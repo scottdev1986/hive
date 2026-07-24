@@ -30,29 +30,29 @@ import { existsSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  discoverBriefableDocs,
   type BriefableDocs,
+  discoverBriefableDocs,
 } from "../adapters/briefing-docs";
-import { projectStateDir } from "../daemon/project-state";
 import {
   listMemoryFacts,
-  writeMemoryFact,
   type MemoryWriteFileInput,
+  writeMemoryFact,
 } from "../adapters/memory";
-import { probeDaemonReuse } from "../daemon/lifecycle";
-import { expectedDaemonHandshake } from "../daemon/handshake";
-import { reindexMemory } from "./mcp";
 import {
   installShippedSkills,
   type SkillInstallReport,
   type SkillTool,
 } from "../adapters/skills";
+import { expectedDaemonHandshake } from "../daemon/handshake";
+import { probeDaemonReuse } from "../daemon/lifecycle";
+import { projectStateDir } from "../daemon/project-state";
+import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 import { CAPABILITY_PROVIDERS } from "../schemas";
 import { ensureEmbeddingsRuntime } from "./embeddings";
-import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 import { runGraphifyEnable } from "./graphify";
-import { projectRootOrCwd } from "./project-root";
+import { reindexMemory } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
+import { projectRootOrCwd } from "./project-root";
 
 /** The vendors Hive installs skills for, and the command whose presence on PATH
  * means the user actually has that CLI. Hive does not create a `.claude/` for
@@ -105,7 +105,9 @@ export interface InitDeps {
     root: string,
     input: MemoryWriteFileInput,
   ) => Promise<{ id: string }>;
-  listMemoryFacts: (root: string) => Promise<Array<{ id: string; scope: string }>>;
+  listMemoryFacts: (
+    root: string,
+  ) => Promise<Array<{ id: string; scope: string }>>;
   fileExists: (path: string) => Promise<boolean>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, contents: string) => Promise<void>;
@@ -157,7 +159,10 @@ export const defaultInitDeps: InitDeps = {
   writeInitStamp: async (root) => {
     const path = initStampPath(root);
     await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, `# Written by \`hive init\`; bare \`hive\` checks it.\n`);
+    await writeFile(
+      path,
+      `# Written by \`hive init\`; bare \`hive\` checks it.\n`,
+    );
   },
   installEmbeddings: ensureEmbeddingsRuntime,
   today: () => new Date().toISOString().slice(0, 10),
@@ -250,16 +255,20 @@ function gitignoreContains(entry: string, lines: readonly string[]): boolean {
  */
 export async function ensureHiveStateGitignored(
   cwd: string,
-  deps: Pick<InitDeps, "fileExists" | "readFile" | "writeFile"> = defaultInitDeps,
+  deps: Pick<
+    InitDeps,
+    "fileExists" | "readFile" | "writeFile"
+  > = defaultInitDeps,
 ): Promise<string> {
   const path = join(cwd, ".gitignore");
   const exists = await deps.fileExists(path);
   const existing = exists ? await deps.readFile(path) : "";
   const lines = existing.split(/\r?\n/);
-  const missing = HIVE_GITIGNORE_ENTRIES.filter((entry) =>
-    !gitignoreContains(entry, lines)
+  const missing = HIVE_GITIGNORE_ENTRIES.filter(
+    (entry) => !gitignoreContains(entry, lines),
   );
-  if (missing.length === 0) return ".gitignore already covers Hive's local state.";
+  if (missing.length === 0)
+    return ".gitignore already covers Hive's local state.";
   const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
   await deps.writeFile(
     path,
@@ -341,9 +350,10 @@ export async function runInit(
   const skills: SkillInstallReport[] = [];
   // Keyed by the vendor union rather than a hand-written list: a vendor with no
   // row is a compile error here, not a CLI Hive quietly never looks for.
-  const installed = CAPABILITY_PROVIDERS
-    .map((tool) => ({ tool, ...VENDORS[tool] }))
-    .filter((vendor) => deps.hasCli(vendor.command));
+  const installed = CAPABILITY_PROVIDERS.map((tool) => ({
+    tool,
+    ...VENDORS[tool],
+  })).filter((vendor) => deps.hasCli(vendor.command));
   if (installed.length === 0) {
     messages.push(
       "No Claude Code, Codex, or Grok CLI found on PATH; installed no skills and created no vendor directories.",
@@ -400,9 +410,8 @@ export async function runInit(
   // 4. Seed narrative facts (source: init): genuinely narrative knowledge an
   //    agent should start with, distinct from the facts an agent earns.
   const facts = options.facts ?? [];
-  const factsSeeded = facts.length === 0
-    ? []
-    : await seedInitFacts(cwd, facts, today, deps);
+  const factsSeeded =
+    facts.length === 0 ? [] : await seedInitFacts(cwd, facts, today, deps);
   if (factsSeeded.length > 0) {
     const articles = `${factsSeeded.length} narrative memory article${
       factsSeeded.length === 1 ? "" : "s"
@@ -474,7 +483,8 @@ export async function readSeedFactsFile(path: string): Promise<InitFact[]> {
   }
   return parsed.map((entry) => {
     if (
-      typeof entry !== "object" || entry === null ||
+      typeof entry !== "object" ||
+      entry === null ||
       typeof (entry as { title?: unknown }).title !== "string" ||
       typeof (entry as { body?: unknown }).body !== "string"
     ) {
@@ -506,9 +516,10 @@ export async function runInitCli(options: {
   if (repaired.length > 0) {
     console.log(`Removed stale Hive runtime config: ${repaired.join(", ")}`);
   }
-  const facts = options.seedFacts === undefined
-    ? []
-    : await readSeedFactsFile(options.seedFacts);
+  const facts =
+    options.seedFacts === undefined
+      ? []
+      : await readSeedFactsFile(options.seedFacts);
   const result = await runInit(root, {
     ...(options.scaffoldAgents === undefined
       ? {}

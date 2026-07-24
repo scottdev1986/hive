@@ -1,17 +1,16 @@
 import {
-  DEFAULT_PERCENT_ESTIMATES,
   CAPABILITY_PROVIDERS,
-  CapabilityProviderSchema,
-  QuotaObservationSchema,
-  unknownVendor,
   type CapabilityProvider,
+  CapabilityProviderSchema,
   type CapabilityRecord,
+  DEFAULT_PERCENT_ESTIMATES,
   type QuotaConfidence,
   type QuotaConfig,
   type QuotaLimit,
   type QuotaMeterState,
   type QuotaObservation,
   type QuotaObservationInput,
+  QuotaObservationSchema,
   type QuotaPoolOrigin,
   type QuotaPoolStatus,
   type QuotaScope,
@@ -19,24 +18,25 @@ import {
   type QuotaUnconfiguredStatus,
   type QuotaWindowStatus,
   type RoutingCategory,
+  unknownVendor,
 } from "../schemas";
 import {
+  type AuthorizedLaunch,
+  requireAuthorizedLaunch,
+} from "./authorized-launch";
+import type {
+  DiscoveredQuotaPool,
+  QuotaAlertState,
   QuotaLedger,
-  type DiscoveredQuotaPool,
-  type QuotaAlertState,
-  type QuotaReservation,
-  type ReserveQuotaInput,
+  QuotaReservation,
+  ReserveQuotaInput,
 } from "./quota-ledger";
 import {
-  orderRateLimitWindows,
-  readingsFromCodexResponse,
   type DiscoveredPoolReading,
+  orderRateLimitWindows,
   type QuotaProbe,
+  readingsFromCodexResponse,
 } from "./quota-sources";
-import {
-  requireAuthorizedLaunch,
-  type AuthorizedLaunch,
-} from "./authorized-launch";
 
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -136,8 +136,15 @@ function zonedParts(date: Date, timeZone: string): Record<string, number> {
   }).formatToParts(date)) {
     if (part.type === "literal") continue;
     if (part.type === "weekday") {
-      values.weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-        .indexOf(part.value);
+      values.weekday = [
+        "Sun",
+        "Mon",
+        "Tue",
+        "Wed",
+        "Thu",
+        "Fri",
+        "Sat",
+      ].indexOf(part.value);
     } else {
       values[part.type] = Number(part.value);
     }
@@ -171,8 +178,10 @@ function zonedToUtc(
   }
   const resolved = zonedParts(new Date(guess), timeZone);
   if (
-    resolved.year === year && resolved.month === month &&
-    resolved.day === day && resolved.hour === hour &&
+    resolved.year === year &&
+    resolved.month === month &&
+    resolved.day === day &&
+    resolved.hour === hour &&
     resolved.minute === minute
   ) {
     return new Date(guess);
@@ -182,10 +191,16 @@ function zonedToUtc(
   // Resolve that boundary to the first valid local minute after the gap.
   const searchStart = desired - 18 * HOUR_MS;
   const searchEnd = desired + 18 * HOUR_MS;
-  for (let candidate = searchStart; candidate <= searchEnd; candidate += 60_000) {
+  for (
+    let candidate = searchStart;
+    candidate <= searchEnd;
+    candidate += 60_000
+  ) {
     const parts = zonedParts(new Date(candidate), timeZone);
     if (
-      parts.year === year && parts.month === month && parts.day === day &&
+      parts.year === year &&
+      parts.month === month &&
+      parts.day === day &&
       parts.hour! * 60 + parts.minute! >= hour * 60 + minute
     ) {
       return new Date(candidate);
@@ -196,22 +211,23 @@ function zonedToUtc(
   );
 }
 
-export function calendarWeekBounds(now: Date, limit: QuotaLimit): {
+export function calendarWeekBounds(
+  now: Date,
+  limit: QuotaLimit,
+): {
   start: string;
   end: string;
 } {
   const local = zonedParts(now, limit.timezone);
   let daysBack = (local.weekday! - limit.resetWeekday + 7) % 7;
-  const beforeReset = daysBack === 0 && (
-    local.hour! < limit.resetHour ||
-    (local.hour === limit.resetHour && local.minute! < limit.resetMinute)
-  );
+  const beforeReset =
+    daysBack === 0 &&
+    (local.hour! < limit.resetHour ||
+      (local.hour === limit.resetHour && local.minute! < limit.resetMinute));
   if (beforeReset) daysBack = 7;
-  const localDate = new Date(Date.UTC(
-    local.year!,
-    local.month! - 1,
-    local.day! - daysBack,
-  ));
+  const localDate = new Date(
+    Date.UTC(local.year!, local.month! - 1, local.day! - daysBack),
+  );
   const start = zonedToUtc(
     localDate.getUTCFullYear(),
     localDate.getUTCMonth() + 1,
@@ -220,11 +236,13 @@ export function calendarWeekBounds(now: Date, limit: QuotaLimit): {
     limit.resetMinute,
     limit.timezone,
   );
-  const nextDate = new Date(Date.UTC(
-    localDate.getUTCFullYear(),
-    localDate.getUTCMonth(),
-    localDate.getUTCDate() + 7,
-  ));
+  const nextDate = new Date(
+    Date.UTC(
+      localDate.getUTCFullYear(),
+      localDate.getUTCMonth(),
+      localDate.getUTCDate() + 7,
+    ),
+  );
   const end = zonedToUtc(
     nextDate.getUTCFullYear(),
     nextDate.getUTCMonth() + 1,
@@ -241,8 +259,11 @@ function scopeKey(scope: QuotaScope): string {
 }
 
 function sameScope(left: QuotaLimit, right: QuotaLimit): boolean {
-  return left.provider === right.provider && left.account === right.account &&
-    left.pool === right.pool;
+  return (
+    left.provider === right.provider &&
+    left.account === right.account &&
+    left.pool === right.pool
+  );
 }
 
 function confidenceLabel(status: QuotaPoolStatus): string {
@@ -260,7 +281,10 @@ export function describeRemaining(
 }
 
 export class QuotaExhaustedError extends Error {
-  constructor(message: string, readonly fallback?: QuotaRouteCandidate) {
+  constructor(
+    message: string,
+    readonly fallback?: QuotaRouteCandidate,
+  ) {
     super(message);
     this.name = "QuotaExhaustedError";
   }
@@ -368,18 +392,23 @@ export class QuotaService {
     provider: CapabilityProvider,
     records: readonly CapabilityRecord[],
   ): void {
-    this.ledger.replaceModelCatalog(provider, records.flatMap((record) =>
-      [...new Set([
-        record.displayName ?? record.canonicalId,
-        record.launchToken,
-        ...record.aliases,
-      ])].map((displayName) => ({
-        provider,
-        modelId: record.canonicalId,
-        displayName,
-        discoveredAt: record.observedAt,
-      }))
-    ));
+    this.ledger.replaceModelCatalog(
+      provider,
+      records.flatMap((record) =>
+        [
+          ...new Set([
+            record.displayName ?? record.canonicalId,
+            record.launchToken,
+            ...record.aliases,
+          ]),
+        ].map((displayName) => ({
+          provider,
+          modelId: record.canonicalId,
+          displayName,
+          discoveredAt: record.observedAt,
+        })),
+      ),
+    );
   }
 
   /**
@@ -400,7 +429,11 @@ export class QuotaService {
     response: CodexRateLimitsResponse,
     observedAt = iso(this.clock()),
   ): Promise<CodexQuotaReading | null> {
-    for (const reading of readingsFromCodexResponse(response, "default", observedAt)) {
+    for (const reading of readingsFromCodexResponse(
+      response,
+      "default",
+      observedAt,
+    )) {
       this.ledger.upsertDiscoveredPool({
         provider: reading.provider,
         account: reading.account,
@@ -409,9 +442,11 @@ export class QuotaService {
         label: reading.label,
         fiveHourWindowMinutes: reading.fiveHour?.windowMinutes ?? null,
         weeklyWindowMinutes: reading.weekly?.windowMinutes ?? null,
-        fiveHourMeterState: reading.fiveHourMeterState ??
+        fiveHourMeterState:
+          reading.fiveHourMeterState ??
           (reading.fiveHour === null ? "unknown" : "metered"),
-        weeklyMeterState: reading.weeklyMeterState ??
+        weeklyMeterState:
+          reading.weeklyMeterState ??
           (reading.weekly === null ? "unknown" : "metered"),
         discoveredAt: reading.observedAt,
         source: reading.source,
@@ -423,14 +458,18 @@ export class QuotaService {
     // provider's percentages are mapped onto the allowance they declared.
     if (limit !== null && limit.origin === "manual") {
       const byId = response.rateLimitsByLimitId ?? {};
-      const snapshot = byId[limit.pool] ??
-        Object.values(byId).find((candidate) => candidate.limitId === limit.pool) ??
+      const snapshot =
+        byId[limit.pool] ??
+        Object.values(byId).find(
+          (candidate) => candidate.limitId === limit.pool,
+        ) ??
         response.rateLimits;
       const windows = orderRateLimitWindows(snapshot);
       if (windows.fiveHour === null || windows.weekly === null) return null;
       const reading = {
-        fiveHourUsed: limit.fiveHourAllowance * windows.fiveHour.usedPct / 100,
-        weeklyUsed: limit.weeklyAllowance * windows.weekly.usedPct / 100,
+        fiveHourUsed:
+          (limit.fiveHourAllowance * windows.fiveHour.usedPct) / 100,
+        weeklyUsed: (limit.weeklyAllowance * windows.weekly.usedPct) / 100,
       };
       await this.observe({
         provider: "codex",
@@ -454,8 +493,11 @@ export class QuotaService {
 
     // Otherwise the discovered pool is the one that matters, and it is
     // percent-denominated: the reading *is* the percentage.
-    const routable = readingsFromCodexResponse(response, "default", observedAt)
-      .find((reading) => reading.models.includes("*"));
+    const routable = readingsFromCodexResponse(
+      response,
+      "default",
+      observedAt,
+    ).find((reading) => reading.models.includes("*"));
     if (routable === undefined) return null;
     await this.recordDiscoveredReading(routable);
     if (routable.fiveHour === null || routable.weekly === null) return null;
@@ -473,24 +515,26 @@ export class QuotaService {
    */
   resolvedLimits(): ResolvedQuotaLimit[] {
     const manualScopes = new Set(this.config.limits.map(scopeKey));
-    const manual = this.config.limits.map((limit): ResolvedQuotaLimit => ({
-      ...limit,
-      origin: "manual",
-      unit: "units",
-      routable: limit.models.length > 0,
-      label: null,
-      overridesDiscovered: false,
-      fiveHourWindowMinutes: 5 * 60,
-      weeklyWindowMinutes: 7 * 24 * 60,
-      fiveHourMeterState: "metered",
-      weeklyMeterState: "metered",
-    }));
+    const manual = this.config.limits.map(
+      (limit): ResolvedQuotaLimit => ({
+        ...limit,
+        origin: "manual",
+        unit: "units",
+        routable: limit.models.length > 0,
+        label: null,
+        overridesDiscovered: false,
+        fiveHourWindowMinutes: 5 * 60,
+        weeklyWindowMinutes: 7 * 24 * 60,
+        fiveHourMeterState: "metered",
+        weeklyMeterState: "metered",
+      }),
+    );
     const discovered: ResolvedQuotaLimit[] = [];
     const bind = this.poolBinder();
     for (const pool of this.ledger.discoveredPools()) {
       if (manualScopes.has(scopeKey(pool))) {
-        const override = manual.find((limit) =>
-          scopeKey(limit) === scopeKey(pool)
+        const override = manual.find(
+          (limit) => scopeKey(limit) === scopeKey(pool),
         );
         if (override !== undefined) {
           override.overridesDiscovered = true;
@@ -556,7 +600,7 @@ export class QuotaService {
       if (pool.models.includes("*")) return ["*"];
       if (pool.label === null) return [];
       const key = `${pool.provider}\0${pool.label.toLowerCase()}`;
-      return [...byDisplayName.get(key) ?? []].sort();
+      return [...(byDisplayName.get(key) ?? [])].sort();
     };
   }
 
@@ -571,12 +615,13 @@ export class QuotaService {
    * which is the ordinary case and is not a gap in coverage.
    */
   private limitsFor(candidate: QuotaCandidateIdentity): ResolvedQuotaLimit[] {
-    const routable = this.resolvedLimits().filter((limit) =>
-      limit.routable && limit.provider === candidate.tool
+    const routable = this.resolvedLimits().filter(
+      (limit) => limit.routable && limit.provider === candidate.tool,
     );
     const general = routable.filter((limit) => limit.models.includes("*"));
-    const specific = routable.filter((limit) =>
-      !limit.models.includes("*") && limit.models.includes(candidate.model)
+    const specific = routable.filter(
+      (limit) =>
+        !limit.models.includes("*") && limit.models.includes(candidate.model),
     );
     return [...general, ...specific];
   }
@@ -587,15 +632,22 @@ export class QuotaService {
    * shared snapshot heals the join, automatic adoption on that provider is
    * unsafe; another provider remains entirely unaffected.
    */
-  private unboundModelPools(provider: CapabilityProvider): ResolvedQuotaLimit[] {
-    return this.resolvedLimits().filter((limit) =>
-      limit.provider === provider && limit.origin === "discovered" &&
-      !limit.routable && limit.label !== null
+  private unboundModelPools(
+    provider: CapabilityProvider,
+  ): ResolvedQuotaLimit[] {
+    return this.resolvedLimits().filter(
+      (limit) =>
+        limit.provider === provider &&
+        limit.origin === "discovered" &&
+        !limit.routable &&
+        limit.label !== null,
     );
   }
 
   /** The pool a run is booked against: its own cap if it has one, else general. */
-  private limitFor(candidate: QuotaCandidateIdentity): ResolvedQuotaLimit | null {
+  private limitFor(
+    candidate: QuotaCandidateIdentity,
+  ): ResolvedQuotaLimit | null {
     const limits = this.limitsFor(candidate);
     return limits.at(-1) ?? null;
   }
@@ -611,7 +663,7 @@ export class QuotaService {
     now = this.clock(),
   ): QuotaPoolStatus[] {
     return this.limitsFor(candidate).map((limit) =>
-      this.statusForLimit(limit, now)
+      this.statusForLimit(limit, now),
     );
   }
 
@@ -619,10 +671,14 @@ export class QuotaService {
   private generalLimit(
     provider: CapabilityProvider,
   ): ResolvedQuotaLimit | null {
-    return this.resolvedLimits().find((limit) =>
-      limit.routable && limit.provider === provider &&
-      limit.models.includes("*")
-    ) ?? null;
+    return (
+      this.resolvedLimits().find(
+        (limit) =>
+          limit.routable &&
+          limit.provider === provider &&
+          limit.models.includes("*"),
+      ) ?? null
+    );
   }
 
   /**
@@ -703,12 +759,12 @@ export class QuotaService {
     category: RoutingCategory,
   ): { fiveHour: number; weekly: number } {
     if (limit.unit === "units") {
-      const estimate = this.config.estimates[category] ??
-        this.config.estimates.default ?? 10;
+      const estimate =
+        this.config.estimates[category] ?? this.config.estimates.default ?? 10;
       return { fiveHour: estimate, weekly: estimate };
     }
-    const percent = this.config.estimatesPct[category] ??
-      DEFAULT_PERCENT_ESTIMATES[category];
+    const percent =
+      this.config.estimatesPct[category] ?? DEFAULT_PERCENT_ESTIMATES[category];
     return { fiveHour: percent.fiveHour, weekly: percent.weekly };
   }
 
@@ -735,9 +791,9 @@ export class QuotaService {
       // metered window — the weekly cap that actually governs — doing the gating.
       const allowanceFor = (window: "fiveHour" | "weekly"): number =>
         this.meters(entry.limit, entry.status, window)
-          ? (window === "fiveHour"
+          ? window === "fiveHour"
             ? entry.limit.fiveHourAllowance
-            : entry.limit.weeklyAllowance)
+            : entry.limit.weeklyAllowance
           : Number.POSITIVE_INFINITY;
       return {
         id: crypto.randomUUID(),
@@ -793,7 +849,8 @@ export class QuotaService {
       candidate.effort ?? null,
     );
     if (
-      health === null || health.consecutiveFailures === 0 ||
+      health === null ||
+      health.consecutiveFailures === 0 ||
       health.lastFailureAt === null
     ) {
       return null;
@@ -805,10 +862,13 @@ export class QuotaService {
       this.config.launchQuarantineMinutes * 4,
     );
     const until = add(new Date(health.lastFailureAt), minutes * 60_000);
-    return new Date(until) <= now ? null : {
-      until,
-      reason: health.lastFailureReason ?? "a previous launch never proved life",
-    };
+    return new Date(until) <= now
+      ? null
+      : {
+          until,
+          reason:
+            health.lastFailureReason ?? "a previous launch never proved life",
+        };
   }
 
   /** An agent came up. Whatever we thought about this route, it works. */
@@ -849,29 +909,36 @@ export class QuotaService {
       const weekFloor = preserveDeep
         ? limit.weeklyAllowance * this.config.reserveWeeklyPct
         : 0;
-      return measured.fiveRemaining - estimate.fiveHour >= fiveFloor &&
-        measured.weekRemaining - estimate.weekly >= weekFloor;
+      return (
+        measured.fiveRemaining - estimate.fiveHour >= fiveFloor &&
+        measured.weekRemaining - estimate.weekly >= weekFloor
+      );
     });
     // A fallback is only recommended when Hive can actually see that it fits.
     // Every pool that could be checked must have room, and at least one must have
     // been checkable — an unmeasured model is not a *safe* fallback, it is an
     // unknown one, and recommending it would be the same false confidence that
     // put two agents on an exhausted model.
-    return checked.some((room) => room !== null) &&
-      checked.every((room) => room !== false);
+    return (
+      checked.some((room) => room !== null) &&
+      checked.every((room) => room !== false)
+    );
   }
 
   /** The pool with the least room: the one that actually governs the run. */
   private tightest(
     entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
   ): { limit: ResolvedQuotaLimit; status: QuotaPoolStatus } {
-    const room = (entry: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }) =>
+    const room = (entry: {
+      limit: ResolvedQuotaLimit;
+      status: QuotaPoolStatus;
+    }) =>
       Math.min(
         entry.status.fiveHour.remainingPct ?? Number.POSITIVE_INFINITY,
         entry.status.weekly.remainingPct ?? Number.POSITIVE_INFINITY,
       );
     return entries.reduce((tightest, entry) =>
-      room(entry) < room(tightest) ? entry : tightest
+      room(entry) < room(tightest) ? entry : tightest,
     );
   }
 
@@ -914,7 +981,7 @@ export class QuotaService {
         if (!entry.limit.models.includes("*")) {
           warnings.push(
             `${entry.limit.provider} pool ${entry.limit.pool} meters ` +
-            `${candidate.model} but has no live reading, so it could not be checked.`,
+              `${candidate.model} but has no live reading, so it could not be checked.`,
           );
         }
         continue;
@@ -923,23 +990,25 @@ export class QuotaService {
       const after = Math.min(
         (measured.fiveRemaining - estimate.fiveHour) /
           entry.limit.fiveHourAllowance,
-        (measured.weekRemaining - estimate.weekly) / entry.limit.weeklyAllowance,
+        (measured.weekRemaining - estimate.weekly) /
+          entry.limit.weeklyAllowance,
       );
       if (after > this.config.warningRemainingPct) continue;
       const unit = entry.limit.unit === "percent" ? "%" : "";
       const tightWindow =
-        (measured.weekRemaining - estimate.weekly) / entry.limit.weeklyAllowance <
-            (measured.fiveRemaining - estimate.fiveHour) /
-              entry.limit.fiveHourAllowance
+        (measured.weekRemaining - estimate.weekly) /
+          entry.limit.weeklyAllowance <
+        (measured.fiveRemaining - estimate.fiveHour) /
+          entry.limit.fiveHourAllowance
           ? "weekly"
           : "fiveHour";
       const status = entry.status[tightWindow];
       warnings.push(
         `${entry.limit.provider} pool ${entry.limit.pool} is at ` +
-        `${describeRemaining(status, unit)} remaining ` +
-        `(${tightWindow === "weekly" ? "weekly" : "5h"} window` +
-        `${status.resetsAt === null ? "" : `, resets ${status.resetsAt}`}) ` +
-        `after this ${category} run.`,
+          `${describeRemaining(status, unit)} remaining ` +
+          `(${tightWindow === "weekly" ? "weekly" : "5h"} window` +
+          `${status.resetsAt === null ? "" : `, resets ${status.resetsAt}`}) ` +
+          `after this ${category} run.`,
       );
     }
     return warnings;
@@ -998,10 +1067,13 @@ export class QuotaService {
       // Some billing surfaces carry no model catalog. That absence cannot
       // erase a vendor claim measured by capability discovery.
       if (result.catalog.length > 0) {
-        this.ledger.replaceModelCatalog(probe.provider, result.catalog.map((entry) => ({
-          ...entry,
-          discoveredAt: iso(now),
-        })));
+        this.ledger.replaceModelCatalog(
+          probe.provider,
+          result.catalog.map((entry) => ({
+            ...entry,
+            discoveredAt: iso(now),
+          })),
+        );
       }
       if (result.resetCredits !== undefined) {
         this.resetCredits.set(probe.provider, result.resetCredits);
@@ -1015,9 +1087,11 @@ export class QuotaService {
           label: reading.label,
           fiveHourWindowMinutes: reading.fiveHour?.windowMinutes ?? null,
           weeklyWindowMinutes: reading.weekly?.windowMinutes ?? null,
-          fiveHourMeterState: reading.fiveHourMeterState ??
+          fiveHourMeterState:
+            reading.fiveHourMeterState ??
             (reading.fiveHour === null ? "unknown" : "metered"),
-          weeklyMeterState: reading.weeklyMeterState ??
+          weeklyMeterState:
+            reading.weeklyMeterState ??
             (reading.weekly === null ? "unknown" : "metered"),
           discoveredAt: reading.observedAt,
           source: reading.source,
@@ -1052,39 +1126,47 @@ export class QuotaService {
     // An operator override claims this scope in their own planning units, so the
     // provider's percentages are mapped onto the allowance they declared rather
     // than stored as though a percent were a unit.
-    const target = this.resolvedLimits().find((candidate) =>
-      scopeKey(candidate) === scopeKey(scope)
+    const target = this.resolvedLimits().find(
+      (candidate) => scopeKey(candidate) === scopeKey(scope),
     );
     const scale = (usedPct: number, allowance: number): number =>
       target === undefined || target.unit === "percent"
         ? usedPct
-        : usedPct * allowance / 100;
-    this.ledger.upsertObservation(QuotaObservationSchema.parse({
-      ...scope,
-      fiveHourUsed: reading.fiveHour === null
-        ? prior?.fiveHourUsed ?? 0
-        : scale(reading.fiveHour.usedPct, target?.fiveHourAllowance ?? 100),
-      weeklyUsed: reading.weekly === null
-        ? prior?.weeklyUsed ?? 0
-        : scale(reading.weekly.usedPct, target?.weeklyAllowance ?? 100),
-      observedAt: reading.observedAt,
-      fiveHourResetAt: reading.fiveHour?.resetsAt ?? null,
-      weeklyResetAt: reading.weekly?.resetsAt ?? null,
-      source: reading.source,
-      confidence: reading.confidence,
-      ...(reading.fiveHour === null ? {} : {
-        fiveHourObservedAt: reading.observedAt,
-        fiveHourSource: reading.source,
-        fiveHourConfidence: reading.confidence,
+        : (usedPct * allowance) / 100;
+    this.ledger.upsertObservation(
+      QuotaObservationSchema.parse({
+        ...scope,
+        fiveHourUsed:
+          reading.fiveHour === null
+            ? (prior?.fiveHourUsed ?? 0)
+            : scale(reading.fiveHour.usedPct, target?.fiveHourAllowance ?? 100),
+        weeklyUsed:
+          reading.weekly === null
+            ? (prior?.weeklyUsed ?? 0)
+            : scale(reading.weekly.usedPct, target?.weeklyAllowance ?? 100),
+        observedAt: reading.observedAt,
+        fiveHourResetAt: reading.fiveHour?.resetsAt ?? null,
+        weeklyResetAt: reading.weekly?.resetsAt ?? null,
+        source: reading.source,
+        confidence: reading.confidence,
+        ...(reading.fiveHour === null
+          ? {}
+          : {
+              fiveHourObservedAt: reading.observedAt,
+              fiveHourSource: reading.source,
+              fiveHourConfidence: reading.confidence,
+            }),
+        ...(reading.weekly === null
+          ? {}
+          : {
+              weeklyObservedAt: reading.observedAt,
+              weeklySource: reading.source,
+              weeklyConfidence: reading.confidence,
+            }),
       }),
-      ...(reading.weekly === null ? {} : {
-        weeklyObservedAt: reading.observedAt,
-        weeklySource: reading.source,
-        weeklyConfidence: reading.confidence,
-      }),
-    }));
-    const limit = this.resolvedLimits().find((candidate) =>
-      scopeKey(candidate) === scopeKey(scope)
+    );
+    const limit = this.resolvedLimits().find(
+      (candidate) => scopeKey(candidate) === scopeKey(scope),
     );
     if (limit !== undefined) await this.alertPool(limit, this.clock());
   }
@@ -1102,7 +1184,9 @@ export class QuotaService {
       .filter((limit) => limit.provider === provider && limit.routable)
       .some((limit) => {
         const status = this.statusForLimit(limit, now);
-        return live(status.fiveHour.confidence) && live(status.weekly.confidence);
+        return (
+          live(status.fiveHour.confidence) && live(status.weekly.confidence)
+        );
       });
   }
 
@@ -1126,7 +1210,7 @@ export class QuotaService {
     if (this.lastRefreshAt === null) return true;
     if (
       now.getTime() - this.lastRefreshAt.getTime() >=
-        this.config.refreshIntervalMinutes * 60_000
+      this.config.refreshIntervalMinutes * 60_000
     ) {
       return true;
     }
@@ -1146,7 +1230,8 @@ export class QuotaService {
       reservation.agentName !== request.agentName ||
       reservation.provider !== request.tool ||
       reservation.model !== request.model ||
-      reservation.category !== request.category || reservation.purpose !== "control"
+      reservation.category !== request.category ||
+      reservation.purpose !== "control"
     ) {
       throw new Error(
         `Control reservation ${reservation.id} does not match the recorded execution identity for ${request.agentName}`,
@@ -1155,7 +1240,10 @@ export class QuotaService {
     return reservation;
   }
 
-  private windowBounds(limit: QuotaLimit, now: Date): {
+  private windowBounds(
+    limit: QuotaLimit,
+    now: Date,
+  ): {
     fiveHourStart: string;
     weeklyStart: string;
     weeklyEnd: string | null;
@@ -1202,21 +1290,21 @@ export class QuotaService {
      * unit-denominated pool always has the operator's allowance and Hive's own
      * conservative ledger to fall back on, and says so by reporting `estimated`.
      */
-    const windowStatus = (
-      window: "fiveHour" | "weekly",
-    ): QuotaWindowStatus => {
+    const windowStatus = (window: "fiveHour" | "weekly"): QuotaWindowStatus => {
       const other = window === "fiveHour" ? "weekly" : "fiveHour";
       const observedAt = observation?.[`${window}ObservedAt`] ?? null;
       const resetsAtRaw = observation?.[`${window}ResetAt`] ?? null;
-      const windowMinutes = window === "fiveHour"
-        ? limit.fiveHourWindowMinutes
-        : limit.weeklyWindowMinutes;
-      const meterState = window === "fiveHour"
-        ? limit.fiveHourMeterState
-        : limit.weeklyMeterState;
+      const windowMinutes =
+        window === "fiveHour"
+          ? limit.fiveHourWindowMinutes
+          : limit.weeklyWindowMinutes;
+      const meterState =
+        window === "fiveHour"
+          ? limit.fiveHourMeterState
+          : limit.weeklyMeterState;
       const absenceObservedAt = observation?.[`${other}ObservedAt`] ?? null;
-      const notMetered = limit.origin === "discovered" &&
-        meterState === "not-metered";
+      const notMetered =
+        limit.origin === "discovered" && meterState === "not-metered";
       if (notMetered) {
         return {
           availability: "not-metered",
@@ -1228,25 +1316,28 @@ export class QuotaService {
           remaining: null,
           remainingPct: null,
           resetsAt: null,
-          confidence: observation?.[`${other}Confidence`] ??
-            observation?.confidence ?? "missing",
-          source: observation?.[`${other}Source`] ?? observation?.source ?? "none",
+          confidence:
+            observation?.[`${other}Confidence`] ??
+            observation?.confidence ??
+            "missing",
+          source:
+            observation?.[`${other}Source`] ?? observation?.source ?? "none",
           observedAt: absenceObservedAt,
           windowMinutes: null,
         };
       }
       const observationValid = observedAt !== null && valid(resetsAtRaw);
-      const ledgerUsed = window === "fiveHour" ? totals.fiveHour : totals.weekly;
-      const reserved = window === "fiveHour"
-        ? totals.reserved
-        : totals.reservedWeekly;
-      const allowance = window === "fiveHour"
-        ? limit.fiveHourAllowance
-        : limit.weeklyAllowance;
+      const ledgerUsed =
+        window === "fiveHour" ? totals.fiveHour : totals.weekly;
+      const reserved =
+        window === "fiveHour" ? totals.reserved : totals.reservedWeekly;
+      const allowance =
+        window === "fiveHour" ? limit.fiveHourAllowance : limit.weeklyAllowance;
       const reportedUsed = observation?.[`${window}Used`] ?? 0;
-      const afterObservation = window === "fiveHour"
-        ? totals.afterFiveHourObservation
-        : totals.afterWeeklyObservation;
+      const afterObservation =
+        window === "fiveHour"
+          ? totals.afterFiveHourObservation
+          : totals.afterWeeklyObservation;
       // A measurement beats an estimate. The provider's reading already counts
       // everything spent before it was taken — Hive's own runs included — so the
       // only spend it cannot know about is what happened *after* it. That, and
@@ -1274,22 +1365,25 @@ export class QuotaService {
         : observationValid
           ? reportedUsed + unverified
           : ledgerUsed;
-      const remaining = used === null
-        ? null
-        : Math.max(0, allowance - used - reserved);
-      const earliest = limit.unit === "units"
-        ? window === "fiveHour"
-          ? this.ledger.earliestUsageAt(scope, bounds.fiveHourStart)
-          : limit.weeklyWindow === "rolling"
-            ? this.ledger.earliestUsageAt(scope, bounds.weeklyStart)
-            : null
-        : null;
-      const fallbackReset = limit.unit === "units"
-        ? window === "fiveHour"
-          ? (earliest === null ? null : add(new Date(earliest), 5 * HOUR_MS))
-          : bounds.weeklyEnd ??
-            (earliest === null ? null : add(new Date(earliest), 7 * DAY_MS))
-        : null;
+      const remaining =
+        used === null ? null : Math.max(0, allowance - used - reserved);
+      const earliest =
+        limit.unit === "units"
+          ? window === "fiveHour"
+            ? this.ledger.earliestUsageAt(scope, bounds.fiveHourStart)
+            : limit.weeklyWindow === "rolling"
+              ? this.ledger.earliestUsageAt(scope, bounds.weeklyStart)
+              : null
+          : null;
+      const fallbackReset =
+        limit.unit === "units"
+          ? window === "fiveHour"
+            ? earliest === null
+              ? null
+              : add(new Date(earliest), 5 * HOUR_MS)
+            : (bounds.weeklyEnd ??
+              (earliest === null ? null : add(new Date(earliest), 7 * DAY_MS)))
+          : null;
       // The label describes the number actually being published, not the reading
       // it was built from. A measured base with Hive's own estimate of the spend
       // since is partly a guess, and calling it `authoritative` would be a claim
@@ -1303,7 +1397,8 @@ export class QuotaService {
             ? "stale"
             : unverified > 0
               ? "estimated"
-              : observation?.[`${window}Confidence`] ?? observation!.confidence;
+              : (observation?.[`${window}Confidence`] ??
+                observation!.confidence);
       return {
         availability: unmeasured ? "unknown" : "available",
         unit: limit.unit,
@@ -1319,7 +1414,7 @@ export class QuotaService {
           ? "none"
           : !observationValid
             ? "ledger"
-            : observation?.[`${window}Source`] ?? observation!.source,
+            : (observation?.[`${window}Source`] ?? observation!.source),
         observedAt: observationValid ? observedAt : null,
         windowMinutes,
       };
@@ -1337,17 +1432,18 @@ export class QuotaService {
       models: limit.models,
       label: limit.label,
       routable: limit.routable,
-      confidence: observation === null
-        ? (limit.unit === "percent" ? "missing" : "estimated")
-        : anyFresh
-          ? observation.confidence
-          : "stale",
-      freshness: observation === null
-        ? "missing"
-        : anyFresh
-          ? "fresh"
-          : "stale",
-      source: observation?.source ?? (limit.unit === "percent" ? "none" : "ledger"),
+      confidence:
+        observation === null
+          ? limit.unit === "percent"
+            ? "missing"
+            : "estimated"
+          : anyFresh
+            ? observation.confidence
+            : "stale",
+      freshness:
+        observation === null ? "missing" : anyFresh ? "fresh" : "stale",
+      source:
+        observation?.source ?? (limit.unit === "percent" ? "none" : "ledger"),
       fiveHour,
       weekly,
     };
@@ -1363,9 +1459,13 @@ export class QuotaService {
       seen.add(key);
       values.push({
         ...this.statusForLimit(limit, now),
-        models: [...new Set(resolved
-          .filter((candidate) => sameScope(candidate, limit))
-          .flatMap((candidate) => candidate.models))],
+        models: [
+          ...new Set(
+            resolved
+              .filter((candidate) => sameScope(candidate, limit))
+              .flatMap((candidate) => candidate.models),
+          ),
+        ],
       });
     }
     const trackedProviders = new Set<string>();
@@ -1392,24 +1492,30 @@ export class QuotaService {
         subtract(now, 5 * HOUR_MS),
         subtract(now, 7 * DAY_MS),
       );
-      values.push(this.gapStatus(unconfigured.provider, unconfigured.model, {
-        reserved: totals.reserved,
-        fiveHourRecorded: totals.fiveHour,
-        weeklyRecorded: totals.weekly,
-      }));
+      values.push(
+        this.gapStatus(unconfigured.provider, unconfigured.model, {
+          reserved: totals.reserved,
+          fiveHourRecorded: totals.fiveHour,
+          weeklyRecorded: totals.weekly,
+        }),
+      );
     }
     // A provider with no routable pool has no live numbers. Say which provider,
     // and say why, instead of implying an operator forgot to fill in a file.
     for (const provider of CAPABILITY_PROVIDERS) {
       if (trackedProviders.has(provider)) continue;
-      if (resolved.some((limit) => limit.provider === provider && limit.routable)) {
+      if (
+        resolved.some((limit) => limit.provider === provider && limit.routable)
+      ) {
         continue;
       }
-      values.push(this.gapStatus(provider, "*", {
-        reserved: 0,
-        fiveHourRecorded: 0,
-        weeklyRecorded: 0,
-      }));
+      values.push(
+        this.gapStatus(provider, "*", {
+          reserved: 0,
+          fiveHourRecorded: 0,
+          weeklyRecorded: 0,
+        }),
+      );
     }
     return values;
   }
@@ -1429,9 +1535,10 @@ export class QuotaService {
       model,
       configured: false,
       confidence: "missing",
-      reason: probeError === null
-        ? `Hive has not read live limits from ${provider} yet; usage is unknown and routing is unconstrained`
-        : `Live limits from ${provider} are unavailable: ${probeError}`,
+      reason:
+        probeError === null
+          ? `Hive has not read live limits from ${provider} yet; usage is unknown and routing is unconstrained`
+          : `Live limits from ${provider} are unavailable: ${probeError}`,
       probeError,
       ...recorded,
       recordedIsLocalEstimate: true,
@@ -1481,9 +1588,10 @@ export class QuotaService {
     window: "fiveHour" | "weekly",
   ): boolean {
     if (status[window].availability === "not-metered") return false;
-    const declared = window === "fiveHour"
-      ? limit.fiveHourWindowMinutes
-      : limit.weeklyWindowMinutes;
+    const declared =
+      window === "fiveHour"
+        ? limit.fiveHourWindowMinutes
+        : limit.weeklyWindowMinutes;
     return declared !== null || status[window].observedAt !== null;
   }
 
@@ -1511,7 +1619,8 @@ export class QuotaService {
   async routeAndReserve(
     request: QuotaRouteRequest,
   ): Promise<QuotaRouteDecision> {
-    for (const candidate of request.candidates) requireAuthorizedLaunch(candidate);
+    for (const candidate of request.candidates)
+      requireAuthorizedLaunch(candidate);
     const now = this.clock();
     if (
       request.reviewOfTool !== undefined &&
@@ -1519,12 +1628,17 @@ export class QuotaService {
     ) {
       return unknownVendor(request.reviewOfTool as never, "review provider");
     }
-    let candidates = request.candidates.filter((candidate) =>
-      request.explicitTool === undefined || candidate.tool === request.explicitTool
+    let candidates = request.candidates.filter(
+      (candidate) =>
+        request.explicitTool === undefined ||
+        candidate.tool === request.explicitTool,
     );
-    if (request.reviewOfTool !== undefined && request.category === "code_review") {
-      candidates = candidates.filter((candidate) =>
-        candidate.tool !== request.reviewOfTool
+    if (
+      request.reviewOfTool !== undefined &&
+      request.category === "code_review"
+    ) {
+      candidates = candidates.filter(
+        (candidate) => candidate.tool !== request.reviewOfTool,
       );
     }
     if (candidates.length === 0) {
@@ -1537,9 +1651,12 @@ export class QuotaService {
     for (const candidate of candidates) {
       const pools = this.unboundModelPools(candidate.tool);
       if (pools.length === 0) continue;
-      const hasOwnBoundMeter = this.resolvedLimits().some((limit) =>
-        limit.provider === candidate.tool && limit.routable &&
-        !limit.models.includes("*") && limit.models.includes(candidate.model)
+      const hasOwnBoundMeter = this.resolvedLimits().some(
+        (limit) =>
+          limit.provider === candidate.tool &&
+          limit.routable &&
+          !limit.models.includes("*") &&
+          limit.models.includes(candidate.model),
       );
       if (!hasOwnBoundMeter) {
         catalogQuarantine.set(
@@ -1550,14 +1667,14 @@ export class QuotaService {
       }
     }
     if (request.explicitCandidate !== true) {
-      const eligible = candidates.filter((candidate) =>
-        !catalogQuarantine.has(candidate)
+      const eligible = candidates.filter(
+        (candidate) => !catalogQuarantine.has(candidate),
       );
       if (eligible.length === 0 && catalogQuarantine.size > 0) {
         throw new QuotaExhaustedError(
-          `Provider catalog quarantine leaves no auto-routable candidate. ${
-            [...catalogQuarantine.values()].join("; ")
-          }`,
+          `Provider catalog quarantine leaves no auto-routable candidate. ${[
+            ...catalogQuarantine.values(),
+          ].join("; ")}`,
         );
       }
       candidates = eligible;
@@ -1575,8 +1692,8 @@ export class QuotaService {
       // stale, and a measured general pool still gates a model whose own cap has
       // not been read yet. Only when every pool that meters this model is unknown
       // does Hive admit that it cannot judge.
-      const known = entries.filter((entry) =>
-        this.measured(entry.status, entry.limit) !== null
+      const known = entries.filter(
+        (entry) => this.measured(entry.status, entry.limit) !== null,
       );
       if (entries.length === 0 || known.length === 0) {
         return {
@@ -1591,7 +1708,7 @@ export class QuotaService {
     // Viability, before distribution gets a vote. A route Hive has just watched fail
     // to produce a working agent is not a route, however much quota it has.
     const quarantine = new Map<
-      typeof evaluated[number],
+      (typeof evaluated)[number],
       { until: string; reason: string }
     >();
     for (const item of evaluated) {
@@ -1604,15 +1721,18 @@ export class QuotaService {
     // and this is also what lets a single explicitly-pinned model still launch:
     // an explicit directive is not overridden by a cooldown. It warns, loudly.
     const attemptable = viable.length > 0 ? viable : evaluated;
-    const quarantineWarnings = attemptable === evaluated
-      ? [...quarantine.values()].map((held) =>
-        `Every candidate route recently failed to start (${held.reason}); ` +
-        `launching anyway because there is no alternative.`
-      )
-      : [...quarantine.entries()].map(([item, held]) =>
-        `${item.candidate.tool}/${item.candidate.model} was passed over: it ` +
-        `failed to start (${held.reason}) and is retried after ${held.until}.`
-      );
+    const quarantineWarnings =
+      attemptable === evaluated
+        ? [...quarantine.values()].map(
+            (held) =>
+              `Every candidate route recently failed to start (${held.reason}); ` +
+              `launching anyway because there is no alternative.`,
+          )
+        : [...quarantine.entries()].map(
+            ([item, held]) =>
+              `${item.candidate.tool}/${item.candidate.model} was passed over: it ` +
+              `failed to start (${held.reason}) and is retried after ${held.until}.`,
+          );
     if (request.explicitCandidate === true) {
       const warnings = [...catalogQuarantine.values()];
       quarantineWarnings.push(...warnings);
@@ -1626,9 +1746,10 @@ export class QuotaService {
     }
 
     const failures: string[] = [];
-    const autoCandidates = request.selection === "spread"
-      ? attemptable.filter((item) => !item.unknown)
-      : attemptable;
+    const autoCandidates =
+      request.selection === "spread"
+        ? attemptable.filter((item) => !item.unknown)
+        : attemptable;
     if (request.selection === "spread") {
       for (const item of attemptable.filter((candidate) => candidate.unknown)) {
         failures.push(
@@ -1637,29 +1758,37 @@ export class QuotaService {
         );
       }
       if (autoCandidates.length > 0) {
-        const fair = this.ledger.tryReserveFairGroups(autoCandidates.map((item) => ({
-          provider: item.candidate.tool,
-          inputs: this.reservationInputs(
-            request.agentName,
-            item.candidate,
-            item.entries,
-            request.category,
-            now,
-          ),
-        })));
+        const fair = this.ledger.tryReserveFairGroups(
+          autoCandidates.map((item) => ({
+            provider: item.candidate.tool,
+            inputs: this.reservationInputs(
+              request.agentName,
+              item.candidate,
+              item.entries,
+              request.category,
+              now,
+            ),
+          })),
+        );
         if (fair.ok) {
           const item = autoCandidates[fair.candidateIndex]!;
           const primary = fair.reservations[0]!;
           const governing = this.tightest(item.entries);
-          for (const entry of item.entries) await this.alertPool(entry.limit, now);
+          for (const entry of item.entries)
+            await this.alertPool(entry.limit, now);
           return {
             ...item.candidate,
             authorized: item.candidate,
             reservation: primary,
             status: this.statusForLimit(governing.limit, now),
-            reason: "capability-cleared weighted fair dispatch over Hive-observed assignments",
+            reason:
+              "capability-cleared weighted fair dispatch over Hive-observed assignments",
             warnings: [
-              ...this.pressureWarnings(item.candidate, item.entries, request.category),
+              ...this.pressureWarnings(
+                item.candidate,
+                item.entries,
+                request.category,
+              ),
               ...quarantineWarnings,
             ],
           };
@@ -1689,11 +1818,15 @@ export class QuotaService {
           now: iso(now),
           expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
         });
-        const status = this.gapStatus(item.candidate.tool, item.candidate.model, {
-          reserved: fallbackEstimate,
-          fiveHourRecorded: 0,
-          weeklyRecorded: 0,
-        });
+        const status = this.gapStatus(
+          item.candidate.tool,
+          item.candidate.model,
+          {
+            reserved: fallbackEstimate,
+            fiveHourRecorded: 0,
+            weeklyRecorded: 0,
+          },
+        );
         await this.alertUnknown(item.candidate, now);
         return {
           ...item.candidate,
@@ -1703,7 +1836,7 @@ export class QuotaService {
           reason: `${item.candidate.tool} selected in compatibility mode`,
           warnings: [
             `Hive has no live usage for ${item.candidate.tool}; ` +
-            `${item.candidate.model} is running unconstrained.`,
+              `${item.candidate.model} is running unconstrained.`,
             ...quarantineWarnings,
           ],
         };
@@ -1721,10 +1854,11 @@ export class QuotaService {
         // Name the pool that refused, not just the model. "Fable is blocked" is
         // useless without which meter blocked it, how much is left, and when it
         // comes back — the caller has to be able to act on this.
-        const blocked = item.entries.find((entry) =>
-          entry.limit.pool === reserved.blockedBy.pool &&
-          entry.limit.provider === reserved.blockedBy.provider &&
-          entry.limit.account === reserved.blockedBy.account
+        const blocked = item.entries.find(
+          (entry) =>
+            entry.limit.pool === reserved.blockedBy.pool &&
+            entry.limit.provider === reserved.blockedBy.provider &&
+            entry.limit.account === reserved.blockedBy.account,
         );
         failures.push(
           blocked === undefined
@@ -1739,7 +1873,8 @@ export class QuotaService {
         request.explicitTool === undefined ||
         item.candidate.tool === request.explicitTool
       ) {
-        for (const entry of item.entries) await this.alertPool(entry.limit, now);
+        for (const entry of item.entries)
+          await this.alertPool(entry.limit, now);
         return {
           ...item.candidate,
           authorized: item.candidate,
@@ -1747,7 +1882,11 @@ export class QuotaService {
           status: this.statusForLimit(governing.limit, now),
           reason: "safe headroom for the user's chosen link",
           warnings: [
-            ...this.pressureWarnings(item.candidate, item.entries, request.category),
+            ...this.pressureWarnings(
+              item.candidate,
+              item.entries,
+              request.category,
+            ),
             ...quarantineWarnings,
           ],
         };
@@ -1757,8 +1896,8 @@ export class QuotaService {
     }
 
     if (request.explicitTool !== undefined) {
-      const other = request.candidates.find((candidate) =>
-        candidate.tool !== request.explicitTool
+      const other = request.candidates.find(
+        (candidate) => candidate.tool !== request.explicitTool,
       );
       if (other !== undefined && this.hasRoom(other, request.category, now)) {
         safeFallback ??= other;
@@ -1782,7 +1921,8 @@ export class QuotaService {
   requireActiveReservation(reservationId: string): void {
     const reservation = this.ledger.getReservation(reservationId);
     if (
-      reservation === null || reservation.status !== "active" ||
+      reservation === null ||
+      reservation.status !== "active" ||
       new Date(reservation.expiresAt) <= this.clock()
     ) {
       throw new QuotaExhaustedError(
@@ -1807,8 +1947,8 @@ export class QuotaService {
       if (credits <= 0) continue;
       notes.push(
         ` ${provider} reports ${credits} unspent usage-limit reset ` +
-        `${credits === 1 ? "credit" : "credits"}. Hive will not spend one on ` +
-        `its own — redeem it yourself if you want this run to proceed now.`,
+          `${credits === 1 ? "credit" : "credits"}. Hive will not spend one on ` +
+          `its own — redeem it yourself if you want this run to proceed now.`,
       );
     }
     return notes.join("");
@@ -1831,8 +1971,8 @@ export class QuotaService {
     }));
     // A run no pool can measure cannot be authorized or refused on the numbers.
     // Accounting still happens: the run gets an explicit unbounded reservation.
-    const known = entries.filter((entry) =>
-      this.measured(entry.status, entry.limit) !== null
+    const known = entries.filter(
+      (entry) => this.measured(entry.status, entry.limit) !== null,
     );
     if (known.length === 0) {
       const reservation = this.ledger.insertUnboundedReservation({
@@ -1878,11 +2018,13 @@ export class QuotaService {
     const limit = governing.limit;
     const status = governing.status;
     if (!group.ok) {
-      const blocked = entries.find((entry) =>
-        entry.limit.pool === group.blockedBy.pool &&
-        entry.limit.provider === group.blockedBy.provider &&
-        entry.limit.account === group.blockedBy.account
-      ) ?? governing;
+      const blocked =
+        entries.find(
+          (entry) =>
+            entry.limit.pool === group.blockedBy.pool &&
+            entry.limit.provider === group.blockedBy.provider &&
+            entry.limit.account === group.blockedBy.account,
+        ) ?? governing;
       const unit = blocked.limit.unit === "percent" ? "%" : "";
       const estimate = this.estimateFor(blocked.limit, request.category);
       throw new QuotaExhaustedError(
@@ -1895,7 +2037,10 @@ export class QuotaService {
       );
     }
     const reservation = group.reservations[0]!;
-    const matched = this.requireMatchingControlReservation(reservation, request);
+    const matched = this.requireMatchingControlReservation(
+      reservation,
+      request,
+    );
     await this.alertPool(limit, now);
     return matched;
   }
@@ -1936,11 +2081,12 @@ export class QuotaService {
   ): Promise<void> {
     const reservation = this.ledger.getReservation(reservationId);
     if (reservation === null) return;
-    const estimatedWeekly = reservation.estimatedWeeklyUnits ??
-      reservation.estimatedUnits;
-    const ratio = reservation.estimatedUnits > 0
-      ? estimatedWeekly / reservation.estimatedUnits
-      : 1;
+    const estimatedWeekly =
+      reservation.estimatedWeeklyUnits ?? reservation.estimatedUnits;
+    const ratio =
+      reservation.estimatedUnits > 0
+        ? estimatedWeekly / reservation.estimatedUnits
+        : 1;
     this.ledger.reconcile(
       reservationId,
       units ?? reservation.estimatedUnits,
@@ -2054,59 +2200,69 @@ export class QuotaService {
     // gate depends on. A statusLine reading from an unconfigured install still
     // discovers its pool rather than being thrown away for want of a
     // `quota.toml`; a manual pool that declares no wildcard keeps taking them.
-    const limit = this.generalLimit(agent.tool) ??
+    const limit =
+      this.generalLimit(agent.tool) ??
       this.limitFor({ tool: agent.tool, model: agent.model }) ??
       this.discoverStatuslinePool(agent.tool, report.observedAt);
     const prior = this.ledger.getObservation(limit);
     if (
-      prior !== null && prior.confidence === "authoritative" &&
+      prior !== null &&
+      prior.confidence === "authoritative" &&
       prior.observedAt >= report.observedAt
     ) {
       return null;
     }
     const scale = (usedPct: number, allowance: number): number =>
-      limit.unit === "percent" ? usedPct : usedPct * allowance / 100;
+      limit.unit === "percent" ? usedPct : (usedPct * allowance) / 100;
     const observation = QuotaObservationSchema.parse({
       provider: limit.provider,
       account: limit.account,
       pool: limit.pool,
-      fiveHourUsed: report.fiveHour === undefined
-        ? prior?.fiveHourUsed ?? 0
-        : scale(report.fiveHour.usedPct, limit.fiveHourAllowance),
-      weeklyUsed: report.sevenDay === undefined
-        ? prior?.weeklyUsed ?? 0
-        : scale(report.sevenDay.usedPct, limit.weeklyAllowance),
+      fiveHourUsed:
+        report.fiveHour === undefined
+          ? (prior?.fiveHourUsed ?? 0)
+          : scale(report.fiveHour.usedPct, limit.fiveHourAllowance),
+      weeklyUsed:
+        report.sevenDay === undefined
+          ? (prior?.weeklyUsed ?? 0)
+          : scale(report.sevenDay.usedPct, limit.weeklyAllowance),
       observedAt: report.observedAt,
-      fiveHourResetAt: report.fiveHour?.resetsAt ??
-        prior?.fiveHourResetAt ?? null,
+      fiveHourResetAt:
+        report.fiveHour?.resetsAt ?? prior?.fiveHourResetAt ?? null,
       weeklyResetAt: report.sevenDay?.resetsAt ?? prior?.weeklyResetAt ?? null,
       source: "statusline",
       confidence: "reported",
       // Only the windows this payload actually carried are stamped. A statusLine
       // that reports the five-hour window alone leaves the weekly fact — and its
       // older timestamp — untouched.
-      ...(report.fiveHour === undefined ? {} : {
-        fiveHourObservedAt: report.observedAt,
-        fiveHourSource: "statusline",
-        fiveHourConfidence: "reported",
-      }),
-      ...(report.sevenDay === undefined ? {} : {
-        weeklyObservedAt: report.observedAt,
-        weeklySource: "statusline",
-        weeklyConfidence: "reported",
-      }),
+      ...(report.fiveHour === undefined
+        ? {}
+        : {
+            fiveHourObservedAt: report.observedAt,
+            fiveHourSource: "statusline",
+            fiveHourConfidence: "reported",
+          }),
+      ...(report.sevenDay === undefined
+        ? {}
+        : {
+            weeklyObservedAt: report.observedAt,
+            weeklySource: "statusline",
+            weeklyConfidence: "reported",
+          }),
     });
     // The statusLine refreshes every few hundred milliseconds; unchanged
     // readings are re-recorded at most every five minutes to keep freshness
     // current without write and alert churn.
     if (
-      prior !== null && prior.source === "statusline" &&
+      prior !== null &&
+      prior.source === "statusline" &&
       prior.fiveHourUsed === observation.fiveHourUsed &&
       prior.weeklyUsed === observation.weeklyUsed &&
       prior.fiveHourResetAt === observation.fiveHourResetAt &&
       prior.weeklyResetAt === observation.weeklyResetAt &&
       new Date(observation.observedAt).getTime() -
-          new Date(prior.observedAt).getTime() < 5 * 60_000
+        new Date(prior.observedAt).getTime() <
+        5 * 60_000
     ) {
       return prior;
     }
@@ -2137,34 +2293,35 @@ export class QuotaService {
       discoveredAt: observedAt,
       source: "statusline",
     });
-    return this.resolvedLimits().find((limit) =>
-      limit.provider === provider && limit.pool === "subscription" &&
-      limit.account === "default"
+    return this.resolvedLimits().find(
+      (limit) =>
+        limit.provider === provider &&
+        limit.pool === "subscription" &&
+        limit.account === "default",
     )!;
   }
 
-  async observe(
-    observation: QuotaObservationInput,
-  ): Promise<QuotaObservation> {
+  async observe(observation: QuotaObservationInput): Promise<QuotaObservation> {
     const raw = QuotaObservationSchema.parse(observation);
     // A whole-pool observation — an operator's `hive quota reconcile`, say —
     // measured both windows at once, so both windows carry its provenance.
     const parsed: QuotaObservation =
       raw.fiveHourObservedAt === null && raw.weeklyObservedAt === null
         ? {
-          ...raw,
-          fiveHourObservedAt: raw.observedAt,
-          fiveHourSource: raw.source,
-          fiveHourConfidence: raw.confidence,
-          weeklyObservedAt: raw.observedAt,
-          weeklySource: raw.source,
-          weeklyConfidence: raw.confidence,
-        }
+            ...raw,
+            fiveHourObservedAt: raw.observedAt,
+            fiveHourSource: raw.source,
+            fiveHourConfidence: raw.confidence,
+            weeklyObservedAt: raw.observedAt,
+            weeklySource: raw.source,
+            weeklyConfidence: raw.confidence,
+          }
         : raw;
-    const limit = this.resolvedLimits().find((candidate) =>
-      candidate.provider === parsed.provider &&
-      candidate.account === parsed.account &&
-      candidate.pool === parsed.pool
+    const limit = this.resolvedLimits().find(
+      (candidate) =>
+        candidate.provider === parsed.provider &&
+        candidate.account === parsed.account &&
+        candidate.pool === parsed.pool,
     );
     if (limit === undefined) {
       throw new Error(
@@ -2271,19 +2428,25 @@ export class QuotaService {
       // An unmeasured window cannot cross a threshold. Alerting on it would mean
       // thresholding a number Hive invented.
       if (
-        value.remainingPct === null || value.allowance === null ||
+        value.remainingPct === null ||
+        value.allowance === null ||
         value.reserved === null
-      ) continue;
+      )
+        continue;
       const current = this.level(value.remainingPct);
       const prior = this.ledger.getAlertState(limit, window);
-      const boundaryChanged = prior?.boundaryAt !== null &&
+      const boundaryChanged =
+        prior?.boundaryAt !== null &&
         prior?.boundaryAt !== value.resetsAt &&
         (prior?.boundaryAt === undefined || new Date(prior.boundaryAt) <= now);
-      let previousLevel = boundaryChanged ? "normal" : prior?.level ?? "normal";
+      let previousLevel = boundaryChanged
+        ? "normal"
+        : (prior?.level ?? "normal");
       if (this.severity(current) < this.severity(previousLevel)) {
-        const threshold = previousLevel === "critical"
-          ? this.config.criticalRemainingPct
-          : this.config.warningRemainingPct;
+        const threshold =
+          previousLevel === "critical"
+            ? this.config.criticalRemainingPct
+            : this.config.warningRemainingPct;
         if (value.remainingPct <= threshold + this.config.hysteresisPct) {
           continue;
         }
@@ -2296,7 +2459,7 @@ export class QuotaService {
         pool: status.pool,
         window,
         level: current,
-        notifiedAt: notify ? iso(now) : prior?.notifiedAt ?? null,
+        notifiedAt: notify ? iso(now) : (prior?.notifiedAt ?? null),
         boundaryAt: value.resetsAt,
       });
       if (notify) {

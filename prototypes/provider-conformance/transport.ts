@@ -32,7 +32,8 @@ export interface JsonLineProcessOptions {
 
 const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 const MAX_CAPTURE_VALUE = 16 * 1024;
-const REDACTED_KEYS = /email|organization|token|secret|authorization|api[_-]?key|credential/i;
+const REDACTED_KEYS =
+  /email|organization|token|secret|authorization|api[_-]?key|credential/i;
 
 export function redact(value: unknown, key = ""): unknown {
   if (REDACTED_KEYS.test(key)) return "[REDACTED]";
@@ -44,7 +45,10 @@ export function redact(value: unknown, key = ""): unknown {
   if (Array.isArray(value)) return value.map((entry) => redact(entry));
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([entryKey, entry]) => [entryKey, redact(entry, entryKey)]),
+      Object.entries(value).map(([entryKey, entry]) => [
+        entryKey,
+        redact(entry, entryKey),
+      ]),
     );
   }
   return value;
@@ -68,9 +72,11 @@ export class JsonLineProcess implements JsonTransport {
       stderr: "pipe",
       env: { ...cleanEnvironment(), ...options.environment },
     });
-    this.pump = Promise.all([this.readStdout(), this.readStderr(), this.observeExit()]).then(
-      () => undefined,
-    );
+    this.pump = Promise.all([
+      this.readStdout(),
+      this.readStderr(),
+      this.observeExit(),
+    ]).then(() => undefined);
   }
 
   get pid(): number {
@@ -83,7 +89,9 @@ export class JsonLineProcess implements JsonTransport {
 
   send(message: JsonObject): void {
     if (this.closedError !== null) throw this.closedError;
-    this.captureLines.push(JSON.stringify({ direction: "in", frame: redact(message) }));
+    this.captureLines.push(
+      JSON.stringify({ direction: "in", frame: redact(message) }),
+    );
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
     this.child.stdin.flush();
   }
@@ -102,7 +110,11 @@ export class JsonLineProcess implements JsonTransport {
         reject,
         timer: setTimeout(() => {
           this.waiters.delete(waiter);
-          reject(new Error(`Timed out after ${timeoutMs} ms waiting for provider frame`));
+          reject(
+            new Error(
+              `Timed out after ${timeoutMs} ms waiting for provider frame`,
+            ),
+          );
         }, timeoutMs),
       };
       this.waiters.add(waiter);
@@ -130,8 +142,13 @@ export class JsonLineProcess implements JsonTransport {
       const { done, value } = await reader.read();
       if (done) break;
       this.buffer += decoder.decode(value, { stream: true });
-      if (this.buffer.length > MAX_BUFFER_BYTES && !this.buffer.includes("\n")) {
-        throw new Error(`Provider emitted more than ${MAX_BUFFER_BYTES} unterminated bytes`);
+      if (
+        this.buffer.length > MAX_BUFFER_BYTES &&
+        !this.buffer.includes("\n")
+      ) {
+        throw new Error(
+          `Provider emitted more than ${MAX_BUFFER_BYTES} unterminated bytes`,
+        );
       }
       while (true) {
         const newline = this.buffer.indexOf("\n");
@@ -142,16 +159,26 @@ export class JsonLineProcess implements JsonTransport {
         let message: JsonObject;
         try {
           const parsed = JSON.parse(line) as unknown;
-          if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+          if (
+            typeof parsed !== "object" ||
+            parsed === null ||
+            Array.isArray(parsed)
+          ) {
             throw new Error("frame is not an object");
           }
           message = parsed as JsonObject;
         } catch (error) {
-          this.captureLines.push(JSON.stringify({ direction: "out", malformed: redact(line) }));
-          throw new Error(`Provider emitted malformed JSON: ${error instanceof Error ? error.message : "unknown error"}`);
+          this.captureLines.push(
+            JSON.stringify({ direction: "out", malformed: redact(line) }),
+          );
+          throw new Error(
+            `Provider emitted malformed JSON: ${error instanceof Error ? error.message : "unknown error"}`,
+          );
         }
         this.messages.push(message);
-        this.captureLines.push(JSON.stringify({ direction: "out", frame: redact(message) }));
+        this.captureLines.push(
+          JSON.stringify({ direction: "out", frame: redact(message) }),
+        );
         for (const waiter of [...this.waiters]) {
           if (!waiter.predicate(message)) continue;
           clearTimeout(waiter.timer);
@@ -192,7 +219,9 @@ export class JsonLineProcess implements JsonTransport {
     await mkdir(dirname(this.options.capturePath), { recursive: true });
     const stderr = this.stderr.trim();
     if (stderr.length > 0) {
-      this.captureLines.push(JSON.stringify({ direction: "stderr", text: redact(stderr) }));
+      this.captureLines.push(
+        JSON.stringify({ direction: "stderr", text: redact(stderr) }),
+      );
     }
     await Bun.write(
       this.options.capturePath,
@@ -226,13 +255,21 @@ export class JsonWebSocket implements JsonTransport {
     });
     this.ready = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`Timed out after ${options.timeoutMs} ms connecting to ${options.url}`));
+        reject(
+          new Error(
+            `Timed out after ${options.timeoutMs} ms connecting to ${options.url}`,
+          ),
+        );
       }, options.timeoutMs);
-      this.socket.addEventListener("open", () => {
-        clearTimeout(timer);
-        this.opened = true;
-        resolve();
-      }, { once: true });
+      this.socket.addEventListener(
+        "open",
+        () => {
+          clearTimeout(timer);
+          this.opened = true;
+          resolve();
+        },
+        { once: true },
+      );
       this.socket.addEventListener("error", () => {
         if (!this.opened) {
           clearTimeout(timer);
@@ -243,16 +280,22 @@ export class JsonWebSocket implements JsonTransport {
     this.socket.addEventListener("message", (event) => {
       void this.receive(event.data);
     });
-    this.socket.addEventListener("close", (event) => {
-      const error = new Error(`Provider WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`);
-      this.closedError = error;
-      for (const waiter of this.waiters) {
-        clearTimeout(waiter.timer);
-        waiter.reject(error);
-      }
-      this.waiters.clear();
-      this.finish();
-    }, { once: true });
+    this.socket.addEventListener(
+      "close",
+      (event) => {
+        const error = new Error(
+          `Provider WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ""})`,
+        );
+        this.closedError = error;
+        for (const waiter of this.waiters) {
+          clearTimeout(waiter.timer);
+          waiter.reject(error);
+        }
+        this.waiters.clear();
+        this.finish();
+      },
+      { once: true },
+    );
   }
 
   static async connect(options: JsonWebSocketOptions): Promise<JsonWebSocket> {
@@ -269,7 +312,9 @@ export class JsonWebSocket implements JsonTransport {
     if (!this.opened || this.socket.readyState !== WebSocket.OPEN) {
       throw this.closedError ?? new Error("Provider WebSocket is not open");
     }
-    this.captureLines.push(JSON.stringify({ direction: "in", frame: redact(message) }));
+    this.captureLines.push(
+      JSON.stringify({ direction: "in", frame: redact(message) }),
+    );
     this.socket.send(JSON.stringify(message));
   }
 
@@ -287,7 +332,11 @@ export class JsonWebSocket implements JsonTransport {
         reject,
         timer: setTimeout(() => {
           this.waiters.delete(waiter);
-          reject(new Error(`Timed out after ${timeoutMs} ms waiting for provider WebSocket frame`));
+          reject(
+            new Error(
+              `Timed out after ${timeoutMs} ms waiting for provider WebSocket frame`,
+            ),
+          );
         }, timeoutMs),
       };
       this.waiters.add(waiter);
@@ -295,7 +344,10 @@ export class JsonWebSocket implements JsonTransport {
   }
 
   async close(): Promise<void> {
-    if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+    if (
+      this.socket.readyState === WebSocket.OPEN ||
+      this.socket.readyState === WebSocket.CONNECTING
+    ) {
       this.socket.close(1000, "fixture complete");
     }
     await Promise.race([this.finished, Bun.sleep(1_000)]);
@@ -307,27 +359,36 @@ export class JsonWebSocket implements JsonTransport {
   }
 
   private async receive(data: string | ArrayBuffer | Blob): Promise<void> {
-    const text = typeof data === "string"
-      ? data
-      : data instanceof Blob
-      ? await data.text()
-      : new TextDecoder().decode(data);
+    const text =
+      typeof data === "string"
+        ? data
+        : data instanceof Blob
+          ? await data.text()
+          : new TextDecoder().decode(data);
     let message: JsonObject;
     try {
       const parsed = JSON.parse(text) as unknown;
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
         throw new Error("frame is not an object");
       }
       message = parsed as JsonObject;
     } catch (error) {
-      this.captureLines.push(JSON.stringify({ direction: "out", malformed: redact(text) }));
+      this.captureLines.push(
+        JSON.stringify({ direction: "out", malformed: redact(text) }),
+      );
       this.closedError = new Error(
         `Provider emitted malformed WebSocket JSON: ${error instanceof Error ? error.message : "unknown error"}`,
       );
       return;
     }
     this.messages.push(message);
-    this.captureLines.push(JSON.stringify({ direction: "out", frame: redact(message) }));
+    this.captureLines.push(
+      JSON.stringify({ direction: "out", frame: redact(message) }),
+    );
     for (const waiter of [...this.waiters]) {
       if (!waiter.predicate(message)) continue;
       clearTimeout(waiter.timer);

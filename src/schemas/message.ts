@@ -1,6 +1,11 @@
 import { z } from "zod";
 
-export const MessagePrioritySchema = z.enum(["normal", "steer", "urgent", "critical"]);
+export const MessagePrioritySchema = z.enum([
+  "normal",
+  "steer",
+  "urgent",
+  "critical",
+]);
 export type MessagePriority = z.infer<typeof MessagePrioritySchema>;
 
 export const ControlIntentSchema = z.enum([
@@ -18,9 +23,7 @@ export const MessageLifecycleStateSchema = z.enum([
   "agent-acknowledged",
   "applied",
 ]);
-export type MessageLifecycleState = z.infer<
-  typeof MessageLifecycleStateSchema
->;
+export type MessageLifecycleState = z.infer<typeof MessageLifecycleStateSchema>;
 
 export const AgentMessageSchema = z.strictObject({
   id: z.string().min(1),

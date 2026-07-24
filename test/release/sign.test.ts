@@ -10,20 +10,16 @@
  */
 import { describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { signManifest } from "../../scripts/signing/sign-manifest";
 import { verifyManifest } from "../../src/release/manifest";
 import { signingConfigFromEnv } from "../../src/release/sign";
-import { signManifest } from "../../scripts/signing/sign-manifest";
 
 const repoRoot = resolve(import.meta.dir, "../..");
-const read = (path: string): string => readFileSync(join(repoRoot, path), "utf8");
+const read = (path: string): string =>
+  readFileSync(join(repoRoot, path), "utf8");
 const ENTITLEMENTS = "scripts/signing/entitlements.plist";
 
 describe("the signed-vs-unsigned decision", () => {
@@ -41,7 +37,9 @@ describe("the signed-vs-unsigned decision", () => {
   });
 
   test("an empty identity is treated as unset, not as a certificate", () => {
-    expect(signingConfigFromEnv({ MACOS_SIGN_IDENTITY: "   " }, ENTITLEMENTS)).toBeNull();
+    expect(
+      signingConfigFromEnv({ MACOS_SIGN_IDENTITY: "   " }, ENTITLEMENTS),
+    ).toBeNull();
   });
 
   test("an identity with no notary credentials signs but does not notarize", () => {
@@ -101,7 +99,9 @@ describe("the hardened-runtime entitlements", () => {
   const plist = read(ENTITLEMENTS);
   // The granted entitlements are the <key>…</key><true/> pairs, not anything the
   // explanatory comment happens to name.
-  const grantedKeys = [...plist.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g)].map((m) => m[1]);
+  const grantedKeys = [
+    ...plist.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g),
+  ].map((m) => m[1]);
 
   test("grant exactly the two JavaScriptCore JIT needs, in order", () => {
     expect(grantedKeys).toEqual([
@@ -127,23 +127,35 @@ describe("the hardened-runtime entitlements", () => {
 describe("the offline manifest signature", () => {
   test("what sign-manifest produces verifies against the embedded key", () => {
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-    const pub = publicKey.export({ format: "der", type: "spki" }).toString("base64");
-    const priv = privateKey.export({ format: "der", type: "pkcs8" }).toString("base64");
+    const pub = publicKey
+      .export({ format: "der", type: "spki" })
+      .toString("base64");
+    const priv = privateKey
+      .export({ format: "der", type: "pkcs8" })
+      .toString("base64");
     const bytes = new TextEncoder().encode('{"schema":1,"version":"0.0.7"}\n');
 
     const signature = signManifest(bytes, priv);
-    expect(verifyManifest(bytes, signature, pub)).toEqual({ verified: true, signed: true });
+    expect(verifyManifest(bytes, signature, pub)).toEqual({
+      verified: true,
+      signed: true,
+    });
   });
 
   test("a signature from the wrong key is refused", () => {
     const signer = generateKeyPairSync("ed25519");
     const other = generateKeyPairSync("ed25519");
-    const priv = signer.privateKey.export({ format: "der", type: "pkcs8" }).toString("base64");
-    const otherPub = other.publicKey.export({ format: "der", type: "spki" }).toString("base64");
+    const priv = signer.privateKey
+      .export({ format: "der", type: "pkcs8" })
+      .toString("base64");
+    const otherPub = other.publicKey
+      .export({ format: "der", type: "spki" })
+      .toString("base64");
     const bytes = new TextEncoder().encode('{"schema":1}\n');
 
-    expect(verifyManifest(bytes, signManifest(bytes, priv), otherPub))
-      .toMatchObject({ verified: false });
+    expect(
+      verifyManifest(bytes, signManifest(bytes, priv), otherPub),
+    ).toMatchObject({ verified: false });
   });
 });
 
@@ -197,21 +209,27 @@ describe("the release workflow's signing steps", () => {
     const root = mkdtempSync(join(tmpdir(), "hive-manifest-gate-"));
     const path = join(root, "hive-release.json");
     try {
-      writeFileSync(path, JSON.stringify({
-        schema: 1,
-        version: "../../invalid",
-      }));
-      const result = Bun.spawnSync([
-        process.execPath,
-        "run",
-        join(repoRoot, "scripts/signing/verify-manifest.ts"),
+      writeFileSync(
         path,
-      ], {
-        cwd: repoRoot,
-        env: { ...process.env, HIVE_RELEASE_PUBLIC_KEY: "" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+        JSON.stringify({
+          schema: 1,
+          version: "../../invalid",
+        }),
+      );
+      const result = Bun.spawnSync(
+        [
+          process.execPath,
+          "run",
+          join(repoRoot, "scripts/signing/verify-manifest.ts"),
+          path,
+        ],
+        {
+          cwd: repoRoot,
+          env: { ...process.env, HIVE_RELEASE_PUBLIC_KEY: "" },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr.toString()).toContain("invalid release manifest");
     } finally {

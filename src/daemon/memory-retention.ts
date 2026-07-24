@@ -19,10 +19,7 @@
 //
 // The sweep is maintenance, not authority: the daemon logs a failure and
 // keeps running.
-import {
-  demoteMemoryFact,
-  discoverMemoryFacts,
-} from "../adapters/memory";
+import { demoteMemoryFact, discoverMemoryFacts } from "../adapters/memory";
 import type { MemoryRetentionConfig, MemoryScope } from "../schemas";
 import type { EpisodicStore } from "./episodic-store";
 import { countConsolidationCandidates } from "./memory-consolidate";
@@ -49,8 +46,11 @@ function collectReferencedEventIds(
   key?: string,
 ): void {
   if (
-    typeof value === "number" && Number.isInteger(value) && value > 0 &&
-    key !== undefined && /event/i.test(key)
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value > 0 &&
+    key !== undefined &&
+    /event/i.test(key)
   ) {
     into.add(value);
     return;
@@ -63,7 +63,8 @@ function collectReferencedEventIds(
     const record = value as Record<string, unknown>;
     if (
       (record.type === "event" || record.kind === "event") &&
-      typeof record.id === "number" && Number.isInteger(record.id) &&
+      typeof record.id === "number" &&
+      Number.isInteger(record.id) &&
       record.id > 0
     ) {
       into.add(record.id);
@@ -113,8 +114,9 @@ export async function runRetentionSweep(options: {
         "unreferenced this pass",
     );
   } else {
-    const cutoff = new Date(now.getTime() - config.events_hot_days * DAY_MS)
-      .toISOString();
+    const cutoff = new Date(
+      now.getTime() - config.events_hot_days * DAY_MS,
+    ).toISOString();
     report.eventsDeleted = episodic.sweepEvents(cutoff, referenced);
   }
 
@@ -122,7 +124,8 @@ export async function runRetentionSweep(options: {
 
   // (3) Verified wiki articles whose verification aged out demote to stale.
   const staleCutoff = new Date(now.getTime() - config.stale_after_days * DAY_MS)
-    .toISOString().slice(0, 10);
+    .toISOString()
+    .slice(0, 10);
   const demotionDate = now.toISOString().slice(0, 10);
   for (const scope of ["repo", "global"] as const) {
     for (const fact of await discoverMemoryFacts(repoRoot, scope)) {

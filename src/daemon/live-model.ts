@@ -83,9 +83,10 @@ function transcriptPath(
   toolSessionId: string,
   home?: string,
 ): string {
-  const directory = home === undefined
-    ? claudeProjectDirectory(worktreePath)
-    : claudeProjectDirectory(worktreePath, home);
+  const directory =
+    home === undefined
+      ? claudeProjectDirectory(worktreePath)
+      : claudeProjectDirectory(worktreePath, home);
   return join(directory, `${toolSessionId}.jsonl`);
 }
 
@@ -128,7 +129,9 @@ export async function readLiveClaudeModel(
   home?: string,
 ): Promise<string | null> {
   if (toolSessionId === undefined) return null;
-  const tail = await readTail(transcriptPath(worktreePath, toolSessionId, home));
+  const tail = await readTail(
+    transcriptPath(worktreePath, toolSessionId, home),
+  );
   if (tail === null) return null;
   return lastAssistantModel(tail);
 }

@@ -3,20 +3,20 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
-  discovered,
-  unknownVendor,
-  known,
-  unknown,
   type CapabilityProvider,
   type Discovered,
+  discovered,
+  known,
+  unknown,
+  unknownVendor,
 } from "../schemas/capability";
 import {
-  ClaudeStdioProbeTransport,
-  CodexStdioProbeTransport,
-  GrokStdioProbeTransport,
   type ClaudeProbeTransport,
+  ClaudeStdioProbeTransport,
   type CodexProbeTransport,
+  CodexStdioProbeTransport,
   type GrokProbeTransport,
+  GrokStdioProbeTransport,
 } from "./quota-sources";
 
 /**
@@ -69,29 +69,54 @@ const GROK_BILLING = "grok._x.ai/billing" as const;
  * carried a real boolean and `spend` a real currency block. A *guessed* key does
  * not raise; it reads back as `null`, and null here means "cannot run".
  */
-const CreditBlockSchema = z.object({
-  rate_limits: z.object({
-    extra_usage: z.object({
-      is_enabled: z.boolean().nullable().optional(),
-      disabled_reason: z.string().nullable().optional(),
-    }).passthrough().nullable().optional(),
-    spend: z.object({
-      enabled: z.boolean().nullable().optional(),
-      can_toggle: z.boolean().nullable().optional(),
-      disabled_reason: z.string().nullable().optional(),
-    }).passthrough().nullable().optional(),
-    five_hour: z.object({ utilization: z.number().nullable() })
-      .passthrough().nullable().optional(),
-    seven_day: z.object({ utilization: z.number().nullable() })
-      .passthrough().nullable().optional(),
-    model_scoped: z.array(
-      z.object({
-        display_name: z.string().nullable(),
-        utilization: z.number().nullable(),
-      }).passthrough(),
-    ).nullable().optional(),
-  }).passthrough().nullable().optional(),
-}).passthrough();
+const CreditBlockSchema = z
+  .object({
+    rate_limits: z
+      .object({
+        extra_usage: z
+          .object({
+            is_enabled: z.boolean().nullable().optional(),
+            disabled_reason: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+        spend: z
+          .object({
+            enabled: z.boolean().nullable().optional(),
+            can_toggle: z.boolean().nullable().optional(),
+            disabled_reason: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+        five_hour: z
+          .object({ utilization: z.number().nullable() })
+          .passthrough()
+          .nullable()
+          .optional(),
+        seven_day: z
+          .object({ utilization: z.number().nullable() })
+          .passthrough()
+          .nullable()
+          .optional(),
+        model_scoped: z
+          .array(
+            z
+              .object({
+                display_name: z.string().nullable(),
+                utilization: z.number().nullable(),
+              })
+              .passthrough(),
+          )
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 export interface AccountBilling {
   /** Whether paid overflow is known available or known disabled. */
@@ -154,12 +179,19 @@ export function accountBillingFromUsage(
   const flags = [extra?.is_enabled, spend?.enabled].filter(
     (flag): flag is boolean => typeof flag === "boolean",
   );
-  const creditsEnabled: Discovered<boolean> = flags.length === 0
-    // The surface answered and carried no credit flag. That is not "off".
-    ? unknown(limits === null || limits === undefined ? "surface-silent" : "field-absent", USAGE, observedAt)
-    : flags.every((flag) => flag === flags[0])
-    ? known(flags[0]!, USAGE, observedAt)
-    : unknown("malformed", USAGE, observedAt);
+  const creditsEnabled: Discovered<boolean> =
+    flags.length === 0
+      ? // The surface answered and carried no credit flag. That is not "off".
+        unknown(
+          limits === null || limits === undefined
+            ? "surface-silent"
+            : "field-absent",
+          USAGE,
+          observedAt,
+        )
+      : flags.every((flag) => flag === flags[0])
+        ? known(flags[0]!, USAGE, observedAt)
+        : unknown("malformed", USAGE, observedAt);
 
   const utilization = (value: unknown): number | null =>
     typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -182,36 +214,49 @@ export function accountBillingFromUsage(
   return {
     creditsEnabled,
     disabledReason: extra?.disabled_reason ?? spend?.disabled_reason ?? null,
-    generalUtilization: general.length === 0
-      ? unknown("field-absent", USAGE, observedAt)
-      : known(Math.max(...general), USAGE, observedAt),
+    generalUtilization:
+      general.length === 0
+        ? unknown("field-absent", USAGE, observedAt)
+        : known(Math.max(...general), USAGE, observedAt),
     modelUtilization,
     overflowUncertainty: null,
   };
 }
 
-const CodexCreditSnapshotSchema = z.object({
-  hasCredits: z.boolean().optional(),
-  unlimited: z.boolean().optional(),
-  balance: z.string().nullable().optional(),
-}).passthrough();
+const CodexCreditSnapshotSchema = z
+  .object({
+    hasCredits: z.boolean().optional(),
+    unlimited: z.boolean().optional(),
+    balance: z.string().nullable().optional(),
+  })
+  .passthrough();
 
-const CodexWindowSchema = z.object({
-  usedPercent: z.number(),
-}).passthrough().nullable().optional();
+const CodexWindowSchema = z
+  .object({
+    usedPercent: z.number(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
 
-const CodexLimitSnapshotSchema = z.object({
-  limitName: z.string().nullable().optional(),
-  primary: CodexWindowSchema,
-  secondary: CodexWindowSchema,
-  credits: CodexCreditSnapshotSchema.nullable().optional(),
-}).passthrough();
+const CodexLimitSnapshotSchema = z
+  .object({
+    limitName: z.string().nullable().optional(),
+    primary: CodexWindowSchema,
+    secondary: CodexWindowSchema,
+    credits: CodexCreditSnapshotSchema.nullable().optional(),
+  })
+  .passthrough();
 
-const CodexBillingSchema = z.object({
-  rateLimits: CodexLimitSnapshotSchema,
-  rateLimitsByLimitId: z.record(z.string(), CodexLimitSnapshotSchema)
-    .nullable().optional(),
-}).passthrough();
+const CodexBillingSchema = z
+  .object({
+    rateLimits: CodexLimitSnapshotSchema,
+    rateLimitsByLimitId: z
+      .record(z.string(), CodexLimitSnapshotSchema)
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 /**
  * Read Codex's billing facts from `account/rateLimits/read`.
@@ -242,16 +287,17 @@ export function accountBillingFromCodexRateLimits(
 
   const root = parsed.data.rateLimits;
   const used = (snapshot: z.infer<typeof CodexLimitSnapshotSchema>): number[] =>
-    [snapshot.primary?.usedPercent, snapshot.secondary?.usedPercent]
-      .filter((value): value is number =>
-        typeof value === "number" && Number.isFinite(value)
-      );
+    [snapshot.primary?.usedPercent, snapshot.secondary?.usedPercent].filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value),
+    );
   const general = used(root);
   const modelUtilization: Record<string, number> = {};
   for (const snapshot of Object.values(parsed.data.rateLimitsByLimitId ?? {})) {
     const values = used(snapshot);
     if (
-      snapshot.limitName !== null && snapshot.limitName !== undefined &&
+      snapshot.limitName !== null &&
+      snapshot.limitName !== undefined &&
       values.length > 0
     ) {
       modelUtilization[snapshot.limitName.toLowerCase()] = Math.max(...values);
@@ -259,22 +305,25 @@ export function accountBillingFromCodexRateLimits(
   }
 
   const credits = root.credits;
-  const hasPaidCapacity = credits?.hasCredits === true ||
-    credits?.unlimited === true;
+  const hasPaidCapacity =
+    credits?.hasCredits === true || credits?.unlimited === true;
   const creditsEnabled: Discovered<boolean> = hasPaidCapacity
     ? known<boolean>(true, CODEX_LIMITS, observedAt)
     : unknown(
-      credits === null || credits === undefined ? "field-absent" : "surface-silent",
-      CODEX_LIMITS,
-      observedAt,
-    );
+        credits === null || credits === undefined
+          ? "field-absent"
+          : "surface-silent",
+        CODEX_LIMITS,
+        observedAt,
+      );
 
   return {
     creditsEnabled,
     disabledReason: null,
-    generalUtilization: general.length === 0
-      ? unknown("field-absent", CODEX_LIMITS, observedAt)
-      : known(Math.max(...general), CODEX_LIMITS, observedAt),
+    generalUtilization:
+      general.length === 0
+        ? unknown("field-absent", CODEX_LIMITS, observedAt)
+        : known(Math.max(...general), CODEX_LIMITS, observedAt),
     modelUtilization,
     overflowUncertainty: hasPaidCapacity
       ? null
@@ -284,18 +333,33 @@ export function accountBillingFromCodexRateLimits(
   };
 }
 
-const GrokBillingSchema = z.object({
-  subscription_tier: z.string().nullable().optional(),
-  config: z.object({
-    creditUsagePercent: z.number().nullable().optional(),
-    onDemandCap: z.object({ val: z.number().nullable().optional() })
-      .passthrough().nullable().optional(),
-    onDemandUsed: z.object({ val: z.number().nullable().optional() })
-      .passthrough().nullable().optional(),
-    prepaidBalance: z.object({ val: z.number().nullable().optional() })
-      .passthrough().nullable().optional(),
-  }).passthrough().nullable().optional(),
-}).passthrough();
+const GrokBillingSchema = z
+  .object({
+    subscription_tier: z.string().nullable().optional(),
+    config: z
+      .object({
+        creditUsagePercent: z.number().nullable().optional(),
+        onDemandCap: z
+          .object({ val: z.number().nullable().optional() })
+          .passthrough()
+          .nullable()
+          .optional(),
+        onDemandUsed: z
+          .object({ val: z.number().nullable().optional() })
+          .passthrough()
+          .nullable()
+          .optional(),
+        prepaidBalance: z
+          .object({ val: z.number().nullable().optional() })
+          .passthrough()
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 /**
  * Read Grok money-guard + weekly utilization from `_x.ai/billing`.
@@ -321,8 +385,12 @@ export function accountBillingFromGrokBilling(
     };
   }
   const config = parsed.data.config;
-  const moneyVal = (rail: { val?: number | null } | null | undefined): number | null =>
-    typeof rail?.val === "number" && Number.isFinite(rail.val) ? rail.val : null;
+  const moneyVal = (
+    rail: { val?: number | null } | null | undefined,
+  ): number | null =>
+    typeof rail?.val === "number" && Number.isFinite(rail.val)
+      ? rail.val
+      : null;
   const cap = moneyVal(config.onDemandCap);
   const used = moneyVal(config.onDemandUsed);
   const prepaid = moneyVal(config.prepaidBalance);
@@ -334,8 +402,10 @@ export function accountBillingFromGrokBilling(
 
   const percent = config.creditUsagePercent;
   const generalUtilization: Discovered<number> =
-    typeof percent === "number" && Number.isFinite(percent) &&
-      percent >= 0 && percent <= 100
+    typeof percent === "number" &&
+    Number.isFinite(percent) &&
+    percent >= 0 &&
+    percent <= 100
       ? known(percent, GROK_BILLING, observedAt)
       : unknown("field-absent", GROK_BILLING, observedAt);
 
@@ -390,11 +460,13 @@ export function spendRisk(
   // The one fact that settles it on its own. No credits, no charge — the plan
   // limit is a wall, not a meter.
   if (
-    billing.creditsEnabled.state === "known" && !billing.creditsEnabled.value
+    billing.creditsEnabled.state === "known" &&
+    !billing.creditsEnabled.value
   ) {
     return {
       state: "no-spend",
-      detail: "usage credits are off, so nothing can be charged: a request past " +
+      detail:
+        "usage credits are off, so nothing can be charged: a request past " +
         "the plan limit is refused, not billed",
     };
   }
@@ -404,7 +476,8 @@ export function spendRisk(
   if (general.state !== "known" && own === undefined) {
     return {
       state: "unknown",
-      detail: "no plan-usage reading, so Hive cannot tell whether this spawn " +
+      detail:
+        "no plan-usage reading, so Hive cannot tell whether this spawn " +
         "would be billed to credits — and it will not spend your money on a " +
         "guess",
     };
@@ -414,9 +487,10 @@ export function spendRisk(
     general.state === "known" ? general.value : 0,
   );
   if (worst < 100) {
-    const which = own === undefined
-      ? `account plan pool ${worst}% used`
-      : `${displayName} pool ${own}% used`;
+    const which =
+      own === undefined
+        ? `account plan pool ${worst}% used`
+        : `${displayName} pool ${own}% used`;
     return {
       state: "no-spend",
       detail: `the plan still covers this (${which})`,
@@ -427,13 +501,14 @@ export function spendRisk(
   // spawn may be billed, and that is his call to make, not Hive's.
   return {
     state: "would-spend",
-    detail: billing.creditsEnabled.state === "known"
-      ? `the ${displayName} plan pool is exhausted and usage credits are ON, so ` +
-        "this spawn would be billed to credits — real money"
-      : billing.overflowUncertainty == null
-      ? `the ${displayName} plan pool is exhausted and Hive cannot read whether ` +
-        "usage credits are on, so it cannot rule out a charge"
-      : `the ${displayName} plan pool is exhausted. ${billing.overflowUncertainty}`,
+    detail:
+      billing.creditsEnabled.state === "known"
+        ? `the ${displayName} plan pool is exhausted and usage credits are ON, so ` +
+          "this spawn would be billed to credits — real money"
+        : billing.overflowUncertainty == null
+          ? `the ${displayName} plan pool is exhausted and Hive cannot read whether ` +
+            "usage credits are on, so it cannot rule out a charge"
+          : `the ${displayName} plan pool is exhausted. ${billing.overflowUncertainty}`,
   };
 }
 
@@ -473,11 +548,13 @@ export function poolAvailability(
   if (own === undefined || own < 100) return { state: "available" };
   // The pool is spent. Whether that is fatal depends on whether anything can pay.
   if (
-    billing.creditsEnabled.state === "known" && !billing.creditsEnabled.value
+    billing.creditsEnabled.state === "known" &&
+    !billing.creditsEnabled.value
   ) {
     return {
       state: "exhausted",
-      detail: `its own ${displayName} pool is spent (${own}%) and usage credits ` +
+      detail:
+        `its own ${displayName} pool is spent (${own}%) and usage credits ` +
         "are OFF, so nothing can pay for the overflow — the vendor refuses the " +
         "request rather than billing it. The model cannot run, so it is not a " +
         "candidate; a capable model that can run is chosen instead",
@@ -570,7 +647,8 @@ export async function readBillingWithMemory(
     path?: string;
   } = {},
 ): Promise<AccountBilling | null> {
-  const read = options.read ?? ((p: CapabilityProvider) => readAccountBilling(p));
+  const read =
+    options.read ?? ((p: CapabilityProvider) => readAccountBilling(p));
   const now = options.now?.() ?? new Date();
   const warn = options.warn ?? ((message: string) => console.warn(message));
   const path = options.path ?? billingMemoryPath(provider);
@@ -595,7 +673,8 @@ export async function readBillingWithMemory(
   );
   if (!remembered.success) return live;
 
-  const observedAt = remembered.data.creditsEnabled.observedAt ??
+  const observedAt =
+    remembered.data.creditsEnabled.observedAt ??
     remembered.data.generalUtilization.observedAt;
   const ageMinutes = (now.getTime() - Date.parse(observedAt)) / 60_000;
   if (!Number.isFinite(ageMinutes) || ageMinutes > BILLING_MEMORY_TTL_MINUTES) {
@@ -652,20 +731,23 @@ function billingReader(
   switch (provider) {
     case "codex":
       return async (observedAt) => {
-        const payload = await (transports?.codex ??
-          new CodexStdioProbeTransport()).readRateLimits(timeoutMs);
+        const payload = await (
+          transports?.codex ?? new CodexStdioProbeTransport()
+        ).readRateLimits(timeoutMs);
         return accountBillingFromCodexRateLimits(payload.limits, observedAt);
       };
     case "claude":
       return async (observedAt) => {
-        const payload = await (transports?.claude ??
-          new ClaudeStdioProbeTransport()).readUsage(timeoutMs);
+        const payload = await (
+          transports?.claude ?? new ClaudeStdioProbeTransport()
+        ).readUsage(timeoutMs);
         return accountBillingFromUsage(payload.usage, observedAt);
       };
     case "grok":
       return async (observedAt) => {
-        const payload = await (transports?.grok ??
-          new GrokStdioProbeTransport()).readBilling(timeoutMs);
+        const payload = await (
+          transports?.grok ?? new GrokStdioProbeTransport()
+        ).readBilling(timeoutMs);
         return accountBillingFromGrokBilling(payload.billing, observedAt);
       };
     case "kimi":

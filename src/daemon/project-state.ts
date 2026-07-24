@@ -13,8 +13,20 @@ import { resolveHandshakeProject } from "./project-identity";
 function primaryWorktree(root: string): string {
   try {
     const result = Bun.spawnSync(
-      ["git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { stdout: "pipe", stderr: "ignore", timeout: 5_000, killSignal: "SIGKILL" },
+      [
+        "git",
+        "-C",
+        root,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ],
+      {
+        stdout: "pipe",
+        stderr: "ignore",
+        timeout: 5_000,
+        killSignal: "SIGKILL",
+      },
     );
     if (result.exitCode !== 0) return root;
     return dirname(result.stdout.toString().trim());

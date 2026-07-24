@@ -13,7 +13,9 @@ const repoRoot = resolve(import.meta.dir, "../..");
 const stagedHive = join(repoRoot, ".dev/root/current/hive");
 const stagedSessiond = join(repoRoot, ".dev/root/current/hive-sessiond");
 const describeIfStaged =
-  existsSync(stagedHive) && existsSync(stagedSessiond) ? describe : describe.skip;
+  existsSync(stagedHive) && existsSync(stagedSessiond)
+    ? describe
+    : describe.skip;
 
 function shortHome(tag: string): string {
   const home = `/tmp/hsf-${tag}-${Math.random().toString(16).slice(2, 6)}`;

@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  discoverMemoryFacts,
+  parseMemoryFile,
+} from "../../src/adapters/memory";
+import { provisionSkills } from "../../src/adapters/skills";
+import {
   defaultInitDeps,
   ensureHiveStateGitignored,
   HIVE_GITIGNORE_ENTRIES,
@@ -13,11 +18,6 @@ import {
   scaffoldAgentsMd,
   seedInitFacts,
 } from "../../src/cli/init";
-import {
-  discoverMemoryFacts,
-  parseMemoryFile,
-} from "../../src/adapters/memory";
-import { provisionSkills } from "../../src/adapters/skills";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 
 // `hive init` writes Hive's own state into its home — a throwaway one here,
@@ -66,17 +66,26 @@ function git(root: string, args: string[]): void {
 async function tsRepo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "hive-init-"));
   git(root, ["init"]);
-  await writeFile(join(root, "package.json"), JSON.stringify({
-    scripts: { test: "bun test", typecheck: "tsc --noEmit", dev: "bun run src/cli.ts" },
-  }));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      scripts: {
+        test: "bun test",
+        typecheck: "tsc --noEmit",
+        dev: "bun run src/cli.ts",
+      },
+    }),
+  );
   await writeFile(join(root, "bun.lock"), "");
   await writeFile(join(root, "tsconfig.json"), "{}");
   await writeFile(join(root, "SPEC.md"), "# Spec\n\nRead SPEC.md.\n");
-  await writeFile(join(root, "src/cli.ts"), "console.log(1)\n").catch(async () => {
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(join(root, "src"), { recursive: true });
-    await writeFile(join(root, "src/cli.ts"), "console.log(1)\n");
-  });
+  await writeFile(join(root, "src/cli.ts"), "console.log(1)\n").catch(
+    async () => {
+      const { mkdir } = await import("node:fs/promises");
+      await mkdir(join(root, "src"), { recursive: true });
+      await writeFile(join(root, "src/cli.ts"), "console.log(1)\n");
+    },
+  );
   git(root, ["add", "-A"]);
   git(root, ["commit", "-m", "init", "--no-gpg-sign"]);
   return root;
@@ -88,7 +97,12 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
     try {
       const ids = await seedInitFacts(
         root,
-        [{ title: "The e2e suite needs Docker running first", body: "Otherwise it hangs at setup." }],
+        [
+          {
+            title: "The e2e suite needs Docker running first",
+            body: "Otherwise it hangs at setup.",
+          },
+        ],
         "2026-07-10",
       );
       expect(ids).toEqual(["the-e2e-suite-needs-docker-running-first"]);
@@ -106,14 +120,20 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
       // verified rather than accumulating a duplicate.
       await seedInitFacts(
         root,
-        [{ title: "The e2e suite needs Docker running first", body: "Updated note." }],
+        [
+          {
+            title: "The e2e suite needs Docker running first",
+            body: "Updated note.",
+          },
+        ],
         "2026-08-01",
       );
       const after = await discoverMemoryFacts(root, "repo");
       expect(after).toHaveLength(1);
       const reRaw = await readFile(after[0]!.path, "utf8");
-      expect(parseMemoryFile(after[0]!.id, "repo", after[0]!.path, reRaw).verified)
-        .toBe("2026-08-01");
+      expect(
+        parseMemoryFile(after[0]!.id, "repo", after[0]!.path, reRaw).verified,
+      ).toBe("2026-08-01");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -145,11 +165,17 @@ describe("runInit", () => {
   test("scaffolds AGENTS.md on opt-in, and seeds facts", async () => {
     const root = await tsRepo();
     try {
-      const result = await runInit(root, {
-        scaffoldAgents: true,
-        facts: [{ title: "Flaky login test", body: "Races on the token clock." }],
-        today: "2026-07-10",
-      }, testDeps());
+      const result = await runInit(
+        root,
+        {
+          scaffoldAgents: true,
+          facts: [
+            { title: "Flaky login test", body: "Races on the token clock." },
+          ],
+          today: "2026-07-10",
+        },
+        testDeps(),
+      );
       expect(result.agentsScaffolded).toBe(true);
       expect(result.factsSeeded).toEqual(["flaky-login-test"]);
       // AGENTS.md really written — a generic starter, not invented commands.
@@ -164,7 +190,10 @@ describe("runInit", () => {
   test("never overwrites an existing AGENTS.md (Codex 32KiB silent-truncation hazard)", async () => {
     const root = await tsRepo();
     try {
-      await writeFile(join(root, "AGENTS.md"), "# human instructions\nkeep me\n");
+      await writeFile(
+        join(root, "AGENTS.md"),
+        "# human instructions\nkeep me\n",
+      );
       const result = await runInit(root, { scaffoldAgents: true }, testDeps());
       expect(result.agentsScaffolded).toBe(false);
       expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe(
@@ -208,7 +237,9 @@ describe("runInit", () => {
       expect(reindexed).toBe(1);
       // The old init printed "Run `hive memory reindex` ... to index the seeded
       // facts", which is Hive asking to be finished by hand.
-      expect(result.messages.every((m) => !m.includes("hive memory reindex"))).toBe(true);
+      expect(
+        result.messages.every((m) => !m.includes("hive memory reindex")),
+      ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -236,7 +267,10 @@ describe("runInit", () => {
     try {
       const result = await runInit(
         root,
-        { facts: [{ title: "Unindexed fact", body: "x" }], today: "2026-07-11" },
+        {
+          facts: [{ title: "Unindexed fact", body: "x" }],
+          today: "2026-07-11",
+        },
         {
           ...testDeps(),
           reindexMemory: async () => {
@@ -266,7 +300,9 @@ describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
       );
       // The #78 ruling: never a bare parent-dir entry.
       expect(gitignore).not.toContain("\n.hive/\n");
-      expect(result.messages.some((m) => m.includes("Created .gitignore"))).toBe(true);
+      expect(
+        result.messages.some((m) => m.includes("Created .gitignore")),
+      ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -277,14 +313,20 @@ describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
     try {
       await writeFile(join(root, ".gitignore"), "node_modules/\n# theirs\nout");
       const first = await runInit(root, {}, testDeps());
-      expect(first.messages.some((m) => m.includes("Updated .gitignore"))).toBe(true);
+      expect(first.messages.some((m) => m.includes("Updated .gitignore"))).toBe(
+        true,
+      );
       const after = await readFile(join(root, ".gitignore"), "utf8");
       expect(after).toBe(
         `node_modules/\n# theirs\nout\n\n# Hive local state\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
       );
 
       const second = await runInit(root, {}, testDeps());
-      expect(second.messages.some((m) => m.includes("already covers Hive's local state"))).toBe(true);
+      expect(
+        second.messages.some((m) =>
+          m.includes("already covers Hive's local state"),
+        ),
+      ).toBe(true);
       expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(after);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -295,11 +337,12 @@ describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
     for (const entry of [".hive/memory", "/.hive/memory/"]) {
       const root = await tsRepo();
       try {
-        const original =
-          `node_modules/\n${entry}\n.hive/worktrees/\ngraphify-out/\n.graphifyignore\n`;
+        const original = `node_modules/\n${entry}\n.hive/worktrees/\ngraphify-out/\n.graphifyignore\n`;
         await writeFile(join(root, ".gitignore"), original);
         const result = await runInit(root, {}, testDeps());
-        expect(result.messages.some((m) => m.includes("already covers"))).toBe(true);
+        expect(result.messages.some((m) => m.includes("already covers"))).toBe(
+          true,
+        );
         expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(original);
       } finally {
         await rm(root, { recursive: true, force: true });
@@ -327,7 +370,10 @@ describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
   test("a negation or comment mentioning the path does not count as covering", async () => {
     const root = await tsRepo();
     try {
-      await writeFile(join(root, ".gitignore"), "# ignore .hive/memory/ later\n");
+      await writeFile(
+        join(root, ".gitignore"),
+        "# ignore .hive/memory/ later\n",
+      );
       const message = await ensureHiveStateGitignored(root);
       expect(message).toContain("Updated");
       expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(
@@ -356,22 +402,37 @@ describe("runInit — installing the shipped skills", () => {
       const result = await runInit(root, {}, machineWith("claude", "codex"));
 
       // Vendor-verified paths: Claude Code reads .claude/skills, Codex .agents/skills.
-      expect(await readFile(skillFile(root, ".claude", "hive-claude"), "utf8"))
-        .toEqual(shippedSkillsFor("claude")[0]!.content);
-      expect(await readFile(skillFile(root, ".agents", "hive-codex"), "utf8"))
-        .toEqual(shippedSkillsFor("codex")[0]!.content);
+      expect(
+        await readFile(skillFile(root, ".claude", "hive-claude"), "utf8"),
+      ).toEqual(shippedSkillsFor("claude")[0]!.content);
+      expect(
+        await readFile(skillFile(root, ".agents", "hive-codex"), "utf8"),
+      ).toEqual(shippedSkillsFor("codex")[0]!.content);
       // The shared skill goes to both; the vendor-specific ones do not cross over.
-      expect(await Bun.file(skillFile(root, ".claude", "karpathy-guidelines")).exists())
-        .toBe(true);
-      expect(await Bun.file(skillFile(root, ".agents", "karpathy-guidelines")).exists())
-        .toBe(true);
-      expect(await Bun.file(skillFile(root, ".claude", "hive-codex")).exists())
-        .toBe(false);
-      expect(await Bun.file(skillFile(root, ".agents", "hive-claude")).exists())
-        .toBe(false);
+      expect(
+        await Bun.file(
+          skillFile(root, ".claude", "karpathy-guidelines"),
+        ).exists(),
+      ).toBe(true);
+      expect(
+        await Bun.file(
+          skillFile(root, ".agents", "karpathy-guidelines"),
+        ).exists(),
+      ).toBe(true);
+      expect(
+        await Bun.file(skillFile(root, ".claude", "hive-codex")).exists(),
+      ).toBe(false);
+      expect(
+        await Bun.file(skillFile(root, ".agents", "hive-claude")).exists(),
+      ).toBe(false);
 
-      expect(result.skills.map((report) => report.tool)).toEqual(["claude", "codex"]);
-      expect(result.skills.every((report) => report.createdDirectory)).toBe(true);
+      expect(result.skills.map((report) => report.tool)).toEqual([
+        "claude",
+        "codex",
+      ]);
+      expect(result.skills.every((report) => report.createdDirectory)).toBe(
+        true,
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -384,11 +445,12 @@ describe("runInit — installing the shipped skills", () => {
       const root = await tsRepo();
       try {
         const result = await runInit(root, {}, machineWith("codex", "grok"));
-        expect(result.skills.map((report) => [report.tool, report.withheld]))
-          .toEqual([
-            ["codex", ["hive-codex"]],
-            ["grok", ["hive-grok"]],
-          ]);
+        expect(
+          result.skills.map((report) => [report.tool, report.withheld]),
+        ).toEqual([
+          ["codex", ["hive-codex"]],
+          ["grok", ["hive-grok"]],
+        ]);
 
         const renderCodexPrompt = (): string => {
           const rendered = Bun.spawnSync(
@@ -409,10 +471,12 @@ describe("runInit — installing the shipped skills", () => {
         // Agent worktrees have one reader and receive only their own contract.
         const worktree = join(root, "grok-worktree");
         await provisionSkills(worktree, "grok", join(root, "missing-global"));
-        expect(await Bun.file(skillFile(worktree, ".agents", "hive-grok")).exists())
-          .toBe(true);
-        expect(await Bun.file(skillFile(worktree, ".agents", "hive-codex")).exists())
-          .toBe(false);
+        expect(
+          await Bun.file(skillFile(worktree, ".agents", "hive-grok")).exists(),
+        ).toBe(true);
+        expect(
+          await Bun.file(skillFile(worktree, ".agents", "hive-codex")).exists(),
+        ).toBe(false);
       } finally {
         await rm(root, { recursive: true, force: true });
       }
@@ -426,8 +490,9 @@ describe("runInit — installing the shipped skills", () => {
 
       // Someone with no Codex does not get a .agents/ directory in their repo.
       expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
-      expect(await Bun.file(skillFile(root, ".claude", "hive-claude")).exists())
-        .toBe(true);
+      expect(
+        await Bun.file(skillFile(root, ".claude", "hive-claude")).exists(),
+      ).toBe(true);
       expect(result.skills.map((report) => report.tool)).toEqual(["claude"]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -442,8 +507,11 @@ describe("runInit — installing the shipped skills", () => {
       expect(await Bun.file(join(root, ".claude")).exists()).toBe(false);
       expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
       expect(result.skills).toEqual([]);
-      expect(result.messages.some((m) => m.includes("No Claude Code, Codex, or Grok CLI")))
-        .toBe(true);
+      expect(
+        result.messages.some((m) =>
+          m.includes("No Claude Code, Codex, or Grok CLI"),
+        ),
+      ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -453,8 +521,13 @@ describe("runInit — installing the shipped skills", () => {
     const root = await tsRepo();
     try {
       // A repo that already uses Claude Code, with settings and a skill of their own.
-      await mkdir(join(root, ".claude", "skills", "their-skill"), { recursive: true });
-      await writeFile(join(root, ".claude", "settings.json"), '{"theirs":true}\n');
+      await mkdir(join(root, ".claude", "skills", "their-skill"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(root, ".claude", "settings.json"),
+        '{"theirs":true}\n',
+      );
       await writeFile(
         join(root, ".claude", "skills", "their-skill", "SKILL.md"),
         "# their skill\n",
@@ -462,12 +535,15 @@ describe("runInit — installing the shipped skills", () => {
 
       const result = await runInit(root, {}, machineWith("claude"));
 
-      expect(await readFile(join(root, ".claude", "settings.json"), "utf8"))
-        .toEqual('{"theirs":true}\n');
-      expect(await readFile(skillFile(root, ".claude", "their-skill"), "utf8"))
-        .toEqual("# their skill\n");
-      expect(await Bun.file(skillFile(root, ".claude", "hive-claude")).exists())
-        .toBe(true);
+      expect(
+        await readFile(join(root, ".claude", "settings.json"), "utf8"),
+      ).toEqual('{"theirs":true}\n');
+      expect(
+        await readFile(skillFile(root, ".claude", "their-skill"), "utf8"),
+      ).toEqual("# their skill\n");
+      expect(
+        await Bun.file(skillFile(root, ".claude", "hive-claude")).exists(),
+      ).toBe(true);
       expect(result.skills[0]!.createdDirectory).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -486,7 +562,11 @@ describe("runInit — installing the shipped skills", () => {
       expect(await readFile(edited, "utf8")).toEqual("# my own rules\n");
       expect(second.messages.some((m) => m.includes("--force"))).toBe(true);
 
-      const forced = await runInit(root, { force: true }, machineWith("claude"));
+      const forced = await runInit(
+        root,
+        { force: true },
+        machineWith("claude"),
+      );
       expect(forced.skills[0]!.installed).toContain("karpathy-guidelines");
       expect(await readFile(edited, "utf8")).not.toEqual("# my own rules\n");
     } finally {
@@ -513,15 +593,18 @@ describe("readSeedFactsFile", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-init-facts-"));
     try {
       const path = join(root, "facts.json");
-      await writeFile(path, JSON.stringify([
-        { title: "A", body: "b", tags: ["x"], id: "a" },
-      ]));
+      await writeFile(
+        path,
+        JSON.stringify([{ title: "A", body: "b", tags: ["x"], id: "a" }]),
+      );
       expect(await readSeedFactsFile(path)).toEqual([
         { title: "A", body: "b", tags: ["x"], id: "a" },
       ]);
 
       await writeFile(path, JSON.stringify([{ title: "no body" }]));
-      await expect(readSeedFactsFile(path)).rejects.toThrow("string title and body");
+      await expect(readSeedFactsFile(path)).rejects.toThrow(
+        "string title and body",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -586,7 +669,9 @@ describe("Graphify in init", () => {
       const { deps } = probe();
       await runInit(root, {}, deps);
       expect(isRepoInitialized(root)).toBe(true);
-      expect(await readFile(initStampPath(root), "utf8")).toContain("hive init");
+      expect(await readFile(initStampPath(root), "utf8")).toContain(
+        "hive init",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -615,7 +700,8 @@ describe("the embeddings step in init", () => {
     try {
       const { deps, calls } = embeddingsProbe(async () => ({
         ok: true,
-        detail: "embedding runtime from hive 1.2.3 installed (sha256-verified against the release manifest) and probe-verified (bge-small-en-v1.5, dimensions=384)",
+        detail:
+          "embedding runtime from hive 1.2.3 installed (sha256-verified against the release manifest) and probe-verified (bge-small-en-v1.5, dimensions=384)",
       }));
       const result = await runInit(root, {}, deps);
       expect(calls).toHaveLength(1);

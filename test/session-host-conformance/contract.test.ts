@@ -10,32 +10,52 @@ import {
 import { buildWireCorpus } from "./fixtures";
 import {
   GENERATED_FILES,
-  WIRE_SCHEMA_CATALOG,
   renderGeneratedArtifacts,
+  WIRE_SCHEMA_CATALOG,
 } from "./generate";
 import { runConformance } from "./runner";
 
 describe("terminal foundation WP0 contracts", () => {
   test("wire and checkpoint layouts are fixed-width and collision-free", () => {
-    expect(Object.values(FRAME_HEADER.widths).reduce((sum, width) => sum + width, 0)).toBe(FRAME_HEADER.bytes);
-    expect(Object.values(CHECKPOINT_HEADER.widths).reduce((sum, width) => sum + width, 0)).toBe(CHECKPOINT_HEADER.bytes);
-    expect(new Set(Object.values(FRAME_TYPES)).size).toBe(Object.keys(FRAME_TYPES).length);
+    expect(
+      Object.values(FRAME_HEADER.widths).reduce((sum, width) => sum + width, 0),
+    ).toBe(FRAME_HEADER.bytes);
+    expect(
+      Object.values(CHECKPOINT_HEADER.widths).reduce(
+        (sum, width) => sum + width,
+        0,
+      ),
+    ).toBe(CHECKPOINT_HEADER.bytes);
+    expect(new Set(Object.values(FRAME_TYPES)).size).toBe(
+      Object.keys(FRAME_TYPES).length,
+    );
   });
 
   test("SessionHost interface and supporting types stay verbatim with §19", async () => {
-    const design = await readFile(resolve(import.meta.dir, "../../docs/design/terminal-stack-transition.html"), "utf8");
+    const design = await readFile(
+      resolve(
+        import.meta.dir,
+        "../../docs/design/terminal-stack-transition.html",
+      ),
+      "utf8",
+    );
     const extract = (label: string): string => {
       const marker = `<pre aria-label="${label}">`;
       const start = design.indexOf(marker);
       const end = design.indexOf("</pre>", start);
-      if (start < 0 || end < 0) throw new Error(`missing normative block ${label}`);
-      return design.slice(start + marker.length, end)
+      if (start < 0 || end < 0)
+        throw new Error(`missing normative block ${label}`);
+      return design
+        .slice(start + marker.length, end)
         .replaceAll("&lt;", "<")
         .replaceAll("&gt;", ">")
         .replaceAll("&amp;", "&");
     };
     const expected = `${extract("Normative SessionHost TypeScript contract")}\n\n${extract("Normative SessionHost supporting types")}\n`;
-    const actual = await readFile(resolve(import.meta.dir, "../../src/daemon/session-host/contract.ts"), "utf8");
+    const actual = await readFile(
+      resolve(import.meta.dir, "../../src/daemon/session-host/contract.ts"),
+      "utf8",
+    );
     expect(actual).toBe(expected);
   });
 
@@ -48,7 +68,10 @@ describe("terminal foundation WP0 contracts", () => {
 
   test("the native scrollback budget stays pinned to the cross-language contract", async () => {
     const adapter = await readFile(
-      resolve(import.meta.dir, "../../native/sessiond/src/terminal_adapter.zig"),
+      resolve(
+        import.meta.dir,
+        "../../native/sessiond/src/terminal_adapter.zig",
+      ),
       "utf8",
     );
     expect(adapter).toContain(
@@ -61,8 +84,12 @@ describe("terminal foundation WP0 contracts", () => {
   test("the shared corpus covers every generated wire schema", () => {
     const corpus = buildWireCorpus();
     const schemaNames = Object.keys(WIRE_SCHEMA_CATALOG).sort();
-    expect([...new Set(corpus.valid.map((item) => item.schema))].sort()).toEqual(schemaNames);
-    expect([...new Set(corpus.invalid.map((item) => item.schema))].sort()).toEqual(schemaNames);
+    expect(
+      [...new Set(corpus.valid.map((item) => item.schema))].sort(),
+    ).toEqual(schemaNames);
+    expect(
+      [...new Set(corpus.invalid.map((item) => item.schema))].sort(),
+    ).toEqual(schemaNames);
   });
 
   test("Swift and TypeScript agree after every valid, invalid, and reducer prefix", async () => {
@@ -82,22 +109,26 @@ describe("terminal foundation WP0 contracts", () => {
   test("the Zig output stays schema-driven and payload-struct free", async () => {
     const zig = await readFile(GENERATED_FILES.zig, "utf8");
     expect(zig).toContain("Zig 0.15.2 compilation is provisioned by WP1");
-    expect(zig).toContain("pub const hello_payload = \"helloPayload\"");
-    expect(zig).toContain("pub const @\"error\": u16 = 0x0003");
+    expect(zig).toContain('pub const hello_payload = "helloPayload"');
+    expect(zig).toContain('pub const @"error": u16 = 0x0003');
     expect(zig).toContain("pub const response: u16 = 0x0001");
     expect(zig).toContain("pub const visibility_expiry_ms: u64 = 15000");
-    expect(zig).toContain("@embedFile(\"session-protocol.schema.json\")");
+    expect(zig).toContain('@embedFile("session-protocol.schema.json")');
     expect(zig).not.toContain("Payload = struct");
   });
 
   test("generated projections emit every CHECKPOINT_HEADER offset and width", async () => {
     const zig = await readFile(GENERATED_FILES.zig, "utf8");
     const swift = await readFile(GENERATED_FILES.swift, "utf8");
-    const checkpointSwift = await readFile(GENERATED_FILES.checkpointSwift, "utf8");
-    const zigName = (value: string): string => value
-      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-      .toLowerCase()
-      .replaceAll("-", "_");
+    const checkpointSwift = await readFile(
+      GENERATED_FILES.checkpointSwift,
+      "utf8",
+    );
+    const zigName = (value: string): string =>
+      value
+        .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+        .toLowerCase()
+        .replaceAll("-", "_");
     for (const [name, offset] of Object.entries(CHECKPOINT_HEADER.offsets)) {
       expect(zig).toContain(`pub const ${zigName(name)}: usize = ${offset};`);
       expect(swift).toContain(`static let ${name} = ${offset}`);
@@ -116,9 +147,15 @@ describe("terminal foundation WP0 contracts", () => {
     // same table (terminal_state.zig off.* vs generated.checkpoint.offset.*);
     // Swift consumers alias SessionProtocolGenerated.Checkpoint.Offset.
     const zig = await readFile(GENERATED_FILES.zig, "utf8");
-    const checkpointSwift = await readFile(GENERATED_FILES.checkpointSwift, "utf8");
+    const checkpointSwift = await readFile(
+      GENERATED_FILES.checkpointSwift,
+      "utf8",
+    );
     const checkpointFormat = await readFile(
-      resolve(import.meta.dir, "../../native/sessiond/src/checkpoint_format.zig"),
+      resolve(
+        import.meta.dir,
+        "../../native/sessiond/src/checkpoint_format.zig",
+      ),
       "utf8",
     );
     const envelope = await readFile(
@@ -132,7 +169,9 @@ describe("terminal foundation WP0 contracts", () => {
     // Generated Zig must name the offset block so checkpoint_format can assert it.
     expect(zig).toContain("pub const offset = struct {");
     expect(checkpointFormat).toContain("generated.checkpoint.offset");
-    expect(checkpointFormat).toContain("checkpoint offset through_seq drifted from generated");
+    expect(checkpointFormat).toContain(
+      "checkpoint offset through_seq drifted from generated",
+    );
     // Deliberate-mismatch canary values that MUST appear in the dual-source local table.
     expect(checkpointFormat).toMatch(/const through_seq: usize = 16;/);
     expect(checkpointFormat).toMatch(/const payload_sha256: usize = 84;/);
@@ -140,10 +179,16 @@ describe("terminal foundation WP0 contracts", () => {
     // Swift production path must point at the generated projection, not bare literals.
     expect(checkpointSwift).toContain("public enum SessionProtocolGenerated");
     expect(envelope).toContain("SessionProtocolGenerated.Checkpoint.Offset");
-    expect(envelope).toContain("typealias FieldOffset = SessionProtocolGenerated.Checkpoint.Offset");
+    expect(envelope).toContain(
+      "typealias FieldOffset = SessionProtocolGenerated.Checkpoint.Offset",
+    );
     // Positive control: a wrong emitted offset fails this equality check.
-    expect(checkpointSwift).toContain(`static let throughSeq = ${CHECKPOINT_HEADER.offsets.throughSeq}`);
-    expect(checkpointSwift).toContain(`static let payloadSha256 = ${CHECKPOINT_HEADER.offsets.payloadSha256}`);
+    expect(checkpointSwift).toContain(
+      `static let throughSeq = ${CHECKPOINT_HEADER.offsets.throughSeq}`,
+    );
+    expect(checkpointSwift).toContain(
+      `static let payloadSha256 = ${CHECKPOINT_HEADER.offsets.payloadSha256}`,
+    );
     // If generator emitted a different interior offset, CHECKPOINT_HEADER would disagree:
     expect(CHECKPOINT_HEADER.offsets.throughSeq).toBe(16);
     expect(CHECKPOINT_HEADER.offsets.payloadSha256).toBe(84);

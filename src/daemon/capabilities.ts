@@ -15,17 +15,13 @@
 //     still daemon-minted, still one level deep.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  type Hv1CapabilityConstraints,
   Hv1CapabilityRecordSchema,
   isOrchestratorName,
-  type Hv1CapabilityConstraints,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 
-export type Role =
-  | "operator"
-  | "orchestrator"
-  | "writer"
-  | "reader";
+export type Role = "operator" | "orchestrator" | "writer" | "reader";
 
 export type Action =
   | "status:read"
@@ -75,20 +71,38 @@ const AGENT_DIRECTED: readonly Action[] = [
 ];
 
 const OPERATOR_ACTIONS: readonly Action[] = [
-  "status:read", "terminal:observe", "quota:read", "quota:write", "token-usage:read",
-  "token-usage:write", "agent:spawn", "agent:kill",
-  "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
-  "message:send", "message:ack", "message:read", "inbox:read",
-  "branch:land", "memory:read", "memory:write", "memory:delete", "event:report",
+  "status:read",
+  "terminal:observe",
+  "quota:read",
+  "quota:write",
+  "token-usage:read",
+  "token-usage:write",
+  "agent:spawn",
+  "agent:kill",
+  "agent:mark-dead",
+  "agent:recover",
+  "approval:read",
+  "approval:decide",
+  "message:send",
+  "message:ack",
+  "message:read",
+  "inbox:read",
+  "branch:land",
+  "memory:read",
+  "memory:write",
+  "memory:delete",
+  "event:report",
   "telemetry:report",
   // Autonomy is the human's dial: only the operator credential (the user's
   // own CLI and the Workspace acting for them) may write it. Agents observing
   // it is harmless; an agent raising it would be a sandbox escape.
-  "autonomy:read", "autonomy:write",
+  "autonomy:read",
+  "autonomy:write",
   // Routing policy is the user's standing routing preference — the Model
   // Control Center and the user's own CLI edit it; an agent rewriting the
   // router that governs agents would be self-authorization.
-  "routing-policy:read", "routing-policy:write",
+  "routing-policy:read",
+  "routing-policy:write",
   "workspace-visibility:write",
   // The one sanctioned token issuance outside the daemon's own spawn path:
   // the launcher mints the Codex root's capability (SPEC decision 4's "no
@@ -111,11 +125,26 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   orchestrator: {
     actions: [
-      "status:read", "terminal:observe", "quota:read", "quota:write", "token-usage:read",
-      "agent:spawn", "agent:kill",
-      "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
-      "message:send", "message:ack", "message:read", "inbox:read",
-      "memory:read", "memory:write", "memory:delete", "event:report", "telemetry:report",
+      "status:read",
+      "terminal:observe",
+      "quota:read",
+      "quota:write",
+      "token-usage:read",
+      "agent:spawn",
+      "agent:kill",
+      "agent:mark-dead",
+      "agent:recover",
+      "approval:read",
+      "approval:decide",
+      "message:send",
+      "message:ack",
+      "message:read",
+      "inbox:read",
+      "memory:read",
+      "memory:write",
+      "memory:delete",
+      "event:report",
+      "telemetry:report",
       "autonomy:read",
     ],
     anySubject: AGENT_DIRECTED,
@@ -123,9 +152,17 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   writer: {
     actions: [
-      "status:read", "status:write", "terminal:observe", "quota:read",
-      "message:send", "message:ack", "inbox:read",
-      "branch:land", "memory:read", "memory:write", "event:report",
+      "status:read",
+      "status:write",
+      "terminal:observe",
+      "quota:read",
+      "message:send",
+      "message:ack",
+      "inbox:read",
+      "branch:land",
+      "memory:read",
+      "memory:write",
+      "event:report",
       "telemetry:report",
     ],
     anySubject: [],
@@ -133,9 +170,16 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   reader: {
     actions: [
-      "status:read", "status:write", "terminal:observe", "quota:read",
-      "message:send", "message:ack", "inbox:read",
-      "memory:read", "event:report", "telemetry:report",
+      "status:read",
+      "status:write",
+      "terminal:observe",
+      "quota:read",
+      "message:send",
+      "message:ack",
+      "inbox:read",
+      "memory:read",
+      "event:report",
+      "telemetry:report",
     ],
     anySubject: [],
     oneShot: [],
@@ -205,7 +249,9 @@ export interface Denial {
   readonly message: string;
 }
 
-export type Decision = { readonly ok: true; readonly capability: Capability } | Denial;
+export type Decision =
+  | { readonly ok: true; readonly capability: Capability }
+  | Denial;
 
 const deny = (
   reason: DenialReason,
@@ -284,7 +330,9 @@ export class CapabilityStore {
       subject,
       role,
       epoch: options.epoch ?? 0,
-      ...(options.constraints === undefined ? {} : { constraints: options.constraints }),
+      ...(options.constraints === undefined
+        ? {}
+        : { constraints: options.constraints }),
       ...(options.subjects === undefined ? {} : { subjects: options.subjects }),
       issuedAt: issued.toISOString(),
       expiresAt: new Date(
@@ -339,11 +387,13 @@ export class CapabilityStore {
     const subject = request.subject;
     // queen is the preferred root address; "orchestrator" is the accepted
     // synonym. A capability bound to either may act as the root under both.
-    const sameRootSubject = subject !== undefined &&
+    const sameRootSubject =
+      subject !== undefined &&
       isOrchestratorName(subject) &&
       isOrchestratorName(capability.subject);
     if (
-      subject !== undefined && subject !== capability.subject &&
+      subject !== undefined &&
+      subject !== capability.subject &&
       !sameRootSubject &&
       !grant.anySubject.includes(request.action)
     ) {
@@ -380,8 +430,10 @@ export class CapabilityStore {
     }
 
     if (
-      EPOCH_CHECKED.has(request.action) && authority !== null &&
-      capability.role !== "operator" && authority.capabilityEpoch !== capability.epoch
+      EPOCH_CHECKED.has(request.action) &&
+      authority !== null &&
+      capability.role !== "operator" &&
+      authority.capabilityEpoch !== capability.epoch
     ) {
       return deny(
         "capability.stale-epoch",
@@ -504,7 +556,9 @@ export function permitsTerminalObservation(
   if (self && include === "visible-text") {
     return capability.constraints?.content === true;
   }
-  return capability.role === "operator" &&
+  return (
+    capability.role === "operator" &&
     capability.constraints?.scope === "operator" &&
-    capability.subjects?.includes(targetAgentId) === true;
+    capability.subjects?.includes(targetAgentId) === true
+  );
 }

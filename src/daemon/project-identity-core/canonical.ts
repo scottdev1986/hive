@@ -64,7 +64,10 @@ export function canonicalizeDirectory(path: string): CanonicalizeResult {
  * known to ignore the distinction, because a fold can only ever merge two keys,
  * and merging two genuinely distinct directories into one Hive is the worse error.
  */
-export function foldIdentityKey(canonicalPath: string, volume: VolumeBehavior): string {
+export function foldIdentityKey(
+  canonicalPath: string,
+  volume: VolumeBehavior,
+): string {
   let key = canonicalPath;
   if (!volume.normalizationSensitive) key = key.normalize("NFC");
   if (!volume.caseSensitive) key = key.toLowerCase();

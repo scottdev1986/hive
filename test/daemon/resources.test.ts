@@ -3,12 +3,12 @@ import {
   assessResources,
   descendantsOf,
   foregroundJobState,
+  type ProcessSample,
   parseAvailableMemoryMb,
   parseForegroundProcessTable,
   parseProcessTable,
   processCommandName,
   treeRunsCommand,
-  type ProcessSample,
 } from "../../src/daemon/resources";
 
 const sample = (
@@ -20,12 +20,14 @@ const sample = (
 
 describe("parseProcessTable", () => {
   test("parses ps output and converts rss to megabytes", () => {
-    const parsed = parseProcessTable([
-      "  101     1  2048 /usr/local/bin/bun test",
-      "  202   101 10240 codex app-server --stdio",
-      "garbage line",
-      "",
-    ].join("\n"));
+    const parsed = parseProcessTable(
+      [
+        "  101     1  2048 /usr/local/bin/bun test",
+        "  202   101 10240 codex app-server --stdio",
+        "garbage line",
+        "",
+      ].join("\n"),
+    );
     expect(parsed).toEqual([
       { pid: 101, ppid: 1, rssMb: 2, command: "/usr/local/bin/bun test" },
       { pid: 202, ppid: 101, rssMb: 10, command: "codex app-server --stdio" },
@@ -53,32 +55,38 @@ describe("parseAvailableMemoryMb", () => {
 });
 
 describe("foregroundJobState", () => {
-  const samples = parseForegroundProcessTable([
-    "  100     1   100   200 Ss",
-    "  200   100   200   200 S+",
-  ].join("\n"));
+  const samples = parseForegroundProcessTable(
+    ["  100     1   100   200 Ss", "  200   100   200   200 S+"].join("\n"),
+  );
 
   test("reports a child foreground job as running", () => {
     expect(foregroundJobState(samples, 100)).toBe("running");
   });
 
   test("reports the shell itself in front as no provider job", () => {
-    expect(foregroundJobState([
-      {
-        pid: 100,
-        ppid: 1,
-        processGroupId: 100,
-        foregroundProcessGroupId: 100,
-        stat: "Ss+",
-      },
-    ], 100)).toBe("gone");
+    expect(
+      foregroundJobState(
+        [
+          {
+            pid: 100,
+            ppid: 1,
+            processGroupId: 100,
+            foregroundProcessGroupId: 100,
+            stat: "Ss+",
+          },
+        ],
+        100,
+      ),
+    ).toBe("gone");
   });
 
   test("reports a suspended foreground job", () => {
-    expect(foregroundJobState([
-      ...samples.slice(0, 1),
-      { ...samples[1]!, stat: "T+" },
-    ], 100)).toBe("stopped");
+    expect(
+      foregroundJobState(
+        [...samples.slice(0, 1), { ...samples[1]!, stat: "T+" }],
+        100,
+      ),
+    ).toBe("stopped");
   });
 });
 
@@ -91,10 +99,12 @@ describe("descendantsOf", () => {
       sample(40, 40, 1), // self-parented, unrelated
       sample(50, 1, 1),
     ];
-    expect(descendantsOf(samples, [10]).map((entry) => entry.pid))
-      .toEqual([10, 20, 30]);
-    expect(descendantsOf(samples, [40]).map((entry) => entry.pid))
-      .toEqual([40]);
+    expect(descendantsOf(samples, [10]).map((entry) => entry.pid)).toEqual([
+      10, 20, 30,
+    ]);
+    expect(descendantsOf(samples, [40]).map((entry) => entry.pid)).toEqual([
+      40,
+    ]);
   });
 });
 
@@ -160,10 +170,12 @@ describe("is the launched process alive in this pane", () => {
   // Exactly what `ps -axo pid=,ppid=,rss=,command=` returns for a real hive
   // pane, captured from one: the pane's process is the wrapper shell, and the
   // provider is its child.
-  const pane = parseProcessTable([
-    ` 1915  6158   2416 zsh -c (claude "hi"); s=$?; if [ "$s" -ne 0 ]; then sleep 15; fi; exit $s`,
-    " 1917  1915 425488 claude hi",
-  ].join("\n"));
+  const pane = parseProcessTable(
+    [
+      ` 1915  6158   2416 zsh -c (claude "hi"); s=$?; if [ "$s" -ne 0 ]; then sleep 15; fi; exit $s`,
+      " 1917  1915 425488 claude hi",
+    ].join("\n"),
+  );
 
   test("finds the provider under the wrapper shell", () => {
     expect(treeRunsCommand(pane, [1915], "claude")).toBe(true);
@@ -182,16 +194,20 @@ describe("is the launched process alive in this pane", () => {
   });
 
   test("names the binary, not the path it was found at", () => {
-    expect(processCommandName("/Users/x/.local/bin/codex -c model=gpt")).toEqual("codex");
+    expect(
+      processCommandName("/Users/x/.local/bin/codex -c model=gpt"),
+    ).toEqual("codex");
     expect(processCommandName("claude hi")).toEqual("claude");
   });
 
   test("the app-server host is a `hive` process, and is found as one", () => {
     // A check hardcoded to "codex" would report every app-server agent dead.
-    const host = parseProcessTable([
-      " 2001  6158   2416 zsh -c (hive codex-app-server-host --port 4317)",
-      " 2002  2001  90000 hive codex-app-server-host --port 4317",
-    ].join("\n"));
+    const host = parseProcessTable(
+      [
+        " 2001  6158   2416 zsh -c (hive codex-app-server-host --port 4317)",
+        " 2002  2001  90000 hive codex-app-server-host --port 4317",
+      ].join("\n"),
+    );
     expect(treeRunsCommand(host, [2001], "hive")).toBe(true);
     expect(treeRunsCommand(host, [2001], "codex")).toBe(false);
   });

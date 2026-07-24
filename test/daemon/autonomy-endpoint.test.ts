@@ -92,8 +92,9 @@ describe("GET /autonomy", () => {
   test("a daemon without a control reports null, not a guess", async () => {
     const { daemon } = harness({ withControl: false });
     const { token } = daemon.capabilities.mint("operator", "operator");
-    expect(await (await request(daemon, token, "GET")).json())
-      .toEqual({ autonomy: null });
+    expect(await (await request(daemon, token, "GET")).json()).toEqual({
+      autonomy: null,
+    });
     await daemon.stop();
   });
 });
@@ -102,7 +103,9 @@ describe("POST /autonomy", () => {
   test("the operator flips the dial and gets the confirmed value back", async () => {
     const { daemon, control } = harness();
     const { token } = daemon.capabilities.mint("operator", "operator");
-    const response = await request(daemon, token, "POST", { autonomy: "dangerous" });
+    const response = await request(daemon, token, "POST", {
+      autonomy: "dangerous",
+    });
     expect(response.status).toEqual(200);
     expect(await response.json()).toEqual({ autonomy: "dangerous" });
     expect(control.sets).toEqual(["dangerous"]);
@@ -117,7 +120,9 @@ describe("POST /autonomy", () => {
       ["orchestrator", "orchestrator"],
     ] as const) {
       const { token } = daemon.capabilities.mint(subject, role);
-      const response = await request(daemon, token, "POST", { autonomy: "dangerous" });
+      const response = await request(daemon, token, "POST", {
+        autonomy: "dangerous",
+      });
       expect([role, response.status]).toEqual([role, 403]);
     }
     expect(control.sets).toEqual([]);
@@ -139,10 +144,13 @@ describe("POST /autonomy", () => {
     const { daemon, control } = harness();
     control.failNextSet = true;
     const { token } = daemon.capabilities.mint("operator", "operator");
-    const response = await request(daemon, token, "POST", { autonomy: "dangerous" });
+    const response = await request(daemon, token, "POST", {
+      autonomy: "dangerous",
+    });
     expect(response.status).toEqual(500);
-    expect(((await response.json()) as { error: string }).error)
-      .toContain("disk full");
+    expect(((await response.json()) as { error: string }).error).toContain(
+      "disk full",
+    );
     expect(control.value).toEqual("sandboxed");
     await daemon.stop();
   });
@@ -150,8 +158,9 @@ describe("POST /autonomy", () => {
   test("a daemon without a control refuses to pretend it can set one", async () => {
     const { daemon } = harness({ withControl: false });
     const { token } = daemon.capabilities.mint("operator", "operator");
-    expect((await request(daemon, token, "POST", { autonomy: "dangerous" })).status)
-      .toEqual(503);
+    expect(
+      (await request(daemon, token, "POST", { autonomy: "dangerous" })).status,
+    ).toEqual(503);
     await daemon.stop();
   });
 });

@@ -30,7 +30,11 @@
  * for binaries that still list it, and the only answer to that is an
  * out-of-band reinstall. See docs/release/versioning-and-release.md.
  */
-import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  verify as verifySignature,
+} from "node:crypto";
 import { z } from "zod";
 
 export const RELEASE_MANIFEST_SCHEMA = 1;
@@ -39,10 +43,12 @@ export const RELEASE_MANIFEST_SCHEMA = 1;
 export const MANIFEST_ASSET = "hive-release.json";
 export const SIGNATURE_ASSET = "hive-release.json.sig";
 
-const AssetNameSchema = z.string().regex(
-  /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
-  "artifact name must be a file name, not a path",
-);
+const AssetNameSchema = z
+  .string()
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._-]*$/,
+    "artifact name must be a file name, not a path",
+  );
 
 const ReleaseVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 
@@ -58,66 +64,68 @@ const ArtifactSchema = z.strictObject({
   buildHash: z.string().min(1),
 });
 
-const ManifestSchema = z.strictObject({
-  schema: z.literal(RELEASE_MANIFEST_SCHEMA),
-  version: ReleaseVersionSchema,
-  tag: z.string().min(1),
-  channel: z.enum(["stable", "beta"]),
-  commit: z.string().min(1),
-  publishedAt: z.iso.datetime({ offset: true }),
-  /** Overrides every notice rate limit. See docs/release/versioning-and-release.md. */
-  securityCritical: z.boolean(),
-  wireProtocol: z.strictObject({
-    min: z.number().int().nonnegative(),
-    max: z.number().int().nonnegative(),
-  }),
-  schemaEpoch: z.number().int().nonnegative(),
-  artifacts: z.array(ArtifactSchema).min(1),
-}).superRefine((manifest, context) => {
-  if (manifest.tag !== `v${manifest.version}`) {
-    context.addIssue({
-      code: "custom",
-      path: ["tag"],
-      message: "tag must name the manifest version",
-    });
-  }
-  if (manifest.wireProtocol.min > manifest.wireProtocol.max) {
-    context.addIssue({
-      code: "custom",
-      path: ["wireProtocol"],
-      message: "wire protocol minimum must not exceed its maximum",
-    });
-  }
-  const targets = new Set<string>();
-  const assets = new Map<string, string>();
-  for (const [index, artifact] of manifest.artifacts.entries()) {
-    const target = `${artifact.kind}\0${artifact.platform}\0${artifact.arch}`;
-    if (targets.has(target)) {
+const ManifestSchema = z
+  .strictObject({
+    schema: z.literal(RELEASE_MANIFEST_SCHEMA),
+    version: ReleaseVersionSchema,
+    tag: z.string().min(1),
+    channel: z.enum(["stable", "beta"]),
+    commit: z.string().min(1),
+    publishedAt: z.iso.datetime({ offset: true }),
+    /** Overrides every notice rate limit. See docs/release/versioning-and-release.md. */
+    securityCritical: z.boolean(),
+    wireProtocol: z.strictObject({
+      min: z.number().int().nonnegative(),
+      max: z.number().int().nonnegative(),
+    }),
+    schemaEpoch: z.number().int().nonnegative(),
+    artifacts: z.array(ArtifactSchema).min(1),
+  })
+  .superRefine((manifest, context) => {
+    if (manifest.tag !== `v${manifest.version}`) {
       context.addIssue({
         code: "custom",
-        path: ["artifacts", index],
-        message: `duplicate artifact target ${artifact.kind}/${artifact.platform}-${artifact.arch}`,
+        path: ["tag"],
+        message: "tag must name the manifest version",
       });
     }
-    targets.add(target);
-    const identity = [
-      artifact.kind,
-      artifact.platform,
-      artifact.size,
-      artifact.sha256,
-      artifact.buildHash,
-    ].join("\0");
-    const existing = assets.get(artifact.name);
-    if (existing !== undefined && existing !== identity) {
+    if (manifest.wireProtocol.min > manifest.wireProtocol.max) {
       context.addIssue({
         code: "custom",
-        path: ["artifacts", index, "name"],
-        message: `artifact name ${artifact.name} describes conflicting bytes`,
+        path: ["wireProtocol"],
+        message: "wire protocol minimum must not exceed its maximum",
       });
     }
-    assets.set(artifact.name, identity);
-  }
-});
+    const targets = new Set<string>();
+    const assets = new Map<string, string>();
+    for (const [index, artifact] of manifest.artifacts.entries()) {
+      const target = `${artifact.kind}\0${artifact.platform}\0${artifact.arch}`;
+      if (targets.has(target)) {
+        context.addIssue({
+          code: "custom",
+          path: ["artifacts", index],
+          message: `duplicate artifact target ${artifact.kind}/${artifact.platform}-${artifact.arch}`,
+        });
+      }
+      targets.add(target);
+      const identity = [
+        artifact.kind,
+        artifact.platform,
+        artifact.size,
+        artifact.sha256,
+        artifact.buildHash,
+      ].join("\0");
+      const existing = assets.get(artifact.name);
+      if (existing !== undefined && existing !== identity) {
+        context.addIssue({
+          code: "custom",
+          path: ["artifacts", index, "name"],
+          message: `artifact name ${artifact.name} describes conflicting bytes`,
+        });
+      }
+      assets.set(artifact.name, identity);
+    }
+  });
 
 export type ReleaseArtifact = z.infer<typeof ArtifactSchema>;
 export type ReleaseManifest = z.infer<typeof ManifestSchema>;
@@ -134,9 +142,11 @@ export function selectArtifact(
   kind: ReleaseArtifact["kind"],
   arch: HiveArch,
 ): ReleaseArtifact | null {
-  return manifest.artifacts.find(
-    (artifact) => artifact.kind === kind && artifact.arch === arch,
-  ) ?? null;
+  return (
+    manifest.artifacts.find(
+      (artifact) => artifact.kind === kind && artifact.arch === arch,
+    ) ?? null
+  );
 }
 
 export function sha256(bytes: Uint8Array): string {
@@ -148,8 +158,13 @@ export function sha256(bytes: Uint8Array): string {
  * a mismatching artifact is public information. The point is that we never
  * execute bytes whose digest the manifest did not name.
  */
-export function artifactMatches(artifact: ReleaseArtifact, bytes: Uint8Array): boolean {
-  return bytes.byteLength === artifact.size && sha256(bytes) === artifact.sha256;
+export function artifactMatches(
+  artifact: ReleaseArtifact,
+  bytes: Uint8Array,
+): boolean {
+  return (
+    bytes.byteLength === artifact.size && sha256(bytes) === artifact.sha256
+  );
 }
 
 export type ManifestTrust =
@@ -228,8 +243,9 @@ export function verifyManifest(
   }
   return {
     verified: false,
-    reason: keys.length === 1
-      ? "manifest signature does not match the embedded release key"
-      : `manifest signature does not match any of the ${keys.length} embedded release keys`,
+    reason:
+      keys.length === 1
+        ? "manifest signature does not match the embedded release key"
+        : `manifest signature does not match any of the ${keys.length} embedded release keys`,
   };
 }

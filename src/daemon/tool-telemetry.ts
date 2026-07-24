@@ -65,9 +65,7 @@ function parseJsonLines(tail: string): unknown[] {
     if (line.length === 0) continue;
     try {
       parsed.push(JSON.parse(line));
-    } catch {
-      continue;
-    }
+    } catch {}
   }
   return parsed;
 }
@@ -136,7 +134,8 @@ export function lastAssistantContextTokens(tail: string): number | null {
     if (entry.isSidechain === true) continue;
     if (!isRecord(entry.message) || !isRecord(entry.message.usage)) continue;
     const usage = entry.message.usage;
-    const total = asCount(usage.input_tokens) +
+    const total =
+      asCount(usage.input_tokens) +
       asCount(usage.cache_creation_input_tokens) +
       asCount(usage.cache_read_input_tokens) +
       asCount(usage.output_tokens);
@@ -159,9 +158,10 @@ export async function readClaudeTelemetry(
   home?: string,
 ): Promise<ClaudeContextTelemetry> {
   if (toolSessionId === undefined) return NO_CLAUDE_TELEMETRY;
-  const directory = home === undefined
-    ? claudeProjectDirectory(worktreePath)
-    : claudeProjectDirectory(worktreePath, home);
+  const directory =
+    home === undefined
+      ? claudeProjectDirectory(worktreePath)
+      : claudeProjectDirectory(worktreePath, home);
   const path = join(directory, `${toolSessionId}.jsonl`);
   let mtimeMs: number;
   try {
@@ -181,9 +181,10 @@ export async function readCodexTelemetry(
   home?: string,
 ): Promise<ToolTelemetry> {
   if (toolSessionId === undefined) return NO_TELEMETRY;
-  const rollout = home === undefined
-    ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
-    : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
+  const rollout =
+    home === undefined
+      ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
+      : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
   if (rollout === null) return NO_TELEMETRY;
   const lastActivityAt = new Date(rollout.mtimeMs).toISOString();
   const tail = await readFileTail(rollout.path);
@@ -202,8 +203,8 @@ export async function readCodexTelemetry(
     const usage = isRecord(info.last_token_usage)
       ? info.last_token_usage
       : isRecord(info.total_token_usage)
-      ? info.total_token_usage
-      : null;
+        ? info.total_token_usage
+        : null;
     if (usage === null) continue;
     const total = asCount(usage.input_tokens) + asCount(usage.output_tokens);
     if (total > 0) contextPct = clampPct((100 * total) / window);
@@ -217,8 +218,12 @@ export function lastCodexTurnCompleted(tail: string): boolean | null {
   const entries = parseJsonLines(tail);
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
-    if (!isRecord(entry) || entry.type !== "event_msg" ||
-      !isRecord(entry.payload)) continue;
+    if (
+      !isRecord(entry) ||
+      entry.type !== "event_msg" ||
+      !isRecord(entry.payload)
+    )
+      continue;
     if (entry.payload.type === "task_started") return false;
     if (entry.payload.type === "task_complete") return true;
   }
@@ -387,13 +392,15 @@ function countClaudeGraphifyCalls(slice: string): number {
     }
     for (const item of entry.message.content) {
       if (
-        isRecord(item) && item.type === "tool_use" &&
+        isRecord(item) &&
+        item.type === "tool_use" &&
         typeof item.name === "string" &&
         // graph_locate is graph usage that rides Hive's own server, so the
         // adoption count must see it or the rollout metric undercounts.
         (item.name.startsWith("mcp__graphify__") ||
           item.name === "mcp__hive__graph_locate")
-      ) count++;
+      )
+        count++;
     }
   }
   return count;
@@ -411,7 +418,8 @@ function countCodexGraphifyCalls(slice: string): number {
       (payload.invocation.server === "graphify" ||
         (payload.invocation.server === "hive" &&
           payload.invocation.tool === "graph_locate"))
-    ) count++;
+    )
+      count++;
   }
   return count;
 }
@@ -458,17 +466,23 @@ export async function readGraphifyCalls(
   switch (tool) {
     case "claude": {
       if (toolSessionId === undefined) return null;
-      const directory = home === undefined
-        ? claudeProjectDirectory(worktreePath)
-        : claudeProjectDirectory(worktreePath, home);
+      const directory =
+        home === undefined
+          ? claudeProjectDirectory(worktreePath)
+          : claudeProjectDirectory(worktreePath, home);
       path = join(directory, `${toolSessionId}.jsonl`);
       break;
     }
     case "codex": {
       if (toolSessionId === undefined) return null;
-      const rollout = home === undefined
-        ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
-        : await findCodexRolloutBySessionId(worktreePath, toolSessionId, home);
+      const rollout =
+        home === undefined
+          ? await findCodexRolloutBySessionId(worktreePath, toolSessionId)
+          : await findCodexRolloutBySessionId(
+              worktreePath,
+              toolSessionId,
+              home,
+            );
       if (rollout === null) return cursor ?? null;
       path = rollout.path;
       break;
@@ -497,9 +511,10 @@ export async function readGraphifyCalls(
       return unknownVendor(tool, "readGraphifyCalls");
   }
 
-  const base = cursor !== undefined && cursor.path === path
-    ? cursor
-    : { path, offset: 0, count: 0 };
+  const base =
+    cursor !== undefined && cursor.path === path
+      ? cursor
+      : { path, offset: 0, count: 0 };
   let slice: string;
   try {
     const handle = await open(path, "r");

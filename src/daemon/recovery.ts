@@ -1,9 +1,5 @@
 import { existsSync } from "node:fs";
 import {
-  type AuthorizedLaunch,
-  requireAuthorizedLaunch,
-} from "./authorized-launch";
-import {
   buildClaudeResumeCommand,
   discoverClaudeRecoverySessionId,
   resolveWorkingClaudeExecutable,
@@ -35,44 +31,42 @@ import {
   writeOpencodeAgentConfig,
 } from "../adapters/tools/opencode";
 import {
-  ORCHESTRATOR_NAME,
-  CapabilityProviderSchema,
-  unknownVendor,
   type AgentRecord,
+  CapabilityProviderSchema,
   type ExecutionIdentity,
   type HiveConfig,
+  ORCHESTRATOR_NAME,
+  unknownVendor,
 } from "../schemas";
-import type { HiveDatabase } from "./db";
-import type { StopAgentSession } from "./teardown";
-import { readCodexTelemetry } from "./tool-telemetry";
-import {
-  parseProcessTable,
-  runPs,
-  treeRunsCommand,
-} from "./resources";
-import {
-  LAUNCH_FAILURE_PATTERNS,
-  waitForMcpReporting,
-  watchForProofOfLife,
-} from "./readiness";
-import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import {
-  nextAgentSessionLocator,
-} from "./session-host/locators";
-import { shellJoin } from "./session-host/shell-session";
-import {
-  requireSessiondAgentLocator,
-  sessiondVendorProcessIsDead,
-  type HiveTerminalHostAdapter,
-} from "./session-host/hive-terminal-host";
-import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
+  type AuthorizedLaunch,
+  requireAuthorizedLaunch,
+} from "./authorized-launch";
+import type { HiveDatabase } from "./db";
 import {
   codexInstructionProfileName,
   launchPromptPath,
   wrapCodexWithInstructionProfile,
   wrapGrokWithRulesFile,
 } from "./launch-prompt";
+import { hiveCliSpawnArgv } from "./lifecycle";
+import {
+  LAUNCH_FAILURE_PATTERNS,
+  waitForMcpReporting,
+  watchForProofOfLife,
+} from "./readiness";
+import { parseProcessTable, runPs, treeRunsCommand } from "./resources";
+import {
+  type HiveTerminalHostAdapter,
+  requireSessiondAgentLocator,
+  sessiondVendorProcessIsDead,
+} from "./session-host/hive-terminal-host";
+import { nextAgentSessionLocator } from "./session-host/locators";
+import { shellJoin } from "./session-host/shell-session";
+import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
+import type { StopAgentSession } from "./teardown";
+import { readCodexTelemetry } from "./tool-telemetry";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -245,19 +239,24 @@ export class CrashRecovery {
   private readonly deliberateKills = new Set<string>();
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
-    this.resolveClaude = deps.resolveClaudeSessionId ??
+    this.resolveClaude =
+      deps.resolveClaudeSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverClaudeRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveCodex = deps.resolveCodexSessionId ??
+    this.resolveCodex =
+      deps.resolveCodexSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverCodexRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveGrok = deps.resolveGrokSessionId ??
+    this.resolveGrok =
+      deps.resolveGrokSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverGrokRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveKimi = deps.resolveKimiSessionId ??
+    this.resolveKimi =
+      deps.resolveKimiSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverKimiRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveOpencode = deps.resolveOpencodeSessionId ??
+    this.resolveOpencode =
+      deps.resolveOpencodeSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverOpencodeRecoverySessionId(
           worktreePath,
@@ -266,7 +265,8 @@ export class CrashRecovery {
         ));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
-    this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
+    this.claudeExecutable =
+      deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
     this.codexExecutable = deps.codexExecutable ?? "codex";
     this.grokExecutable = deps.grokExecutable ?? "grok";
     this.kimiExecutable = deps.kimiExecutable ?? "kimi";
@@ -276,9 +276,10 @@ export class CrashRecovery {
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
     this.writeGrokConfig = deps.writeGrokConfig ?? writeGrokAgentConfig;
     this.writeKimiConfig = deps.writeKimiConfig ?? writeKimiAgentConfig;
-    this.writeOpencodeConfig = deps.writeOpencodeConfig ??
-      writeOpencodeAgentConfig;
-    this.readCodexActivity = deps.readCodexActivity ??
+    this.writeOpencodeConfig =
+      deps.writeOpencodeConfig ?? writeOpencodeAgentConfig;
+    this.readCodexActivity =
+      deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
   }
@@ -366,8 +367,11 @@ export class CrashRecovery {
     for (const candidate of this.deps.db.listAgents()) {
       const agent = candidate;
       const isSpawning = agent.status === "spawning";
-      if (!isSpawning && !LIVE_STATUSES.includes(agent.status) &&
-        agent.status !== "control-paused") {
+      if (
+        !isSpawning &&
+        !LIVE_STATUSES.includes(agent.status) &&
+        agent.status !== "control-paused"
+      ) {
         continue;
       }
       // A reservation marks a spawn in flight inside this daemon process;
@@ -381,8 +385,10 @@ export class CrashRecovery {
       try {
         sessionPresent = await this.sessionPresent(agent);
       } catch (error) {
-        if (!(error instanceof Error) ||
-          !error.message.startsWith("Agent process presence is unknown for ")) {
+        if (
+          !(error instanceof Error) ||
+          !error.message.startsWith("Agent process presence is unknown for ")
+        ) {
           throw error;
         }
         outcomes.push({
@@ -408,15 +414,18 @@ export class CrashRecovery {
       }
       const terminationAudit = this.deliberateTerminationAudit(agent);
       if (terminationAudit !== null) {
-        outcomes.push(await this.markDead(
-          agent,
-          `audited termination (${terminationAudit.reason}); reconciled as a deliberate kill`,
-          { deliberate: true },
-        ));
+        outcomes.push(
+          await this.markDead(
+            agent,
+            `audited termination (${terminationAudit.reason}); reconciled as a deliberate kill`,
+            { deliberate: true },
+          ),
+        );
         continue;
       }
       if (
-        agent.writeRevoked && agent.controlMessageId !== undefined &&
+        agent.writeRevoked &&
+        agent.controlMessageId !== undefined &&
         this.deps.db.getMessage(agent.controlMessageId)?.state === "queued"
       ) {
         // A quota- or identity-blocked critical control remains durable and
@@ -439,17 +448,20 @@ export class CrashRecovery {
         outcomes.push({
           agent: agent.name,
           action: "skipped",
-          reason: "write authority is revoked; recovery requires explicit cleanup",
+          reason:
+            "write authority is revoked; recovery requires explicit cleanup",
         });
         continue;
       }
       if (isSpawning) {
         // The agent died before its tool session produced anything worth
         // resuming; the orchestrator respawns from the stored task instead.
-        outcomes.push(await this.markDead(
-          agent,
-          "process died during spawn (crash recovery)",
-        ));
+        outcomes.push(
+          await this.markDead(
+            agent,
+            "process died during spawn (crash recovery)",
+          ),
+        );
         continue;
       }
       outcomes.push(await this.recoverOne(agent, { manual: false }));
@@ -484,7 +496,8 @@ export class CrashRecovery {
       return {
         agent: name,
         action: "skipped",
-        reason: "write authority is revoked; recovery requires explicit cleanup",
+        reason:
+          "write authority is revoked; recovery requires explicit cleanup",
       };
     }
     if (await this.sessionPresent(agent)) {
@@ -536,17 +549,21 @@ export class CrashRecovery {
         `crash recovery gave up after ${agent.recoveryAttempts} resume attempts`,
       );
     }
-    if (agent.worktreePath === null || !this.worktreeExists(agent.worktreePath)) {
+    if (
+      agent.worktreePath === null ||
+      !this.worktreeExists(agent.worktreePath)
+    ) {
       return this.markDead(agent, "worktree is missing; session not resumable");
     }
     let sessionId: string | null;
     try {
-      sessionId = agent.toolSessionId ??
-        await this.resolveSession(
+      sessionId =
+        agent.toolSessionId ??
+        (await this.resolveSession(
           agent.tool,
           agent.worktreePath,
           agent.createdAt,
-        );
+        ));
     } catch (error) {
       return this.preserveUnverifiedRecovery(
         agent,
@@ -621,10 +638,8 @@ export class CrashRecovery {
       if (identity === undefined) {
         throw new Error("no immutable execution identity is recorded");
       }
-      const authorized = await this.deps.authorizeLaunch?.(
-        identity,
-        record.category,
-      ) ?? null;
+      const authorized =
+        (await this.deps.authorizeLaunch?.(identity, record.category)) ?? null;
       if (authorized === null) {
         throw new Error(
           `${identity.model} enablement policy is unreadable; open the Model ` +
@@ -666,21 +681,24 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             dangerous,
           });
-          argv = buildClaudeResumeCommand({
-            daemonPort: this.daemonPort(),
-            model,
-            ...(identity?.tool === "claude" && identity.effort !== undefined
-              ? { effort: identity.effort }
-              : {}),
-            name: record.name,
-            readOnly: record.readOnly,
-            dangerous,
-            worktreePath,
-            executable: this.claudeExecutable,
-            ...(hasInstructions
-              ? { appendSystemPromptFile: instructionPath }
-              : {}),
-          }, sessionId);
+          argv = buildClaudeResumeCommand(
+            {
+              daemonPort: this.daemonPort(),
+              model,
+              ...(identity?.tool === "claude" && identity.effort !== undefined
+                ? { effort: identity.effort }
+                : {}),
+              name: record.name,
+              readOnly: record.readOnly,
+              dangerous,
+              worktreePath,
+              executable: this.claudeExecutable,
+              ...(hasInstructions
+                ? { appendSystemPromptFile: instructionPath }
+                : {}),
+            },
+            sessionId,
+          );
           break;
         }
         case "codex": {
@@ -690,50 +708,57 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           });
-          argv = buildCodexResumeCommand({
-            daemonPort: this.daemonPort(),
-            effort: identity?.tool === "codex" ? identity.effort : "medium",
-            model,
-            name: record.name,
-            readOnly: record.readOnly,
-            dangerous,
-            worktreePath,
-            executable: this.codexExecutable,
-            ...(hasInstructions
-              ? {
-                profile: codexInstructionProfileName(
-                  sessionKey,
-                ),
-              }
-              : {}),
-          }, sessionId);
+          argv = buildCodexResumeCommand(
+            {
+              daemonPort: this.daemonPort(),
+              effort: identity?.tool === "codex" ? identity.effort : "medium",
+              model,
+              name: record.name,
+              readOnly: record.readOnly,
+              dangerous,
+              worktreePath,
+              executable: this.codexExecutable,
+              ...(hasInstructions
+                ? {
+                    profile: codexInstructionProfileName(sessionKey),
+                  }
+                : {}),
+            },
+            sessionId,
+          );
           break;
         }
         case "grok": {
           await this.writeGrokConfig(worktreePath, {
             daemonPort: this.daemonPort(),
           });
-          argv = buildGrokResumeCommand({
-            model,
-            ...(identity?.tool === "grok" && identity.effort !== undefined
-              ? { effort: identity.effort }
-              : {}),
-            worktreePath,
-            readOnly: record.readOnly,
-            executable: this.grokExecutable,
-          }, sessionId);
+          argv = buildGrokResumeCommand(
+            {
+              model,
+              ...(identity?.tool === "grok" && identity.effort !== undefined
+                ? { effort: identity.effort }
+                : {}),
+              worktreePath,
+              readOnly: record.readOnly,
+              executable: this.grokExecutable,
+            },
+            sessionId,
+          );
           break;
         }
         case "kimi": {
           await this.writeKimiConfig(worktreePath, {
             daemonPort: this.daemonPort(),
           });
-          argv = buildKimiResumeCommand({
-            model,
-            readOnly: record.readOnly,
-            dangerous,
-            executable: this.kimiExecutable,
-          }, sessionId);
+          argv = buildKimiResumeCommand(
+            {
+              model,
+              readOnly: record.readOnly,
+              dangerous,
+              executable: this.kimiExecutable,
+            },
+            sessionId,
+          );
           break;
         }
         case "opencode": {
@@ -742,13 +767,16 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             ...(hasInstructions ? { instructionPath } : {}),
           });
-          argv = buildOpencodeResumeCommand({
-            model,
-            readOnly: record.readOnly,
-            dangerous,
-            executable: this.opencodeExecutable,
-            ...(hasInstructions ? { agent: OPENCODE_HIVE_AGENT } : {}),
-          }, sessionId);
+          argv = buildOpencodeResumeCommand(
+            {
+              model,
+              readOnly: record.readOnly,
+              dangerous,
+              executable: this.opencodeExecutable,
+              ...(hasInstructions ? { agent: OPENCODE_HIVE_AGENT } : {}),
+            },
+            sessionId,
+          );
           break;
         }
         default:
@@ -775,23 +803,21 @@ export class CrashRecovery {
             : withEffort;
         }
         if (record.tool === "codex" && hasInstructions) {
-          return wrapCodexWithInstructionProfile(
-            joined,
-            sessionKey,
-          );
+          return wrapCodexWithInstructionProfile(joined, sessionKey);
         }
         return joined;
       })();
-      const revalidated = await this.deps.authorizeLaunch?.(
-        identity,
-        record.category,
-      ) ?? null;
+      const revalidated =
+        (await this.deps.authorizeLaunch?.(identity, record.category)) ?? null;
       if (
-        revalidated === null || revalidated.tool !== authorized.tool ||
+        revalidated === null ||
+        revalidated.tool !== authorized.tool ||
         revalidated.model !== authorized.model ||
         revalidated.effort !== authorized.effort
       ) {
-        throw new Error("resume authorization changed before the process adapter");
+        throw new Error(
+          "resume authorization changed before the process adapter",
+        );
       }
       requireAuthorizedLaunch(revalidated);
       const launchGrantId = `recovery:${record.id}:${record.recoveryAttempts}`;
@@ -868,13 +894,17 @@ export class CrashRecovery {
       );
     }
 
-    await this.deps.send(
-      "hive-recovery",
-      ORCHESTRATOR_NAME,
-      `Resumed ${record.name} after a crash: relaunched ${record.tool} session ` +
-        `${sessionId} in ${worktreePath} with its conversation restored.`,
-      { idempotencyKey: `crash-resume:${record.id}:${record.recoveryAttempts}` },
-    ).catch(() => undefined);
+    await this.deps
+      .send(
+        "hive-recovery",
+        ORCHESTRATOR_NAME,
+        `Resumed ${record.name} after a crash: relaunched ${record.tool} session ` +
+          `${sessionId} in ${worktreePath} with its conversation restored.`,
+        {
+          idempotencyKey: `crash-resume:${record.id}:${record.recoveryAttempts}`,
+        },
+      )
+      .catch(() => undefined);
     return { agent: record.name, action: "resumed", sessionId };
   }
 
@@ -922,14 +952,18 @@ export class CrashRecovery {
    * never got the notice will fail it on the evidence.
    */
   private async wakeResumedAgent(record: AgentRecord): Promise<void> {
-    await this.deps.send(
-      "hive-recovery",
-      record.name,
-      "Your previous process crashed and Hive resumed your tool session with " +
-        "its conversation restored. Check hive_inbox for queued messages, " +
-        "re-verify any in-flight edits in your worktree, and continue your task.",
-      { idempotencyKey: `crash-resume-notice:${record.id}:${record.recoveryAttempts}` },
-    ).catch(() => undefined);
+    await this.deps
+      .send(
+        "hive-recovery",
+        record.name,
+        "Your previous process crashed and Hive resumed your tool session with " +
+          "its conversation restored. Check hive_inbox for queued messages, " +
+          "re-verify any in-flight edits in your worktree, and continue your task.",
+        {
+          idempotencyKey: `crash-resume-notice:${record.id}:${record.recoveryAttempts}`,
+        },
+      )
+      .catch(() => undefined);
     await this.deps.flushQueued(record.name).catch(() => undefined);
   }
 
@@ -992,9 +1026,11 @@ export class CrashRecovery {
   ): Promise<boolean | null> {
     try {
       const rootPids = [
-        (await this.deps.terminalHost?.inspect(
-          requireSessiondAgentLocator(record),
-        ))?.providerRoot?.pid,
+        (
+          await this.deps.terminalHost?.inspect(
+            requireSessiondAgentLocator(record),
+          )
+        )?.providerRoot?.pid,
       ].filter((pid): pid is number => pid !== undefined && pid !== null);
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(await (this.deps.ps ?? runPs)());
@@ -1038,17 +1074,18 @@ export class CrashRecovery {
     });
     this.deps.revokeCapabilities?.(agent.name);
     this.denyPendingApprovals(agent.name);
-    await this.deps.send(
-      "hive-recovery",
-      ORCHESTRATOR_NAME,
-      `${agent.name} could not be recovered safely: ${reason}. Hive preserved ` +
-        "the agent record, worktree, quota reservation, and queued messages; " +
-        "retry cleanup or recovery explicitly after verifying process state.",
-      {
-        idempotencyKey:
-          `crash-recovery-preserved:${agent.id}:${current.recoveryAttempts}`,
-      },
-    ).catch(() => undefined);
+    await this.deps
+      .send(
+        "hive-recovery",
+        ORCHESTRATOR_NAME,
+        `${agent.name} could not be recovered safely: ${reason}. Hive preserved ` +
+          "the agent record, worktree, quota reservation, and queued messages; " +
+          "retry cleanup or recovery explicitly after verifying process state.",
+        {
+          idempotencyKey: `crash-recovery-preserved:${agent.id}:${current.recoveryAttempts}`,
+        },
+      )
+      .catch(() => undefined);
     return { agent: agent.name, action: "skipped", reason };
   }
 
@@ -1058,11 +1095,7 @@ export class CrashRecovery {
     options: { deliberate?: boolean } = {},
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
-    this.deps.db.markAgentDead(
-      agent.id,
-      now,
-      reason,
-    );
+    this.deps.db.markAgentDead(agent.id, now, reason);
     this.deps.revokeCapabilities?.(agent.name);
     await this.deps.settleQuota(agent);
     this.denyPendingApprovals(agent.name);
@@ -1072,26 +1105,31 @@ export class CrashRecovery {
     for (const message of stranded) {
       this.deps.db.markMessageAlerted(message.id, now);
     }
-    const strandedNote = stranded.length === 0
-      ? ""
-      : ` ${stranded.length} queued message(s) were flagged undeliverable.`;
-    const worktreeNote = agent.worktreePath === null
-      ? "No worktree was recorded."
-      : `Worktree preserved at ${agent.worktreePath}` +
-        (agent.branch === null ? "." : ` (branch ${agent.branch}).`);
+    const strandedNote =
+      stranded.length === 0
+        ? ""
+        : ` ${stranded.length} queued message(s) were flagged undeliverable.`;
+    const worktreeNote =
+      agent.worktreePath === null
+        ? "No worktree was recorded."
+        : `Worktree preserved at ${agent.worktreePath}` +
+          (agent.branch === null ? "." : ` (branch ${agent.branch}).`);
     // An audited kill is not a crash and must not be reported as one (#66):
     // the closure is finished on the killer's behalf and said plainly.
-    const headline = options.deliberate === true
-      ? `${agent.name} was killed deliberately and its record has been reconciled without a resume: ${reason}.`
-      : `${agent.name} died in a crash and could not be resumed: ${reason}.`;
-    await this.deps.send(
-      "hive-recovery",
-      ORCHESTRATOR_NAME,
-      `${headline} ` +
-        `${worktreeNote}${strandedNote} Respawn with hive_spawn if the work ` +
-        `should continue. Stored task: ${boundedTask(agent.taskDescription)}`,
-      { idempotencyKey: `crash-dead:${agent.id}:${agent.lastEventAt}` },
-    ).catch(() => undefined);
+    const headline =
+      options.deliberate === true
+        ? `${agent.name} was killed deliberately and its record has been reconciled without a resume: ${reason}.`
+        : `${agent.name} died in a crash and could not be resumed: ${reason}.`;
+    await this.deps
+      .send(
+        "hive-recovery",
+        ORCHESTRATOR_NAME,
+        `${headline} ` +
+          `${worktreeNote}${strandedNote} Respawn with hive_spawn if the work ` +
+          `should continue. Stored task: ${boundedTask(agent.taskDescription)}`,
+        { idempotencyKey: `crash-dead:${agent.id}:${agent.lastEventAt}` },
+      )
+      .catch(() => undefined);
     return { agent: agent.name, action: "marked-dead", reason };
   }
 

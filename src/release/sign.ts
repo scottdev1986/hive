@@ -138,13 +138,20 @@ async function runOrThrow(command: string[]): Promise<string> {
  * the ad-hoc signature Bun left behind. The secure timestamp reaches out to
  * Apple's timestamp server, so this step needs network.
  */
-export async function signCliSlice(path: string, config: SigningConfig): Promise<void> {
+export async function signCliSlice(
+  path: string,
+  config: SigningConfig,
+): Promise<void> {
   await runOrThrow([
-    "codesign", "--force",
-    "--sign", config.identity,
-    "--options", "runtime",
+    "codesign",
+    "--force",
+    "--sign",
+    config.identity,
+    "--options",
+    "runtime",
     "--timestamp",
-    "--entitlements", config.entitlements,
+    "--entitlements",
+    config.entitlements,
     path,
   ]);
 }
@@ -154,11 +161,17 @@ export async function signCliSlice(path: string, config: SigningConfig): Promise
  * entitlements. It is a plain AppKit binary that neither JITs nor loads foreign
  * code, so it gets the strictest runtime with nothing relaxed.
  */
-export async function signAppBundle(path: string, config: SigningConfig): Promise<void> {
+export async function signAppBundle(
+  path: string,
+  config: SigningConfig,
+): Promise<void> {
   await runOrThrow([
-    "codesign", "--force",
-    "--sign", config.identity,
-    "--options", "runtime",
+    "codesign",
+    "--force",
+    "--sign",
+    config.identity,
+    "--options",
+    "runtime",
     "--timestamp",
     path,
   ]);
@@ -171,7 +184,10 @@ export async function signAppBundle(path: string, config: SigningConfig): Promis
  * anything but `Accepted` as failure, fetching the log so the reason lands in CI
  * output instead of a bare "Invalid".
  */
-export async function notarize(paths: string[], notary: NotaryConfig): Promise<void> {
+export async function notarize(
+  paths: string[],
+  notary: NotaryConfig,
+): Promise<void> {
   const staging = await mkdtemp(join(tmpdir(), "hive-notarize-"));
   try {
     const bundle = join(staging, "artifacts");
@@ -182,12 +198,27 @@ export async function notarize(paths: string[], notary: NotaryConfig): Promise<v
     const zip = join(staging, "submission.zip");
     await runOrThrow(["ditto", "-c", "-k", "--keepParent", bundle, zip]);
 
-    const key = ["--key", notary.keyPath, "--key-id", notary.keyId, "--issuer", notary.issuer];
+    const key = [
+      "--key",
+      notary.keyPath,
+      "--key-id",
+      notary.keyId,
+      "--issuer",
+      notary.issuer,
+    ];
     const submit = await run([
-      "xcrun", "notarytool", "submit", zip, ...key, "--output-format", "json", "--wait",
+      "xcrun",
+      "notarytool",
+      "submit",
+      zip,
+      ...key,
+      "--output-format",
+      "json",
+      "--wait",
     ]);
     const parsed = safeJson(submit.stdout);
-    const status = typeof parsed?.status === "string" ? parsed.status : "unknown";
+    const status =
+      typeof parsed?.status === "string" ? parsed.status : "unknown";
     const id = typeof parsed?.id === "string" ? parsed.id : null;
 
     if (status !== "Accepted") {
@@ -196,7 +227,9 @@ export async function notarize(paths: string[], notary: NotaryConfig): Promise<v
         const log = await run(["xcrun", "notarytool", "log", id, ...key]);
         detail += `\n--- notarization log ---\n${log.stdout.trim() || log.stderr.trim()}`;
       }
-      throw new Error(`Notarization returned ${status}, not Accepted:\n${detail}`);
+      throw new Error(
+        `Notarization returned ${status}, not Accepted:\n${detail}`,
+      );
     }
   } finally {
     await rm(staging, { recursive: true, force: true });

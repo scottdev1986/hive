@@ -3,8 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentHost } from "./src/host";
-import { BoundedWal, isoNow, WalOverflowError } from "./src/wal";
 import type { HostConfig, ReconnectReport, WalRecord } from "./src/types";
+import { BoundedWal, isoNow, WalOverflowError } from "./src/wal";
 
 const temporaryDirectories: string[] = [];
 afterEach(() => {
@@ -50,7 +50,7 @@ describe("bounded WAL", () => {
         payload: {},
       },
     };
-    writeFileSync(path, `${JSON.stringify(record)}\n{\"kind\":`);
+    writeFileSync(path, `${JSON.stringify(record)}\n{"kind":`);
     const wal = new BoundedWal(path, 4096);
     expect(wal.events()).toHaveLength(1);
     expect(readFileSync(path, "utf8")).toBe(`${JSON.stringify(record)}\n`);
@@ -76,37 +76,41 @@ describe("bounded WAL", () => {
       });
     }
     wal.append({ kind: "ACK", at: isoNow(), highWaterMark: 3 });
-    expect(() => wal.append({
-      kind: "EVENT",
-      at: isoNow(),
-      event: {
-        sequence: 4,
-        providerEventId: "event-4",
-        commandId: "command-1",
-        brokerGeneration: 1,
-        sessionEpoch: 0,
-        observedAt: isoNow(),
-        type: "tool_output",
-        payload: { text: "y".repeat(300) },
-      },
-    })).not.toThrow();
+    expect(() =>
+      wal.append({
+        kind: "EVENT",
+        at: isoNow(),
+        event: {
+          sequence: 4,
+          providerEventId: "event-4",
+          commandId: "command-1",
+          brokerGeneration: 1,
+          sessionEpoch: 0,
+          observedAt: isoNow(),
+          type: "tool_output",
+          payload: { text: "y".repeat(300) },
+        },
+      }),
+    ).not.toThrow();
     expect(wal.events().map((event) => event.sequence)).toEqual([4]);
 
     const tiny = new BoundedWal(join(directory, "tiny.wal"), 280);
-    expect(() => tiny.append({
-      kind: "EVENT",
-      at: isoNow(),
-      event: {
-        sequence: 1,
-        providerEventId: "too-large",
-        commandId: "command-1",
-        brokerGeneration: 1,
-        sessionEpoch: 0,
-        observedAt: isoNow(),
-        type: "tool_output",
-        payload: { text: "z".repeat(500) },
-      },
-    })).toThrow(WalOverflowError);
+    expect(() =>
+      tiny.append({
+        kind: "EVENT",
+        at: isoNow(),
+        event: {
+          sequence: 1,
+          providerEventId: "too-large",
+          commandId: "command-1",
+          brokerGeneration: 1,
+          sessionEpoch: 0,
+          observedAt: isoNow(),
+          type: "tool_output",
+          payload: { text: "z".repeat(500) },
+        },
+      }),
+    ).toThrow(WalOverflowError);
   });
 });
 
@@ -131,27 +135,47 @@ describe("AgentHost", () => {
       prompt: "execute once",
     };
     void host.accept(command);
-    await waitFor(() => host.report().inFlightPhase === "accepted", "ACCEPTED boundary");
-    const beforeWrite = readFileSync(join(config.stateDir, "host.wal.jsonl"), "utf8");
+    await waitFor(
+      () => host.report().inFlightPhase === "accepted",
+      "ACCEPTED boundary",
+    );
+    const beforeWrite = readFileSync(
+      join(config.stateDir, "host.wal.jsonl"),
+      "utf8",
+    );
     expect(beforeWrite).toContain('"kind":"ACCEPTED"');
     expect(beforeWrite).not.toContain("execute once");
-    expect(() => readFileSync(join(config.stateDir, "provider-ledger.json"), "utf8")).toThrow();
+    expect(() =>
+      readFileSync(join(config.stateDir, "provider-ledger.json"), "utf8"),
+    ).toThrow();
 
     await host.accept(command);
     host.releaseBoundary();
-    await waitFor(() => host.report().pendingApprovalId !== null, "approval request");
+    await waitFor(
+      () => host.report().pendingApprovalId !== null,
+      "approval request",
+    );
     const approvalId = host.report().pendingApprovalId!;
     await host.approve(approvalId, "approve");
     await host.approve(approvalId, "approve").catch(() => undefined);
-    await waitFor(() => host.report().inFlightPhase === "terminal_durable", "terminal event");
-    const ledger = JSON.parse(readFileSync(join(config.stateDir, "provider-ledger.json"), "utf8"));
+    await waitFor(
+      () => host.report().inFlightPhase === "terminal_durable",
+      "terminal event",
+    );
+    const ledger = JSON.parse(
+      readFileSync(join(config.stateDir, "provider-ledger.json"), "utf8"),
+    );
     expect(ledger.promptExecutions).toBe(1);
     expect(ledger.approvalExecutions).toBe(1);
     expect(ledger.toolExecutions).toBe(1);
     const report: ReconnectReport = host.report();
-    expect(report.childIdentity?.processGroupId).toBe(report.childIdentity?.pid);
+    expect(report.childIdentity?.processGroupId).toBe(
+      report.childIdentity?.pid,
+    );
     expect(report.vendorSessionId).toStartWith("claude-");
-    expect(report.lastAcceptedCommand).toMatchObject({ commandId: "command-1" });
+    expect(report.lastAcceptedCommand).toMatchObject({
+      commandId: "command-1",
+    });
     expect(report.lastEventSequence).toBeGreaterThan(0);
     host.acknowledge(report.lastEventSequence);
     expect(host.report().replay).toEqual([]);
@@ -170,13 +194,24 @@ describe("AgentHost", () => {
       boundary: "during_tool_approval",
       maxWalBytes: 64 * 1024,
     };
-    const wal = new BoundedWal(join(stateDir, "host.wal.jsonl"), config.maxWalBytes);
+    const wal = new BoundedWal(
+      join(stateDir, "host.wal.jsonl"),
+      config.maxWalBytes,
+    );
     wal.append({
       kind: "ACCEPTED",
       at: isoNow(),
-      command: { commandId: "command-approval", brokerGeneration: 1, sessionEpoch: 0 },
+      command: {
+        commandId: "command-approval",
+        brokerGeneration: 1,
+        sessionEpoch: 0,
+      },
     });
-    wal.append({ kind: "COMMAND_WRITTEN", at: isoNow(), commandId: "command-approval" });
+    wal.append({
+      kind: "COMMAND_WRITTEN",
+      at: isoNow(),
+      commandId: "command-approval",
+    });
     wal.append({
       kind: "EVENT",
       at: isoNow(),
@@ -197,23 +232,28 @@ describe("AgentHost", () => {
       approvalId: "approval-1",
       decision: "approve",
     });
-    writeFileSync(join(stateDir, "provider-ledger.json"), `${JSON.stringify({
-      vendor: "codex",
-      vendorSessionId: "codex-session",
-      state: "pending_approval",
-      commandId: "command-approval",
-      promptExecutions: 1,
-      approvalExecutions: 0,
-      toolExecutions: 0,
-      approvalId: "approval-1",
-      finalText: null,
-    })}\n`);
+    writeFileSync(
+      join(stateDir, "provider-ledger.json"),
+      `${JSON.stringify({
+        vendor: "codex",
+        vendorSessionId: "codex-session",
+        state: "pending_approval",
+        commandId: "command-approval",
+        promptExecutions: 1,
+        approvalExecutions: 0,
+        toolExecutions: 0,
+        approvalId: "approval-1",
+        finalText: null,
+      })}\n`,
+    );
 
     const recovered = new AgentHost(config);
     await recovered.start();
     expect(recovered.report().inFlightPhase).toBe("unknown_outcome");
     expect(recovered.report().replay.at(-1)?.type).toBe("UNKNOWN_OUTCOME");
-    const ledger = JSON.parse(readFileSync(join(stateDir, "provider-ledger.json"), "utf8"));
+    const ledger = JSON.parse(
+      readFileSync(join(stateDir, "provider-ledger.json"), "utf8"),
+    );
     expect(ledger.approvalExecutions).toBe(0);
     expect(ledger.toolExecutions).toBe(0);
     await recovered.shutdown();

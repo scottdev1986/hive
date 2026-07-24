@@ -22,7 +22,8 @@ import { HIVE_UPDATE_REPO, HIVE_VERSION, IS_RELEASE_BUILD } from "../version";
 export const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const NETWORK_TIMEOUT_MS = 2_500;
 
-export const updateCachePath = (): string => join(getHiveHome(), "update-check.json");
+export const updateCachePath = (): string =>
+  join(getHiveHome(), "update-check.json");
 
 const CacheSchema = z.object({
   latestVersion: z.string(),
@@ -41,7 +42,10 @@ export function readUpdateCache(path = updateCachePath()): UpdateCache | null {
   }
 }
 
-export function writeUpdateCache(cache: UpdateCache, path = updateCachePath()): void {
+export function writeUpdateCache(
+  cache: UpdateCache,
+  path = updateCachePath(),
+): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(cache, null, 2)}\n`);
 }
@@ -52,13 +56,13 @@ export type UpdateCheck =
   | { state: "disabled"; current: string; reason: string }
   | { state: "up-to-date"; current: string; latest: string }
   | {
-    state: "update-available";
-    current: string;
-    latest: string;
-    securityCritical: boolean;
-    /** Set when the cache answered because the network did not. */
-    stale: boolean;
-  }
+      state: "update-available";
+      current: string;
+      latest: string;
+      securityCritical: boolean;
+      /** Set when the cache answered because the network did not. */
+      stale: boolean;
+    }
   /** We do not know. We say we do not know. */
   | { state: "unavailable"; current: string; reason: string };
 
@@ -123,13 +127,17 @@ export async function fetchLatestFromGitHub(
   if (!response.ok) {
     throw new Error(`GitHub returned ${response.status}`);
   }
-  const body = z.object({
-    tag_name: z.string(),
-    body: z.string().nullish(),
-  }).parse(await response.json());
+  const body = z
+    .object({
+      tag_name: z.string(),
+      body: z.string().nullish(),
+    })
+    .parse(await response.json());
   const patch = parseReleaseTag(body.tag_name);
   if (patch === null) {
-    throw new Error(`latest release tag ${body.tag_name} is not a Hive release`);
+    throw new Error(
+      `latest release tag ${body.tag_name} is not a Hive release`,
+    );
   }
   return {
     version: `0.0.${patch}`,
@@ -157,23 +165,32 @@ export async function checkForUpdate(deps: CheckDeps): Promise<UpdateCheck> {
 
   if (!isRelease) return { state: "dev-build", current };
   const disabled = checksDisabled(env);
-  if (disabled !== null) return { state: "disabled", current, reason: disabled };
+  if (disabled !== null)
+    return { state: "disabled", current, reason: disabled };
 
   const cached = readUpdateCache(cachePath);
-  const fresh = cached !== null &&
-    deps.now() - cached.checkedAt < CHECK_INTERVAL_MS;
+  const fresh =
+    cached !== null && deps.now() - cached.checkedAt < CHECK_INTERVAL_MS;
   if (fresh && deps.force !== true) {
-    return classify(current, cached.latestVersion, cached.securityCritical, false);
+    return classify(
+      current,
+      cached.latestVersion,
+      cached.securityCritical,
+      false,
+    );
   }
 
   try {
     const latest = await deps.fetchLatest();
-    writeUpdateCache({
-      latestVersion: latest.version,
-      checkedAt: deps.now(),
-      securityCritical: latest.securityCritical,
-      dismissedVersion: cached?.dismissedVersion ?? null,
-    }, cachePath);
+    writeUpdateCache(
+      {
+        latestVersion: latest.version,
+        checkedAt: deps.now(),
+        securityCritical: latest.securityCritical,
+        dismissedVersion: cached?.dismissedVersion ?? null,
+      },
+      cachePath,
+    );
     return classify(current, latest.version, latest.securityCritical, false);
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -197,16 +214,25 @@ export async function checkForUpdate(deps: CheckDeps): Promise<UpdateCheck> {
 }
 
 /** `hive update skip` — silence the offered version until a newer one lands. */
-export function dismissVersion(version: string, cachePath = updateCachePath()): void {
+export function dismissVersion(
+  version: string,
+  cachePath = updateCachePath(),
+): void {
   const cache = readUpdateCache(cachePath);
-  writeUpdateCache({
-    latestVersion: cache?.latestVersion ?? version,
-    checkedAt: cache?.checkedAt ?? 0,
-    securityCritical: cache?.securityCritical ?? false,
-    dismissedVersion: version,
-  }, cachePath);
+  writeUpdateCache(
+    {
+      latestVersion: cache?.latestVersion ?? version,
+      checkedAt: cache?.checkedAt ?? 0,
+      securityCritical: cache?.securityCritical ?? false,
+      dismissedVersion: version,
+    },
+    cachePath,
+  );
 }
 
-export function isDismissed(version: string, cache: UpdateCache | null): boolean {
+export function isDismissed(
+  version: string,
+  cache: UpdateCache | null,
+): boolean {
   return cache?.dismissedVersion === version;
 }

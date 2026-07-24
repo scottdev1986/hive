@@ -1,10 +1,14 @@
 import { realpathSync } from "node:fs";
 import { dirname } from "node:path";
-
-import { canonicalizeDirectory, evidenceMatches, foldIdentityKey, isAtOrBeneath } from "./canonical";
-import { isLinkedWorktree, probeGit, repoFamilyKeyOf } from "./git";
 import type { BookmarkProvider } from "./bookmark";
 import { NullBookmarkProvider } from "./bookmark";
+import {
+  canonicalizeDirectory,
+  evidenceMatches,
+  foldIdentityKey,
+  isAtOrBeneath,
+} from "./canonical";
+import { isLinkedWorktree, probeGit, repoFamilyKeyOf } from "./git";
 import type { LedgerCapability, ManagedWorktreeLedger } from "./ledger";
 import type { ProjectRegistry } from "./registry";
 import type { FsEvidence, ProjectKey, Resolution } from "./types";
@@ -34,18 +38,28 @@ function reject(
  * The function is pure with respect to the filesystem: it reads, and it never creates,
  * moves, or deletes anything.
  */
-export function resolveProject(directory: string, options: ResolveOptions): Resolution {
+export function resolveProject(
+  directory: string,
+  options: ResolveOptions,
+): Resolution {
   const bookmarks = options.bookmarks ?? new NullBookmarkProvider();
 
   // Step 1 -- canonicalize the existing invocation directory.
   const canonical = canonicalizeDirectory(directory);
   if (!canonical.ok) {
-    return reject(canonical.error, directory, `cannot canonicalize ${directory}`);
+    return reject(
+      canonical.error,
+      directory,
+      `cannot canonicalize ${directory}`,
+    );
   }
   const { canonicalPath: invocationPath, volume } = canonical.value;
 
   // Step 2 -- authenticated managed-worktree ownership, before any repository is read.
-  const managed = options.ledger.lookup(invocationPath, options.ledgerCapability);
+  const managed = options.ledger.lookup(
+    invocationPath,
+    options.ledgerCapability,
+  );
   if (managed) {
     const probe = probeGit(invocationPath);
     const key: ProjectKey = {
@@ -54,7 +68,9 @@ export function resolveProject(directory: string, options: ResolveOptions): Reso
       kind: "managed-worktree",
       gitDir: probe.gitDir,
       gitCommonDir: probe.gitCommonDir,
-      repoFamilyKey: probe.gitCommonDir ? repoFamilyKeyOf(probe.gitCommonDir) : null,
+      repoFamilyKey: probe.gitCommonDir
+        ? repoFamilyKeyOf(probe.gitCommonDir)
+        : null,
       superprojectRoot: probe.superprojectRoot,
       volume,
     };
@@ -71,10 +87,18 @@ export function resolveProject(directory: string, options: ResolveOptions): Reso
   const probe = probeGit(invocationPath);
 
   if (probe.isBare) {
-    return reject("BARE_REPOSITORY", invocationPath, "a bare repository has no worktree to own");
+    return reject(
+      "BARE_REPOSITORY",
+      invocationPath,
+      "a bare repository has no worktree to own",
+    );
   }
   if (probe.isInsideGitDir) {
-    return reject("INSIDE_GIT_DIR", invocationPath, "the Git directory is not a project root");
+    return reject(
+      "INSIDE_GIT_DIR",
+      invocationPath,
+      "the Git directory is not a project root",
+    );
   }
 
   const key = probe.isRepository
@@ -91,7 +115,8 @@ export function resolveProject(directory: string, options: ResolveOptions): Reso
 
   // Steps 4-6 produced a root. Everything below is registry reconciliation.
   const rootCanonical = canonicalizeDirectory(key.canonicalPath);
-  if (!rootCanonical.ok) return reject(rootCanonical.error, key.canonicalPath, "root vanished");
+  if (!rootCanonical.ok)
+    return reject(rootCanonical.error, key.canonicalPath, "root vanished");
   const evidence = rootCanonical.value.evidence;
 
   if (key.kind === "plain-directory") {
@@ -132,8 +157,16 @@ function gitProjectKey(
     if (options.registry.findByIdentityKey(childKey)) return null;
 
     const parentProbe = probeGit(dirname(root));
-    if (parentProbe.topLevel && parentProbe.gitCommonDir && parentProbe.gitDir) {
-      return keyFromProbe(realpathSync.native(parentProbe.topLevel), parentProbe, volume);
+    if (
+      parentProbe.topLevel &&
+      parentProbe.gitCommonDir &&
+      parentProbe.gitDir
+    ) {
+      return keyFromProbe(
+        realpathSync.native(parentProbe.topLevel),
+        parentProbe,
+        volume,
+      );
     }
     // No enclosing repository: Use Parent has nothing to select, so fall through.
   }
@@ -166,13 +199,18 @@ function keyFromProbe(
     gitDir,
     gitCommonDir,
     repoFamilyKey: repoFamilyKeyOf(gitCommonDir),
-    superprojectRoot: probe.superprojectRoot ? realpathSync.native(probe.superprojectRoot) : null,
+    superprojectRoot: probe.superprojectRoot
+      ? realpathSync.native(probe.superprojectRoot)
+      : null,
     volume,
   };
 }
 
 /** Step 6 -- a plain directory uses its exact canonical root. */
-function plainProjectKey(canonicalPath: string, volume: ProjectKey["volume"]): ProjectKey {
+function plainProjectKey(
+  canonicalPath: string,
+  volume: ProjectKey["volume"],
+): ProjectKey {
   return {
     identityKey: foldIdentityKey(canonicalPath, volume),
     canonicalPath,
@@ -193,7 +231,8 @@ function findRegisteredPlainAncestor(
   for (const record of registry.records()) {
     if (record.kind !== "plain-directory") continue;
     if (record.confirmedCanonicalPath === key.canonicalPath) continue;
-    if (isAtOrBeneath(key.canonicalPath, record.confirmedCanonicalPath, volume)) return record;
+    if (isAtOrBeneath(key.canonicalPath, record.confirmedCanonicalPath, volume))
+      return record;
   }
   return null;
 }
@@ -240,7 +279,10 @@ function reconcile(
       const resolved = bookmarks.resolve(existing.bookmark);
       if (resolved) {
         const resolvedReal = safeRealpath(resolved.path);
-        if (resolvedReal !== null && resolvedReal !== existing.confirmedCanonicalPath) {
+        if (
+          resolvedReal !== null &&
+          resolvedReal !== existing.confirmedCanonicalPath
+        ) {
           registry.markNeedsRebind(existing.hiveUuid, "BOOKMARK_DISAGREEMENT");
           return {
             status: "NEEDS_REBIND",
@@ -314,25 +356,44 @@ export function resolveOrCreate(
   idempotencyKey: string,
 ): Resolution {
   const first = resolveProject(directory, options);
-  if (first.status !== "NEEDS_SETUP" || first.reason !== "NEW_PROJECT") return first;
+  if (first.status !== "NEEDS_SETUP" || first.reason !== "NEW_PROJECT")
+    return first;
 
   const leaseKey = `${first.key.identityKey} ${idempotencyKey}`;
   const held = leases.get(leaseKey);
   if (held) {
     const record = options.registry.findByUuid(held);
-    if (record) return { status: "RESOLVED", key: first.key, hiveUuid: held, evidence: first.evidence };
+    if (record)
+      return {
+        status: "RESOLVED",
+        key: first.key,
+        hiveUuid: held,
+        evidence: first.evidence,
+      };
   }
 
   const existing = options.registry.findByIdentityKey(first.key.identityKey);
   if (existing) {
-    return { status: "RESOLVED", key: first.key, hiveUuid: existing.hiveUuid, evidence: first.evidence };
+    return {
+      status: "RESOLVED",
+      key: first.key,
+      hiveUuid: existing.hiveUuid,
+      evidence: first.evidence,
+    };
   }
 
   const bookmarks = options.bookmarks ?? new NullBookmarkProvider();
-  const bookmark = bookmarks.available ? bookmarks.create(first.key.canonicalPath) : null;
+  const bookmark = bookmarks.available
+    ? bookmarks.create(first.key.canonicalPath)
+    : null;
   const record = options.registry.create(first.key, first.evidence, bookmark);
   leases.set(leaseKey, record.hiveUuid);
-  return { status: "RESOLVED", key: first.key, hiveUuid: record.hiveUuid, evidence: first.evidence };
+  return {
+    status: "RESOLVED",
+    key: first.key,
+    hiveUuid: record.hiveUuid,
+    evidence: first.evidence,
+  };
 }
 
 export function clearCreationLeases(): void {

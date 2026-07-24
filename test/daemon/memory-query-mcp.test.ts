@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
-import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { DEFAULT_CLASS_BUDGETS } from "../../src/daemon/episodic-projections";
+import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { projectStateDir } from "../../src/daemon/project-state";
 import { HiveDaemon } from "../../src/daemon/server";
-import { actingAs, type AuthorizedFetch } from "../../src/daemon/testing";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
+import { type AuthorizedFetch, actingAs } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -28,7 +28,9 @@ afterEach(async () => {
     await daemon.stop().catch(() => undefined);
   }
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -84,23 +86,26 @@ interface Envelope {
 }
 
 function envelope(result: Awaited<ReturnType<Client["callTool"]>>): Envelope {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
   return JSON.parse(content.text) as Envelope;
 }
 
-async function connectedClient(
-  fetch: AuthorizedFetch,
-): Promise<Client> {
+async function connectedClient(fetch: AuthorizedFetch): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
     { fetch },
   );
-  const client = new Client({ name: "hive-memory-query-test", version: "1.0.0" });
+  const client = new Client({
+    name: "hive-memory-query-test",
+    version: "1.0.0",
+  });
   await client.connect(transport);
   return client;
 }
@@ -109,7 +114,10 @@ async function query(
   client: Client,
   args: Record<string, unknown>,
 ): Promise<Envelope> {
-  const result = await client.callTool({ name: "memory_query", arguments: args });
+  const result = await client.callTool({
+    name: "memory_query",
+    arguments: args,
+  });
   expect(result.isError).not.toBe(true);
   return envelope(result);
 }
@@ -126,9 +134,7 @@ function daemonFixture(options: {
     spawner: new UnusedSpawner(),
     db,
     repoRoot: options.repoRoot,
-    ...(options.episodic === null
-      ? {}
-      : { episodicStore: options.episodic }),
+    ...(options.episodic === null ? {} : { episodicStore: options.episodic }),
   });
   daemons.push(daemon);
   return { daemon, db };
@@ -136,26 +142,37 @@ function daemonFixture(options: {
 
 function seedTokenRows(db: HiveDatabase, agentId: string): void {
   const sessionId = crypto.randomUUID();
-  db.database.query(`
+  db.database
+    .query(`
     INSERT INTO token_usage_sessions (id, repoRoot, startedAt)
     VALUES (?, '/repo', ?)
-  `).run(sessionId, T0);
+  `)
+    .run(sessionId, T0);
   const subjectId = crypto.randomUUID();
-  db.database.query(`
+  db.database
+    .query(`
     INSERT INTO token_usage_subjects (
       id, sessionId, agentId, name, role, provider, cwd, startedAt
     ) VALUES (?, ?, ?, ?, 'worker', 'claude', '/repo', ?)
-  `).run(subjectId, sessionId, agentId, agentId, T0);
-  db.database.query(`
+  `)
+    .run(subjectId, sessionId, agentId, agentId, T0);
+  db.database
+    .query(`
     INSERT INTO token_usage_events (
       subjectId, eventKey, inputTokens, outputTokens, observedAt, source
     ) VALUES (?, 'm1', 1234, 321, ?, 'claude-transcript')
-  `).run(subjectId, T1);
+  `)
+    .run(subjectId, T1);
 }
 
-async function fileBytesContain(root: string, needle: string): Promise<boolean> {
-  const entries = await readdir(root, { recursive: true, withFileTypes: true })
-    .catch(() => []);
+async function fileBytesContain(
+  root: string,
+  needle: string,
+): Promise<boolean> {
+  const entries = await readdir(root, {
+    recursive: true,
+    withFileTypes: true,
+  }).catch(() => []);
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const path = join(entry.parentPath, entry.name);
@@ -176,25 +193,31 @@ describe("memory_query MCP tool", () => {
       agents: [agent("maya")],
     });
     const assignment = daemon.status.currentAssignment("agent-maya")!;
-    daemon.status.appendAgentReport({
-      subject: "maya",
-      agentId: "agent-maya",
-      role: "writer",
-      incarnationGeneration: 1,
-      capabilityEpoch: 0,
-      toolSessionId: null,
-    }, {
-      requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000a1",
-      assignmentId: assignment.assignmentId,
-      assignmentGeneration: assignment.assignmentGeneration,
-      phase: "implementing",
-      summary: "Wiring memory_query",
-      blocker: null,
-      evidenceRefs: [],
-      freshForSeconds: 600,
-    }, new Date(T1));
+    daemon.status.appendAgentReport(
+      {
+        subject: "maya",
+        agentId: "agent-maya",
+        role: "writer",
+        incarnationGeneration: 1,
+        capabilityEpoch: 0,
+        toolSessionId: null,
+      },
+      {
+        requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000a1",
+        assignmentId: assignment.assignmentId,
+        assignmentGeneration: assignment.assignmentGeneration,
+        phase: "implementing",
+        summary: "Wiring memory_query",
+        blocker: null,
+        evidenceRefs: [],
+        freshForSeconds: 600,
+      },
+      new Date(T1),
+    );
 
-    const client = await connectedClient(actingAs(daemon, "operator", "operator"));
+    const client = await connectedClient(
+      actingAs(daemon, "operator", "operator"),
+    );
     try {
       const now = await query(client, { class: "agent-now", agent: "maya" });
       expect(now.state).toBe("ok");
@@ -351,7 +374,9 @@ describe("memory_query MCP tool", () => {
       episodic: new EpisodicStore(":memory:"),
       agents: [],
     });
-    const client = await connectedClient(actingAs(daemon, "operator", "operator"));
+    const client = await connectedClient(
+      actingAs(daemon, "operator", "operator"),
+    );
     try {
       await client.callTool({
         name: "memory_write",
@@ -455,9 +480,13 @@ describe("two-way nonce isolation with positive controls", () => {
     });
     seedTokenRows(a.db, "agent-ada");
 
-    const queenA = await connectedClient(actingAs(a.daemon, "operator", "operator"));
+    const queenA = await connectedClient(
+      actingAs(a.daemon, "operator", "operator"),
+    );
     const adaA = await connectedClient(actingAs(a.daemon, "ada", "writer"));
-    const queenB = await connectedClient(actingAs(b.daemon, "operator", "operator"));
+    const queenB = await connectedClient(
+      actingAs(b.daemon, "operator", "operator"),
+    );
     const adaB = await connectedClient(actingAs(b.daemon, "ada", "writer"));
     try {
       await queenA.callTool({
@@ -479,7 +508,9 @@ describe("two-way nonce isolation with positive controls", () => {
 
       // Positive control: in A, every query class finds NONCE_A.
       const positiveInA: Envelope[] = [];
-      positiveInA.push(await query(queenA, { class: "agent-now", agent: "ada" }));
+      positiveInA.push(
+        await query(queenA, { class: "agent-now", agent: "ada" }),
+      );
       positiveInA.push(
         await query(queenA, { class: "agent-history", agent: "ada" }),
       );
@@ -511,7 +542,9 @@ describe("two-way nonce isolation with positive controls", () => {
 
       // Isolation: in B, every query class returns zero hits for NONCE_A.
       const negativeInB: Envelope[] = [];
-      negativeInB.push(await query(queenB, { class: "agent-now", agent: "ada" }));
+      negativeInB.push(
+        await query(queenB, { class: "agent-now", agent: "ada" }),
+      );
       negativeInB.push(
         await query(queenB, { class: "agent-history", agent: "ada" }),
       );
@@ -540,7 +573,9 @@ describe("two-way nonce isolation with positive controls", () => {
       expect(JSON.stringify(storeB.currentFacts())).not.toContain(NONCE_A);
       expect(JSON.stringify(storeA.eventsFor())).toContain(NONCE_A);
       expect(JSON.stringify(storeA.currentFacts())).toContain(NONCE_A);
-      expect(await fileBytesContain(projectStateDir(rootB), NONCE_A)).toBe(false);
+      expect(await fileBytesContain(projectStateDir(rootB), NONCE_A)).toBe(
+        false,
+      );
       expect(await fileBytesContain(rootB, NONCE_A)).toBe(false);
 
       // Mirror: plant NONCE_B in B, B finds it, A sees none of it.
@@ -607,7 +642,9 @@ describe("two-way nonce isolation with positive controls", () => {
       const landedA = await query(queenA, { class: "what-landed" });
       expect(JSON.stringify(landedA.results)).not.toContain(NONCE_B);
       expect(JSON.stringify(storeA.eventsFor())).not.toContain(NONCE_B);
-      expect(await fileBytesContain(projectStateDir(rootA), NONCE_B)).toBe(false);
+      expect(await fileBytesContain(projectStateDir(rootA), NONCE_B)).toBe(
+        false,
+      );
       expect(await fileBytesContain(rootA, NONCE_B)).toBe(false);
 
       // The stores really are two files under two project identities.

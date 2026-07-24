@@ -4,8 +4,14 @@ import { macProcessIdentity } from "../../../src/daemon/lifecycle";
 
 test("TypeScript and Zig encode the same live process identity", async () => {
   const root = resolve(import.meta.dir, "../../..");
-  const probe = resolve(root, "native/sessiond/zig-out/bin/sessiond-identity-probe");
-  const child = Bun.spawn([probe, String(process.pid)], { stdout: "pipe", stderr: "pipe" });
+  const probe = resolve(
+    root,
+    "native/sessiond/zig-out/bin/sessiond-identity-probe",
+  );
+  const child = Bun.spawn([probe, String(process.pid)], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   const [status, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),

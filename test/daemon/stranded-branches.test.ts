@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentRecord } from "../../src/schemas";
 import type { UnmergedBranch } from "../../src/adapters/worktrees";
 import { HiveDatabase } from "../../src/daemon/db";
 import type { SessionSender } from "../../src/daemon/delivery";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
 import { submitPaste } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -136,7 +136,9 @@ describe("stranded-branch reconciliation", () => {
   });
 
   test("stays quiet about a branch deliberately marked preserved", async () => {
-    const { db, daemon } = strandedDaemon([{ ...DAVID_BRANCH, preserved: true }]);
+    const { db, daemon } = strandedDaemon([
+      { ...DAVID_BRANCH, preserved: true },
+    ]);
     try {
       await daemon.reconcileStrandedBranches();
       expect(await daemon.delivery.orchestratorInbox()).toEqual([]);

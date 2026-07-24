@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 import { sourceBuildHash } from "../../src/daemon/handshake";
+import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const fixtures: string[] = [];
 
@@ -13,8 +19,14 @@ function buildInputFixture(): string {
   mkdirSync(join(root, "skills", "test-skill"), { recursive: true });
   writeFileSync(join(root, "src", "app.ts"), "export const value = 1;\n");
   writeFileSync(join(root, "src", "app.test.ts"), "test('one', () => {});\n");
-  writeFileSync(join(root, "src", "__fixtures__", "sample.ts"), "export const fixture = 1;\n");
-  writeFileSync(join(root, "skills", "test-skill", "SKILL.md"), "# Skill one\n");
+  writeFileSync(
+    join(root, "src", "__fixtures__", "sample.ts"),
+    "export const fixture = 1;\n",
+  );
+  writeFileSync(
+    join(root, "skills", "test-skill", "SKILL.md"),
+    "# Skill one\n",
+  );
   writeFileSync(join(root, "graphify.lock"), "graphify-one\n");
   writeFileSync(join(root, "bun.lock"), "bun-one\n");
   return root;

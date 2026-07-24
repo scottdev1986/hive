@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -19,9 +26,9 @@ import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recov
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 describe("Grok adapter", () => {
@@ -33,10 +40,17 @@ describe("Grok adapter", () => {
 
   test("launches a writer with model and optional effort on argv", () => {
     expect(buildGrokSpawnCommand(writer)).toEqual([
-      "grok", "-m", "catalog-model", "--always-approve",
+      "grok",
+      "-m",
+      "catalog-model",
+      "--always-approve",
     ]);
     expect(buildGrokSpawnCommand({ ...writer, effort: "high" })).toEqual([
-      "grok", "-m", "catalog-model", "--reasoning-effort", "high",
+      "grok",
+      "-m",
+      "catalog-model",
+      "--reasoning-effort",
+      "high",
       "--always-approve",
     ]);
   });
@@ -49,32 +63,48 @@ describe("Grok adapter", () => {
   test("names a new session on argv, and never on a resume", () => {
     const sessionId = "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f";
     expect(buildGrokSpawnCommand({ ...writer, sessionId })).toEqual([
-      "grok", "-m", "catalog-model", "--always-approve",
-      "--session-id", sessionId,
+      "grok",
+      "-m",
+      "catalog-model",
+      "--always-approve",
+      "--session-id",
+      sessionId,
     ]);
     // The CLI rejects --session-id on resume (it names a NEW conversation), so
     // the resume path carries -r and nothing else.
-    expect(buildGrokResumeCommand({ ...writer, sessionId }, sessionId)).toEqual([
-      "grok", "-r", sessionId, "-m", "catalog-model", "--always-approve",
-    ]);
+    expect(buildGrokResumeCommand({ ...writer, sessionId }, sessionId)).toEqual(
+      ["grok", "-r", sessionId, "-m", "catalog-model", "--always-approve"],
+    );
   });
 
   test("uses the cross-model reader barrier", () => {
     expect(buildGrokSpawnCommand({ ...writer, readOnly: true })).toEqual([
-      "grok", "-m", "catalog-model",
-      "--deny", "Bash",
-      "--deny", "Write",
-      "--deny", "Edit",
-      "--allow", "MCPTool",
-      "--allow", "Read",
-      "--allow", "Grep",
+      "grok",
+      "-m",
+      "catalog-model",
+      "--deny",
+      "Bash",
+      "--deny",
+      "Write",
+      "--deny",
+      "Edit",
+      "--allow",
+      "MCPTool",
+      "--allow",
+      "Read",
+      "--allow",
+      "Grep",
     ]);
   });
 
   test("resume uses -r and replays current process flags, never --session-id", () => {
     const command = buildGrokResumeCommand(writer, "019f-session");
     expect(command).toEqual([
-      "grok", "-r", "019f-session", "-m", "catalog-model",
+      "grok",
+      "-r",
+      "019f-session",
+      "-m",
+      "catalog-model",
       "--always-approve",
     ]);
     expect(command).not.toContain("--session-id");
@@ -92,8 +122,13 @@ describe("Grok adapter", () => {
   });
 
   test("parses only the vendor version identity shape", () => {
-    expect(parseGrokCliVersion("grok 0.2.93 (f00f96316d4b) [stable]\n"))
-      .toEqual({ version: "0.2.93", buildHash: "f00f96316d4b", channel: "stable" });
+    expect(
+      parseGrokCliVersion("grok 0.2.93 (f00f96316d4b) [stable]\n"),
+    ).toEqual({
+      version: "0.2.93",
+      buildHash: "f00f96316d4b",
+      channel: "stable",
+    });
     const current = parseGrokCliVersion("grok 0.2.101 (5bc4b5dfadcf)");
     expect(current).not.toBeNull();
     expect(current).toEqual({
@@ -109,20 +144,20 @@ describe("Grok adapter", () => {
     roots.push(root);
     const executable = async (name: string, output: string, exitCode = 0) => {
       const path = join(root, name);
-      await writeFile(path, [
-        "#!/bin/sh",
-        `printf '%s\\n' '${output}'`,
-        `exit ${exitCode}`,
-        "",
-      ].join("\n"));
+      await writeFile(
+        path,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' '${output}'`,
+          `exit ${exitCode}`,
+          "",
+        ].join("\n"),
+      );
       await chmod(path, 0o755);
       return path;
     };
 
-    const current = await executable(
-      "current",
-      "grok 0.2.101 (5bc4b5dfadcf)",
-    );
+    const current = await executable("current", "grok 0.2.101 (5bc4b5dfadcf)");
     expect(probeGrokCliVersion(current)).toEqual({
       version: "0.2.101",
       buildHash: "5bc4b5dfadcf",
@@ -145,16 +180,19 @@ describe("Grok adapter", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-grok-config-"));
     roots.push(root);
     await mkdir(join(root, ".grok"));
-    await writeFile(join(root, ".grok", "config.toml"), [
-      'theme = "dark"',
-      "[unrelated]",
-      "keep = true",
-      "[mcp_servers.hive]",
-      'url = "http://stale"',
-      "[mcp_servers.other]",
-      'command = "other"',
-      "",
-    ].join("\n"));
+    await writeFile(
+      join(root, ".grok", "config.toml"),
+      [
+        'theme = "dark"',
+        "[unrelated]",
+        "keep = true",
+        "[mcp_servers.hive]",
+        'url = "http://stale"',
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+      ].join("\n"),
+    );
     await writeGrokAgentConfig(root, {
       daemonPort: 4317,
       capabilityToken: "secret-token",
@@ -163,7 +201,7 @@ describe("Grok adapter", () => {
     const content = await readFile(join(root, ".grok", "config.toml"), "utf8");
     expect(content).toContain('theme = "dark"');
     expect(content).toContain("[unrelated]\nkeep = true");
-    expect(content).toContain("[mcp_servers.other]\ncommand = \"other\"");
+    expect(content).toContain('[mcp_servers.other]\ncommand = "other"');
     expect(content).not.toContain("http://stale");
     expect(content).toContain('url = "http://127.0.0.1:4317/mcp"');
     expect(content).toContain('Authorization = "Bearer secret-token"');
@@ -186,14 +224,20 @@ describe("Grok adapter", () => {
     const long = join(home, "sessions", "worktree-deadbeef");
     await mkdir(join(encoded, "old"), { recursive: true });
     await mkdir(join(long, "new"), { recursive: true });
-    await writeFile(join(encoded, "old", "summary.json"), JSON.stringify({
-      info: { id: "old-id", cwd: worktree },
-    }));
+    await writeFile(
+      join(encoded, "old", "summary.json"),
+      JSON.stringify({
+        info: { id: "old-id", cwd: worktree },
+      }),
+    );
     await writeFile(join(long, ".cwd"), `${worktree}\n`);
-    await writeFile(join(long, "new", "summary.json"), JSON.stringify({
-      info: { id: "new-id", cwd: worktree },
-      current_model_id: "observed-model",
-    }));
+    await writeFile(
+      join(long, "new", "summary.json"),
+      JSON.stringify({
+        info: { id: "new-id", cwd: worktree },
+        current_model_id: "observed-model",
+      }),
+    );
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
     const summary = join(long, "new", "summary.json");
     await writeFile(summary, await readFile(summary, "utf8"));
@@ -202,9 +246,12 @@ describe("Grok adapter", () => {
       "observed-model",
     );
 
-    await writeFile(summary, JSON.stringify({
-      info: { id: "wrong-id", cwd: join(home, "other") },
-    }));
+    await writeFile(
+      summary,
+      JSON.stringify({
+        info: { id: "wrong-id", cwd: join(home, "other") },
+      }),
+    );
     expect(await findLatestGrokSessionId(worktree, home)).toBe("old-id");
   });
 
@@ -214,10 +261,13 @@ describe("Grok adapter", () => {
     const worktree = resolve(join(home, "worktree"));
     const project = join(home, "sessions", encodeURIComponent(worktree));
     await mkdir(join(project, "session"), { recursive: true });
-    await writeFile(join(project, "session", "summary.json"), JSON.stringify({
-      info: { sessionID: "drifted-session", cwd: worktree },
-      current_model_id: "observed-model",
-    }));
+    await writeFile(
+      join(project, "session", "summary.json"),
+      JSON.stringify({
+        info: { sessionID: "drifted-session", cwd: worktree },
+        current_model_id: "observed-model",
+      }),
+    );
 
     expect(findLatestGrokSessionId(worktree, home)).rejects.toThrow(
       "Invalid Grok summary",
@@ -236,10 +286,13 @@ describe("Grok adapter", () => {
       timestamp: string,
     ) => {
       await mkdir(join(project, directory), { recursive: true });
-      await writeFile(join(project, directory, "summary.json"), JSON.stringify({
-        info: { id, cwd: worktree },
-        [timestampKey]: timestamp,
-      }));
+      await writeFile(
+        join(project, directory, "summary.json"),
+        JSON.stringify({
+          info: { id, cwd: worktree },
+          [timestampKey]: timestamp,
+        }),
+      );
     };
     await summary(
       "predecessor",
@@ -248,12 +301,19 @@ describe("Grok adapter", () => {
       "2026-07-13T11:59:59.000Z",
     );
 
-    expect(await discoverGrokRecoverySessionId(
-      worktree,
-      "2026-07-13T12:00:00.000Z",
-      home,
-    )).toBeNull();
-    await summary("current", "current", "created_at", "2026-07-13T12:00:01.000Z");
+    expect(
+      await discoverGrokRecoverySessionId(
+        worktree,
+        "2026-07-13T12:00:00.000Z",
+        home,
+      ),
+    ).toBeNull();
+    await summary(
+      "current",
+      "current",
+      "created_at",
+      "2026-07-13T12:00:01.000Z",
+    );
     await summary(
       "predecessor",
       "predecessor",
@@ -261,11 +321,13 @@ describe("Grok adapter", () => {
       "2026-07-13T11:59:59.000Z",
     );
 
-    expect(await discoverGrokRecoverySessionId(
-      worktree,
-      "2026-07-13T12:00:00.000Z",
-      home,
-    )).toBe("current");
+    expect(
+      await discoverGrokRecoverySessionId(
+        worktree,
+        "2026-07-13T12:00:00.000Z",
+        home,
+      ),
+    ).toBe("current");
 
     await summary(
       "second-current",
@@ -273,11 +335,9 @@ describe("Grok adapter", () => {
       "created_at",
       "2026-07-13T12:00:02.000Z",
     );
-    expect(discoverGrokRecoverySessionId(
-      worktree,
-      "2026-07-13T12:00:00.000Z",
-      home,
-    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    expect(
+      discoverGrokRecoverySessionId(worktree, "2026-07-13T12:00:00.000Z", home),
+    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
     await rm(join(project, "second-current"), { recursive: true });
 
     await summary(
@@ -286,11 +346,9 @@ describe("Grok adapter", () => {
       "createdAt",
       "2026-07-13T12:00:03.000Z",
     );
-    expect(discoverGrokRecoverySessionId(
-      worktree,
-      "2026-07-13T12:00:00.000Z",
-      home,
-    )).rejects.toMatchObject({
+    expect(
+      discoverGrokRecoverySessionId(worktree, "2026-07-13T12:00:00.000Z", home),
+    ).rejects.toMatchObject({
       name: "RecoverySessionDiscoveryError",
       reason: "invalid-evidence",
     });

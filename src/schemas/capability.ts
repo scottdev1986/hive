@@ -27,7 +27,9 @@ const Hv1CapabilityCommonShape = {
 export const Hv1CapabilityRecordSchema = z.union([
   z.strictObject({
     ...Hv1CapabilityCommonShape,
-    constraints: z.strictObject({ content: z.literal(true).optional() }).optional(),
+    constraints: z
+      .strictObject({ content: z.literal(true).optional() })
+      .optional(),
   }),
   z.strictObject({
     ...Hv1CapabilityCommonShape,
@@ -92,9 +94,9 @@ export const CAPABILITY_PROVIDERS = CapabilityProviderSchema.options;
  */
 export function unknownVendor(vendor: never, site: string): never {
   throw new Error(
-    `${site}: unknown vendor ${JSON.stringify(vendor)}; Hive knows ${
-      CAPABILITY_PROVIDERS.join(" and ")
-    }`,
+    `${site}: unknown vendor ${JSON.stringify(vendor)}; Hive knows ${CAPABILITY_PROVIDERS.join(
+      " and ",
+    )}`,
   );
 }
 
@@ -114,7 +116,9 @@ export function providersOf<T>(
   record: Partial<Record<CapabilityProvider, T>>,
 ): CapabilityProvider[] {
   const union = new Set<string>(CAPABILITY_PROVIDERS);
-  const extras = Object.keys(record).filter((key) => !union.has(key)).sort();
+  const extras = Object.keys(record)
+    .filter((key) => !union.has(key))
+    .sort();
   return [...CAPABILITY_PROVIDERS, ...(extras as CapabilityProvider[])];
 }
 
@@ -124,8 +128,8 @@ export async function forEachProvider<T>(
   read: (provider: CapabilityProvider) => Promise<T>,
 ): Promise<Record<CapabilityProvider, T>> {
   const entries = await Promise.all(
-    CAPABILITY_PROVIDERS.map(async (provider) =>
-      [provider, await read(provider)] as const
+    CAPABILITY_PROVIDERS.map(
+      async (provider) => [provider, await read(provider)] as const,
     ),
   );
   return Object.fromEntries(entries) as Record<CapabilityProvider, T>;
@@ -222,17 +226,17 @@ export type CapabilityUnknownReason = z.infer<
  */
 export type Discovered<T> =
   | {
-    state: "known";
-    value: T;
-    surface: CapabilitySurface;
-    observedAt: string;
-  }
+      state: "known";
+      value: T;
+      surface: CapabilitySurface;
+      observedAt: string;
+    }
   | {
-    state: "unknown";
-    reason: CapabilityUnknownReason;
-    surface: CapabilitySurface;
-    observedAt: string;
-  };
+      state: "unknown";
+      reason: CapabilityUnknownReason;
+      surface: CapabilitySurface;
+      observedAt: string;
+    };
 
 export const discovered = <T extends z.ZodType>(value: T) =>
   z.discriminatedUnion("state", [
@@ -277,7 +281,11 @@ export const valueOr = <T>(fact: Discovered<T>, fallback: T): T =>
  * advertises Hive's `minimal`. An unknown future string must survive ingestion
  * and persistence intact so a critical restart can replay it.
  */
-export const EffortLevelSchema = z.string().min(1).max(64).regex(/^[a-z0-9-]+$/);
+export const EffortLevelSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9-]+$/);
 
 export const CapabilityRecordSchema = z.strictObject({
   // --- Identity. Together these form the record's key. ---
@@ -374,7 +382,9 @@ export const fingerprintAccount = (
   identifiers: readonly (string | null | undefined)[],
 ): string => {
   const material = identifiers
-    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .filter(
+      (part): part is string => typeof part === "string" && part.length > 0,
+    )
     .map((part) => part.trim().toLowerCase());
   if (material.length === 0) return `${provider}:unidentified`;
   return createHash("sha256")

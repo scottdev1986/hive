@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { QUIET_LIMIT, waitForMcpReporting, watchForProofOfLife, type ProofOfLifeDeps } from "../../src/daemon/readiness";
+import {
+  type ProofOfLifeDeps,
+  QUIET_LIMIT,
+  waitForMcpReporting,
+  watchForProofOfLife,
+} from "../../src/daemon/readiness";
 
 /**
  * A pane that redraws like a real TUI: the Codex composer increments
@@ -8,7 +13,10 @@ import { QUIET_LIMIT, waitForMcpReporting, watchForProofOfLife, type ProofOfLife
  */
 function tickingPane(): () => Promise<string> {
   let second = 0;
-  return async () => `> task\n• Working (${(second += 1)}s • esc to interrupt)`;
+  return async () => {
+    second += 1;
+    return `> task\n• Working (${second}s • esc to interrupt)`;
+  };
 }
 
 const frozen = (text: string) => async () => text;
@@ -34,9 +42,13 @@ describe("proof of life", () => {
     // No hook event, no rollout write, no tool call: exactly the state that got
     // liam and ethan killed at 15s. The screen is redrawing, which is the whole
     // point — thinking emits a heartbeat even though it emits no actions.
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: tickingPane(),
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: tickingPane(),
+      }),
+    );
     expect(proof).toEqual({
       alive: true,
       signal: "screen redrawing (codex running in pane)",
@@ -46,15 +58,19 @@ describe("proof of life", () => {
   test("survives far past the retired 15s deadline while it reasons", async () => {
     let polls = 0;
     const pane = tickingPane();
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: async () => {
-        polls += 1;
-        return pane();
-      },
-      // A five-minute thinker is not a dead one; there is no wall clock left to
-      // outlive.
-      heartbeatMin: 300,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: async () => {
+          polls += 1;
+          return pane();
+        },
+        // A five-minute thinker is not a dead one; there is no wall clock left to
+        // outlive.
+        heartbeatMin: 300,
+      }),
+    );
     expect(proof.alive).toBe(true);
     expect(polls).toBeGreaterThan(200);
   });
@@ -66,11 +82,18 @@ describe("proof of life", () => {
     // the old predicate ("three pane changes") called that a healthy launch and
     // recorded a dead provider as a successful spawn.
     let tick = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: async () => `[wrapper] launching provider... ${(tick += 1)}`,
-      launchedProcessAlive: async () => false,
-      launchedCommand: "codex",
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: async () => {
+          tick += 1;
+          return `[wrapper] launching provider... ${tick}`;
+        },
+        launchedProcessAlive: async () => false,
+        launchedCommand: "codex",
+      }),
+    );
     expect(proof.alive).toBe(false);
     if (!proof.alive) {
       // And it names the death it actually died. This pane was never silent.
@@ -85,10 +108,14 @@ describe("proof of life", () => {
     // as the deep-tier Codex case, and the only difference from the test above
     // is that the launched process is genuinely running: no hook event, no
     // rollout write, no tool call, and it must still read as alive.
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: tickingPane(),
-      launchedProcessAlive: async () => true,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: tickingPane(),
+        launchedProcessAlive: async () => true,
+      }),
+    );
     expect(proof.alive).toBe(true);
   });
 
@@ -96,10 +123,14 @@ describe("proof of life", () => {
     // `ps` failed, or the terminal host reported no process. That is not evidence the agent is
     // running, so a redraw we cannot attribute buys nothing — and hive says so
     // rather than flattering itself with a default.
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: tickingPane(),
-      launchedProcessAlive: async () => null,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: tickingPane(),
+        launchedProcessAlive: async () => null,
+      }),
+    );
     expect(proof.alive).toBe(false);
   });
 
@@ -108,11 +139,15 @@ describe("proof of life", () => {
     // Readiness looks for the binary hive launched, so an app-server agent
     // proves life exactly like a TUI one; a check hardcoded to "codex" would
     // have killed every one of them.
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: tickingPane(),
-      launchedProcessAlive: async () => true,
-      launchedCommand: "hive",
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: tickingPane(),
+        launchedProcessAlive: async () => true,
+        launchedCommand: "hive",
+      }),
+    );
     expect(proof).toEqual({
       alive: true,
       signal: "screen redrawing (hive running in pane)",
@@ -121,32 +156,46 @@ describe("proof of life", () => {
 
   test("a live vendor parked at a silent trust prompt survives past the gate", async () => {
     let polls = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: frozen("Do you trust the contents of this directory?"),
-      launchedProcessAlive: async () => true,
-      wait: async () => {
-        polls += 1;
-      },
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: frozen("Do you trust the contents of this directory?"),
+        launchedProcessAlive: async () => true,
+        wait: async () => {
+          polls += 1;
+        },
+      }),
+    );
     expect(proof.alive).toBe(true);
     expect(polls).toBeGreaterThanOrEqual(QUIET_LIMIT);
   });
 
   test("a transient unknown sample does not erase prior proof of a live process", async () => {
     let samples = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: frozen("Do you trust the contents of this directory?"),
-      launchedProcessAlive: async () =>
-        (samples += 1) === QUIET_LIMIT ? null : true,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: frozen("Do you trust the contents of this directory?"),
+        launchedProcessAlive: async () => {
+          samples += 1;
+          return samples === QUIET_LIMIT ? null : true;
+        },
+      }),
+    );
     expect(proof.alive).toBe(true);
     expect(samples).toBe(QUIET_LIMIT);
   });
 
   test("a frozen screen whose launched process is dead is reaped, and says why", async () => {
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      launchedProcessAlive: async () => false,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        launchedProcessAlive: async () => false,
+      }),
+    );
     expect(proof.alive).toBe(false);
     if (!proof.alive) {
       expect(proof.reason).toContain("no sign of life");
@@ -156,12 +205,16 @@ describe("proof of life", () => {
 
   test("a dead launch is caught FASTER than the timer it replaces", async () => {
     let polls = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      launchedProcessAlive: async () => false,
-      wait: async () => {
-        polls += 1;
-      },
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        launchedProcessAlive: async () => false,
+        wait: async () => {
+          polls += 1;
+        },
+      }),
+    );
     expect(proof.alive).toBe(false);
     // The old probe waited out 15 polls. A positive test for silence beats a
     // stopwatch: this is not a loosening of the fail-loud contract.
@@ -174,9 +227,16 @@ describe("proof of life", () => {
     // distinguish a hung TUI from one waiting at an interactive prompt by its
     // output, so it must not kill either one for silence alone.
     let painted = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: async () => (painted += 1) <= 2 ? `paint ${painted}` : "paint 2",
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: async () => {
+          painted += 1;
+          return painted <= 2 ? `paint ${painted}` : "paint 2";
+        },
+      }),
+    );
     expect(proof.alive).toBe(true);
   });
 
@@ -184,66 +244,100 @@ describe("proof of life", () => {
     // The middle state, and the reason a frozen pane can never mean death on its
     // own: a finished turn goes pane-static within seconds.
     let polls = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: frozen("done, awaiting input"),
-      lastEventAt: () => (polls += 1) >= 3 ? "2026-07-11T00:00:05.000Z" : BASELINE,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: frozen("done, awaiting input"),
+        lastEventAt: () => {
+          polls += 1;
+          return polls >= 3 ? "2026-07-11T00:00:05.000Z" : BASELINE;
+        },
+      }),
+    );
     expect(proof).toEqual({ alive: true, signal: "hook event" });
   });
 
   test("a rollout write proves life, but stale activity does not rescue a dead process", async () => {
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      codexActivity: async () => new Date(Date.now() + 60_000).toISOString(),
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        codexActivity: async () => new Date(Date.now() + 60_000).toISOString(),
+      }),
+    );
     expect(proof).toEqual({ alive: true, signal: "tool activity" });
 
     // Measured against real Codex: the rollout is written at session start and
     // then goes silent for the entire reasoning phase. A rollout whose mtime
     // predates the watch is not a signal and cannot rescue a process known dead.
-    const stale = await watchForProofOfLife("s", BASELINE, deps({
-      codexActivity: async () => "2020-01-01T00:00:00.000Z",
-      launchedProcessAlive: async () => false,
-    }));
+    const stale = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        codexActivity: async () => "2020-01-01T00:00:00.000Z",
+        launchedProcessAlive: async () => false,
+      }),
+    );
     expect(stale.alive).toBe(false);
   });
 
   test("a vanished session is dead however lively the last screen looked", async () => {
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: tickingPane(),
-      hasSession: async () => false,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: tickingPane(),
+        hasSession: async () => false,
+      }),
+    );
     expect(proof).toEqual({ alive: false, reason: "terminal session exited" });
   });
 
   test("a launch error fails immediately, redrawing or not", async () => {
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: frozen("codex: command not found"),
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: frozen("codex: command not found"),
+      }),
+    );
     expect(proof.alive).toBe(false);
     if (!proof.alive) expect(proof.reason).toContain("command not found");
   });
 
   test("the row leaving spawning outranks anything a screen could say", async () => {
     let settled = false;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      wait: async () => {
-        settled = true;
-      },
-      settled: () => settled,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        wait: async () => {
+          settled = true;
+        },
+        settled: () => settled,
+      }),
+    );
     expect(proof).toEqual({ alive: true, signal: "agent reported ready" });
   });
 
   test("an unreadable pane is not evidence of death while the session lives", async () => {
     let polls = 0;
-    const proof = await watchForProofOfLife("s", BASELINE, deps({
-      capturePane: async () => {
-        throw new Error("pane unavailable");
-      },
-      // The session is up and a hook event lands; a capture failure must not
-      // outvote that.
-      lastEventAt: () => (polls += 1) >= 2 ? "2026-07-11T00:00:05.000Z" : BASELINE,
-    }));
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        capturePane: async () => {
+          throw new Error("pane unavailable");
+        },
+        // The session is up and a hook event lands; a capture failure must not
+        // outvote that.
+        lastEventAt: () => {
+          polls += 1;
+          return polls >= 2 ? "2026-07-11T00:00:05.000Z" : BASELINE;
+        },
+      }),
+    );
     expect(proof.alive).toBe(true);
   });
 });
@@ -268,7 +362,10 @@ describe("hive MCP reachability (#57)", () => {
     const failure = await waitForMcpReporting(
       "maya",
       BASELINE,
-      () => (polls += 1) >= 3,
+      () => {
+        polls += 1;
+        return polls >= 3;
+      },
       async () => {},
       60_000,
     );

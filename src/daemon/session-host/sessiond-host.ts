@@ -3,19 +3,42 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { z } from "zod";
 import {
-  expectedDaemonHandshake,
-  type DaemonHandshake,
-} from "../handshake";
+  AppliedPayloadSchema,
+  AttachGrantPayloadSchema,
+  AttachRequestPayloadSchema,
+  ClaimAcquirePayloadSchema,
+  ClaimResultPayloadSchema,
+  CreateBeginPayloadSchema,
+  CreateCommitPayloadSchema,
+  CreatedPayloadSchema,
+  ErrorPayloadSchema,
+  FRAME_FLAGS,
+  FRAME_HEADER,
+  FRAME_TYPES,
+  type FrameTypeName,
+  HelloPayloadSchema,
+  InputSubmitPayloadSchema,
+  InspectedPayloadSchema,
+  InspectPayloadSchema,
+  ListedPayloadSchema,
+  ListPayloadSchema,
+  OrphanDiscardedPayloadSchema,
+  OrphanDiscardPayloadSchema,
+  PingPongPayloadSchema,
+  RenewedPayloadSchema,
+  ResizePayloadSchema,
+  SESSION_PROTOCOL_MINOR_RANGE,
+  SESSION_PROTOCOL_VERSION,
+  SessionSpecSchema,
+  TERMINAL_LIMITS,
+  TerminatedPayloadSchema,
+  TerminatePayloadSchema,
+  VisibilityRenewPayloadSchema,
+  WelcomePayloadSchema,
+  type WireErrorCode,
+} from "../../schemas/session-protocol";
+import { type DaemonHandshake, expectedDaemonHandshake } from "../handshake";
 import { resolveHiveHome } from "../instance-identity";
-import type {
-  ClaimResult,
-  InputReceipt,
-  ResizeResult,
-  SessionInspection,
-  SessionRef,
-  TerminalHost,
-  TerminationResult,
-} from "./terminal-host-contract";
 import type {
   AttachGrant,
   AttachRequest,
@@ -29,41 +52,15 @@ import {
   HiveTerminalBindingSchema,
   type TerminalHostBindingStore,
 } from "./terminal-host-binding";
-import {
-  AppliedPayloadSchema,
-  AttachGrantPayloadSchema,
-  AttachRequestPayloadSchema,
-  ClaimAcquirePayloadSchema,
-  ClaimResultPayloadSchema,
-  CreateBeginPayloadSchema,
-  CreateCommitPayloadSchema,
-  CreatedPayloadSchema,
-  ErrorPayloadSchema,
-  FRAME_FLAGS,
-  FRAME_HEADER,
-  FRAME_TYPES,
-  HelloPayloadSchema,
-  InspectPayloadSchema,
-  InspectedPayloadSchema,
-  InputSubmitPayloadSchema,
-  ListPayloadSchema,
-  ListedPayloadSchema,
-  PingPongPayloadSchema,
-  ResizePayloadSchema,
-  SESSION_PROTOCOL_MINOR_RANGE,
-  SESSION_PROTOCOL_VERSION,
-  SessionSpecSchema,
-  TERMINAL_LIMITS,
-  TerminatePayloadSchema,
-  TerminatedPayloadSchema,
-  OrphanDiscardPayloadSchema,
-  OrphanDiscardedPayloadSchema,
-  RenewedPayloadSchema,
-  VisibilityRenewPayloadSchema,
-  WelcomePayloadSchema,
-  type FrameTypeName,
-  type WireErrorCode,
-} from "../../schemas/session-protocol";
+import type {
+  ClaimResult,
+  InputReceipt,
+  ResizeResult,
+  SessionInspection,
+  SessionRef,
+  TerminalHost,
+  TerminationResult,
+} from "./terminal-host-contract";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -99,13 +96,9 @@ export type OrphanDiscardResult =
 
 export type LandedTerminalHost = Pick<
   TerminalHost,
-  | "claimInput"
-  | "submitInput"
-  | "resize"
-  | "inspect"
-  | "list"
-  | "terminate"
-> & Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
+  "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
+> &
+  Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
 
 export class SessiondProtocolError extends Error {
   constructor(message: string) {
@@ -133,7 +126,10 @@ export class SessiondWireNotReadyError extends Error {
 }
 
 export class SessiondBrokerUnavailableError extends Error {
-  constructor(readonly socketPath: string, cause: unknown) {
+  constructor(
+    readonly socketPath: string,
+    cause: unknown,
+  ) {
     super(`sessiond broker is unavailable at ${socketPath}`, { cause });
     this.name = "SessiondBrokerUnavailableError";
   }
@@ -157,12 +153,17 @@ export type SessiondFrame = Readonly<{
 }>;
 
 const frameNames = new Map<number, FrameTypeName>(
-  Object.entries(FRAME_TYPES).map(([name, code]) => [code, name as FrameTypeName]),
+  Object.entries(FRAME_TYPES).map(([name, code]) => [
+    code,
+    name as FrameTypeName,
+  ]),
 );
 
 export function encodeSessiondFrame(frame: SessiondFrame): Uint8Array {
   if (frame.payload.byteLength > TERMINAL_LIMITS.controlJsonBytesPerFrame) {
-    throw new SessiondProtocolError("sessiond control frame exceeds the negotiated v1 cap");
+    throw new SessiondProtocolError(
+      "sessiond control frame exceeds the negotiated v1 cap",
+    );
   }
   const bytes = new Uint8Array(FRAME_HEADER.bytes + frame.payload.byteLength);
   bytes.set(FRAME_HEADER.magicBytes, FRAME_HEADER.offsets.magic);
@@ -191,7 +192,9 @@ export class SessiondFrameDecoder {
   }
 
   push(chunk: Uint8Array): SessiondFrame[] {
-    const combined = new Uint8Array(this.buffered.byteLength + chunk.byteLength);
+    const combined = new Uint8Array(
+      this.buffered.byteLength + chunk.byteLength,
+    );
     combined.set(this.buffered);
     combined.set(chunk, this.buffered.byteLength);
     this.buffered = combined;
@@ -209,23 +212,32 @@ export class SessiondFrameDecoder {
         }
       }
       if (
-        view.getUint8(FRAME_HEADER.offsets.major) !== SESSION_PROTOCOL_VERSION.major ||
-        view.getUint8(FRAME_HEADER.offsets.minor) < SESSION_PROTOCOL_MINOR_RANGE.min ||
-        view.getUint8(FRAME_HEADER.offsets.minor) > SESSION_PROTOCOL_MINOR_RANGE.max
+        view.getUint8(FRAME_HEADER.offsets.major) !==
+          SESSION_PROTOCOL_VERSION.major ||
+        view.getUint8(FRAME_HEADER.offsets.minor) <
+          SESSION_PROTOCOL_MINOR_RANGE.min ||
+        view.getUint8(FRAME_HEADER.offsets.minor) >
+          SESSION_PROTOCOL_MINOR_RANGE.max
       ) {
-        throw new SessiondProtocolError("sessiond frame has an unsupported protocol version");
+        throw new SessiondProtocolError(
+          "sessiond frame has an unsupported protocol version",
+        );
       }
       const flags = view.getUint16(FRAME_HEADER.offsets.flags);
       if (
         (flags & ~FRAME_FLAGS.allowedMask) !== 0 ||
         view.getUint16(FRAME_HEADER.offsets.reserved) !== 0
       ) {
-        throw new SessiondProtocolError("sessiond frame has invalid flags or reserved bits");
+        throw new SessiondProtocolError(
+          "sessiond frame has invalid flags or reserved bits",
+        );
       }
       const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
       const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
       if (payloadLength > this.controlFrameMaxBytes) {
-        throw new SessiondProtocolError("sessiond control frame exceeds the negotiated v1 cap");
+        throw new SessiondProtocolError(
+          "sessiond control frame exceeds the negotiated v1 cap",
+        );
       }
       const frameLength = FRAME_HEADER.bytes + payloadLength;
       if (this.buffered.byteLength < frameLength) break;
@@ -235,12 +247,16 @@ export class SessiondFrameDecoder {
           this.buffered = this.buffered.slice(frameLength);
           continue;
         }
-        throw new SessiondProtocolError(`sessiond returned unsupported frame type ${typeCode}`);
+        throw new SessiondProtocolError(
+          `sessiond returned unsupported frame type ${typeCode}`,
+        );
       }
       const requestId = view.getBigUint64(FRAME_HEADER.offsets.requestId);
       const streamSeq = view.getBigUint64(FRAME_HEADER.offsets.streamSeq);
       if (requestId === 0n || streamSeq !== 0n) {
-        throw new SessiondProtocolError("sessiond control frame has invalid correlation fields");
+        throw new SessiondProtocolError(
+          "sessiond control frame has invalid correlation fields",
+        );
       }
       frames.push({
         type,
@@ -312,9 +328,12 @@ export class SessiondSocketClient implements SessiondBrokerClient {
 
   constructor(private readonly socket: Socket) {
     socket.on("data", (chunk) =>
-      this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
+      this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk),
+    );
     socket.on("error", (error) => this.fail(error));
-    socket.on("close", () => this.fail(new Error("sessiond connection closed")));
+    socket.on("close", () =>
+      this.fail(new Error("sessiond connection closed")),
+    );
   }
 
   static connect(path: string): Promise<SessiondSocketClient> {
@@ -330,13 +349,16 @@ export class SessiondSocketClient implements SessiondBrokerClient {
   }
 
   request<Result>(request: SessiondControlRequest<Result>): Promise<Result> {
-    if (this.closed) return Promise.reject(new Error("sessiond connection is closed"));
+    if (this.closed)
+      return Promise.reject(new Error("sessiond connection is closed"));
     const requestId = this.nextRequestId++;
     const payload = textEncoder.encode(JSON.stringify(request.payload));
     if (payload.byteLength > this.controlFrameMaxBytes) {
-      return Promise.reject(new SessiondProtocolError(
-        "sessiond control frame exceeds the negotiated v1 cap",
-      ));
+      return Promise.reject(
+        new SessiondProtocolError(
+          "sessiond control frame exceeds the negotiated v1 cap",
+        ),
+      );
     }
     const bytes = encodeSessiondFrame({
       type: request.requestType,
@@ -373,18 +395,23 @@ export class SessiondSocketClient implements SessiondBrokerClient {
     beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
     initialInput: Uint8Array,
   ): Promise<z.infer<typeof CreatedPayloadSchema>> {
-    if (this.closed) return Promise.reject(new Error("sessiond connection is closed"));
+    if (this.closed)
+      return Promise.reject(new Error("sessiond connection is closed"));
     if (this.activeCreate !== null) {
-      return Promise.reject(new SessiondProtocolError(
-        "sessiond create transaction is already active",
-      ));
+      return Promise.reject(
+        new SessiondProtocolError(
+          "sessiond create transaction is already active",
+        ),
+      );
     }
     if (initialInput.byteLength > this.automatedMessageMaxBytes) {
-      return Promise.reject(new SessiondWireError(
-        "PAYLOAD_TOO_LARGE",
-        "create input exceeds the negotiated automated-message cap",
-        null,
-      ));
+      return Promise.reject(
+        new SessiondWireError(
+          "PAYLOAD_TOO_LARGE",
+          "create input exceeds the negotiated automated-message cap",
+          null,
+        ),
+      );
     }
     const input = initialInput.slice();
 
@@ -435,7 +462,11 @@ export class SessiondSocketClient implements SessiondBrokerClient {
       0n,
       textEncoder.encode(JSON.stringify(beginPayload)),
     );
-    for (let offset = 0; offset < initialInput.byteLength; offset += this.streamChunkMaxBytes) {
+    for (
+      let offset = 0;
+      offset < initialInput.byteLength;
+      offset += this.streamChunkMaxBytes
+    ) {
       await this.writeNoResponseFrame(
         "CREATE_INPUT",
         FRAME_FLAGS.contentSensitive,
@@ -462,14 +493,18 @@ export class SessiondSocketClient implements SessiondBrokerClient {
     streamSeq: bigint,
     payload: Uint8Array,
   ): Promise<void> {
-    if (this.closed) return Promise.reject(new Error("sessiond connection is closed"));
-    const cap = type === "CREATE_INPUT"
-      ? this.streamChunkMaxBytes
-      : this.controlFrameMaxBytes;
+    if (this.closed)
+      return Promise.reject(new Error("sessiond connection is closed"));
+    const cap =
+      type === "CREATE_INPUT"
+        ? this.streamChunkMaxBytes
+        : this.controlFrameMaxBytes;
     if (payload.byteLength > cap) {
-      return Promise.reject(new SessiondProtocolError(
-        "sessiond frame exceeds the negotiated v1 cap",
-      ));
+      return Promise.reject(
+        new SessiondProtocolError(
+          "sessiond frame exceeds the negotiated v1 cap",
+        ),
+      );
     }
     const requestId = this.nextRequestId++;
     this.activeCreate?.requestIds.add(requestId);
@@ -497,7 +532,9 @@ export class SessiondSocketClient implements SessiondBrokerClient {
     try {
       frames = this.decoder.push(chunk);
     } catch (error) {
-      this.fail(error instanceof Error ? error : new Error("invalid sessiond frame"));
+      this.fail(
+        error instanceof Error ? error : new Error("invalid sessiond frame"),
+      );
       return;
     }
     for (const frame of frames) this.receiveFrame(frame);
@@ -509,20 +546,31 @@ export class SessiondSocketClient implements SessiondBrokerClient {
       try {
         decoded = JSON.parse(textDecoder.decode(frame.payload));
       } catch {
-        this.fail(new SessiondProtocolError("sessiond returned an invalid PING payload"));
+        this.fail(
+          new SessiondProtocolError(
+            "sessiond returned an invalid PING payload",
+          ),
+        );
         return;
       }
-      if (frame.flags !== 0 || !PingPongPayloadSchema.safeParse(decoded).success) {
-        this.fail(new SessiondProtocolError("sessiond returned an invalid PING frame"));
+      if (
+        frame.flags !== 0 ||
+        !PingPongPayloadSchema.safeParse(decoded).success
+      ) {
+        this.fail(
+          new SessiondProtocolError("sessiond returned an invalid PING frame"),
+        );
         return;
       }
-      this.socket.write(encodeSessiondFrame({
-        type: "PONG",
-        flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-        requestId: frame.requestId,
-        streamSeq: 0n,
-        payload: frame.payload,
-      }));
+      this.socket.write(
+        encodeSessiondFrame({
+          type: "PONG",
+          flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+          requestId: frame.requestId,
+          streamSeq: 0n,
+          payload: frame.payload,
+        }),
+      );
       return;
     }
     if (this.activeCreate?.requestIds.has(frame.requestId)) {
@@ -531,7 +579,9 @@ export class SessiondSocketClient implements SessiondBrokerClient {
     }
     const pending = this.pending.get(frame.requestId);
     if (pending === undefined) {
-      this.fail(new SessiondProtocolError("sessiond returned an uncorrelated response"));
+      this.fail(
+        new SessiondProtocolError("sessiond returned an uncorrelated response"),
+      );
       return;
     }
     clearTimeout(pending.timeout);
@@ -544,19 +594,27 @@ export class SessiondSocketClient implements SessiondBrokerClient {
     try {
       decoded = JSON.parse(textDecoder.decode(frame.payload));
     } catch {
-      pending.reject(new SessiondProtocolError("sessiond returned invalid JSON"));
+      pending.reject(
+        new SessiondProtocolError("sessiond returned invalid JSON"),
+      );
       return;
     }
     if (
       frame.type !== pending.responseType ||
       frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final)
     ) {
-      pending.reject(new SessiondProtocolError("sessiond returned the wrong response frame"));
+      pending.reject(
+        new SessiondProtocolError("sessiond returned the wrong response frame"),
+      );
       return;
     }
     const result = pending.responseSchema.safeParse(decoded);
     if (!result.success) {
-      pending.reject(new SessiondProtocolError("sessiond returned a response outside the frozen schema"));
+      pending.reject(
+        new SessiondProtocolError(
+          "sessiond returned a response outside the frozen schema",
+        ),
+      );
       return;
     }
     pending.resolve(result.data);
@@ -565,9 +623,12 @@ export class SessiondSocketClient implements SessiondBrokerClient {
   private errorFromFrame(frame: SessiondFrame): Error {
     if (
       frame.type !== "ERROR" ||
-      frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)
+      frame.flags !==
+        (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)
     ) {
-      return new SessiondProtocolError("sessiond returned a response to a no-response frame");
+      return new SessiondProtocolError(
+        "sessiond returned a response to a no-response frame",
+      );
     }
     let decoded: unknown;
     try {
@@ -654,7 +715,9 @@ async function connectBroker(
       welcome.protocol.minor < SESSION_PROTOCOL_MINOR_RANGE.min ||
       welcome.protocol.minor > SESSION_PROTOCOL_MINOR_RANGE.max
     ) {
-      throw new SessiondProtocolError("sessiond broker WELCOME does not match this daemon");
+      throw new SessiondProtocolError(
+        "sessiond broker WELCOME does not match this daemon",
+      );
     }
     client.setNegotiatedLimits(welcome.limits);
     client.setNegotiatedEngineBuildId(welcome.engineBuildId);
@@ -674,20 +737,28 @@ export class SessiondHost implements LandedTerminalHost {
 
   constructor(options: SessiondHostOptions = {}) {
     const hiveHome = resolveHiveHome(options.hiveHome);
-    const handshake = options.handshake ?? (() =>
-      expectedDaemonHandshake(options.repoRoot ?? process.cwd()));
-    this.connectBroker = options.connectBroker ?? (async () =>
-      connectBroker(
-        join(hiveHome, "runtime", "sessiond", "broker.sock"),
-        await handshake(),
-      ));
-    this.connectDirect = options.connectDirect ?? (async () => {
-      throw new SessiondWireNotReadyError("direct host operations");
-    });
+    const handshake =
+      options.handshake ??
+      (() => expectedDaemonHandshake(options.repoRoot ?? process.cwd()));
+    this.connectBroker =
+      options.connectBroker ??
+      (async () =>
+        connectBroker(
+          join(hiveHome, "runtime", "sessiond", "broker.sock"),
+          await handshake(),
+        ));
+    this.connectDirect =
+      options.connectDirect ??
+      (async () => {
+        throw new SessiondWireNotReadyError("direct host operations");
+      });
     this.pendingBindings = options.pendingBindings ?? null;
   }
 
-  async create(spec: SessionSpec, initialInput: Uint8Array): Promise<CreateResult> {
+  async create(
+    spec: SessionSpec,
+    initialInput: Uint8Array,
+  ): Promise<CreateResult> {
     if (this.pendingBindings === null) {
       throw new SessiondCreateAdmissionDisabledError();
     }
@@ -695,7 +766,8 @@ export class SessiondHost implements LandedTerminalHost {
     const locator = HiveTerminalBindingSchema.unwrap().shape.locator.parse(
       parsedSpec.locator,
     );
-    const binding = this.pendingBindings.getTerminalHostBindingByLocator(locator);
+    const binding =
+      this.pendingBindings.getTerminalHostBindingByLocator(locator);
     if (binding === null) throw new SessiondCreateAdmissionDisabledError();
     const payload = CreateBeginPayloadSchema.parse({
       ...parsedSpec,
@@ -719,7 +791,10 @@ export class SessiondHost implements LandedTerminalHost {
         // launchHost rejects capacity before it opens a host directory or
         // launches a process. That typed receipt is positive never-created
         // evidence, so the pending product binding must not survive as a pane.
-        if (error instanceof SessiondWireError && error.code === "CAPACITY_EXCEEDED") {
+        if (
+          error instanceof SessiondWireError &&
+          error.code === "CAPACITY_EXCEEDED"
+        ) {
           this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
         }
         throw error;
@@ -771,7 +846,11 @@ export class SessiondHost implements LandedTerminalHost {
     locator: Parameters<SessionHost["renewVisibility"]>[0],
     mode: OrphanDiscardMode,
   ): Promise<OrphanDiscardResult> {
-    const payload = OrphanDiscardPayloadSchema.parse({ schemaVersion: 1, locator, mode });
+    const payload = OrphanDiscardPayloadSchema.parse({
+      schemaVersion: 1,
+      locator,
+      mode,
+    });
     const broker = await this.connectBroker();
     try {
       const { schemaVersion: _, ...result } = await broker.request({
@@ -821,7 +900,10 @@ export class SessiondHost implements LandedTerminalHost {
   async claimInput(
     request: Parameters<TerminalHost["claimInput"]>[0],
   ): Promise<ClaimResult> {
-    const payload = ClaimAcquirePayloadSchema.parse({ schemaVersion: 1, ...request });
+    const payload = ClaimAcquirePayloadSchema.parse({
+      schemaVersion: 1,
+      ...request,
+    });
     const host = await this.connectDirect(request.session);
     try {
       const response = await host.request({
@@ -839,13 +921,14 @@ export class SessiondHost implements LandedTerminalHost {
   async submitInput(
     request: Parameters<TerminalHost["submitInput"]>[0],
   ): Promise<InputReceipt> {
-    const operation = request.operation.kind === "bytes"
-      ? {
-        kind: "bytes" as const,
-        encoding: "base64" as const,
-        bytes: Buffer.from(request.operation.bytes).toString("base64"),
-      }
-      : request.operation;
+    const operation =
+      request.operation.kind === "bytes"
+        ? {
+            kind: "bytes" as const,
+            encoding: "base64" as const,
+            bytes: Buffer.from(request.operation.bytes).toString("base64"),
+          }
+        : request.operation;
     const payload = InputSubmitPayloadSchema.parse({
       schemaVersion: 1,
       ...request,
@@ -861,7 +944,9 @@ export class SessiondHost implements LandedTerminalHost {
         responseSchema: AppliedPayloadSchema,
       });
       if (response.resultKind !== "input") {
-        throw new SessiondProtocolError("sessiond returned a resize result for input");
+        throw new SessiondProtocolError(
+          "sessiond returned a resize result for input",
+        );
       }
       return response.receipt;
     } finally {
@@ -882,7 +967,9 @@ export class SessiondHost implements LandedTerminalHost {
         responseSchema: AppliedPayloadSchema,
       });
       if (response.resultKind !== "resize") {
-        throw new SessiondProtocolError("sessiond returned an input result for resize");
+        throw new SessiondProtocolError(
+          "sessiond returned an input result for resize",
+        );
       }
       return response.result;
     } finally {
@@ -925,7 +1012,10 @@ export class SessiondHost implements LandedTerminalHost {
   async terminate(
     request: Parameters<TerminalHost["terminate"]>[0],
   ): Promise<TerminationResult> {
-    const payload = TerminatePayloadSchema.parse({ schemaVersion: 1, ...request });
+    const payload = TerminatePayloadSchema.parse({
+      schemaVersion: 1,
+      ...request,
+    });
     const broker = await this.connectBroker();
     try {
       const { schemaVersion: _, ...result } = await broker.request({

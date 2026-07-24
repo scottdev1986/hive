@@ -11,13 +11,17 @@ import type {
 
 /** Root Codex is enabled only for the exact executable binding whose
  * dual-client scenario passed; a version label alone is not sufficient. */
-export function codexRootEligible(report: ConformanceReport, bindingSha256: string): boolean {
-  return report.results.some((result) =>
-    result.provider === "codex" &&
-    result.scenario === "dual-client" &&
-    result.outcome === "pass" &&
-    result.binding.sha256 === bindingSha256 &&
-    result.assertions.every((assertion) => assertion.pass)
+export function codexRootEligible(
+  report: ConformanceReport,
+  bindingSha256: string,
+): boolean {
+  return report.results.some(
+    (result) =>
+      result.provider === "codex" &&
+      result.scenario === "dual-client" &&
+      result.outcome === "pass" &&
+      result.binding.sha256 === bindingSha256 &&
+      result.assertions.every((assertion) => assertion.pass),
   );
 }
 
@@ -59,7 +63,9 @@ function keptEvent(event: NormalizedEvent): Record<string, unknown> {
     ...(event.resumedFrom === undefined ? {} : { resumedViaDurableId: true }),
     ...(event.exists === undefined ? {} : { exists: event.exists }),
     ...(event.content === undefined ? {} : { content: event.content }),
-    ...(event.validationOnly === undefined ? {} : { validationOnly: event.validationOnly }),
+    ...(event.validationOnly === undefined
+      ? {}
+      : { validationOnly: event.validationOnly }),
   };
 }
 
@@ -76,7 +82,9 @@ function resultSummary(result: ScenarioResult): Record<string, unknown> {
     fallbackConfigured: result.fallbackConfigured,
     realTaskStarted: result.realTaskStarted,
     assertions: result.assertions.map(({ id, pass }) => ({ id, pass })),
-    events: result.events.filter((event) => KEPT_EVENTS.has(event.type)).map(keptEvent),
+    events: result.events
+      .filter((event) => KEPT_EVENTS.has(event.type))
+      .map(keptEvent),
     cost: result.cost,
     diagnostics: result.diagnostics,
   };
@@ -89,20 +97,28 @@ function canonicalFact(fact: EvidenceFact): EvidenceFact {
       ...fact.observed,
       provenance: [
         `evidence/driven-run-summary.json#${fact.provider}/${fact.scenario}`,
-        ...fact.observed.provenance
-          .filter((item) => item.startsWith("binding sha256:")),
+        ...fact.observed.provenance.filter((item) =>
+          item.startsWith("binding sha256:"),
+        ),
       ],
     },
   };
 }
 
 function markdown(report: ConformanceReport, facts: EvidenceFact[]): string {
-  const rows = facts.map((fact) => {
-    const costNote = fact.billable.note === undefined ? "" : ` — ${fact.billable.note}`;
-    return `| ${fact.provider} | ${fact.scenario} | ${fact.documented.status} | ${fact.observed.status} | ${fact.billable.status}${costNote} |`;
-  }).join("\n");
-  const claudeBinding = report.results.find((result) => result.provider === "claude")!.binding;
-  const codexBinding = report.results.find((result) => result.provider === "codex")!.binding;
+  const rows = facts
+    .map((fact) => {
+      const costNote =
+        fact.billable.note === undefined ? "" : ` — ${fact.billable.note}`;
+      return `| ${fact.provider} | ${fact.scenario} | ${fact.documented.status} | ${fact.observed.status} | ${fact.billable.status}${costNote} |`;
+    })
+    .join("\n");
+  const claudeBinding = report.results.find(
+    (result) => result.provider === "claude",
+  )!.binding;
+  const codexBinding = report.results.find(
+    (result) => result.provider === "codex",
+  )!.binding;
   const claudeSpend = report.results
     .filter((result) => result.provider === "claude")
     .reduce((total, result) => total + (result.cost.observedUsd ?? 0), 0);
@@ -136,21 +152,34 @@ Documentation provenance is attached to every fact in [the machine-readable matr
 }
 
 export function compactReport(report: ConformanceReport) {
-  if (!report.live || !Array.isArray(report.providers) || !Array.isArray(report.scenarios)) {
+  if (
+    !report.live ||
+    !Array.isArray(report.providers) ||
+    !Array.isArray(report.scenarios)
+  ) {
     throw new Error("Promotion requires one complete live all-provider run");
   }
   const expectedCount = report.providers.reduce(
-    (count, provider) => count + report.scenarios.filter((scenario) =>
-      provider === "codex" || scenario !== "dual-client"
-    ).length,
+    (count, provider) =>
+      count +
+      report.scenarios.filter(
+        (scenario) => provider === "codex" || scenario !== "dual-client",
+      ).length,
     0,
   );
-  if (!Array.isArray(report.results) || report.results.length !== expectedCount) {
-    throw new Error(`Promotion requires one complete live all-provider run (${expectedCount} results)`);
+  if (
+    !Array.isArray(report.results) ||
+    report.results.length !== expectedCount
+  ) {
+    throw new Error(
+      `Promotion requires one complete live all-provider run (${expectedCount} results)`,
+    );
   }
   const failed = report.results.filter((result) => result.outcome !== "pass");
   if (failed.length > 0) {
-    throw new Error(`Cannot promote a red run: ${failed.map((result) => `${result.provider}/${result.scenario}`).join(", ")}`);
+    throw new Error(
+      `Cannot promote a red run: ${failed.map((result) => `${result.provider}/${result.scenario}`).join(", ")}`,
+    );
   }
   return {
     schemaVersion: 1,
@@ -175,20 +204,34 @@ export function compactReport(report: ConformanceReport) {
 async function main(): Promise<void> {
   const reportPath = process.argv[2];
   if (reportPath === undefined) {
-    throw new Error("Usage: bun run prototypes/provider-conformance/promote.ts <report.json>");
+    throw new Error(
+      "Usage: bun run prototypes/provider-conformance/promote.ts <report.json>",
+    );
   }
-  const report = JSON.parse(await Bun.file(reportPath).text()) as ConformanceReport;
+  const report = JSON.parse(
+    await Bun.file(reportPath).text(),
+  ) as ConformanceReport;
   const evidenceDirectory = join(HERE, "evidence");
   await mkdir(evidenceDirectory, { recursive: true });
   const facts = report.evidence.map(canonicalFact);
   await Promise.all([
-    Bun.write(join(evidenceDirectory, "driven-run-summary.json"), `${JSON.stringify(compactReport(report), null, 2)}\n`),
-    Bun.write(join(evidenceDirectory, "evidence-matrix.json"), `${JSON.stringify({
-      schemaVersion: 1,
-      generatedAt: report.completedAt,
-      runId: report.runId,
-      facts,
-    }, null, 2)}\n`),
+    Bun.write(
+      join(evidenceDirectory, "driven-run-summary.json"),
+      `${JSON.stringify(compactReport(report), null, 2)}\n`,
+    ),
+    Bun.write(
+      join(evidenceDirectory, "evidence-matrix.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          generatedAt: report.completedAt,
+          runId: report.runId,
+          facts,
+        },
+        null,
+        2,
+      )}\n`,
+    ),
     Bun.write(join(HERE, "EVIDENCE.md"), markdown(report, facts)),
   ]);
 }

@@ -27,7 +27,9 @@ type WireCorpus = ReturnType<typeof buildWireCorpus>;
 type ReducerCorpus = ReturnType<typeof buildReducerCorpus>;
 
 const fromHex = (value: string): Uint8Array =>
-  Uint8Array.from(value.match(/../g)?.map((byte) => Number.parseInt(byte, 16)) ?? []);
+  Uint8Array.from(
+    value.match(/../g)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+  );
 
 const toHex = (bytes: Uint8Array): string =>
   [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -40,15 +42,22 @@ export function runTypeScriptConformance(
   const canonicalDigests: Record<string, string> = {};
   const invalidRejected: string[] = [];
   for (const item of corpus.valid) {
-    const schema = WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
+    const schema =
+      WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
     const result = schema.safeParse(item.value);
-    if (!result.success) throw new Error(`TypeScript rejected valid case ${item.name}: ${result.error.message}`);
+    if (!result.success)
+      throw new Error(
+        `TypeScript rejected valid case ${item.name}: ${result.error.message}`,
+      );
     const canonical = canonicalJson(z.encode(schema as z.ZodType, result.data));
     validEncodings[item.name] = canonical;
-    canonicalDigests[item.name] = createHash("sha256").update(canonical).digest("hex");
+    canonicalDigests[item.name] = createHash("sha256")
+      .update(canonical)
+      .digest("hex");
   }
   for (const item of corpus.invalid) {
-    const schema = WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
+    const schema =
+      WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
     if (schema.safeParse(item.value).success) {
       throw new Error(`TypeScript accepted invalid case ${item.name}`);
     }
@@ -58,7 +67,10 @@ export function runTypeScriptConformance(
   const validHeaders: string[] = [];
   for (const item of corpus.frameHeaders.valid) {
     const encoded = encodeFrameHeader(item.fields);
-    if (toHex(encoded) !== item.hex || canonicalJson(parseFrameHeader(encoded)) !== canonicalJson(item.fields)) {
+    if (
+      toHex(encoded) !== item.hex ||
+      canonicalJson(parseFrameHeader(encoded)) !== canonicalJson(item.fields)
+    ) {
       throw new Error(`TypeScript frame mismatch: ${item.name}`);
     }
     validHeaders.push(item.name);
@@ -92,7 +104,9 @@ export function runTypeScriptConformance(
       const actual = canonicalJson(state);
       const expected = canonicalJson(scenario.prefixes[index]);
       if (actual !== expected) {
-        throw new Error(`TypeScript reducer mismatch: ${scenario.name} prefix ${index + 1}`);
+        throw new Error(
+          `TypeScript reducer mismatch: ${scenario.name} prefix ${index + 1}`,
+        );
       }
       prefixes.push(actual);
     });
@@ -111,20 +125,25 @@ export function runTypeScriptConformance(
 }
 
 export async function runSwiftConformance(): Promise<ConformanceReport> {
-  const process = Bun.spawn([
-    "swift",
-    GENERATED_FILES.swift,
-    GENERATED_FILES.schema,
-    GENERATED_FILES.corpus,
-    GENERATED_FILES.reducer,
-  ], { stdout: "pipe", stderr: "pipe" });
+  const process = Bun.spawn(
+    [
+      "swift",
+      GENERATED_FILES.swift,
+      GENERATED_FILES.schema,
+      GENERATED_FILES.corpus,
+      GENERATED_FILES.reducer,
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(process.stdout).text(),
     new Response(process.stderr).text(),
     process.exited,
   ]);
   if (exitCode !== 0) {
-    throw new Error(`Swift conformance exited ${exitCode}: ${stderr || stdout}`);
+    throw new Error(
+      `Swift conformance exited ${exitCode}: ${stderr || stdout}`,
+    );
   }
   return JSON.parse(stdout) as ConformanceReport;
 }

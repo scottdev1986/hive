@@ -4,7 +4,6 @@ import {
   WORKSPACE_FEED_SNAPSHOT_FIXTURE,
   workspaceFeedAgentFixture,
 } from "../../scripts/test-fixtures/workspace-feed-snapshot";
-import type { AgentRecord } from "../../src/schemas";
 import {
   FEED_GIVE_UP_MS,
   FEED_HEARTBEAT_MS,
@@ -18,10 +17,14 @@ import {
   WorkspaceVisibilityPublisher,
   WorkspaceVisibilityPublishTimeoutError,
 } from "../../src/cli/workspace-feed";
+import type { AgentRecord } from "../../src/schemas";
 
 const timestamp = "2026-07-10T12:00:00.000Z";
 
-function agent(name: string, overrides: Partial<AgentRecord> = {}): AgentRecord {
+function agent(
+  name: string,
+  overrides: Partial<AgentRecord> = {},
+): AgentRecord {
   return {
     id: `agent-${name}`,
     name,
@@ -61,8 +64,9 @@ async function runScript(
   steps: Step[],
   fetchAutonomy: () => Promise<"sandboxed" | "dangerous" | null> = async () =>
     null,
-  fetchOrchestrator: () => Promise<WorkspaceOrchestratorSnapshot | null> =
-    async () => null,
+  fetchOrchestrator: () => Promise<WorkspaceOrchestratorSnapshot | null> = async () =>
+    null,
+  verifyInstance: () => Promise<void> = async () => {},
 ): Promise<FeedRun> {
   const controller = new AbortController();
   const lines: Array<Record<string, unknown>> = [];
@@ -81,6 +85,7 @@ async function runScript(
     },
     fetchAutonomy,
     fetchOrchestrator,
+    verifyInstance,
     fetchStatus: async () => {
       const step = steps[index];
       if (step === undefined) {
@@ -93,19 +98,28 @@ async function runScript(
   return { exitCode, lines, sleeps };
 }
 
-const snapshot = (...agents: AgentRecord[]): Step => () => agents;
-const failure = (message: string): Step => () => {
-  throw new Error(message);
-};
-const last = (step: Step): Step => (abort) => {
-  const result = step(abort);
-  abort();
-  return result;
-};
-const lastFailure = (message: string): Step => (abort) => {
-  abort();
-  throw new Error(message);
-};
+const snapshot =
+  (...agents: AgentRecord[]): Step =>
+  () =>
+    agents;
+const failure =
+  (message: string): Step =>
+  () => {
+    throw new Error(message);
+  };
+const last =
+  (step: Step): Step =>
+  (abort) => {
+    const result = step(abort);
+    abort();
+    return result;
+  };
+const lastFailure =
+  (message: string): Step =>
+  (abort) => {
+    abort();
+    throw new Error(message);
+  };
 
 const orchestrator = (
   status: WorkspaceOrchestratorSnapshot["status"],
@@ -165,30 +179,37 @@ describe("runWorkspaceFeed", () => {
     const output: Array<Record<string, unknown>> = [];
     let requests = 0;
     const publisher = new WorkspaceVisibilityPublisher(
-      (inventory) => publishWorkspaceVisibility(
-        4483,
-        "competing-workspace",
-        7210,
-        inventory,
-        {
-          observeProcess: () => ({ startToken: "7210:500" }),
-          post: async () => {
-            requests += 1;
-            return Response.json({
-              state: "rejected",
-              reason: "source-identity-mismatch",
-              diagnostic: "another live Workspace source already owns the inventory",
-            }, { status: 409 });
+      (inventory) =>
+        publishWorkspaceVisibility(
+          4483,
+          "competing-workspace",
+          7210,
+          inventory,
+          {
+            observeProcess: () => ({ startToken: "7210:500" }),
+            post: async () => {
+              requests += 1;
+              return Response.json(
+                {
+                  state: "rejected",
+                  reason: "source-identity-mismatch",
+                  diagnostic:
+                    "another live Workspace source already owns the inventory",
+                },
+                { status: 409 },
+              );
+            },
           },
-        },
-      ),
+        ),
       (line) => output.push(JSON.parse(line) as Record<string, unknown>),
     );
-    const line = Buffer.from(JSON.stringify({
-      schemaVersion: 1,
-      inventoryRevision: "1",
-      terminals: [],
-    }));
+    const line = Buffer.from(
+      JSON.stringify({
+        schemaVersion: 1,
+        inventoryRevision: "1",
+        terminals: [],
+      }),
+    );
 
     publisher.publishLine(line);
     publisher.publishLine(line);
@@ -196,33 +217,39 @@ describe("runWorkspaceFeed", () => {
     await publisher.flush();
 
     expect(requests).toEqual(1);
-    expect(output).toEqual([{
-      v: 1,
-      error: "workspace visibility publish halted [source-identity-mismatch]: " +
-        "another live Workspace source already owns the inventory",
-    }]);
+    expect(output).toEqual([
+      {
+        v: 1,
+        error:
+          "workspace visibility publish halted [source-identity-mismatch]: " +
+          "another live Workspace source already owns the inventory",
+      },
+    ]);
   });
 
   test("a hung publish is bounded, aborted, and reported with its duration", async () => {
     let aborted = false;
-    await expect(publishWorkspaceVisibility(
-      4483,
-      "workspace-launch",
-      7210,
-      { schemaVersion: 1, inventoryRevision: "1", terminals: [] },
-      {
-        observeProcess: () => ({ startToken: "7210:500" }),
-        timeoutMs: 20,
-        // Never resolves: the 2026-07-21 stall, where the request simply
-        // never came back and renewal stopped for every pane.
-        post: (_input, init) => new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () => {
-            aborted = true;
-            reject(new Error("aborted"));
-          });
-        }),
-      },
-    )).rejects.toThrow(new WorkspaceVisibilityPublishTimeoutError(20));
+    await expect(
+      publishWorkspaceVisibility(
+        4483,
+        "workspace-launch",
+        7210,
+        { schemaVersion: 1, inventoryRevision: "1", terminals: [] },
+        {
+          observeProcess: () => ({ startToken: "7210:500" }),
+          timeoutMs: 20,
+          // Never resolves: the 2026-07-21 stall, where the request simply
+          // never came back and renewal stopped for every pane.
+          post: (_input, init) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                aborted = true;
+                reject(new Error("aborted"));
+              });
+            }),
+        },
+      ),
+    ).rejects.toThrow(new WorkspaceVisibilityPublishTimeoutError(20));
     expect(aborted).toBe(true);
   });
 
@@ -235,19 +262,16 @@ describe("runWorkspaceFeed", () => {
       {
         observeProcess: () => ({ startToken: "7210:500" }),
         timeoutMs: 20,
-        post: async () => new Response(
-          new ReadableStream({ start() {} }),
-          { status: 409 },
-        ),
+        post: async () =>
+          new Response(new ReadableStream({ start() {} }), { status: 409 }),
       },
     ).then(
       () => "resolved",
       (error: unknown) => error,
     );
-    expect(await Promise.race([
-      outcome,
-      Bun.sleep(100).then(() => "still pending"),
-    ])).toBeInstanceOf(WorkspaceVisibilityPublishTimeoutError);
+    expect(
+      await Promise.race([outcome, Bun.sleep(100).then(() => "still pending")]),
+    ).toBeInstanceOf(WorkspaceVisibilityPublishTimeoutError);
   });
 
   test("a stalled publish does not block the next one: newest inventory still lands", async () => {
@@ -255,18 +279,15 @@ describe("runWorkspaceFeed", () => {
     const published: string[] = [];
     let attempts = 0;
     const publisher = new WorkspaceVisibilityPublisher(
-      (inventory) => publishWorkspaceVisibility(
-        4483,
-        "workspace-launch",
-        7210,
-        inventory,
-        {
+      (inventory) =>
+        publishWorkspaceVisibility(4483, "workspace-launch", 7210, inventory, {
           observeProcess: () => ({ startToken: "7210:500" }),
           timeoutMs: 20,
           post: async (_input, init) => {
             attempts += 1;
-            const body = await new Request("http://x", init).json() as
-              { inventoryRevision: string };
+            const body = (await new Request("http://x", init).json()) as {
+              inventoryRevision: string;
+            };
             // The first attempt hangs forever, exactly as on 2026-07-21.
             if (attempts === 1) return await new Promise<Response>(() => {});
             published.push(body.inventoryRevision);
@@ -275,16 +296,17 @@ describe("runWorkspaceFeed", () => {
               inventoryRevision: body.inventoryRevision,
             });
           },
-        },
-      ),
+        }),
       (line) => output.push(JSON.parse(line) as Record<string, unknown>),
     );
     const inventory = (revision: string): Uint8Array =>
-      Buffer.from(JSON.stringify({
-        schemaVersion: 1,
-        inventoryRevision: revision,
-        terminals: [],
-      }));
+      Buffer.from(
+        JSON.stringify({
+          schemaVersion: 1,
+          inventoryRevision: revision,
+          terminals: [],
+        }),
+      );
 
     publisher.publishLine(inventory("1"));
     // Three more arrive while revision 1 is stuck. They are full snapshots, so
@@ -308,17 +330,23 @@ describe("runWorkspaceFeed", () => {
       (line) => output.push(JSON.parse(line) as Record<string, unknown>),
       1_000,
     );
-    publisher.publishLine(Buffer.from(JSON.stringify({
-      schemaVersion: 1,
-      inventoryRevision: "7",
-      terminals: [],
-    })));
+    publisher.publishLine(
+      Buffer.from(
+        JSON.stringify({
+          schemaVersion: 1,
+          inventoryRevision: "7",
+          terminals: [],
+        }),
+      ),
+    );
     await publisher.flush();
 
-    expect(output).toEqual([{
-      v: 1,
-      error: "workspace visibility publish was slow: 1500ms for revision 7",
-    }]);
+    expect(output).toEqual([
+      {
+        v: 1,
+        error: "workspace visibility publish was slow: 1500ms for revision 7",
+      },
+    ]);
   });
 
   test("preserves every known orchestrator lifecycle word", () => {
@@ -330,22 +358,28 @@ describe("runWorkspaceFeed", () => {
   });
 
   test("preserves a pending root locator before any turn status exists", () => {
-    expect(parseWorkspaceOrchestratorSnapshot({
-      status: null,
-      host: "sessiond",
-      hostState: "awaiting-visibility",
-      sessionLocator: rootLocator,
-    })).toEqual(orchestrator(null, {
-      host: "sessiond",
-      hostState: "awaiting-visibility",
-      sessionLocator: rootLocator,
-    }));
-    expect(parseWorkspaceOrchestratorSnapshot({
-      status: null,
-      host: "sessiond",
-      hostState: null,
-      sessionLocator: null,
-    })).toBeNull();
+    expect(
+      parseWorkspaceOrchestratorSnapshot({
+        status: null,
+        host: "sessiond",
+        hostState: "awaiting-visibility",
+        sessionLocator: rootLocator,
+      }),
+    ).toEqual(
+      orchestrator(null, {
+        host: "sessiond",
+        hostState: "awaiting-visibility",
+        sessionLocator: rootLocator,
+      }),
+    );
+    expect(
+      parseWorkspaceOrchestratorSnapshot({
+        status: null,
+        host: "sessiond",
+        hostState: null,
+        sessionLocator: null,
+      }),
+    ).toBeNull();
   });
 
   test("emits the shared wire snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
@@ -378,8 +412,9 @@ describe("runWorkspaceFeed", () => {
     ]);
     expect(run.lines).toHaveLength(2);
     const [, changed] = run.lines;
-    expect((changed?.agents as Array<{ status: string }>)[0]?.status)
-      .toEqual("idle");
+    expect(
+      (changed?.agents as Array<{ status: string }> | undefined)?.[0]?.status,
+    ).toEqual("idle");
   });
 
   test("a failure is emitted once, retried with backoff, and recovery re-emits", async () => {
@@ -420,17 +455,38 @@ describe("runWorkspaceFeed", () => {
     ]);
   });
 
+  test("a transient instance verification failure retries instead of exiting", async () => {
+    const maya = agent("maya");
+    let attempts = 0;
+    const run = await runScript(
+      [last(snapshot(maya))],
+      undefined,
+      undefined,
+      async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("daemon still starting");
+      },
+    );
+    expect(run.exitCode).toEqual(0);
+    expect(attempts).toEqual(2);
+    expect(run.lines).toEqual([
+      { v: 1, error: "daemon still starting" },
+      { v: 1, agents: [maya] },
+    ]);
+  });
+
   test("exits non-zero once the daemon is gone for 30s", async () => {
     // Backoff caps at 4s, so ~9 consecutive failures cross the 30s deadline.
-    const steps: Step[] = Array.from(
-      { length: 30 },
-      () => failure("connect ECONNREFUSED"),
+    const steps: Step[] = Array.from({ length: 30 }, () =>
+      failure("connect ECONNREFUSED"),
     );
     const run = await runScript(steps);
     expect(run.exitCode).toEqual(1);
     expect(run.lines).toEqual([{ v: 1, error: "connect ECONNREFUSED" }]);
     const failedFor = run.sleeps.reduce((total, ms) => total + ms, 0);
-    expect(failedFor).toBeGreaterThanOrEqual(FEED_GIVE_UP_MS - FEED_RETRY_MAX_MS);
+    expect(failedFor).toBeGreaterThanOrEqual(
+      FEED_GIVE_UP_MS - FEED_RETRY_MAX_MS,
+    );
   });
 
   test("an abort mid-outage exits zero: a closing app is not a dead daemon", async () => {
@@ -460,12 +516,9 @@ describe("runWorkspaceFeed", () => {
 
   test("an unreadable autonomy omits the field and never drops the agents", async () => {
     const maya = agent("maya");
-    const run = await runScript(
-      [last(snapshot(maya))],
-      async () => {
-        throw new Error("daemon predates /autonomy");
-      },
-    );
+    const run = await runScript([last(snapshot(maya))], async () => {
+      throw new Error("daemon predates /autonomy");
+    });
     expect(run.lines).toHaveLength(1);
     expect(run.lines[0]?.agents).toBeDefined();
     expect("autonomy" in (run.lines[0] ?? {})).toEqual(false);

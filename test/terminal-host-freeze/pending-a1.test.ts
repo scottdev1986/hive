@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const candidateSource = () => readFile(resolve(
-  import.meta.dir,
-  "../../native/sessiond/src/pty_host.zig",
-), "utf8");
+const candidateSource = () =>
+  readFile(
+    resolve(import.meta.dir, "../../native/sessiond/src/pty_host.zig"),
+    "utf8",
+  );
 
 describe("pending A1 real-sessiond discriminators", () => {
   test.failing("pending A1 / B: launch failure preserves semantic layer and OS code", async () => {

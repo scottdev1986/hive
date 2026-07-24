@@ -21,30 +21,22 @@
  * carved out: a restarting daemon always spawns a fresh broker under its
  * current lock; a foreign peer on broker.sock fails startup visibly.
  */
+
+import { dlopen, FFIType, suffix } from "bun:ffi";
 import { accessSync, constants, existsSync } from "node:fs";
 import { connect, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
-import { dlopen, FFIType, suffix } from "bun:ffi";
-import { getHiveHome } from "./db";
-import {
-  expectedDaemonHandshake,
-  type DaemonHandshake,
-} from "./handshake";
-import {
-  SessiondSocketClient,
-} from "./session-host/sessiond-host";
 import {
   HelloPayloadSchema,
   SESSION_PROTOCOL_MINOR_RANGE,
   SESSION_PROTOCOL_VERSION,
   WelcomePayloadSchema,
 } from "../schemas/session-protocol";
-import {
-  currentLink,
-  installRoot,
-  sessiondPath,
-} from "../update/paths";
+import { currentLink, installRoot, sessiondPath } from "../update/paths";
 import { IS_RELEASE_BUILD } from "../version";
+import { getHiveHome } from "./db";
+import { type DaemonHandshake, expectedDaemonHandshake } from "./handshake";
+import { SessiondSocketClient } from "./session-host/sessiond-host";
 
 const DEFAULT_MAX_RESTARTS = 3;
 const DEFAULT_RESTART_WINDOW_MS = 60_000;
@@ -135,13 +127,7 @@ function libc(): Libc {
   if (libcSingleton !== null) return libcSingleton;
   libcSingleton = dlopen(`libc.${suffix}`, {
     getsockopt: {
-      args: [
-        FFIType.i32,
-        FFIType.i32,
-        FFIType.i32,
-        FFIType.ptr,
-        FFIType.ptr,
-      ],
+      args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.ptr, FFIType.ptr],
       returns: FFIType.i32,
     },
   }) as unknown as Libc;
@@ -153,7 +139,9 @@ export function socketFileDescriptor(socket: Socket): number {
   const handle = (socket as unknown as { _handle?: { fd?: number } })._handle;
   const fd = handle?.fd;
   if (typeof fd !== "number" || fd < 0) {
-    throw new Error("connected socket has no usable file descriptor for LOCAL_PEERPID");
+    throw new Error(
+      "connected socket has no usable file descriptor for LOCAL_PEERPID",
+    );
   }
   return fd;
 }
@@ -167,9 +155,7 @@ export function readLocalPeerPid(fd: number): number {
   const len = new Uint32Array([4]);
   const rc = libc().symbols.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, peer, len);
   if (rc !== 0) {
-    throw new Error(
-      `LOCAL_PEERPID unavailable (getsockopt returned ${rc})`,
-    );
+    throw new Error(`LOCAL_PEERPID unavailable (getsockopt returned ${rc})`);
   }
   const peerPid = peer[0] ?? 0;
   const peerLen = len[0] ?? 0;
@@ -298,7 +284,8 @@ function startupExitError(
   expectedChildPid: number,
   lastReadyError: string | null,
 ): Error {
-  const detail = lastReadyError !== null ? ` (last ready error: ${lastReadyError})` : "";
+  const detail =
+    lastReadyError !== null ? ` (last ready error: ${lastReadyError})` : "";
   return new Error(
     `hive-sessiond serve exited ${exitCode} before kernel peer ownership of ` +
       `broker.sock was proven for child pid ${expectedChildPid}${detail}`,
@@ -362,7 +349,9 @@ export class SessiondBrokerSupervisor {
   private readonly readyTimeoutMs: number;
   private readonly stopTimeoutMs: number;
   private readonly onFatal: ((error: Error) => void) | null;
-  private readonly spawnImpl: NonNullable<SessiondBrokerSupervisorOptions["spawn"]>;
+  private readonly spawnImpl: NonNullable<
+    SessiondBrokerSupervisorOptions["spawn"]
+  >;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly socketExists: (path: string) => boolean;
@@ -385,8 +374,10 @@ export class SessiondBrokerSupervisor {
     this.readyTimeoutMs = options.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
     this.stopTimeoutMs = options.stopTimeoutMs ?? DEFAULT_STOP_TIMEOUT_MS;
     this.onFatal = options.onFatal ?? null;
-    this.spawnImpl = options.spawn ?? ((command, spawnOptions) =>
-      Bun.spawn(command, spawnOptions) as SubprocessLike);
+    this.spawnImpl =
+      options.spawn ??
+      ((command, spawnOptions) =>
+        Bun.spawn(command, spawnOptions) as SubprocessLike);
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
     this.socketExists = options.socketExists ?? ((path) => existsSync(path));
@@ -394,13 +385,15 @@ export class SessiondBrokerSupervisor {
     const handshake =
       options.handshake ??
       (() => expectedDaemonHandshake(options.repoRoot ?? process.cwd()));
-    this.proveReady = options.proveReady ?? (async ({ socketPath, childPid }) => {
-      await proveSessiondBrokerReady({
-        socketPath,
-        expectedChildPid: childPid,
-        handshake: await handshake(),
+    this.proveReady =
+      options.proveReady ??
+      (async ({ socketPath, childPid }) => {
+        await proveSessiondBrokerReady({
+          socketPath,
+          expectedChildPid: childPid,
+          handshake: await handshake(),
+        });
       });
-    });
   }
 
   get status(): SessiondBrokerState {
@@ -472,7 +465,8 @@ export class SessiondBrokerSupervisor {
           // all are retryable until the ready deadline. A foreign bind fails
           // the gate for the full window then throws with lastReadyError;
           // a just-killed broker's stale sock must not abort crash recovery.
-          lastReadyError = error instanceof Error ? error.message : String(error);
+          lastReadyError =
+            error instanceof Error ? error.message : String(error);
         }
       }
       await this.sleep(READY_POLL_MS);
@@ -483,7 +477,9 @@ export class SessiondBrokerSupervisor {
     throw new Error(
       `hive-sessiond serve did not prove kernel ownership of ${socket} ` +
         `for child pid ${child.pid} within ${this.readyTimeoutMs}ms` +
-        (lastReadyError !== null ? ` (last ready error: ${lastReadyError})` : ""),
+        (lastReadyError !== null
+          ? ` (last ready error: ${lastReadyError})`
+          : ""),
     );
   }
 
@@ -553,9 +549,7 @@ export class SessiondBrokerSupervisor {
       this.state = "running";
       this.watchExits();
     } catch (error) {
-      const failure = error instanceof Error
-        ? error
-        : new Error(String(error));
+      const failure = error instanceof Error ? error : new Error(String(error));
       this.state = "failed";
       console.error(`sessiond broker restart failed: ${failure.message}`);
       this.onFatal?.(failure);
@@ -585,10 +579,7 @@ export class SessiondBrokerSupervisor {
       } catch {
         // already reaped
       }
-      await Promise.race([
-        child.exited,
-        this.sleep(1_000),
-      ]);
+      await Promise.race([child.exited, this.sleep(1_000)]);
     }
   }
 }

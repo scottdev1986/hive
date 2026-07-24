@@ -4,8 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeMemoryFact } from "../../src/adapters/memory";
-import type { MemoryWriteInput } from "../../src/schemas";
 import { MemoryIndex } from "../../src/daemon/memory-index";
+import type { MemoryWriteInput } from "../../src/schemas";
 
 const tempRoots: string[] = [];
 const previousHome = process.env.HIVE_HOME;
@@ -13,7 +13,9 @@ const previousHome = process.env.HIVE_HOME;
 afterEach(async () => {
   process.env.HIVE_HOME = previousHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -46,20 +48,26 @@ function memory(overrides: Partial<MemoryWriteInput>): MemoryWriteInput {
 describe("MemoryIndex (SQLite FTS over Markdown facts)", () => {
   test("rebuild indexes every fact from disk and search finds them by title or body", async () => {
     const root = await makeRoot();
-    await writeMemoryFact(root, memory({
-      scope: "repo",
-      id: "flaky-login-test",
-      title: "The login test is flaky",
-      body: "Race condition in session setup causes intermittent failures.",
-      tags: ["testing"],
-    }));
-    await writeMemoryFact(root, memory({
-      scope: "global",
-      id: "cli-distribution",
-      title: "Python's CLI distribution story",
-      body: "Bad; prefer a single compiled binary.",
-      tags: [],
-    }));
+    await writeMemoryFact(
+      root,
+      memory({
+        scope: "repo",
+        id: "flaky-login-test",
+        title: "The login test is flaky",
+        body: "Race condition in session setup causes intermittent failures.",
+        tags: ["testing"],
+      }),
+    );
+    await writeMemoryFact(
+      root,
+      memory({
+        scope: "global",
+        id: "cli-distribution",
+        title: "Python's CLI distribution story",
+        body: "Bad; prefer a single compiled binary.",
+        tags: [],
+      }),
+    );
 
     const index = new MemoryIndex(new Database(":memory:"));
     const rebuilt = await index.rebuild(root);
@@ -76,37 +84,48 @@ describe("MemoryIndex (SQLite FTS over Markdown facts)", () => {
 
   test("scope filters restrict search to one scope", async () => {
     const root = await makeRoot();
-    await writeMemoryFact(root, memory({
-      scope: "repo",
-      id: "shared-term",
-      title: "Repo note about caching",
-      body: "caching details",
-    }));
-    await writeMemoryFact(root, memory({
-      scope: "global",
-      id: "shared-term-global",
-      title: "Global note about caching",
-      body: "caching details",
-    }));
+    await writeMemoryFact(
+      root,
+      memory({
+        scope: "repo",
+        id: "shared-term",
+        title: "Repo note about caching",
+        body: "caching details",
+      }),
+    );
+    await writeMemoryFact(
+      root,
+      memory({
+        scope: "global",
+        id: "shared-term-global",
+        title: "Global note about caching",
+        body: "caching details",
+      }),
+    );
     const index = new MemoryIndex(new Database(":memory:"));
     await index.rebuild(root);
 
-    expect(index.search("caching", { scope: "repo" }).map((r) => r.id))
-      .toEqual(["shared-term"]);
-    expect(index.search("caching", { scope: "global" }).map((r) => r.id))
-      .toEqual(["shared-term-global"]);
+    expect(index.search("caching", { scope: "repo" }).map((r) => r.id)).toEqual(
+      ["shared-term"],
+    );
+    expect(
+      index.search("caching", { scope: "global" }).map((r) => r.id),
+    ).toEqual(["shared-term-global"]);
     expect(index.search("caching").length).toEqual(2);
   });
 
   test("upsertFact and removeFact keep the index in sync without a full rebuild", async () => {
     const root = await makeRoot();
     const index = new MemoryIndex(new Database(":memory:"));
-    const fact = await writeMemoryFact(root, memory({
-      scope: "repo",
-      id: "incremental",
-      title: "Incremental fact",
-      body: "First body text.",
-    }));
+    const fact = await writeMemoryFact(
+      root,
+      memory({
+        scope: "repo",
+        id: "incremental",
+        title: "Incremental fact",
+        body: "First body text.",
+      }),
+    );
     index.upsertFact(fact);
     expect(index.search("first").map((r) => r.id)).toEqual(["incremental"]);
 
@@ -128,17 +147,21 @@ describe("MemoryIndex (SQLite FTS over Markdown facts)", () => {
 
   test("query text with FTS5 special characters does not crash the search", async () => {
     const root = await makeRoot();
-    await writeMemoryFact(root, memory({
-      scope: "repo",
-      id: "special-chars",
-      title: "npm publish -- danger",
-      body: "Never run npm publish without approval.",
-    }));
+    await writeMemoryFact(
+      root,
+      memory({
+        scope: "repo",
+        id: "special-chars",
+        title: "npm publish -- danger",
+        body: "Never run npm publish without approval.",
+      }),
+    );
     const index = new MemoryIndex(new Database(":memory:"));
     await index.rebuild(root);
 
-    expect(() => index.search('npm publish -- "danger" (approval)')).not
-      .toThrow();
+    expect(() =>
+      index.search('npm publish -- "danger" (approval)'),
+    ).not.toThrow();
     expect(
       index.search('npm publish -- "danger" (approval)').map((r) => r.id),
     ).toEqual(["special-chars"]);
@@ -146,12 +169,15 @@ describe("MemoryIndex (SQLite FTS over Markdown facts)", () => {
 
   test("rebuild is idempotent and reflects deletions from disk", async () => {
     const root = await makeRoot();
-    await writeMemoryFact(root, memory({
-      scope: "repo",
-      id: "will-be-deleted",
-      title: "Temporary fact",
-      body: "Delete me.",
-    }));
+    await writeMemoryFact(
+      root,
+      memory({
+        scope: "repo",
+        id: "will-be-deleted",
+        title: "Temporary fact",
+        body: "Delete me.",
+      }),
+    );
     const index = new MemoryIndex(new Database(":memory:"));
     await index.rebuild(root);
     expect(index.search("temporary").length).toEqual(1);

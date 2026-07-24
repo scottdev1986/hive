@@ -1,14 +1,14 @@
 import { join, resolve } from "node:path";
 
-import { HiveDatabase, getHiveHome } from "../daemon/db";
+import { getHiveHome, HiveDatabase } from "../daemon/db";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import { defaultHiveHome } from "../daemon/instances";
 import { daemonInstanceLiveness } from "../daemon/lifecycle";
 import {
-  readRoutingPolicyDatabase,
   RoutingPolicyStore,
+  readRoutingPolicyDatabase,
 } from "../daemon/routing-policy-store";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import type { RoutingPolicy } from "../schemas";
 
 const PROMOTE_ACTOR = "hive-cli-promote-default";
@@ -89,12 +89,7 @@ export async function promoteDefaultModelControl(
     // an incidental side effect of the database promotion.
     preferences.read();
     const targetRevision = target.read(now).revision;
-    const next = target.promote(
-      source,
-      targetRevision,
-      PROMOTE_ACTOR,
-      now,
-    );
+    const next = target.promote(source, targetRevision, PROMOTE_ACTOR, now);
     try {
       await preferences.replace(source.selection);
     } catch (error) {

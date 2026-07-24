@@ -19,17 +19,25 @@
  *     repository's tracked `.gitignore`.
  */
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { machineHiveHome } from "../daemon/instances";
+import { projectStateDir } from "../daemon/project-state";
 import {
+  type GraphifyArtifact,
   graphifyArtifact,
   graphifyArtifactUrl,
   graphifyPlatformKey,
-  type GraphifyArtifact,
 } from "./graphify-artifacts";
-import { projectStateDir } from "../daemon/project-state";
 
 /** The exact version the embedded lock pins. The lock is the single source of
  * truth; a lock that stops naming graphifyy is a build error, not a fallback. */
@@ -143,8 +151,7 @@ export interface GraphifyInstallDeps {
 
 export const defaultInstallDeps: GraphifyInstallDeps = {
   artifact: () => graphifyArtifact(),
-  fetchArtifact: (url) =>
-    fetch(url, { signal: AbortSignal.timeout(300_000) }),
+  fetchArtifact: (url) => fetch(url, { signal: AbortSignal.timeout(300_000) }),
   run: runCommand,
 };
 
@@ -160,14 +167,20 @@ async function probeBundle(run: CommandRunner): Promise<GraphifyOutcome> {
     timeoutMs: 30_000,
   });
   if (probe.exitCode !== 0) {
-    return { ok: false, reason: `installed graphify does not run: ${probe.stderr.trim()}` };
+    return {
+      ok: false,
+      reason: `installed graphify does not run: ${probe.stderr.trim()}`,
+    };
   }
   const mcpProbe = await run([graphifyMcpBin(), "--help"], {
     env: scrubbedGraphifyEnv(),
     timeoutMs: 30_000,
   });
   if (mcpProbe.exitCode !== 0) {
-    return { ok: false, reason: `installed graphify MCP server does not run: ${mcpProbe.stderr.trim()}` };
+    return {
+      ok: false,
+      reason: `installed graphify MCP server does not run: ${mcpProbe.stderr.trim()}`,
+    };
   }
   return { ok: true, detail: `graphifyy==${graphifyPin()} in ${bundleDir()}` };
 }
@@ -190,7 +203,8 @@ export async function installGraphify(
 
   if (existsSync(graphifyBin())) {
     const probed = await probeBundle(deps.run);
-    if (probed.ok) return { ok: true, detail: `${probed.detail} (already installed)` };
+    if (probed.ok)
+      return { ok: true, detail: `${probed.detail} (already installed)` };
     // Present but broken: fall through to a fresh install over it.
   }
 
@@ -207,7 +221,10 @@ export async function installGraphify(
     };
   }
   if (!response.ok) {
-    return { ok: false, reason: `could not download the graphify bundle (${url}): HTTP ${response.status}` };
+    return {
+      ok: false,
+      reason: `could not download the graphify bundle (${url}): HTTP ${response.status}`,
+    };
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
@@ -227,12 +244,23 @@ export async function installGraphify(
     await rm(bundleDir(), { recursive: true, force: true });
     await mkdir(bundleDir(), { recursive: true });
     const untar = await deps.run(
-      ["/usr/bin/tar", "-xf", tarball, "-C", bundleDir(), "--strip-components", "1"],
+      [
+        "/usr/bin/tar",
+        "-xf",
+        tarball,
+        "-C",
+        bundleDir(),
+        "--strip-components",
+        "1",
+      ],
       { timeoutMs: 120_000 },
     );
     if (untar.exitCode !== 0) {
       await rm(bundleDir(), { recursive: true, force: true });
-      return { ok: false, reason: `could not unpack the graphify bundle: ${untar.stderr.trim()}` };
+      return {
+        ok: false,
+        reason: `could not unpack the graphify bundle: ${untar.stderr.trim()}`,
+      };
     }
   } finally {
     await rm(tarball, { force: true });
@@ -256,10 +284,11 @@ export async function buildGraph(
   // Regenerated before every build so new gitignore rules keep taking effect,
   // and folded into the detail so what was excluded is said out loud.
   const ignore = await writeGraphifyIgnore(root, run);
-  const result = await run(
-    [graphifyBin(), "extract", root, "--code-only"],
-    { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: 900_000 },
-  );
+  const result = await run([graphifyBin(), "extract", root, "--code-only"], {
+    cwd: root,
+    env: scrubbedGraphifyEnv(),
+    timeoutMs: 900_000,
+  });
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -286,10 +315,11 @@ export async function updateGraph(
   // Same regeneration as buildGraph: a landing can introduce gitignore rules,
   // and the incremental walk honours the ignore file for changed files.
   await writeGraphifyIgnore(root, run);
-  const result = await run(
-    [graphifyBin(), "update", root, "--force"],
-    { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: 900_000 },
-  );
+  const result = await run([graphifyBin(), "update", root, "--force"], {
+    cwd: root,
+    env: scrubbedGraphifyEnv(),
+    timeoutMs: 900_000,
+  });
   if (result.exitCode !== 0) {
     return {
       ok: false,
@@ -334,9 +364,34 @@ interface BriefNode {
 }
 
 const BRIEF_STOPWORDS = new Set([
-  "the", "a", "an", "of", "to", "in", "on", "for", "with", "where", "does",
-  "do", "is", "are", "how", "what", "when", "why", "and", "or", "that",
-  "this", "its", "into", "new", "another", "after", "happen",
+  "the",
+  "a",
+  "an",
+  "of",
+  "to",
+  "in",
+  "on",
+  "for",
+  "with",
+  "where",
+  "does",
+  "do",
+  "is",
+  "are",
+  "how",
+  "what",
+  "when",
+  "why",
+  "and",
+  "or",
+  "that",
+  "this",
+  "its",
+  "into",
+  "new",
+  "another",
+  "after",
+  "happen",
 ]);
 
 function stemToken(token: string): string {
@@ -349,9 +404,8 @@ function stemToken(token: string): string {
 }
 
 function briefTokens(text: string): Set<string> {
-  const parts = text
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .match(/[A-Za-z]{3,}/g) ?? [];
+  const parts =
+    text.replace(/([a-z])([A-Z])/g, "$1 $2").match(/[A-Za-z]{3,}/g) ?? [];
   const out = new Set<string>();
   for (const part of parts) {
     const token = stemToken(part.toLowerCase());
@@ -399,7 +453,8 @@ export function buildTargetedGraphBrief(
       file,
       location:
         typeof entry.source_location === "string" ? entry.source_location : "",
-      community: typeof entry.community === "number" ? String(entry.community) : "",
+      community:
+        typeof entry.community === "number" ? String(entry.community) : "",
       tokens: briefTokens(label),
     };
     nodes.set(node.id, node);
@@ -435,18 +490,28 @@ export function buildTargetedGraphBrief(
   const links: BriefLink[] = [];
   const fileLinkCounts = new Map<string, Map<string, number>>();
   for (const entry of rawLinks as Record<string, unknown>[]) {
-    const source = typeof entry?.source === "string" ? nodes.get(entry.source) : undefined;
-    const target = typeof entry?.target === "string" ? nodes.get(entry.target) : undefined;
+    const source =
+      typeof entry?.source === "string" ? nodes.get(entry.source) : undefined;
+    const target =
+      typeof entry?.target === "string" ? nodes.get(entry.target) : undefined;
     if (source === undefined || target === undefined) continue;
     links.push({
       relation: typeof entry.relation === "string" ? entry.relation : "related",
-      confidence: typeof entry.confidence === "string" ? entry.confidence : "UNKNOWN",
+      confidence:
+        typeof entry.confidence === "string" ? entry.confidence : "UNKNOWN",
       context: typeof entry.context === "string" ? entry.context : "",
       source,
       target,
     });
-    if (source.file !== "" && target.file !== "" && source.file !== target.file) {
-      for (const [a, b] of [[source.file, target.file], [target.file, source.file]] as const) {
+    if (
+      source.file !== "" &&
+      target.file !== "" &&
+      source.file !== target.file
+    ) {
+      for (const [a, b] of [
+        [source.file, target.file],
+        [target.file, source.file],
+      ] as const) {
         const counts = fileLinkCounts.get(a) ?? new Map<string, number>();
         counts.set(b, (counts.get(b) ?? 0) + 1);
         fileLinkCounts.set(a, counts);
@@ -502,7 +567,12 @@ export function buildTargetedGraphBrief(
       [link.source.file, link.target.file, link.target],
       [link.target.file, link.source.file, link.source],
     ] as const) {
-      if (!seedSet.has(near) || far === "" || seedSet.has(far) || far === near) {
+      if (
+        !seedSet.has(near) ||
+        far === "" ||
+        seedSet.has(far) ||
+        far === near
+      ) {
         continue;
       }
       const key = `${symbol.id} ${far}`;
@@ -524,7 +594,10 @@ export function buildTargetedGraphBrief(
     );
   }
   const expansion = [...neighborScore.keys()]
-    .sort((a, b) => (neighborScore.get(b) as number) - (neighborScore.get(a) as number))
+    .sort(
+      (a, b) =>
+        (neighborScore.get(b) as number) - (neighborScore.get(a) as number),
+    )
     .slice(0, BRIEF_EXPANSION_FILES);
   const selected = [...seeds, ...expansion];
   const selectedSet = new Set(selected);
@@ -547,7 +620,10 @@ export function buildTargetedGraphBrief(
       .sort((a, b) => b.s - a.s)
       .slice(0, BRIEF_SYMBOLS_PER_FILE)
       .map(({ n }) => n);
-    for (const n of [...(moduleNode === undefined ? [] : [moduleNode]), ...symbols]) {
+    for (const n of [
+      ...(moduleNode === undefined ? [] : [moduleNode]),
+      ...symbols,
+    ]) {
       nodeLines.push(
         `NODE ${n.label} [src=${n.file}${n.location === "" ? "" : ` loc=${n.location}`}${n.community === "" ? "" : ` community=${n.community}`}]`,
       );
@@ -784,7 +860,11 @@ export async function buildGraphBrief(
       "--graph",
       graphJsonPath(root),
     ],
-    { cwd: root, env: scrubbedGraphifyEnv(), timeoutMs: GRAPH_BRIEF_TIMEOUT_MS },
+    {
+      cwd: root,
+      env: scrubbedGraphifyEnv(),
+      timeoutMs: GRAPH_BRIEF_TIMEOUT_MS,
+    },
   );
   if (result.exitCode !== 0) {
     return `Graph context: unavailable (${
@@ -876,20 +956,31 @@ export async function writeGraphifyIgnore(
     // Absent: generate below.
   }
   if (existing !== null && !existing.startsWith(GRAPHIFY_IGNORE_MARKER)) {
-    return { ok: true, detail: ".graphifyignore is user-authored; left untouched" };
+    return {
+      ok: true,
+      detail: ".graphifyignore is user-authored; left untouched",
+    };
   }
 
   // Everything the repo's own gitignore machinery (root, nested, and
   // .git/info/exclude) already excludes, collapsed to directories.
   const ignored = await run(
-    ["git", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+    [
+      "git",
+      "ls-files",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--directory",
+    ],
     { cwd: root, timeoutMs: 30_000 },
   );
-  const derived = ignored.exitCode !== 0
-    ? []
-    : ignored.stdout
-        .split("\n")
-        .filter((line) => line.endsWith("/") && line !== "graphify-out/");
+  const derived =
+    ignored.exitCode !== 0
+      ? []
+      : ignored.stdout
+          .split("\n")
+          .filter((line) => line.endsWith("/") && line !== "graphify-out/");
   const capped = derived.slice(0, GITIGNORED_DIR_CAP);
 
   const lines = [
@@ -903,7 +994,9 @@ export async function writeGraphifyIgnore(
     "# Directories this repo's own gitignore rules exclude:",
     ...capped.map((dir) => `/${dir}`),
     ...(derived.length > capped.length
-      ? [`# (+${derived.length - capped.length} more git-ignored directories omitted)`]
+      ? [
+          `# (+${derived.length - capped.length} more git-ignored directories omitted)`,
+        ]
       : []),
     "",
   ];
@@ -923,7 +1016,8 @@ export async function writeGraphifyIgnore(
   }
   return {
     ok: true,
-    detail: `excluding ${VENDORED_DIR_FLOOR.length} common vendored patterns` +
+    detail:
+      `excluding ${VENDORED_DIR_FLOOR.length} common vendored patterns` +
       `${capped.length > 0 ? ` and ${capped.length} git-ignored dirs (${capped.slice(0, 5).join(" ")}${capped.length > 5 ? " …" : ""})` : ""}`,
   };
 }

@@ -32,7 +32,10 @@ export class BoundedWal {
   readonly path: string;
   private records: WalRecord[];
 
-  constructor(path: string, readonly maxBytes: number) {
+  constructor(
+    path: string,
+    readonly maxBytes: number,
+  ) {
     this.path = path;
     mkdirSync(dirname(path), { recursive: true });
     this.records = this.loadAndRepair();
@@ -70,7 +73,10 @@ export class BoundedWal {
 
   events(): SemanticEvent[] {
     return this.records
-      .filter((record): record is Extract<WalRecord, { kind: "EVENT" }> => record.kind === "EVENT")
+      .filter(
+        (record): record is Extract<WalRecord, { kind: "EVENT" }> =>
+          record.kind === "EVENT",
+      )
       .map((record) => record.event);
   }
 
@@ -83,18 +89,22 @@ export class BoundedWal {
         if (record.event.sequence > highWater) unacknowledged.push(record);
         continue;
       }
-      const key = record.kind === "APPROVAL_WRITTEN"
-        ? `${record.kind}:${record.approvalId}`
-        : record.kind;
+      const key =
+        record.kind === "APPROVAL_WRITTEN"
+          ? `${record.kind}:${record.approvalId}`
+          : record.kind;
       latest.set(key, record);
     }
-    const retained = [...latest.values(), ...unacknowledged].sort((left, right) =>
-      left.at.localeCompare(right.at)
+    const retained = [...latest.values(), ...unacknowledged].sort(
+      (left, right) => left.at.localeCompare(right.at),
     );
-    const contents = retained.map((record) => JSON.stringify(record)).join("\n") +
+    const contents =
+      retained.map((record) => JSON.stringify(record)).join("\n") +
       (retained.length === 0 ? "" : "\n");
     if (Buffer.byteLength(contents) > this.maxBytes) {
-      throw new WalOverflowError("unacknowledged semantic events exceed the WAL bound");
+      throw new WalOverflowError(
+        "unacknowledged semantic events exceed the WAL bound",
+      );
     }
     durableReplace(this.path, contents);
     this.records = retained;
@@ -119,7 +129,8 @@ export class BoundedWal {
         break;
       }
     }
-    if (validBytes < Buffer.byteLength(raw)) truncateSync(this.path, validBytes);
+    if (validBytes < Buffer.byteLength(raw))
+      truncateSync(this.path, validBytes);
     return records;
   }
 }

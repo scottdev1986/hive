@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { persistAutonomy, upsertAutonomy } from "../../src/config/autonomy";
@@ -10,7 +10,9 @@ describe("upsertAutonomy", () => {
   });
 
   test("an existing top-level key is replaced in place", () => {
-    const text = ['routingManifest = "off"', 'autonomy = "dangerous"', ""].join("\n");
+    const text = ['routingManifest = "off"', 'autonomy = "dangerous"', ""].join(
+      "\n",
+    );
     expect(upsertAutonomy(text, "sandboxed")).toEqual(
       ['routingManifest = "off"', 'autonomy = "sandboxed"', ""].join("\n"),
     );
@@ -43,15 +45,18 @@ describe("upsertAutonomy", () => {
 
   test("refuses to produce text that does not parse back to the value", () => {
     // An unterminated string makes the whole result unparseable.
-    expect(() => upsertAutonomy('broken = "unterminated', "sandboxed"))
-      .toThrow("refusing to write config");
+    expect(() => upsertAutonomy('broken = "unterminated', "sandboxed")).toThrow(
+      "refusing to write config",
+    );
   });
 });
 
 describe("persistAutonomy", () => {
   const roots: string[] = [];
   afterAll(async () => {
-    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    await Promise.all(
+      roots.map((root) => rm(root, { recursive: true, force: true })),
+    );
   });
 
   test("creates the file when absent and round-trips through a re-read", async () => {
@@ -59,14 +64,18 @@ describe("persistAutonomy", () => {
     roots.push(root);
     const path = join(root, "config.toml");
     await persistAutonomy("dangerous", path);
-    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+    const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
     expect(parsed.autonomy).toEqual("dangerous");
     // Flip it back: the same file updates rather than doubling the key.
     await persistAutonomy("sandboxed", path);
     const text = await readFile(path, "utf8");
     expect(text.match(/autonomy/g)).toHaveLength(1);
-    expect((Bun.TOML.parse(text) as Record<string, unknown>).autonomy)
-      .toEqual("sandboxed");
+    expect((Bun.TOML.parse(text) as Record<string, unknown>).autonomy).toEqual(
+      "sandboxed",
+    );
   });
 
   test("concurrent writes resolve in request order and leave no staging file", async () => {

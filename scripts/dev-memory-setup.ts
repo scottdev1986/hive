@@ -30,7 +30,14 @@
 // the dev home with `rm -rf` — which unlinks symlinks without following
 // them, so the real ~/.hive is unreachable from clean (audited 2026-07-23;
 // see the comment on the clean target).
-import { lstat, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -158,7 +165,10 @@ export function formatShareSummary(
       `  skipped (absent in the real home): ${result.skipped.join(", ")}`,
     );
   }
-  if (result.linked.includes("projects") || result.refreshed.includes("projects")) {
+  if (
+    result.linked.includes("projects") ||
+    result.refreshed.includes("projects")
+  ) {
     lines.push(
       "  note: dev and prod daemons share episodic stores (projects/<uuid>/episodic.db); " +
         "both running at once is expected — SQLite WAL + busy_timeout mediates concurrent access",

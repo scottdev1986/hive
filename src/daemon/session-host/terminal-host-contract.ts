@@ -220,26 +220,32 @@ type OrderedEventBase = Readonly<{
 }>;
 
 export type TerminalEvent =
-  | (OrderedEventBase & Readonly<{
-      kind: "output";
-      bytes: Uint8Array;
-      outputRange: Readonly<{ start: Sequence; endExclusive: Sequence }>;
-    }>)
-  | (OrderedEventBase & Readonly<{
-      kind: "output-gap";
-      missingRange: Readonly<{ start: Sequence; endExclusive: Sequence }>;
-      checkpointRequired: boolean;
-    }>)
+  | (OrderedEventBase &
+      Readonly<{
+        kind: "output";
+        bytes: Uint8Array;
+        outputRange: Readonly<{ start: Sequence; endExclusive: Sequence }>;
+      }>)
+  | (OrderedEventBase &
+      Readonly<{
+        kind: "output-gap";
+        missingRange: Readonly<{ start: Sequence; endExclusive: Sequence }>;
+        checkpointRequired: boolean;
+      }>)
   | (OrderedEventBase & Readonly<{ kind: "output-closed"; reason: string }>)
   | (OrderedEventBase & Readonly<{ kind: "process-exited"; exit: ExitStatus }>)
-  | (OrderedEventBase & Readonly<{ kind: "process-reaped"; reap: ReapEvidence }>)
-  | (OrderedEventBase & Readonly<{ kind: "checkpoint"; checkpoint: Checkpoint }>)
-  | (OrderedEventBase & Readonly<{
-      kind: "resize-applied";
-      revision: Sequence;
-      readback: WindowSize;
-    }>)
-  | (OrderedEventBase & Readonly<{ kind: "flow-control"; outputPaused: boolean }>);
+  | (OrderedEventBase &
+      Readonly<{ kind: "process-reaped"; reap: ReapEvidence }>)
+  | (OrderedEventBase &
+      Readonly<{ kind: "checkpoint"; checkpoint: Checkpoint }>)
+  | (OrderedEventBase &
+      Readonly<{
+        kind: "resize-applied";
+        revision: Sequence;
+        readback: WindowSize;
+      }>)
+  | (OrderedEventBase &
+      Readonly<{ kind: "flow-control"; outputPaused: boolean }>);
 
 export type SessionInspection = Readonly<{
   session: SessionRef;
@@ -328,72 +334,92 @@ export type TerminationResult = Readonly<{
 
 export interface TerminalHost {
   create(request: CreateRequest): Promise<CreateResult>;
-  claimInput(request: Readonly<{
-    session: SessionRef;
-    writer: string;
-    kind: "human" | "automation";
-    leaseMilliseconds: number;
-    idempotencyKey: string;
-  }>): Promise<ClaimResult>;
-  releaseInput(request: Readonly<{
-    session: SessionRef;
-    claimToken: string;
-    idempotencyKey: string;
-  }>): Promise<void>;
-  submitInput(request: Readonly<{
-    session: SessionRef;
-    claimToken: string;
-    transactionId: string;
-    idempotencyKey: string;
-    operation: InputOperation;
-  }>): Promise<InputReceipt>;
-  resize(request: Readonly<{
-    session: SessionRef;
-    window: WindowSize;
-    revision: Sequence;
-    idempotencyKey: string;
-  }>): Promise<ResizeResult>;
-  attach(request: Readonly<{
-    session: SessionRef;
-    cursor: AttachCursor;
-    capabilities: AttachCapabilities;
-  }>): Promise<AttachResult>;
-  acknowledgeOutput(request: Readonly<{
-    session: SessionRef;
-    attachmentId: string;
-    throughEventSequence: Sequence;
-    throughOutputOffset: Sequence;
-  }>): Promise<OutputAcknowledgement>;
+  claimInput(
+    request: Readonly<{
+      session: SessionRef;
+      writer: string;
+      kind: "human" | "automation";
+      leaseMilliseconds: number;
+      idempotencyKey: string;
+    }>,
+  ): Promise<ClaimResult>;
+  releaseInput(
+    request: Readonly<{
+      session: SessionRef;
+      claimToken: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<void>;
+  submitInput(
+    request: Readonly<{
+      session: SessionRef;
+      claimToken: string;
+      transactionId: string;
+      idempotencyKey: string;
+      operation: InputOperation;
+    }>,
+  ): Promise<InputReceipt>;
+  resize(
+    request: Readonly<{
+      session: SessionRef;
+      window: WindowSize;
+      revision: Sequence;
+      idempotencyKey: string;
+    }>,
+  ): Promise<ResizeResult>;
+  attach(
+    request: Readonly<{
+      session: SessionRef;
+      cursor: AttachCursor;
+      capabilities: AttachCapabilities;
+    }>,
+  ): Promise<AttachResult>;
+  acknowledgeOutput(
+    request: Readonly<{
+      session: SessionRef;
+      attachmentId: string;
+      throughEventSequence: Sequence;
+      throughOutputOffset: Sequence;
+    }>,
+  ): Promise<OutputAcknowledgement>;
   inspect(session: SessionRef): Promise<SessionInspection>;
   list(): Promise<readonly SessionInspection[]>;
   /** §11 a subscription is a resumable cursor, not a boolean: it negotiates
    * capabilities and event flow-control limits and begins at a caller-supplied
    * event position or at the current end. A position outside retention is a
    * gap, never silent loss. */
-  subscribe(request: Readonly<{
-    session: SessionRef;
-    capabilities: SubscriptionCapabilities;
-    limits: SubscriptionLimits;
-    from: SubscriptionStart;
-  }>): Promise<SubscribeResult>;
+  subscribe(
+    request: Readonly<{
+      session: SessionRef;
+      capabilities: SubscriptionCapabilities;
+      limits: SubscriptionLimits;
+      from: SubscriptionStart;
+    }>,
+  ): Promise<SubscribeResult>;
   /** §11 delivery for one subscription. Subscribers are independent, so this
    * is keyed by subscription and never by session alone. */
-  events(request: Readonly<{
-    session: SessionRef;
-    subscriptionId: string;
-  }>): AsyncIterable<TerminalEvent>;
+  events(
+    request: Readonly<{
+      session: SessionRef;
+      subscriptionId: string;
+    }>,
+  ): AsyncIterable<TerminalEvent>;
   /** §11 retained events are released by acknowledgement on the same terms as
    * output; the release names WHICH subscription it releases. */
-  acknowledgeEvents(request: Readonly<{
-    session: SessionRef;
-    subscriptionId: string;
-    through: SubscriptionCursor;
-  }>): Promise<EventAcknowledgement>;
-  terminate(request: Readonly<{
-    session: SessionRef;
-    mode: "graceful" | "immediate";
-    target: "foreground-group" | "session-members" | "process-tree";
-    deadline: string;
-    idempotencyKey: string;
-  }>): Promise<TerminationResult>;
+  acknowledgeEvents(
+    request: Readonly<{
+      session: SessionRef;
+      subscriptionId: string;
+      through: SubscriptionCursor;
+    }>,
+  ): Promise<EventAcknowledgement>;
+  terminate(
+    request: Readonly<{
+      session: SessionRef;
+      mode: "graceful" | "immediate";
+      target: "foreground-group" | "session-members" | "process-tree";
+      deadline: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<TerminationResult>;
 }

@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-  ORCHESTRATOR_BRIEF,
-  orchestratorDocGuidance,
-} from "../../src/cli/orchestrator-brief";
 import {
   buildOrchestratorCommand,
   buildOrchestratorInstructions,
@@ -14,7 +18,14 @@ import {
   prepareOrchestratorConfig,
   provisionCodexRootToken,
 } from "../../src/cli/orchestrator";
-import { OPERATOR_SUBJECT, writeCredential } from "../../src/daemon/credentials";
+import {
+  ORCHESTRATOR_BRIEF,
+  orchestratorDocGuidance,
+} from "../../src/cli/orchestrator-brief";
+import {
+  OPERATOR_SUBJECT,
+  writeCredential,
+} from "../../src/daemon/credentials";
 
 let hiveHome: string;
 let previousHiveHome: string | undefined;
@@ -49,7 +60,9 @@ describe("orchestrator launch", () => {
     // The #12 role boundary: the queen writes her own memory and planning
     // docs and uses gh, but implementation is always delegated.
     expect(ORCHESTRATOR_BRIEF).toContain("never author implementation code");
-    expect(ORCHESTRATOR_BRIEF).not.toContain("never write code or modify files");
+    expect(ORCHESTRATOR_BRIEF).not.toContain(
+      "never write code or modify files",
+    );
   });
 
   test("Codex uses the ordinary local TUI command", () => {
@@ -109,7 +122,9 @@ describe("orchestrator launch", () => {
     });
     expect(guidance).toContain("DESIGN.md is the primary design doc");
     expect(guidance).toContain("- README.md");
-    expect(orchestratorDocGuidance({ primary: null, loadBearing: [] })).toBe("");
+    expect(orchestratorDocGuidance({ primary: null, loadBearing: [] })).toBe(
+      "",
+    );
   });
 
   test("Codex setup never modifies project configuration", async () => {

@@ -21,8 +21,10 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
   ) {}
 
   isLive(): boolean {
-    return this.dependencies.current()?.state === "running" &&
-      this.dependencies.ready();
+    return (
+      this.dependencies.current()?.state === "running" &&
+      this.dependencies.ready()
+    );
   }
 
   async deliverMessage(
@@ -30,15 +32,17 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
     meta: Record<string, string>,
   ): Promise<boolean> {
     const current = this.dependencies.current();
-    if (current?.state !== "running" || !this.dependencies.ready()) return false;
+    if (current?.state !== "running" || !this.dependencies.ready())
+      return false;
     if (
       this.dependencies.canInject !== undefined &&
-      !await this.dependencies.canInject()
+      !(await this.dependencies.canInject())
     ) {
       return false;
     }
     const messageId = meta.message_id;
-    if (messageId === undefined) throw new Error("root delivery has no message id");
+    if (messageId === undefined)
+      throw new Error("root delivery has no message id");
     const result = await this.dependencies.input.injectRoot(
       current.locator,
       content,

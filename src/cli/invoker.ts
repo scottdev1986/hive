@@ -29,8 +29,9 @@ export interface InvokerIdentity {
 const CHAIN_DEPTH = 6;
 
 export function isAgentWorktreePath(path: string): boolean {
-  return path.includes("/.hive/worktrees/") ||
-    path.endsWith("/.hive/worktrees");
+  return (
+    path.includes("/.hive/worktrees/") || path.endsWith("/.hive/worktrees")
+  );
 }
 
 /** One `ps` read: a pid's parent and command. Null when the pid is gone or
@@ -50,8 +51,9 @@ function readProcess(pid: number): { ppid: number; command: string } | null {
 }
 
 export function captureInvokerIdentity(
-  readParent: (pid: number) => { ppid: number; command: string } | null =
-    readProcess,
+  readParent: (
+    pid: number,
+  ) => { ppid: number; command: string } | null = readProcess,
 ): InvokerIdentity {
   const cwd = process.cwd();
   const chain: string[] = [];
@@ -79,10 +81,12 @@ export function formatInvokerOrigin(
   subcommand: "kill" | "stop",
   invoker: InvokerIdentity,
 ): string {
-  return `hive ${subcommand} pid=${invoker.pid} ppid=${invoker.ppid} argv=${
-    JSON.stringify(invoker.argv)
-  } cwd=${invoker.cwd} agentWorktree=${invoker.agentWorktree ? "yes" : "no"}` +
-    ` chain=[${invoker.chain.join(",")}]`;
+  return (
+    `hive ${subcommand} pid=${invoker.pid} ppid=${invoker.ppid} argv=${JSON.stringify(
+      invoker.argv,
+    )} cwd=${invoker.cwd} agentWorktree=${invoker.agentWorktree ? "yes" : "no"}` +
+    ` chain=[${invoker.chain.join(",")}]`
+  );
 }
 
 /** `bun test` stamps NODE_ENV=test. Inside a test-runner process, a lethal

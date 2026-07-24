@@ -22,8 +22,9 @@ export type LaunchGateResult =
   | { authorized: AuthorizedLaunch; refusal?: never }
   | { authorized?: never; refusal: LaunchRefusal };
 
-type Guard = (candidate: Readonly<RawLaunchCandidate>) =>
-  Promise<string | null> | string | null;
+type Guard = (
+  candidate: Readonly<RawLaunchCandidate>,
+) => Promise<string | null> | string | null;
 
 export interface LaunchGateChecks {
   resolution: Guard;
@@ -32,8 +33,9 @@ export interface LaunchGateChecks {
   capabilityFloor: Guard;
   effort: (
     candidate: Readonly<RawLaunchCandidate>,
-  ) => Promise<{ effort?: string; refusal: string | null }> |
-    { effort?: string; refusal: string | null };
+  ) =>
+    | Promise<{ effort?: string; refusal: string | null }>
+    | { effort?: string; refusal: string | null };
 }
 
 /**
@@ -80,9 +82,13 @@ export class AuthorizedLaunch {
 }
 
 /** Runtime half of the adapter boundary; structural impostors are refused. */
-export function requireAuthorizedLaunch(value: AuthorizedLaunch): AuthorizedLaunch {
+export function requireAuthorizedLaunch(
+  value: AuthorizedLaunch,
+): AuthorizedLaunch {
   if (!(value instanceof AuthorizedLaunch)) {
-    throw new TypeError("Launch adapter requires an AuthorizedLaunch from the gate");
+    throw new TypeError(
+      "Launch adapter requires an AuthorizedLaunch from the gate",
+    );
   }
   return value;
 }

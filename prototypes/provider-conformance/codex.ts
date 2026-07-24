@@ -2,8 +2,8 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { cleanEnvironment } from "./binding";
 import {
-  DUAL_CLIENT_STEER_TEXT,
   DUAL_CLIENT_INJECT_TEXT,
+  DUAL_CLIENT_STEER_TEXT,
   DUAL_CLIENT_VERIFY_TEXT,
   expectedCost,
   PROMPTS,
@@ -12,10 +12,10 @@ import {
 } from "./prompts";
 import {
   JsonLineProcess,
+  type JsonTransport,
   JsonWebSocket,
   objectValue,
   stringValue,
-  type JsonTransport,
 } from "./transport";
 import type {
   AdapterContext,
@@ -50,13 +50,19 @@ class CodexRpc {
 
   async request(method: string, params?: JsonObject): Promise<unknown> {
     const id = ++this.requestId;
-    this.process.send({ method, id, ...(params === undefined ? {} : { params }) });
+    this.process.send({
+      method,
+      id,
+      ...(params === undefined ? {} : { params }),
+    });
     const response = await this.process.waitFor(
       (message) => message.id === id && message.method === undefined,
     );
     if (response.error !== undefined) {
       const error = objectValue(response.error, `${method} error`);
-      throw new Error(`Codex ${method} failed: ${String(error.message ?? "unknown error")}`);
+      throw new Error(
+        `Codex ${method} failed: ${String(error.message ?? "unknown error")}`,
+      );
     }
     return response.result;
   }
@@ -105,7 +111,9 @@ interface CodexAdapterOptions {
 }
 
 function paramsOf(message: JsonObject): JsonObject {
-  return message.params === undefined ? {} : objectValue(message.params, "Codex params");
+  return message.params === undefined
+    ? {}
+    : objectValue(message.params, "Codex params");
 }
 
 function itemOf(message: JsonObject): JsonObject {
@@ -121,7 +129,11 @@ function turnOf(message: JsonObject): JsonObject {
 function turnIdOf(message: JsonObject): string | undefined {
   const params = paramsOf(message);
   if (typeof params.turnId === "string") return params.turnId;
-  if (typeof params.turn === "object" && params.turn !== null && !Array.isArray(params.turn)) {
+  if (
+    typeof params.turn === "object" &&
+    params.turn !== null &&
+    !Array.isArray(params.turn)
+  ) {
     const turn = params.turn as JsonObject;
     return typeof turn.id === "string" ? turn.id : undefined;
   }
@@ -134,31 +146,44 @@ async function generateSchemaProbe(
 ): Promise<string[]> {
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
-  const child = Bun.spawn([
-    binding.executablePath,
-    "app-server",
-    "generate-json-schema",
-    "--experimental",
-    "--out",
-    outputDirectory,
-  ], {
-    stdin: null,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const child = Bun.spawn(
+    [
+      binding.executablePath,
+      "app-server",
+      "generate-json-schema",
+      "--experimental",
+      "--out",
+      outputDirectory,
+    ],
+    {
+      stdin: null,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
   if (code !== 0) {
-    throw new Error(`Codex schema generation failed (${code}): ${(stderr || stdout).trim()}`);
+    throw new Error(
+      `Codex schema generation failed (${code}): ${(stderr || stdout).trim()}`,
+    );
   }
 
-  const serverRequest = await Bun.file(join(outputDirectory, "ServerRequest.json")).text();
-  const clientRequest = await Bun.file(join(outputDirectory, "ClientRequest.json")).text();
-  const serverNotification = await Bun.file(join(outputDirectory, "ServerNotification.json")).text();
-  const turnStart = await Bun.file(join(outputDirectory, "v2", "TurnStartParams.json")).text();
+  const serverRequest = await Bun.file(
+    join(outputDirectory, "ServerRequest.json"),
+  ).text();
+  const clientRequest = await Bun.file(
+    join(outputDirectory, "ClientRequest.json"),
+  ).text();
+  const serverNotification = await Bun.file(
+    join(outputDirectory, "ServerNotification.json"),
+  ).text();
+  const turnStart = await Bun.file(
+    join(outputDirectory, "v2", "TurnStartParams.json"),
+  ).text();
   const required = [
     [clientRequest, "thread/start"],
     [clientRequest, "thread/resume"],
@@ -172,12 +197,19 @@ async function generateSchemaProbe(
     [serverNotification, "turn/completed"],
   ] as const;
   for (const [schema, method] of required) {
-    if (!schema.includes(`\"${method}\"`)) {
-      throw new Error(`Binding schema does not expose required Codex method: ${method}`);
+    if (!schema.includes(`"${method}"`)) {
+      throw new Error(
+        `Binding schema does not expose required Codex method: ${method}`,
+      );
     }
   }
-  if (!turnStart.includes('"collaborationMode"') || !turnStart.includes('"plan"')) {
-    throw new Error("Binding schema does not expose experimental plan collaborationMode for needs-user");
+  if (
+    !turnStart.includes('"collaborationMode"') ||
+    !turnStart.includes('"plan"')
+  ) {
+    throw new Error(
+      "Binding schema does not expose experimental plan collaborationMode for needs-user",
+    );
   }
   return [
     `${binding.version} generated its own JSON Schema bundle with codex app-server generate-json-schema --experimental (non-billable).`,
@@ -187,9 +219,14 @@ async function generateSchemaProbe(
   ];
 }
 
-async function remoteHelpProbe(binding: InstallationBinding): Promise<string[]> {
+async function remoteHelpProbe(
+  binding: InstallationBinding,
+): Promise<string[]> {
   const probes = [
-    { argv: [binding.executablePath, "app-server", "--help"], required: "--listen" },
+    {
+      argv: [binding.executablePath, "app-server", "--help"],
+      required: "--listen",
+    },
     { argv: [binding.executablePath, "--help"], required: "--remote" },
   ];
   for (const probe of probes) {
@@ -205,7 +242,9 @@ async function remoteHelpProbe(binding: InstallationBinding): Promise<string[]> 
       child.exited,
     ]);
     if (code !== 0 || !`${stdout}\n${stderr}`.includes(probe.required)) {
-      throw new Error(`Binding help does not expose required Codex option: ${probe.required}`);
+      throw new Error(
+        `Binding help does not expose required Codex option: ${probe.required}`,
+      );
     }
   }
   return [
@@ -229,16 +268,27 @@ async function prepareModel(
   rpc = new CodexRpc(process);
   try {
     await rpc.request("initialize", {
-      clientInfo: { name: "hive_provider_conformance", title: "Hive provider conformance", version: "0.1.0" },
+      clientInfo: {
+        name: "hive_provider_conformance",
+        title: "Hive provider conformance",
+        version: "0.1.0",
+      },
       capabilities: { experimentalApi: true },
     });
     rpc.notify("initialized", {});
-    const response = objectValue(await rpc.request("model/list", {}), "model/list response");
+    const response = objectValue(
+      await rpc.request("model/list", {}),
+      "model/list response",
+    );
     const models = Array.isArray(response.data) ? response.data : [];
-    const preferred = models.find((entry) =>
-      typeof entry === "object" && entry !== null && !Array.isArray(entry) &&
-      (entry as JsonObject).isDefault === true
-    ) ?? models[0];
+    const preferred =
+      models.find(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          !Array.isArray(entry) &&
+          (entry as JsonObject).isDefault === true,
+      ) ?? models[0];
     const model = objectValue(preferred, "default Codex model");
     return stringValue(model.model ?? model.id, "Codex model id");
   } finally {
@@ -268,7 +318,8 @@ function handleFrame(
   scenario: Scenario,
   output: Map<string, string>,
 ): void {
-  const method = typeof message.method === "string" ? message.method : undefined;
+  const method =
+    typeof message.method === "string" ? message.method : undefined;
   if (method === undefined) return;
   const params = paramsOf(message);
   const turnId = turnIdOf(message);
@@ -280,12 +331,17 @@ function handleFrame(
       method === "item/fileChange/requestApproval" ||
       method === "item/permissions/requestApproval"
     ) {
-      recorder.add({ type: "approval.requested", requestId, turnId, tool: method });
+      recorder.add({
+        type: "approval.requested",
+        requestId,
+        turnId,
+        tool: method,
+      });
       const decision = approvalDecision(scenario);
       recorder.add({ type: "approval.responded", requestId, turnId, decision });
       if (method === "item/permissions/requestApproval") {
         rpc.respond(message.id as string | number, {
-          permissions: decision === "approve" ? params.permissions ?? {} : {},
+          permissions: decision === "approve" ? (params.permissions ?? {}) : {},
           scope: "turn",
         });
       } else {
@@ -296,13 +352,27 @@ function handleFrame(
       return;
     }
     if (method === "item/tool/requestUserInput") {
-      recorder.add({ type: "user-input.requested", requestId, turnId, tool: method });
+      recorder.add({
+        type: "user-input.requested",
+        requestId,
+        turnId,
+        tool: method,
+      });
       rpc.respond(message.id as string | number, answerUserInput(params));
-      recorder.add({ type: "user-input.responded", requestId, turnId, status: "Alpha" });
+      recorder.add({
+        type: "user-input.responded",
+        requestId,
+        turnId,
+        status: "Alpha",
+      });
       return;
     }
     rpc.respond(message.id as string | number, {});
-    recorder.add({ type: "diagnostic", requestId, text: `Unsupported server request was declined: ${method}` });
+    recorder.add({
+      type: "diagnostic",
+      requestId,
+      text: `Unsupported server request was declined: ${method}`,
+    });
     return;
   }
 
@@ -312,7 +382,8 @@ function handleFrame(
   }
   if (method === "item/agentMessage/delta") {
     const delta = typeof params.delta === "string" ? params.delta : "";
-    if (turnId !== undefined) output.set(turnId, `${output.get(turnId) ?? ""}${delta}`);
+    if (turnId !== undefined)
+      output.set(turnId, `${output.get(turnId) ?? ""}${delta}`);
     return;
   }
   if (method === "item/started") {
@@ -328,11 +399,18 @@ function handleFrame(
   if (method === "item/completed") {
     const item = itemOf(message);
     const status = typeof item.status === "string" ? item.status : "completed";
-    if (item.type === "agentMessage" && typeof item.text === "string" && turnId !== undefined) {
+    if (
+      item.type === "agentMessage" &&
+      typeof item.text === "string" &&
+      turnId !== undefined
+    ) {
       output.set(turnId, item.text);
     }
     recorder.add({
-      type: status === "declined" || status === "failed" ? "tool.denied" : "tool.completed",
+      type:
+        status === "declined" || status === "failed"
+          ? "tool.denied"
+          : "tool.completed",
       turnId,
       tool: typeof item.type === "string" ? item.type : "unknown",
       status,
@@ -346,17 +424,26 @@ function handleFrame(
     if (status === "interrupted") {
       recorder.add({ type: "turn.cancelled", turnId: id, status });
     } else if (status === "failed") {
-      const error = typeof turn.error === "object" && turn.error !== null
-        ? String((turn.error as JsonObject).message ?? "Codex turn failed")
-        : "Codex turn failed";
+      const error =
+        typeof turn.error === "object" && turn.error !== null
+          ? String((turn.error as JsonObject).message ?? "Codex turn failed")
+          : "Codex turn failed";
       recorder.add({ type: "turn.failed", turnId: id, status, text: error });
     } else {
-      recorder.add({ type: "turn.completed", turnId: id, status, text: output.get(id) ?? "" });
+      recorder.add({
+        type: "turn.completed",
+        turnId: id,
+        status,
+        text: output.get(id) ?? "",
+      });
     }
   }
 }
 
-async function startSession(options: StartOptions, executablePath: string): Promise<CodexSession> {
+async function startSession(
+  options: StartOptions,
+  executablePath: string,
+): Promise<CodexSession> {
   let rpc: CodexRpc | undefined;
   const output = new Map<string, string>();
   const process = new JsonLineProcess({
@@ -365,44 +452,73 @@ async function startSession(options: StartOptions, executablePath: string): Prom
     capturePath: options.capturePath,
     timeoutMs: options.timeoutMs,
     onMessage: (message) => {
-      if (rpc !== undefined) handleFrame(message, rpc, options.recorder, options.scenario, output);
+      if (rpc !== undefined)
+        handleFrame(message, rpc, options.recorder, options.scenario, output);
     },
   });
   rpc = new CodexRpc(process);
   try {
     await rpc.request("initialize", {
-      clientInfo: { name: "hive_provider_conformance", title: "Hive provider conformance", version: "0.1.0" },
+      clientInfo: {
+        name: "hive_provider_conformance",
+        title: "Hive provider conformance",
+        version: "0.1.0",
+      },
       capabilities: { experimentalApi: options.experimental },
     });
     rpc.notify("initialized", {});
-    const method = options.resumeThreadId === undefined ? "thread/start" : "thread/resume";
-    const response = objectValue(await rpc.request(method, {
-      ...(options.resumeThreadId === undefined ? {} : { threadId: options.resumeThreadId }),
-      model: options.model,
-      cwd: options.cwd,
-      approvalPolicy: options.approvalPolicy,
-      approvalsReviewer: "user",
-      sandbox: options.sandbox,
-    }), `${method} response`);
+    const method =
+      options.resumeThreadId === undefined ? "thread/start" : "thread/resume";
+    const response = objectValue(
+      await rpc.request(method, {
+        ...(options.resumeThreadId === undefined
+          ? {}
+          : { threadId: options.resumeThreadId }),
+        model: options.model,
+        cwd: options.cwd,
+        approvalPolicy: options.approvalPolicy,
+        approvalsReviewer: "user",
+        sandbox: options.sandbox,
+      }),
+      `${method} response`,
+    );
     const thread = objectValue(response.thread, `${method} thread`);
     const threadId = stringValue(thread.id, `${method} thread id`);
-    const effectiveModel = stringValue(response.model ?? options.model, `${method} effective model`);
+    const effectiveModel = stringValue(
+      response.model ?? options.model,
+      `${method} effective model`,
+    );
     options.recorder.add({
-      type: options.resumeThreadId === undefined ? "session.started" : "session.resumed",
+      type:
+        options.resumeThreadId === undefined
+          ? "session.started"
+          : "session.resumed",
       sessionId: threadId,
       resumedFrom: options.resumeThreadId,
     });
-    options.recorder.add({ type: "model.reported", sessionId: threadId, model: effectiveModel });
-    const sandbox = typeof response.sandbox === "object" && response.sandbox !== null
-      ? response.sandbox as JsonObject
-      : {};
-    const sandboxType = typeof sandbox.type === "string" ? sandbox.type : options.sandbox;
+    options.recorder.add({
+      type: "model.reported",
+      sessionId: threadId,
+      model: effectiveModel,
+    });
+    const sandbox =
+      typeof response.sandbox === "object" && response.sandbox !== null
+        ? (response.sandbox as JsonObject)
+        : {};
+    const sandboxType =
+      typeof sandbox.type === "string" ? sandbox.type : options.sandbox;
     options.recorder.add({
       type: "policy.reported",
       sessionId: threadId,
       status: sandboxType === "readOnly" ? "read-only" : sandboxType,
     });
-    return { rpc, threadId, effectiveModel, capturePath: options.capturePath, output };
+    return {
+      rpc,
+      threadId,
+      effectiveModel,
+      capturePath: options.capturePath,
+      output,
+    };
   } catch (error) {
     await process.close(true);
     throw error;
@@ -419,13 +535,20 @@ async function connectWebSocket(
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      return await JsonWebSocket.connect({ url, capturePath, timeoutMs, onMessage });
+      return await JsonWebSocket.connect({
+        url,
+        capturePath,
+        timeoutMs,
+        onMessage,
+      });
     } catch (error) {
       lastError = error;
       await Bun.sleep(100);
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(`Could not connect to ${url}`);
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Could not connect to ${url}`);
 }
 
 async function startWebSocketSession(
@@ -439,35 +562,62 @@ async function startWebSocketSession(
     options.capturePath,
     options.timeoutMs,
     (message) => {
-      if (rpc !== undefined) handleFrame(message, rpc, options.recorder, options.scenario, output);
+      if (rpc !== undefined)
+        handleFrame(message, rpc, options.recorder, options.scenario, output);
     },
   );
   rpc = new CodexRpc(transport);
   try {
     await rpc.request("initialize", {
-      clientInfo: { name: "hive_provider_conformance", title: "Hive provider conformance", version: "0.1.0" },
+      clientInfo: {
+        name: "hive_provider_conformance",
+        title: "Hive provider conformance",
+        version: "0.1.0",
+      },
       capabilities: { experimentalApi: options.experimental },
     });
     rpc.notify("initialized", {});
-    const method = options.resumeThreadId === undefined ? "thread/start" : "thread/resume";
-    const response = objectValue(await rpc.request(method, {
-      ...(options.resumeThreadId === undefined ? {} : { threadId: options.resumeThreadId }),
-      model: options.model,
-      cwd: options.cwd,
-      approvalPolicy: options.approvalPolicy,
-      approvalsReviewer: "user",
-      sandbox: options.sandbox,
-    }), `${method} response`);
+    const method =
+      options.resumeThreadId === undefined ? "thread/start" : "thread/resume";
+    const response = objectValue(
+      await rpc.request(method, {
+        ...(options.resumeThreadId === undefined
+          ? {}
+          : { threadId: options.resumeThreadId }),
+        model: options.model,
+        cwd: options.cwd,
+        approvalPolicy: options.approvalPolicy,
+        approvalsReviewer: "user",
+        sandbox: options.sandbox,
+      }),
+      `${method} response`,
+    );
     const thread = objectValue(response.thread, `${method} thread`);
     const threadId = stringValue(thread.id, `${method} thread id`);
-    const effectiveModel = stringValue(response.model ?? options.model, `${method} effective model`);
+    const effectiveModel = stringValue(
+      response.model ?? options.model,
+      `${method} effective model`,
+    );
     options.recorder.add({
-      type: options.resumeThreadId === undefined ? "session.started" : "session.resumed",
+      type:
+        options.resumeThreadId === undefined
+          ? "session.started"
+          : "session.resumed",
       sessionId: threadId,
       resumedFrom: options.resumeThreadId,
     });
-    options.recorder.add({ type: "model.reported", sessionId: threadId, model: effectiveModel });
-    return { rpc, threadId, effectiveModel, capturePath: options.capturePath, output };
+    options.recorder.add({
+      type: "model.reported",
+      sessionId: threadId,
+      model: effectiveModel,
+    });
+    return {
+      rpc,
+      threadId,
+      effectiveModel,
+      capturePath: options.capturePath,
+      output,
+    };
   } catch (error) {
     await transport.close();
     throw error;
@@ -489,7 +639,9 @@ function captureChild(argv: string[], cwd: string): ChildCapture {
   };
 }
 
-async function stopChild(capture: ChildCapture): Promise<{ stdout: string; stderr: string }> {
+async function stopChild(
+  capture: ChildCapture,
+): Promise<{ stdout: string; stderr: string }> {
   if (capture.child.exitCode === null) capture.child.kill();
   await Promise.race([capture.child.exited, Bun.sleep(2_000)]);
   if (capture.child.exitCode === null) capture.child.kill("SIGKILL");
@@ -514,78 +666,109 @@ async function runDualClient(
   context: AdapterContext,
   recorder: Recorder,
   capturePath: string,
-): Promise<{ session?: CodexSession; diagnostics: string[]; tuiCapturePath: string }> {
+): Promise<{
+  session?: CodexSession;
+  diagnostics: string[];
+  tuiCapturePath: string;
+}> {
   const diagnostics: string[] = [];
   const url = await websocketEndpoint();
-  const server = captureChild([
-    options.binding.executablePath,
-    "app-server",
-    "--listen",
-    url,
-  ], context.scenarioDirectory);
-  const tuiCapturePath = join(context.scenarioDirectory, "codex-tui.typescript");
+  const server = captureChild(
+    [options.binding.executablePath, "app-server", "--listen", url],
+    context.scenarioDirectory,
+  );
+  const tuiCapturePath = join(
+    context.scenarioDirectory,
+    "codex-tui.typescript",
+  );
   let bootstrap: CodexSession | undefined;
   let session: CodexSession | undefined;
   let tui: ChildCapture | undefined;
   try {
-    bootstrap = await startWebSocketSession({
-      model: context.selectedModel,
-      cwd: context.scenarioDirectory,
-      sandbox: "workspace-write",
-      approvalPolicy: "never",
-      capturePath: join(context.scenarioDirectory, "codex-bootstrap.frames.jsonl"),
-      experimental: false,
-      recorder,
-      scenario: "dual-client",
-      timeoutMs: context.timeoutMs,
-    }, url);
+    bootstrap = await startWebSocketSession(
+      {
+        model: context.selectedModel,
+        cwd: context.scenarioDirectory,
+        sandbox: "workspace-write",
+        approvalPolicy: "never",
+        capturePath: join(
+          context.scenarioDirectory,
+          "codex-bootstrap.frames.jsonl",
+        ),
+        experimental: false,
+        recorder,
+        scenario: "dual-client",
+        timeoutMs: context.timeoutMs,
+      },
+      url,
+    );
     const threadId = bootstrap.threadId;
     await bootstrap.rpc.process.close();
     bootstrap = undefined;
 
-    tui = captureChild([
-      "/usr/bin/script",
-      "-q",
-      tuiCapturePath,
-      options.binding.executablePath,
-      "resume",
-      "--remote",
-      url,
-      threadId,
-      "--model",
-      context.selectedModel,
-      "--cd",
+    tui = captureChild(
+      [
+        "/usr/bin/script",
+        "-q",
+        tuiCapturePath,
+        options.binding.executablePath,
+        "resume",
+        "--remote",
+        url,
+        threadId,
+        "--model",
+        context.selectedModel,
+        "--cd",
+        context.scenarioDirectory,
+        "--no-alt-screen",
+      ],
       context.scenarioDirectory,
-      "--no-alt-screen",
-    ], context.scenarioDirectory);
+    );
     await Bun.sleep(1_000);
     if (tui.child.exitCode !== null) {
-      throw new Error(`Codex remote TUI exited before attachment with code ${tui.child.exitCode}`);
+      throw new Error(
+        `Codex remote TUI exited before attachment with code ${tui.child.exitCode}`,
+      );
     }
-    recorder.add({ type: "client.attached", sessionId: threadId, status: "tui" });
+    recorder.add({
+      type: "client.attached",
+      sessionId: threadId,
+      status: "tui",
+    });
 
-    session = await startWebSocketSession({
-      model: context.selectedModel,
-      cwd: context.scenarioDirectory,
-      sandbox: "workspace-write",
-      approvalPolicy: "never",
-      capturePath,
-      experimental: false,
-      resumeThreadId: threadId,
-      recorder,
-      scenario: "dual-client",
-      timeoutMs: context.timeoutMs,
-    }, url);
-    recorder.add({ type: "client.subscribed", sessionId: threadId, status: "protocol" });
-    const turnId = await startTurn(session, PROMPTS["dual-client"].text(""));
-    await session.rpc.process.waitFor((message) =>
-      message.method === "item/started" && turnIdOf(message) === turnId
+    session = await startWebSocketSession(
+      {
+        model: context.selectedModel,
+        cwd: context.scenarioDirectory,
+        sandbox: "workspace-write",
+        approvalPolicy: "never",
+        capturePath,
+        experimental: false,
+        resumeThreadId: threadId,
+        recorder,
+        scenario: "dual-client",
+        timeoutMs: context.timeoutMs,
+      },
+      url,
     );
-    const response = objectValue(await session.rpc.request("turn/steer", {
-      threadId,
-      expectedTurnId: turnId,
-      input: [{ type: "text", text: DUAL_CLIENT_STEER_TEXT }],
-    }), "turn/steer response");
+    recorder.add({
+      type: "client.subscribed",
+      sessionId: threadId,
+      status: "protocol",
+    });
+    const turnId = await startTurn(session, PROMPTS["dual-client"].text(""));
+    await session.rpc.process.waitFor(
+      (message) =>
+        message.method === "item/started" && turnIdOf(message) === turnId,
+    );
+    const response = objectValue(
+      await session.rpc.request("turn/steer", {
+        threadId,
+        expectedTurnId: turnId,
+        input: [{ type: "text", text: DUAL_CLIENT_STEER_TEXT }],
+      }),
+      "turn/steer response",
+    );
     recorder.add({
       type: "steer.accepted",
       turnId: stringValue(response.turnId, "turn/steer accepted turn id"),
@@ -593,13 +776,19 @@ async function runDualClient(
     await waitForTurn(session, turnId);
     await session.rpc.request("thread/inject_items", {
       threadId,
-      items: [{
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: DUAL_CLIENT_INJECT_TEXT }],
-      }],
+      items: [
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: DUAL_CLIENT_INJECT_TEXT }],
+        },
+      ],
     });
-    recorder.add({ type: "input.injected", sessionId: threadId, receipt: true });
+    recorder.add({
+      type: "input.injected",
+      sessionId: threadId,
+      receipt: true,
+    });
     const verifyTurnId = await startTurn(session, DUAL_CLIENT_VERIFY_TEXT, {
       approvalPolicy: "never",
     });
@@ -610,12 +799,20 @@ async function runDualClient(
     await session?.rpc.process.close();
     if (tui !== undefined) {
       const output = await stopChild(tui);
-      const transcript = await Bun.file(tuiCapturePath).text().catch(() => "");
+      const transcript = await Bun.file(tuiCapturePath)
+        .text()
+        .catch(() => "");
       const combined = `${output.stdout}\n${output.stderr}\n${transcript}`;
       if (combined.includes("HIVE_INJECT_SEEN")) {
-        recorder.add({ type: "client.observed", status: "tui", text: "HIVE_INJECT_SEEN" });
+        recorder.add({
+          type: "client.observed",
+          status: "tui",
+          text: "HIVE_INJECT_SEEN",
+        });
       } else {
-        diagnostics.push("The attached TUI capture did not contain the history-dependent terminal sentinel.");
+        diagnostics.push(
+          "The attached TUI capture did not contain the history-dependent terminal sentinel.",
+        );
       }
     }
     await stopChild(server);
@@ -628,23 +825,32 @@ async function startTurn(
   text: string,
   extra: JsonObject = {},
 ): Promise<string> {
-  const response = objectValue(await session.rpc.request("turn/start", {
-    threadId: session.threadId,
-    input: [{ type: "text", text }],
-    ...extra,
-  }), "turn/start response");
+  const response = objectValue(
+    await session.rpc.request("turn/start", {
+      threadId: session.threadId,
+      input: [{ type: "text", text }],
+      ...extra,
+    }),
+    "turn/start response",
+  );
   const turn = objectValue(response.turn, "turn/start turn");
   return stringValue(turn.id, "turn/start turn id");
 }
 
-async function waitForTurn(session: CodexSession, turnId: string): Promise<JsonObject> {
+async function waitForTurn(
+  session: CodexSession,
+  turnId: string,
+): Promise<JsonObject> {
   return session.rpc.process.waitFor((message) => {
     if (message.method !== "turn/completed") return false;
     return turnIdOf(message) === turnId;
   });
 }
 
-async function markerEvent(recorder: Recorder, markerPath: string): Promise<void> {
+async function markerEvent(
+  recorder: Recorder,
+  markerPath: string,
+): Promise<void> {
   const file = Bun.file(markerPath);
   const exists = await file.exists();
   recorder.add({
@@ -669,7 +875,10 @@ async function runScenario(
   let observedOutputTokens: number | undefined;
 
   const base = {
-    model: scenario === "invalid-model" ? context.invalidModel : context.selectedModel,
+    model:
+      scenario === "invalid-model"
+        ? context.invalidModel
+        : context.selectedModel,
     cwd: context.scenarioDirectory,
     capturePath,
     experimental: scenario === "needs-user",
@@ -686,17 +895,37 @@ async function runScenario(
       diagnostics.push(...dual.diagnostics);
       session = dual.session;
     } else if (scenario === "invalid-model") {
-      recorder.add({ type: "validation.started", model: context.invalidModel, validationOnly: true });
+      recorder.add({
+        type: "validation.started",
+        model: context.invalidModel,
+        validationOnly: true,
+      });
       try {
-        session = await startSession({
-          ...base,
-          sandbox: "read-only",
-          approvalPolicy: "never",
-        }, options.binding.executablePath);
+        session = await startSession(
+          {
+            ...base,
+            sandbox: "read-only",
+            approvalPolicy: "never",
+          },
+          options.binding.executablePath,
+        );
       } catch (error) {
-        const text = error instanceof Error ? error.message : "Codex rejected invalid model";
-        recorder.add({ type: "model.rejected", model: context.invalidModel, text, validationOnly: true });
-        recorder.add({ type: "validation.rejected", model: context.invalidModel, text, validationOnly: true });
+        const text =
+          error instanceof Error
+            ? error.message
+            : "Codex rejected invalid model";
+        recorder.add({
+          type: "model.rejected",
+          model: context.invalidModel,
+          text,
+          validationOnly: true,
+        });
+        recorder.add({
+          type: "validation.rejected",
+          model: context.invalidModel,
+          text,
+          validationOnly: true,
+        });
         return {
           provider: "codex",
           scenario,
@@ -706,7 +935,9 @@ async function runScenario(
           events: recorder.events,
           cost: {
             classification: "non-billable",
-            provenance: ["Codex rejected thread/start before turn/start; no prompt was sent."],
+            provenance: [
+              "Codex rejected thread/start before turn/start; no prompt was sent.",
+            ],
           },
           fallbackConfigured: false,
           realTaskStarted: false,
@@ -721,79 +952,113 @@ async function runScenario(
           text: `Pinned ${context.invalidModel} but provider reported ${session.effectiveModel}`,
         });
       }
-      const turnId = await startTurn(session, PROMPTS[scenario].text(markerPath));
+      const turnId = await startTurn(
+        session,
+        PROMPTS[scenario].text(markerPath),
+      );
       await waitForTurn(session, turnId);
-      const failed = recorder.events.find((event) => event.type === "turn.failed" && event.turnId === turnId);
+      const failed = recorder.events.find(
+        (event) => event.type === "turn.failed" && event.turnId === turnId,
+      );
       if (failed !== undefined) {
-        recorder.add({ type: "validation.rejected", model: context.invalidModel, text: failed.text, validationOnly: true });
+        recorder.add({
+          type: "validation.rejected",
+          model: context.invalidModel,
+          text: failed.text,
+          validationOnly: true,
+        });
       }
     } else if (scenario === "resume") {
       realTaskStarted = true;
-      const first = await startSession({
-        ...base,
-        sandbox: "workspace-write",
-        approvalPolicy: "never",
-      }, options.binding.executablePath);
+      const first = await startSession(
+        {
+          ...base,
+          sandbox: "workspace-write",
+          approvalPolicy: "never",
+        },
+        options.binding.executablePath,
+      );
       const firstTurn = await startTurn(first, PROMPTS.resume.text(markerPath));
       await waitForTurn(first, firstTurn);
       const durableId = first.threadId;
       await first.rpc.process.close(true);
-      session = await startSession({
-        ...base,
-        capturePath: join(context.scenarioDirectory, "codex-resumed.frames.jsonl"),
-        resumeThreadId: durableId,
-        sandbox: "workspace-write",
-        approvalPolicy: "never",
-      }, options.binding.executablePath);
+      session = await startSession(
+        {
+          ...base,
+          capturePath: join(
+            context.scenarioDirectory,
+            "codex-resumed.frames.jsonl",
+          ),
+          resumeThreadId: durableId,
+          sandbox: "workspace-write",
+          approvalPolicy: "never",
+        },
+        options.binding.executablePath,
+      );
       const resumedTurn = await startTurn(session, RESUME_CHECK_TEXT);
       await waitForTurn(session, resumedTurn);
     } else {
       realTaskStarted = true;
       const readOnly = scenario === "read-only";
       const requiresApproval = scenario === "approve" || scenario === "deny";
-      session = await startSession({
-        ...base,
-        sandbox: readOnly || requiresApproval ? "read-only" : "workspace-write",
-        approvalPolicy: requiresApproval ? "on-request" : "never",
-      }, options.binding.executablePath);
+      session = await startSession(
+        {
+          ...base,
+          sandbox:
+            readOnly || requiresApproval ? "read-only" : "workspace-write",
+          approvalPolicy: requiresApproval ? "on-request" : "never",
+        },
+        options.binding.executablePath,
+      );
       const turnId = await startTurn(
         session,
         PROMPTS[scenario].text(markerPath),
         scenario === "needs-user"
           ? {
-            collaborationMode: {
-              mode: "plan",
-              settings: {
-                model: context.selectedModel,
-                reasoning_effort: null,
-                developer_instructions: null,
+              collaborationMode: {
+                mode: "plan",
+                settings: {
+                  model: context.selectedModel,
+                  reasoning_effort: null,
+                  developer_instructions: null,
+                },
               },
-            },
-          }
+            }
           : {},
       );
 
       if (scenario === "steer" || scenario === "cancel") {
-        await session.rpc.process.waitFor((message) =>
-          message.method === "item/started" && turnIdOf(message) === turnId
+        await session.rpc.process.waitFor(
+          (message) =>
+            message.method === "item/started" && turnIdOf(message) === turnId,
         );
         if (scenario === "steer") {
-          const response = objectValue(await session.rpc.request("turn/steer", {
-            threadId: session.threadId,
-            expectedTurnId: turnId,
-            input: [{ type: "text", text: STEER_TEXT }],
-          }), "turn/steer response");
+          const response = objectValue(
+            await session.rpc.request("turn/steer", {
+              threadId: session.threadId,
+              expectedTurnId: turnId,
+              input: [{ type: "text", text: STEER_TEXT }],
+            }),
+            "turn/steer response",
+          );
           recorder.add({
             type: "steer.accepted",
             turnId: stringValue(response.turnId, "turn/steer accepted turn id"),
           });
         } else {
-          await session.rpc.request("turn/interrupt", { threadId: session.threadId, turnId });
+          await session.rpc.request("turn/interrupt", {
+            threadId: session.threadId,
+            turnId,
+          });
           recorder.add({ type: "cancel.receipt", turnId, receipt: true });
         }
       }
       await waitForTurn(session, turnId);
-      if (scenario === "approve" || scenario === "deny" || scenario === "read-only") {
+      if (
+        scenario === "approve" ||
+        scenario === "deny" ||
+        scenario === "read-only"
+      ) {
         await markerEvent(recorder, markerPath);
       }
     }
@@ -803,11 +1068,15 @@ async function runScenario(
       const params = paramsOf(message);
       const usage = objectValue(params.tokenUsage, "Codex token usage");
       const last = objectValue(usage.last ?? {}, "Codex last token usage");
-      if (typeof last.inputTokens === "number") observedInputTokens = last.inputTokens;
-      if (typeof last.outputTokens === "number") observedOutputTokens = last.outputTokens;
+      if (typeof last.inputTokens === "number")
+        observedInputTokens = last.inputTokens;
+      if (typeof last.outputTokens === "number")
+        observedOutputTokens = last.outputTokens;
     }
   } catch (error) {
-    diagnostics.push(error instanceof Error ? error.message : "Unknown Codex adapter failure");
+    diagnostics.push(
+      error instanceof Error ? error.message : "Unknown Codex adapter failure",
+    );
     recorder.add({ type: "diagnostic", text: diagnostics.at(-1) });
   } finally {
     await session?.rpc.process.close(true);
@@ -819,7 +1088,9 @@ async function runScenario(
     scenario,
     binding: options.binding,
     selectedModel: context.selectedModel,
-    ...(scenario === "invalid-model" ? { invalidModel: context.invalidModel } : {}),
+    ...(scenario === "invalid-model"
+      ? { invalidModel: context.invalidModel }
+      : {}),
     events: recorder.events,
     cost: {
       classification: costClass,
@@ -839,25 +1110,37 @@ async function runScenario(
   };
 }
 
-export async function prepareCodex(options: CodexAdapterOptions): Promise<PreparedAdapter> {
+export async function prepareCodex(
+  options: CodexAdapterOptions,
+): Promise<PreparedAdapter> {
   await mkdir(options.preflightDirectory, { recursive: true });
   const schemaDirectory = join(options.preflightDirectory, "generated-schema");
-  const preflightProvenance = await generateSchemaProbe(options.binding, schemaDirectory);
-  const selectedModel = options.selectedModel ?? await prepareModel(
+  const preflightProvenance = await generateSchemaProbe(
     options.binding,
-    join(options.preflightDirectory, "model-list.frames.jsonl"),
-    options.preflightDirectory,
-    options.timeoutMs,
+    schemaDirectory,
   );
+  const selectedModel =
+    options.selectedModel ??
+    (await prepareModel(
+      options.binding,
+      join(options.preflightDirectory, "model-list.frames.jsonl"),
+      options.preflightDirectory,
+      options.timeoutMs,
+    ));
   return {
     provider: "codex",
     binding: options.binding,
     selectedModel,
     preflightProvenance,
-    run: (scenario, context) => runScenario(
-      { ...options, selectedModel, preflightDirectory: options.preflightDirectory },
-      scenario,
-      context,
-    ),
+    run: (scenario, context) =>
+      runScenario(
+        {
+          ...options,
+          selectedModel,
+          preflightDirectory: options.preflightDirectory,
+        },
+        scenario,
+        context,
+      ),
   };
 }

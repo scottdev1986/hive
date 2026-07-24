@@ -35,7 +35,10 @@ export interface Tombstone {
   /** The evidence that used to be at this path. Kept so an audit can explain the refusal. */
   formerEvidence: FsEvidence;
 }
-export interface ProjectRegistrySnapshot { records: ProjectRecord[]; tombstones: Tombstone[]; }
+export interface ProjectRegistrySnapshot {
+  records: ProjectRecord[];
+  tombstones: Tombstone[];
+}
 
 export class IdentityKeyOccupied extends Error {
   constructor(identityKey: string) {
@@ -67,14 +70,28 @@ export class ProjectRegistry {
   records(): ProjectRecord[] {
     return [...this.byUuid.values()];
   }
-  snapshot(): ProjectRegistrySnapshot { return { records: structuredClone(this.records()), tombstones: structuredClone([...this.tombstones.values()]) }; }
+  snapshot(): ProjectRegistrySnapshot {
+    return {
+      records: structuredClone(this.records()),
+      tombstones: structuredClone([...this.tombstones.values()]),
+    };
+  }
   static hydrate(snapshot: ProjectRegistrySnapshot): ProjectRegistry {
     const registry = new ProjectRegistry();
     for (const record of snapshot.records) {
-      if (registry.byUuid.has(record.hiveUuid) || registry.byIdentityKey.has(record.identityKey)) throw new Error("duplicate registry identity");
-      registry.byUuid.set(record.hiveUuid, structuredClone(record)); registry.byIdentityKey.set(record.identityKey, record.hiveUuid);
+      if (
+        registry.byUuid.has(record.hiveUuid) ||
+        registry.byIdentityKey.has(record.identityKey)
+      )
+        throw new Error("duplicate registry identity");
+      registry.byUuid.set(record.hiveUuid, structuredClone(record));
+      registry.byIdentityKey.set(record.identityKey, record.hiveUuid);
     }
-    for (const tombstone of snapshot.tombstones) registry.tombstones.set(tombstone.identityKey, structuredClone(tombstone));
+    for (const tombstone of snapshot.tombstones)
+      registry.tombstones.set(
+        tombstone.identityKey,
+        structuredClone(tombstone),
+      );
     return registry;
   }
 
@@ -115,8 +132,13 @@ export class ProjectRegistry {
   }
 
   /** Explicit creation. Refuses to overwrite a live binding. */
-  create(key: ProjectKey, evidence: FsEvidence, bookmark: string | null): ProjectRecord {
-    if (this.byIdentityKey.has(key.identityKey)) throw new IdentityKeyOccupied(key.identityKey);
+  create(
+    key: ProjectKey,
+    evidence: FsEvidence,
+    bookmark: string | null,
+  ): ProjectRecord {
+    if (this.byIdentityKey.has(key.identityKey))
+      throw new IdentityKeyOccupied(key.identityKey);
     const record: ProjectRecord = {
       hiveUuid: randomUUID(),
       identityKey: key.identityKey,
@@ -151,7 +173,8 @@ export class ProjectRegistry {
     const record = this.byUuid.get(hiveUuid);
     if (!record) throw new Error(`unknown hiveUuid: ${hiveUuid}`);
     const occupant = this.byIdentityKey.get(key.identityKey);
-    if (occupant !== undefined && occupant !== hiveUuid) throw new IdentityKeyOccupied(key.identityKey);
+    if (occupant !== undefined && occupant !== hiveUuid)
+      throw new IdentityKeyOccupied(key.identityKey);
 
     this.byIdentityKey.delete(record.identityKey);
     record.identityKey = key.identityKey;
@@ -174,7 +197,10 @@ export class ProjectRegistry {
    * Break the path -> Hive binding and record why. The Hive itself survives: it may
    * still be alive at another path, and a later resolve there will offer a rebind.
    */
-  tombstonePath(identityKey: string, reason: TombstoneReason): Tombstone | null {
+  tombstonePath(
+    identityKey: string,
+    reason: TombstoneReason,
+  ): Tombstone | null {
     const record = this.findByIdentityKey(identityKey);
     if (!record) return null;
     const tombstone: Tombstone = {

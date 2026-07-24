@@ -1,18 +1,20 @@
 import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
-  rootSessionIdForLaunchRequest,
   type RootSessiondLocator,
+  rootSessionIdForLaunchRequest,
 } from "../daemon/orchestrator-host";
 import {
-  OrchestratorSessiondSnapshotSchema,
   type OrchestratorSessiondLaunch,
   type OrchestratorSessiondSnapshot,
+  OrchestratorSessiondSnapshotSchema,
 } from "../daemon/orchestrator-sessiond";
 import { sameSessionLocator } from "../daemon/session-host/locators";
 import { operatorFetch } from "./credential";
 
 export interface OrchestratorSessiondControl {
-  start(request: OrchestratorSessiondLaunch): Promise<OrchestratorSessiondSnapshot>;
+  start(
+    request: OrchestratorSessiondLaunch,
+  ): Promise<OrchestratorSessiondSnapshot>;
   inspect(requestId: string): Promise<OrchestratorSessiondSnapshot | null>;
 }
 
@@ -40,8 +42,12 @@ type AuthorizedFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
-async function responseError(response: Response): Promise<OrchestratorLaunchFailedError> {
-  const body = await response.json().catch(() => null) as { error?: string } | null;
+async function responseError(
+  response: Response,
+): Promise<OrchestratorLaunchFailedError> {
+  const body = (await response.json().catch(() => null)) as {
+    error?: string;
+  } | null;
   return new OrchestratorLaunchFailedError(
     body?.error ?? `queen session request failed with HTTP ${response.status}`,
   );
@@ -127,7 +133,8 @@ export async function runOrchestratorSessiondLaunch(
         return snapshot.exitCode ?? 1;
       case "failed":
         throw new OrchestratorLaunchFailedError(
-          snapshot.diagnostic ?? "sessiond queen launch failed without a diagnostic",
+          snapshot.diagnostic ??
+            "sessiond queen launch failed without a diagnostic",
         );
       case "awaiting-visibility":
       case "running":
@@ -135,7 +142,7 @@ export async function runOrchestratorSessiondLaunch(
         break;
     }
     const inspected = await inspect();
-    snapshot = inspected ?? await start();
+    snapshot = inspected ?? (await start());
     locator = requireExactRootGeneration(launch, snapshot, locator);
   }
 }

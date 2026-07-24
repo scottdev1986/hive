@@ -1,9 +1,10 @@
 import type { AgentMessage, AgentRecord } from "../schemas";
-import type { ApprovalKind } from "./db";
 import {
-  OrchestratorMessageEnvelopeSchema,
   type OrchestratorMessageEnvelope,
+  OrchestratorMessageEnvelopeSchema,
 } from "../schemas";
+import type { ApprovalKind } from "./db";
+
 export { orchestratorSessionKey } from "./instance-identity";
 
 /**
@@ -87,8 +88,11 @@ function elideMiddle(points: string[], keep: number): string {
   const head = Math.ceil(keep * ENVELOPE_HEAD_SHARE);
   const tail = keep - head;
   const marker = `\n…[${points.length - keep} characters elided; read the full body with ref]…\n`;
-  return points.slice(0, head).join("") + marker +
-    (tail > 0 ? points.slice(points.length - tail).join("") : "");
+  return (
+    points.slice(0, head).join("") +
+    marker +
+    (tail > 0 ? points.slice(points.length - tail).join("") : "")
+  );
 }
 
 /**
@@ -135,8 +139,9 @@ export function createOrchestratorEnvelope(
 
 function fits(envelope: OrchestratorMessageEnvelope): boolean {
   const serialized = `📨 ${JSON.stringify(envelope)}`;
-  return encoder.encode(serialized).byteLength <=
-    ORCHESTRATOR_ENVELOPE_MAX_BYTES;
+  return (
+    encoder.encode(serialized).byteLength <= ORCHESTRATOR_ENVELOPE_MAX_BYTES
+  );
 }
 
 export function formatOrchestratorWake(
@@ -148,60 +153,67 @@ export function formatOrchestratorWake(
 
 export function compactActiveTeam(
   agents: AgentRecord[],
-  evidence: Map<string, { instructions: string[]; files: string[] }> = new Map(),
+  evidence: Map<
+    string,
+    { instructions: string[]; files: string[] }
+  > = new Map(),
 ): ActiveAgentSummary[] {
   return agents
-    .filter((agent) =>
-      agent.status !== "dead" &&
-      agent.status !== "done" &&
-      agent.status !== "failed"
+    .filter(
+      (agent) =>
+        agent.status !== "dead" &&
+        agent.status !== "done" &&
+        agent.status !== "failed",
     )
     .map((agent) => {
       const observed = evidence.get(agent.name) ?? {
         instructions: [],
         files: [],
       };
-      const overlaps = agents.filter((other) =>
-        other.name !== agent.name &&
-        !["dead", "done", "failed"].includes(other.status) &&
-        (evidence.get(other.name)?.files ?? []).some((path) =>
-          observed.files.includes(path)
+      const overlaps = agents
+        .filter(
+          (other) =>
+            other.name !== agent.name &&
+            !["dead", "done", "failed"].includes(other.status) &&
+            (evidence.get(other.name)?.files ?? []).some((path) =>
+              observed.files.includes(path),
+            ),
         )
-      )
         .map((other) => other.name);
       return {
-      name: agent.name,
-      readOnly: agent.readOnly,
-      tool: agent.tool,
-      // The model it is running, not the one it was spawned with — this is the
-      // view the orchestrator routes off.
-      model: agent.liveModel ?? agent.model,
-      status: agent.status,
-      contextPct: agent.contextPct === null
-        ? null
-        : Math.round(agent.contextPct),
-      task: truncateCodePoints(
-        agent.taskDescription.replaceAll(/\s+/g, " ").trim(),
-        MAX_TASK_CODE_POINTS,
-      ),
-      instructionCount: observed.instructions.length,
-      ...(observed.instructions.at(-1) === undefined ? {} : {
-        latestInstruction: truncateCodePoints(
-          observed.instructions.at(-1)!.replaceAll(/\s+/g, " ").trim(),
+        name: agent.name,
+        readOnly: agent.readOnly,
+        tool: agent.tool,
+        // The model it is running, not the one it was spawned with — this is the
+        // view the orchestrator routes off.
+        model: agent.liveModel ?? agent.model,
+        status: agent.status,
+        contextPct:
+          agent.contextPct === null ? null : Math.round(agent.contextPct),
+        task: truncateCodePoints(
+          agent.taskDescription.replaceAll(/\s+/g, " ").trim(),
           MAX_TASK_CODE_POINTS,
         ),
-      }),
-      observedFiles: observed.files,
-      overlaps,
-      ...(Object.hasOwn(agent, "graphifyCalls")
-        ? {
-          graphifyCalls:
-            (agent as AgentRecord & { graphifyCalls: number | null })
-              .graphifyCalls,
-        }
-        : {}),
-      deliveryBlocked: agent.deliveryBlocked ?? null,
-      lastEventAt: agent.lastEventAt,
+        instructionCount: observed.instructions.length,
+        ...(observed.instructions.at(-1) === undefined
+          ? {}
+          : {
+              latestInstruction: truncateCodePoints(
+                observed.instructions.at(-1)!.replaceAll(/\s+/g, " ").trim(),
+                MAX_TASK_CODE_POINTS,
+              ),
+            }),
+        observedFiles: observed.files,
+        overlaps,
+        ...(Object.hasOwn(agent, "graphifyCalls")
+          ? {
+              graphifyCalls: (
+                agent as AgentRecord & { graphifyCalls: number | null }
+              ).graphifyCalls,
+            }
+          : {}),
+        deliveryBlocked: agent.deliveryBlocked ?? null,
+        lastEventAt: agent.lastEventAt,
       };
     });
 }

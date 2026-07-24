@@ -1,17 +1,24 @@
 import type { AgentRecord } from "../../schemas";
-import type { SessionLocator, TerminalGeometry } from "../../schemas/session-protocol";
+import type {
+  SessionLocator,
+  TerminalGeometry,
+} from "../../schemas/session-protocol";
+import type { SessionHost } from "./contract";
 import {
   requireSessiondAgentLocator,
   requireSessiondRootLocator,
 } from "./hive-terminal-host";
-import type { SessionHost } from "./contract";
 import type { OrphanDiscardMode, OrphanDiscardResult } from "./sessiond-host";
-import type { SessionInspection, WindowSize, InputReceipt } from "./terminal-host-contract";
-import type { TerminalHost } from "./terminal-host-contract";
 import {
   SessiondViewerAttachClient,
   type ViewerAttachDependencies,
 } from "./sessiond-viewer-attach";
+import type {
+  InputReceipt,
+  SessionInspection,
+  TerminalHost,
+  WindowSize,
+} from "./terminal-host-contract";
 
 /** Bracketed paste so embedded newlines are captured as one paste, then a
  * carriage return outside the paste submits it. */
@@ -71,7 +78,8 @@ export interface SessiondRootInput {
 }
 
 /** The broker RPCs this injector needs. */
-type BrokerFacade = Pick<SessionHost, "issueAttach"> & Pick<TerminalHost, "list">;
+type BrokerFacade = Pick<SessionHost, "issueAttach"> &
+  Pick<TerminalHost, "list">;
 
 /** §22 orphan discard, absent on hosts that predate it — an injector built
  * without it keeps the pre-fix behaviour: decline and stay queued. */
@@ -80,7 +88,9 @@ type OrphanDiscarder = (
   mode: OrphanDiscardMode,
 ) => Promise<OrphanDiscardResult>;
 
-export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRootInput {
+export class SessiondViewerAgentInput
+  implements SessiondAgentInput, SessiondRootInput
+{
   constructor(
     private readonly broker: BrokerFacade,
     private readonly viewerId: string,
@@ -164,9 +174,10 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
     if (matches.length !== 1) {
       return {
         outcome: "declined",
-        reason: matches.length === 0
-          ? `session ${locator.sessionId} not found on the sessiond host`
-          : `session ${locator.sessionId} is ambiguous on the sessiond host`,
+        reason:
+          matches.length === 0
+            ? `session ${locator.sessionId} not found on the sessiond host`
+            : `session ${locator.sessionId} is ambiguous on the sessiond host`,
       };
     }
     const inspection: SessionInspection = matches[0]!;
@@ -208,7 +219,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
     declineReason: string,
     isPromptPending?: () => boolean,
   ): Promise<SessiondInjectResult> {
-    let discard;
+    let discard: OrphanDiscardResult;
     try {
       discard = await this.discardOrphan(locator, "orphaned");
     } catch (error) {
@@ -230,8 +241,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
         reason: `${declineReason}; orphan discard returned unexpected state ${discard.state}`,
       };
     }
-    const recovery =
-      `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`;
+    const recovery = `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`;
     const retried = await this.submitOnce(
       locator,
       inspection,
@@ -240,7 +250,10 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
       isPromptPending,
     );
     if (retried.outcome === "declined") {
-      return { outcome: "declined", reason: `${recovery}; retry declined: ${retried.reason}` };
+      return {
+        outcome: "declined",
+        reason: `${recovery}; retry declined: ${retried.reason}`,
+      };
     }
     return { ...retried, recovery };
   }
@@ -265,7 +278,12 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
       operations: ["view", "human-input"],
     });
 
-    const client = await this.attach({ locator, grant, geometry, viewerId: this.viewerId });
+    const client = await this.attach({
+      locator,
+      grant,
+      geometry,
+      viewerId: this.viewerId,
+    });
     try {
       const result = await client.injectAutomated({
         session,
@@ -286,7 +304,8 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
       if (receipt.stage === "rejected" || receipt.stage === "unknown") {
         return {
           outcome: "declined",
-          reason: `input receipt stage ${receipt.stage}` +
+          reason:
+            `input receipt stage ${receipt.stage}` +
             (receipt.diagnostic === null ? "" : `: ${receipt.diagnostic}`),
         };
       }
@@ -304,14 +323,18 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
  * schema-valid.
  */
 function geometryFromWindow(window: WindowSize): TerminalGeometry {
-  const cellWidthPx = window.widthPixels > 0 ? window.widthPixels / window.columns : 8;
-  const cellHeightPx = window.heightPixels > 0 ? window.heightPixels / window.rows : 16;
-  const widthPx = window.widthPixels > 0
-    ? window.widthPixels
-    : Math.round(window.columns * cellWidthPx);
-  const heightPx = window.heightPixels > 0
-    ? window.heightPixels
-    : Math.round(window.rows * cellHeightPx);
+  const cellWidthPx =
+    window.widthPixels > 0 ? window.widthPixels / window.columns : 8;
+  const cellHeightPx =
+    window.heightPixels > 0 ? window.heightPixels / window.rows : 16;
+  const widthPx =
+    window.widthPixels > 0
+      ? window.widthPixels
+      : Math.round(window.columns * cellWidthPx);
+  const heightPx =
+    window.heightPixels > 0
+      ? window.heightPixels
+      : Math.round(window.rows * cellHeightPx);
   return {
     columns: window.columns,
     rows: window.rows,

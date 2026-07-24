@@ -1,15 +1,22 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { getDatabasePath, HiveDatabase } from "../../src/daemon/db";
 import { HiveDaemon } from "../../src/daemon/server";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { AgentRecord } from "../../src/schemas";
 
 const tempRoots: string[] = [];
 const previousHome = process.env.HIVE_HOME;
@@ -17,7 +24,9 @@ const previousHome = process.env.HIVE_HOME;
 afterEach(async () => {
   process.env.HIVE_HOME = previousHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -35,9 +44,11 @@ class UnusedSpawner implements Spawner {
 }
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -71,9 +82,11 @@ function validWrite(overrides: Record<string, unknown> = {}) {
 }
 
 async function discoverMemoryFiles(root: string): Promise<string[]> {
-  return (await readdir(join(root, ".hive", "memory"), {
-    recursive: true,
-  }).catch(() => [])).filter((path) => path.endsWith(".md"));
+  return (
+    await readdir(join(root, ".hive", "memory"), {
+      recursive: true,
+    }).catch(() => [])
+  ).filter((path) => path.endsWith(".md"));
 }
 
 describe("memory MCP tools", () => {
@@ -124,31 +137,37 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
-      const written = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          scope: "repo",
-          title: "The login test is flaky",
-          body: "Race condition in session setup.",
-          tags: ["testing"],
+      const written = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            scope: "repo",
+            title: "The login test is flaky",
+            body: "Race condition in session setup.",
+            tags: ["testing"],
+          }),
         }),
-      })) as { id: string; scope: string; path: string };
+      ) as { id: string; scope: string; path: string };
       expect(written.id).toEqual("the-login-test-is-flaky");
       expect(written.scope).toEqual("repo");
       expect(await readFile(written.path, "utf8")).toContain(
         "Race condition in session setup.",
       );
 
-      const found = textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "flaky" },
-      })) as Array<{ id: string; scope: string }>;
+      const found = textValue(
+        await client.callTool({
+          name: "memory_search",
+          arguments: { query: "flaky" },
+        }),
+      ) as Array<{ id: string; scope: string }>;
       expect(found.map((result) => result.id)).toEqual([written.id]);
 
-      const read = textValue(await client.callTool({
-        name: "memory_read",
-        arguments: { scope: "repo", id: written.id },
-      })) as { body: string };
+      const read = textValue(
+        await client.callTool({
+          name: "memory_read",
+          arguments: { scope: "repo", id: written.id },
+        }),
+      ) as { body: string };
       expect(read.body).toEqual("Race condition in session setup.");
 
       // Update in place: same scope+id, new body.
@@ -162,15 +181,19 @@ describe("memory MCP tools", () => {
           supersedes: [written.id],
         }),
       });
-      const afterUpdate = textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "unawaited" },
-      })) as Array<{ id: string }>;
+      const afterUpdate = textValue(
+        await client.callTool({
+          name: "memory_search",
+          arguments: { query: "unawaited" },
+        }),
+      ) as Array<{ id: string }>;
       expect(afterUpdate.map((result) => result.id)).toEqual([written.id]);
-      const staleSearch = textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "Race condition" },
-      })) as Array<{ id: string }>;
+      const staleSearch = textValue(
+        await client.callTool({
+          name: "memory_search",
+          arguments: { query: "Race condition" },
+        }),
+      ) as Array<{ id: string }>;
       expect(staleSearch).toEqual([]);
 
       await client.callTool({
@@ -190,25 +213,37 @@ describe("memory MCP tools", () => {
           supersedes: [written.id, "duplicate-login-note"],
         }),
       });
-      expect(textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "redundant" },
-      }))).toEqual([]);
-      expect((await client.callTool({
-        name: "memory_read",
-        arguments: { scope: "repo", id: "duplicate-login-note" },
-      })).isError).toBe(true);
+      expect(
+        textValue(
+          await client.callTool({
+            name: "memory_search",
+            arguments: { query: "redundant" },
+          }),
+        ),
+      ).toEqual([]);
+      expect(
+        (
+          await client.callTool({
+            name: "memory_read",
+            arguments: { scope: "repo", id: "duplicate-login-note" },
+          })
+        ).isError,
+      ).toBe(true);
 
-      const deletion = textValue(await client.callTool({
-        name: "memory_delete",
-        arguments: { scope: "repo", id: written.id },
-      })) as { deleted: boolean };
+      const deletion = textValue(
+        await client.callTool({
+          name: "memory_delete",
+          arguments: { scope: "repo", id: written.id },
+        }),
+      ) as { deleted: boolean };
       expect(deletion.deleted).toEqual(true);
 
-      const afterDelete = textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "unawaited" },
-      })) as Array<{ id: string }>;
+      const afterDelete = textValue(
+        await client.callTool({
+          name: "memory_search",
+          arguments: { query: "unawaited" },
+        }),
+      ) as Array<{ id: string }>;
       expect(afterDelete).toEqual([]);
 
       const missingRead = await client.callTool({
@@ -217,10 +252,12 @@ describe("memory MCP tools", () => {
       });
       expect(missingRead.isError).toEqual(true);
 
-      const secondDelete = textValue(await client.callTool({
-        name: "memory_delete",
-        arguments: { scope: "repo", id: written.id },
-      })) as { deleted: boolean };
+      const secondDelete = textValue(
+        await client.callTool({
+          name: "memory_delete",
+          arguments: { scope: "repo", id: written.id },
+        }),
+      ) as { deleted: boolean };
       expect(secondDelete.deleted).toEqual(false);
     } finally {
       await client.close().catch(() => undefined);
@@ -240,19 +277,21 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
-      const longBody = "Root cause: an unawaited promise in session setup. "
-        .repeat(20);
-      const written = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          scope: "repo",
-          title: "The login test is flaky",
-          body: longBody,
-          source: "agent",
-          date: "2026-07-10",
-          verified: "2026-07-10",
+      const longBody =
+        "Root cause: an unawaited promise in session setup. ".repeat(20);
+      const written = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            scope: "repo",
+            title: "The login test is flaky",
+            body: longBody,
+            source: "agent",
+            date: "2026-07-10",
+            verified: "2026-07-10",
+          }),
         }),
-      })) as Record<string, unknown>;
+      ) as Record<string, unknown>;
       expect(written).toEqual({
         id: "the-login-test-is-flaky",
         scope: "repo",
@@ -271,10 +310,12 @@ describe("memory MCP tools", () => {
 
       // The full body the caller just wrote is still reachable through
       // memory_read (and the Markdown file at `path`), just not echoed back.
-      const read = textValue(await client.callTool({
-        name: "memory_read",
-        arguments: { scope: "repo", id: "the-login-test-is-flaky" },
-      })) as { body: string };
+      const read = textValue(
+        await client.callTool({
+          name: "memory_read",
+          arguments: { scope: "repo", id: "the-login-test-is-flaky" },
+        }),
+      ) as { body: string };
       expect(read.body.trim()).toEqual(longBody.trim());
     } finally {
       await client.close().catch(() => undefined);
@@ -340,18 +381,20 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
-      const written = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          scope: "repo",
-          id: "seeded-fact",
-          title: "Seeded by init",
-          body: "A derived, re-derivable lesson.",
-          source: "init",
-          date: "2026-06-01",
-          verified: "2026-06-01",
+      const written = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            scope: "repo",
+            id: "seeded-fact",
+            title: "Seeded by init",
+            body: "A derived, re-derivable lesson.",
+            source: "init",
+            date: "2026-06-01",
+            verified: "2026-06-01",
+          }),
         }),
-      })) as { source: string; verified: string; path: string };
+      ) as { source: string; verified: string; path: string };
       expect(written.source).toEqual("init");
       expect(written.verified).toEqual("2026-06-01");
       // The provenance is persisted to the Markdown file, not just the response.
@@ -359,10 +402,12 @@ describe("memory MCP tools", () => {
       expect(onDisk).toContain("source: init");
       expect(onDisk).toContain("verified: 2026-06-01");
 
-      const read = textValue(await client.callTool({
-        name: "memory_read",
-        arguments: { scope: "repo", id: "seeded-fact" },
-      })) as { source: string; verified: string };
+      const read = textValue(
+        await client.callTool({
+          name: "memory_read",
+          arguments: { scope: "repo", id: "seeded-fact" },
+        }),
+      ) as { source: string; verified: string };
       expect(read.source).toEqual("init");
       expect(read.verified).toEqual("2026-06-01");
     } finally {
@@ -383,21 +428,25 @@ describe("memory MCP tools", () => {
     });
     const client = await connectedClient(daemon);
     try {
-      const written = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          id: "flaky-login-pitfall",
-          kind: "pitfall",
-          title: "A green login test run proves nothing",
-          body: "The test passes even while the session setup race is live.",
+      const written = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            id: "flaky-login-pitfall",
+            kind: "pitfall",
+            title: "A green login test run proves nothing",
+            body: "The test passes even while the session setup race is live.",
+          }),
         }),
-      })) as { id: string; path: string };
+      ) as { id: string; path: string };
       expect(await readFile(written.path, "utf8")).toContain("kind: pitfall");
 
-      const read = textValue(await client.callTool({
-        name: "memory_read",
-        arguments: { scope: "repo", id: written.id },
-      })) as { kind: string };
+      const read = textValue(
+        await client.callTool({
+          name: "memory_read",
+          arguments: { scope: "repo", id: written.id },
+        }),
+      ) as { kind: string };
       expect(read.kind).toEqual("pitfall");
 
       const index = await readFile(
@@ -410,15 +459,22 @@ describe("memory MCP tools", () => {
       );
 
       // A plain write stays an article: no kind line on disk, article on read.
-      const plain = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({ id: "plain-article", title: "A plain article" }),
-      })) as { path: string };
+      const plain = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            id: "plain-article",
+            title: "A plain article",
+          }),
+        }),
+      ) as { path: string };
       expect(await readFile(plain.path, "utf8")).not.toContain("kind:");
-      const plainRead = textValue(await client.callTool({
-        name: "memory_read",
-        arguments: { scope: "repo", id: "plain-article" },
-      })) as { kind: string };
+      const plainRead = textValue(
+        await client.callTool({
+          name: "memory_read",
+          arguments: { scope: "repo", id: "plain-article" },
+        }),
+      ) as { kind: string };
       expect(plainRead.kind).toEqual("article");
     } finally {
       await client.close().catch(() => undefined);
@@ -439,26 +495,30 @@ describe("memory MCP tools", () => {
     const client = await connectedClient(daemon);
     try {
       // The first write has nothing to collide with: no candidates key.
-      const first = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          id: "quota-token-spend-limits",
-          title: "Quota token spend limits",
-          body: "Provider caps reset at midnight UTC.",
+      const first = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            id: "quota-token-spend-limits",
+            title: "Quota token spend limits",
+            body: "Provider caps reset at midnight UTC.",
+          }),
         }),
-      })) as Record<string, unknown>;
+      ) as Record<string, unknown>;
       expect(first.similarCandidates).toBeUndefined();
 
       // A near-duplicate: different normalized title (layer 1 lets it
       // through), overlapping terms — the write succeeds and the lookalike
       // comes back as an advisory candidate.
-      const second = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          title: "Quota token spend",
-          body: "How much each provider lets us burn.",
+      const second = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            title: "Quota token spend",
+            body: "How much each provider lets us burn.",
+          }),
         }),
-      })) as {
+      ) as {
         id: string;
         similarCandidates?: Array<{ scope: string; id: string; title: string }>;
       };
@@ -469,17 +529,20 @@ describe("memory MCP tools", () => {
         title: "Quota token spend limits",
       });
       // The article itself is never its own candidate.
-      expect(second.similarCandidates!.map((candidate) => candidate.id))
-        .not.toContain("quota-token-spend");
+      expect(
+        second.similarCandidates!.map((candidate) => candidate.id),
+      ).not.toContain("quota-token-spend");
 
       // A write with no lookalikes carries no candidates.
-      const clean = textValue(await client.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          title: "Zebra delivery protocol",
-          body: "Entirely unrelated to quotas.",
+      const clean = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            title: "Zebra delivery protocol",
+            body: "Entirely unrelated to quotas.",
+          }),
         }),
-      })) as Record<string, unknown>;
+      ) as Record<string, unknown>;
       expect(clean.similarCandidates).toBeUndefined();
     } finally {
       await client.close().catch(() => undefined);
@@ -509,16 +572,20 @@ describe("memory MCP tools", () => {
         "---\ntitle: Added outside the daemon\ndate: 2026-06-01\ntags: []\n---\n\nDiscovered by reindex, not by memory_write.\n",
       );
 
-      const beforeReindex = textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "discovered" },
-      })) as unknown[];
+      const beforeReindex = textValue(
+        await client.callTool({
+          name: "memory_search",
+          arguments: { query: "discovered" },
+        }),
+      ) as unknown[];
       expect(beforeReindex).toEqual([]);
 
-      const reindexed = textValue(await client.callTool({
-        name: "memory_reindex",
-        arguments: {},
-      })) as {
+      const reindexed = textValue(
+        await client.callTool({
+          name: "memory_reindex",
+          arguments: {},
+        }),
+      ) as {
         count: number;
         migration: {
           scanned: number;
@@ -531,15 +598,21 @@ describe("memory MCP tools", () => {
       expect(reindexed.migration.scanned).toBe(1);
       expect(reindexed.migration.migrated).toBe(1);
       expect(reindexed.migration.backups).toEqual([
-        { scope: "repo", path: expect.stringContaining("memory-backups/legacy-v1-") },
+        {
+          scope: "repo",
+          path: expect.stringContaining("memory-backups/legacy-v1-"),
+        },
       ]);
-      expect(await readFile(join(memoryDir, "externally-added.md"), "utf8"))
-        .toContain("Discovered by reindex");
+      expect(
+        await readFile(join(memoryDir, "externally-added.md"), "utf8"),
+      ).toContain("Discovered by reindex");
 
-      const again = textValue(await client.callTool({
-        name: "memory_reindex",
-        arguments: {},
-      })) as typeof reindexed;
+      const again = textValue(
+        await client.callTool({
+          name: "memory_reindex",
+          arguments: {},
+        }),
+      ) as typeof reindexed;
       expect(again.count).toBe(1);
       expect(again.migration).toMatchObject({
         scanned: 1,
@@ -548,10 +621,12 @@ describe("memory MCP tools", () => {
         alreadyMigrated: ["repo"],
       });
 
-      const afterReindex = textValue(await client.callTool({
-        name: "memory_search",
-        arguments: { query: "discovered" },
-      })) as Array<{ id: string }>;
+      const afterReindex = textValue(
+        await client.callTool({
+          name: "memory_search",
+          arguments: { query: "discovered" },
+        }),
+      ) as Array<{ id: string }>;
       expect(afterReindex.map((result) => result.id)).toEqual([
         "externally-added",
       ]);
@@ -578,21 +653,25 @@ describe("memory MCP tools", () => {
     let dbPath: string;
     try {
       dbPath = daemonA.db.path;
-      const written = textValue(await clientA.callTool({
-        name: "memory_write",
-        arguments: validWrite({
-          scope: "global",
-          id: "survives-restart",
-          title: "Durable across a daemon restart",
-          body: "The Markdown file is what persists, not the SQLite index.",
+      const written = textValue(
+        await clientA.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            scope: "global",
+            id: "survives-restart",
+            title: "Durable across a daemon restart",
+            body: "The Markdown file is what persists, not the SQLite index.",
+          }),
         }),
-      })) as { id: string };
+      ) as { id: string };
       expect(written.id).toEqual("survives-restart");
 
-      const foundBeforeStop = textValue(await clientA.callTool({
-        name: "memory_search",
-        arguments: { query: "persists" },
-      })) as unknown[];
+      const foundBeforeStop = textValue(
+        await clientA.callTool({
+          name: "memory_search",
+          arguments: { query: "persists" },
+        }),
+      ) as unknown[];
       expect(foundBeforeStop.length).toEqual(1);
     } finally {
       await clientA.close().catch(() => undefined);
@@ -620,10 +699,12 @@ describe("memory MCP tools", () => {
 
       const clientB = await connectedClient(daemonB);
       try {
-        const foundAfterRebuild = textValue(await clientB.callTool({
-          name: "memory_search",
-          arguments: { query: "persists" },
-        })) as unknown[];
+        const foundAfterRebuild = textValue(
+          await clientB.callTool({
+            name: "memory_search",
+            arguments: { query: "persists" },
+          }),
+        ) as unknown[];
         expect(foundAfterRebuild).toEqual([
           {
             id: "survives-restart",

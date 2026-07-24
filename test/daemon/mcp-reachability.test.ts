@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
 import { HiveDaemon } from "../../src/daemon/server";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
 
 /**
  * #57: the daemon-side half of the reachability signal. A vendor MCP client
@@ -22,7 +22,9 @@ const previousHome = process.env.HIVE_HOME;
 afterEach(async () => {
   process.env.HIVE_HOME = previousHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -57,7 +59,10 @@ describe("hive MCP reachability (#57)", () => {
         new URL("http://hive/mcp"),
         { fetch: actingAs(daemon, "maya", "writer") },
       );
-      const client = new Client({ name: "hive-reachability-test", version: "1.0.0" });
+      const client = new Client({
+        name: "hive-reachability-test",
+        version: "1.0.0",
+      });
       await client.connect(transport);
       await client.close().catch(() => undefined);
 
@@ -98,7 +103,9 @@ describe("hive MCP reachability (#57)", () => {
         }),
       );
       expect(response.ok).toBe(false);
-      expect(daemon.mcpClientSeen("maya", "1970-01-01T00:00:00.000Z")).toBe(false);
+      expect(daemon.mcpClientSeen("maya", "1970-01-01T00:00:00.000Z")).toBe(
+        false,
+      );
     } finally {
       await daemon.stop();
     }

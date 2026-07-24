@@ -1,18 +1,10 @@
-import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  readMemoryFact,
-  writeMemoryFact,
-} from "../../src/adapters/memory";
+import { readMemoryFact, writeMemoryFact } from "../../src/adapters/memory";
 import { loadHiveConfig } from "../../src/config/load";
-import {
-  HiveConfigSchema,
-  type AgentRecord,
-  type MemoryRetentionConfig,
-} from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import type { SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
@@ -20,6 +12,11 @@ import { runRetentionSweep } from "../../src/daemon/memory-retention";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
 import { submitPaste } from "../../src/daemon/testing";
+import {
+  type AgentRecord,
+  HiveConfigSchema,
+  type MemoryRetentionConfig,
+} from "../../src/schemas";
 
 // One fixed clock for every sweep assertion below.
 const NOW = new Date("2026-07-22T00:00:00.000Z");
@@ -67,15 +64,14 @@ function openStore(path: string): EpisodicStore {
 
 /** Seeds a digest row directly (bypassing WP4's compiler) so the sweep is
  * tested against provenance shapes it must recognize, not compiler output. */
-function seedDigest(
-  storePath: string,
-  provenance: string,
-): void {
+function seedDigest(storePath: string, provenance: string): void {
   const seed = new Database(storePath);
-  seed.query(`
+  seed
+    .query(`
     INSERT INTO digests (agent, session_id, compiled_at, body, provenance)
     VALUES (?, ?, ?, ?, ?)
-  `).run("agent-a", "session-1", NOW.toISOString(), "digest body", provenance);
+  `)
+    .run("agent-a", "session-1", NOW.toISOString(), "digest body", provenance);
   seed.close();
 }
 
@@ -99,7 +95,11 @@ describe("runRetentionSweep — episodic hot tier", () => {
         type: "status",
         summary: "old but referenced by a digest",
       });
-      store.appendEvent({ ts: OLD_TS, type: "status", summary: "old and free" });
+      store.appendEvent({
+        ts: OLD_TS,
+        type: "status",
+        summary: "old and free",
+      });
       store.appendEvent({ ts: FRESH_TS, type: "status", summary: "fresh" });
       seedDigest(
         storePath,
@@ -127,7 +127,11 @@ describe("runRetentionSweep — episodic hot tier", () => {
     const storePath = join(repo, "episodic.db");
     const store = openStore(storePath);
     try {
-      store.appendEvent({ ts: OLD_TS, type: "status", summary: "old and free" });
+      store.appendEvent({
+        ts: OLD_TS,
+        type: "status",
+        summary: "old and free",
+      });
       seedDigest(storePath, "this is not json");
 
       const report = await runRetentionSweep({
@@ -164,7 +168,11 @@ describe("runRetentionSweep — episodic hot tier", () => {
         validAt: "2025-06-01T00:00:00.000Z",
         supersedesId: first.id,
       });
-      store.appendEvent({ ts: "2025-01-02T00:00:00.000Z", type: "x", summary: "ancient" });
+      store.appendEvent({
+        ts: "2025-01-02T00:00:00.000Z",
+        type: "x",
+        summary: "ancient",
+      });
       seedDigest(storePath, JSON.stringify({}));
 
       const report = await runRetentionSweep({
@@ -290,18 +298,26 @@ describe("runRetentionSweep — wiki stale demotion", () => {
       expect(demoted?.status).toBe("stale");
       expect(demoted?.verified).toBe("2026-03-01");
       expect(demoted?.body).toContain("verified many months ago");
-      const globalDemoted = await readMemoryFact(repo, "global", "global-old-verified");
+      const globalDemoted = await readMemoryFact(
+        repo,
+        "global",
+        "global-old-verified",
+      );
       expect(globalDemoted?.status).toBe("stale");
 
       // Untouched: recently verified, unverified, already stale, conflicted.
-      expect((await readMemoryFact(repo, "repo", "recent-verified"))?.status)
-        .toBe("verified");
-      expect((await readMemoryFact(repo, "repo", "never-verified"))?.status)
-        .toBe("unverified");
-      expect((await readMemoryFact(repo, "repo", "already-stale"))?.status)
-        .toBe("stale");
-      expect((await readMemoryFact(repo, "repo", "in-conflict"))?.status)
-        .toBe("conflicted");
+      expect(
+        (await readMemoryFact(repo, "repo", "recent-verified"))?.status,
+      ).toBe("verified");
+      expect(
+        (await readMemoryFact(repo, "repo", "never-verified"))?.status,
+      ).toBe("unverified");
+      expect(
+        (await readMemoryFact(repo, "repo", "already-stale"))?.status,
+      ).toBe("stale");
+      expect((await readMemoryFact(repo, "repo", "in-conflict"))?.status).toBe(
+        "conflicted",
+      );
 
       // The scope index shows the demotion and the log records it.
       const index = await readFile(
@@ -338,28 +354,32 @@ describe("[memory.retention] config", () => {
 
   test("invalid values are rejected by the schema", () => {
     expect(() =>
-      HiveConfigSchema.parse({ memory: { retention: { events_hot_days: 0 } } })
+      HiveConfigSchema.parse({ memory: { retention: { events_hot_days: 0 } } }),
     ).toThrow();
     expect(() =>
-      HiveConfigSchema.parse({ memory: { retention: { stale_after_days: -1 } } })
+      HiveConfigSchema.parse({
+        memory: { retention: { stale_after_days: -1 } },
+      }),
     ).toThrow();
     expect(() =>
-      HiveConfigSchema.parse({ memory: { retention: { sweep_interval_hours: 0 } } })
+      HiveConfigSchema.parse({
+        memory: { retention: { sweep_interval_hours: 0 } },
+      }),
     ).toThrow();
     // facts/digests retention is "forever" by invariant, never a knob.
     expect(() =>
       HiveConfigSchema.parse({
         memory: { retention: { facts_retention: "30d" } },
-      })
+      }),
     ).toThrow();
     expect(() =>
       HiveConfigSchema.parse({
         memory: { retention: { digests_retention: "30d" } },
-      })
+      }),
     ).toThrow();
     // Strict: an unknown key is a typo, and a typo must not parse.
     expect(() =>
-      HiveConfigSchema.parse({ memory: { retention: { events_hot_day: 30 } } })
+      HiveConfigSchema.parse({ memory: { retention: { events_hot_day: 30 } } }),
     ).toThrow();
   });
 
@@ -481,7 +501,8 @@ describe("daemon retention wiring", () => {
       episodicStore: episodic,
       retention: retentionConfig({ sweep_interval_hours: 1 }),
     });
-    const sweep = jest.spyOn(daemon, "runMemoryRetentionSweep")
+    const sweep = jest
+      .spyOn(daemon, "runMemoryRetentionSweep")
       .mockResolvedValue(null);
     jest.spyOn(daemon, "runMaintenance").mockResolvedValue(undefined);
     jest.spyOn(daemon, "checkWakePaths").mockResolvedValue([]);
@@ -490,7 +511,13 @@ describe("daemon retention wiring", () => {
     // resolve after stop() and log a spurious closed-database error.
     jest.spyOn(daemon, "rebuildMemoryIndex").mockResolvedValue({
       count: 0,
-      migration: { scanned: 0, migrated: 0, flagged: [], backups: [], alreadyMigrated: [] },
+      migration: {
+        scanned: 0,
+        migrated: 0,
+        flagged: [],
+        backups: [],
+        alreadyMigrated: [],
+      },
     });
     try {
       daemon.start();
@@ -536,22 +563,26 @@ describe("daemon retention wiring", () => {
       removeWorktree: async () => {},
       assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
     });
-    db.insertAgent(agent({
-      lastEventAt: new Date(Date.now() - 15 * 60_000).toISOString(),
-    }));
+    db.insertAgent(
+      agent({
+        lastEventAt: new Date(Date.now() - 15 * 60_000).toISOString(),
+      }),
+    );
     try {
       // The idle-reap two-step drives killAgentTeardown, which is the session
       // end the sweep rides (hive_kill's own path).
       await daemon.reapIdleAgents();
-      const warning = db.listMessages().find((message) => message.to === "maya");
+      const warning = db
+        .listMessages()
+        .find((message) => message.to === "maya");
       db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
       expect(db.getAgentByName("maya")?.status).toBe("dead");
 
       // The kill's fire-and-forget sweep deletes the aged event; any events
       // the daemon itself projected during the kill are fresh and stay.
-      await waitFor(() =>
-        !episodic.eventsFor().some((event) => event.id === aged.id)
+      await waitFor(
+        () => !episodic.eventsFor().some((event) => event.id === aged.id),
       );
     } finally {
       await daemon.stop();

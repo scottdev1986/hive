@@ -6,11 +6,11 @@ import { shellJoin } from "../../../daemon/session-host/shell-session";
 import {
   buildKimiResumeCommand,
   buildKimiSpawnCommand,
+  type KimiSpawnOptions,
   resolveWorkingKimiExecutable,
   wrapKimiSpawnWithEffort,
   wrapKimiWithInstructionFile,
   writeKimiAgentConfig,
-  type KimiSpawnOptions,
 } from "../kimi";
 import type { AgentAdapter } from "./agent-adapter";
 
@@ -34,9 +34,10 @@ export const kimiAgentAdapter: AgentAdapter = {
         ? {}
         : { executable: context.executable }),
     };
-    const argv = context.resumeSessionId === undefined
-      ? buildKimiSpawnCommand(options)
-      : buildKimiResumeCommand(options, context.resumeSessionId);
+    const argv =
+      context.resumeSessionId === undefined
+        ? buildKimiSpawnCommand(options)
+        : buildKimiResumeCommand(options, context.resumeSessionId);
     let command = shellJoin(argv);
     if (context.effort !== undefined) {
       command = wrapKimiSpawnWithEffort(command, context.effort);

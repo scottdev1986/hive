@@ -1,3 +1,4 @@
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import type {
   CapabilityProvider,
   CapabilityRecord,
@@ -12,14 +13,13 @@ import {
   providersOf,
   ROUTING_CATEGORIES,
 } from "../schemas";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
+  type AccountBillings,
   knownBillings,
   poolAvailability,
   readBillingWithMemory,
   spendRisk,
-  type AccountBillings,
 } from "./usage-credits";
 
 export type InventoryRole = {
@@ -100,7 +100,8 @@ export async function readModelInventory(
   options: ModelInventoryReaderOptions = {},
 ): Promise<ModelInventory> {
   const now = options.now?.() ?? new Date();
-  const discover = options.discover ??
+  const discover =
+    options.discover ??
     ((provider: CapabilityProvider) => getAgentAdapter(provider).discover());
   const readBilling = options.readBilling ?? readBillingWithMemory;
   // Every vendor Hive knows is probed and billed, not a hardcoded pair.
@@ -109,23 +110,30 @@ export async function readModelInventory(
     forEachProvider((provider) => readBilling(provider)),
   ]);
   const billing: AccountBillings = knownBillings(billings);
-  const policy = options.readPolicy?.() ??
-    emptyRoutingPolicy(now.toISOString());
+  const policy =
+    options.readPolicy?.() ?? emptyRoutingPolicy(now.toISOString());
   return buildModelInventory({ discovery, policy, billing, now });
 }
 
 const recordMatches = (record: CapabilityRecord, model: string): boolean =>
-  record.canonicalId === model || record.launchToken === model ||
+  record.canonicalId === model ||
+  record.launchToken === model ||
   record.aliases.includes(model);
 
 /** The roles the USER gave this model: its position in each category chain.
  * Read from policy verbatim — Hive infers nothing. */
-function rolesFor(record: CapabilityRecord, input: ModelInventoryInput): InventoryRole[] {
+function rolesFor(
+  record: CapabilityRecord,
+  input: ModelInventoryInput,
+): InventoryRole[] {
   const roles: InventoryRole[] = [];
   for (const category of ROUTING_CATEGORIES) {
     const chain = input.policy.chains[category] ?? [];
     chain.forEach((entry, position) => {
-      if (entry.provider === record.provider && recordMatches(record, entry.model)) {
+      if (
+        entry.provider === record.provider &&
+        recordMatches(record, entry.model)
+      ) {
         roles.push({ category, position, effort: entry.effort });
       }
     });
@@ -133,17 +141,24 @@ function rolesFor(record: CapabilityRecord, input: ModelInventoryInput): Invento
   return roles;
 }
 
-function whenUsed(record: CapabilityRecord, roles: readonly InventoryRole[]): string {
+function whenUsed(
+  record: CapabilityRecord,
+  roles: readonly InventoryRole[],
+): string {
   if (roles.length === 0) {
     return record.hidden.state === "known" && record.hidden.value
       ? "Not used automatically: the vendor marks this model hidden."
       : "Not in any category chain; an explicit user request may still select it.";
   }
-  return roles.map((role) =>
-    role.position === 0
-      ? `Primary for ${role.category}`
-      : `Fallback ${role.position} for ${role.category}`
-  ).join("; ") + ".";
+  return (
+    roles
+      .map((role) =>
+        role.position === 0
+          ? `Primary for ${role.category}`
+          : `Fallback ${role.position} for ${role.category}`,
+      )
+      .join("; ") + "."
+  );
 }
 
 function planStatus(
@@ -154,9 +169,10 @@ function planStatus(
   if (account === undefined || record.displayName === null) {
     return {
       status: "unknown",
-      detail: account === undefined
-        ? "Hive has no current plan or billing reading for this provider."
-        : "The vendor catalog supplied no display name to join to its plan pools.",
+      detail:
+        account === undefined
+          ? "Hive has no current plan or billing reading for this provider."
+          : "The vendor catalog supplied no display name to join to its plan pools.",
     };
   }
   const availability = poolAvailability(account, record.displayName);
@@ -169,7 +185,9 @@ function planStatus(
     : { status: risk.state, detail: risk.detail };
 }
 
-export function buildModelInventory(input: ModelInventoryInput): ModelInventory {
+export function buildModelInventory(
+  input: ModelInventoryInput,
+): ModelInventory {
   // The one legal enumeration: the whole vendor union plus anything extra the
   // discovery record carries. "unavailable" is a legal state below; a vendor
   // that is simply ABSENT from the output is not, so nothing here may iterate
@@ -177,74 +195,90 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
   // union vendor missing from the record (only a cast or foreign JSON can do
   // that) renders as unreadable instead of vanishing.
   const inventoryProviders = providersOf(input.discovery);
-  const discoveryOf = (provider: CapabilityProvider): ProviderDiscovery | undefined =>
+  const discoveryOf = (
+    provider: CapabilityProvider,
+  ): ProviderDiscovery | undefined =>
     input.discovery[provider] as ProviderDiscovery | undefined;
   const records = inventoryProviders.flatMap((provider) => {
     const discovery = discoveryOf(provider);
     return discovery?.status === "ok" ? discovery.records : [];
   });
-  const models = records.map((record): InventoryModel => {
-    const roles = rolesFor(record, input);
-    return {
-      vendor: record.provider,
-      canonicalId: record.canonicalId,
-      variant: record.variant,
-      displayName: record.displayName,
-      aliases: [...record.aliases],
-      effortLevels:
-        record.supportsEffort.state === "known" && !record.supportsEffort.value
-          ? {
-              state: "known-none",
-              detail: "the vendor states this model has no effort axis",
-            }
-          : record.supportedEffortLevels.state === "known"
-          ? { state: "known", values: [...record.supportedEffortLevels.value] }
-          : {
-              state: "unknown",
-              reason: record.supportedEffortLevels.reason,
-            },
-      entitlement: record.entitled.state === "unknown"
-        ? "unknown"
-        : record.entitled.value
-        ? "entitled"
-        : "not-entitled",
-      hidden: record.hidden.state === "unknown"
-        ? "unknown"
-        : record.hidden.value
-        ? "hidden"
-        : "visible",
-      plan: planStatus(record, input.billing),
-      routedCandidate: roles.length > 0,
-      roles,
-      when: whenUsed(record, roles),
-      provenance: {
-        observedAt: record.observedAt,
-        surface: record.entitled.surface,
-        cliVersion: record.cliVersion,
-      },
-    };
-  }).sort((left, right) =>
-    left.vendor.localeCompare(right.vendor) ||
-    left.canonicalId.localeCompare(right.canonicalId) ||
-    (left.variant ?? "").localeCompare(right.variant ?? "")
-  );
+  const models = records
+    .map((record): InventoryModel => {
+      const roles = rolesFor(record, input);
+      return {
+        vendor: record.provider,
+        canonicalId: record.canonicalId,
+        variant: record.variant,
+        displayName: record.displayName,
+        aliases: [...record.aliases],
+        effortLevels:
+          record.supportsEffort.state === "known" &&
+          !record.supportsEffort.value
+            ? {
+                state: "known-none",
+                detail: "the vendor states this model has no effort axis",
+              }
+            : record.supportedEffortLevels.state === "known"
+              ? {
+                  state: "known",
+                  values: [...record.supportedEffortLevels.value],
+                }
+              : {
+                  state: "unknown",
+                  reason: record.supportedEffortLevels.reason,
+                },
+        entitlement:
+          record.entitled.state === "unknown"
+            ? "unknown"
+            : record.entitled.value
+              ? "entitled"
+              : "not-entitled",
+        hidden:
+          record.hidden.state === "unknown"
+            ? "unknown"
+            : record.hidden.value
+              ? "hidden"
+              : "visible",
+        plan: planStatus(record, input.billing),
+        routedCandidate: roles.length > 0,
+        roles,
+        when: whenUsed(record, roles),
+        provenance: {
+          observedAt: record.observedAt,
+          surface: record.entitled.surface,
+          cliVersion: record.cliVersion,
+        },
+      };
+    })
+    .sort(
+      (left, right) =>
+        left.vendor.localeCompare(right.vendor) ||
+        left.canonicalId.localeCompare(right.canonicalId) ||
+        (left.variant ?? "").localeCompare(right.variant ?? ""),
+    );
   const providers = Object.fromEntries(
     inventoryProviders.map((provider) => {
       const discovery = discoveryOf(provider);
-      return [provider, discovery === undefined
-        ? {
-            status: "unavailable" as const,
-            reason: "never probed: absent from the discovery input",
-          }
-        : discovery.status === "ok"
-        ? { status: "ok" as const, count: discovery.records.length }
-        : { status: "unavailable" as const, reason: discovery.reason }];
+      return [
+        provider,
+        discovery === undefined
+          ? {
+              status: "unavailable" as const,
+              reason: "never probed: absent from the discovery input",
+            }
+          : discovery.status === "ok"
+            ? { status: "ok" as const, count: discovery.records.length }
+            : { status: "unavailable" as const, reason: discovery.reason },
+      ];
     }),
   ) as ModelInventory["providers"];
   const warnings = inventoryProviders.flatMap((provider) => {
     const discovery = discoveryOf(provider);
     if (discovery === undefined) {
-      return [`${provider} discovery is missing entirely: never probed; rendered unavailable rather than dropped`];
+      return [
+        `${provider} discovery is missing entirely: never probed; rendered unavailable rather than dropped`,
+      ];
     }
     return discovery.status === "unavailable"
       ? [`${provider} discovery unavailable: ${discovery.reason}`]
@@ -252,8 +286,11 @@ export function buildModelInventory(input: ModelInventoryInput): ModelInventory 
   });
   return {
     observedAt: (input.now ?? new Date()).toISOString(),
-    complete: models.length === records.length &&
-      inventoryProviders.every((provider) => discoveryOf(provider)?.status === "ok"),
+    complete:
+      models.length === records.length &&
+      inventoryProviders.every(
+        (provider) => discoveryOf(provider)?.status === "ok",
+      ),
     discoveredCount: records.length,
     renderedCount: models.length,
     providers,
@@ -276,15 +313,19 @@ export function formatModelInventory(inventory: ModelInventory): string {
         ? `${provider} — ${status.count} discovered`
         : `${provider} — UNAVAILABLE: ${status.reason}`,
     );
-    for (const model of inventory.models.filter((entry) => entry.vendor === provider)) {
-      const identity = model.variant === null
-        ? model.canonicalId
-        : `${model.canonicalId}[${model.variant}]`;
-      const efforts = model.effortLevels.state === "known"
-        ? model.effortLevels.values.join(", ") || "none advertised"
-        : model.effortLevels.state === "known-none"
-        ? `none — ${model.effortLevels.detail}`
-        : `unknown (${model.effortLevels.reason})`;
+    for (const model of inventory.models.filter(
+      (entry) => entry.vendor === provider,
+    )) {
+      const identity =
+        model.variant === null
+          ? model.canonicalId
+          : `${model.canonicalId}[${model.variant}]`;
+      const efforts =
+        model.effortLevels.state === "known"
+          ? model.effortLevels.values.join(", ") || "none advertised"
+          : model.effortLevels.state === "known-none"
+            ? `none — ${model.effortLevels.detail}`
+            : `unknown (${model.effortLevels.reason})`;
       lines.push(
         `  ${identity}`,
         `    entitlement ${model.entitlement}; plan ${model.plan.status}; hidden ${model.hidden}`,

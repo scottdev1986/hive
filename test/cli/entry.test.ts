@@ -3,7 +3,9 @@ import { createProgram } from "../../src/cli";
 
 describe("CLI command descriptions", () => {
   test("routing describes the policy and live facts it actually prints", () => {
-    const routing = createProgram().commands.find((command) => command.name() === "routing");
+    const routing = createProgram().commands.find(
+      (command) => command.name() === "routing",
+    );
 
     expect(routing?.description()).toBe(
       "Show routing policy beside live model, billing, and discovery facts",
@@ -11,8 +13,12 @@ describe("CLI command descriptions", () => {
   });
 
   test("set-model does not claim an unset model inherits provider consent", () => {
-    const routing = createProgram().commands.find((command) => command.name() === "routing");
-    const setModel = routing?.commands.find((command) => command.name() === "set-model");
+    const routing = createProgram().commands.find(
+      (command) => command.name() === "routing",
+    );
+    const setModel = routing?.commands.find(
+      (command) => command.name() === "set-model",
+    );
 
     expect(setModel?.description()).toContain(
       "unset leaves the model unconfigured even when its provider is enabled",
@@ -20,8 +26,12 @@ describe("CLI command descriptions", () => {
   });
 
   test("routing exposes the explicit machine-default promotion command", () => {
-    const routing = createProgram().commands.find((command) => command.name() === "routing");
-    const promote = routing?.commands.find((command) => command.name() === "promote-default");
+    const routing = createProgram().commands.find(
+      (command) => command.name() === "routing",
+    );
+    const promote = routing?.commands.find(
+      (command) => command.name() === "promote-default",
+    );
 
     expect(promote?.description()).toContain("machine default");
     expect(promote?.description()).toContain("Replace");
@@ -39,13 +49,12 @@ describe("removed flags", () => {
       createProgram().parseAsync(["node", "hive", "init", "--refresh"]),
     ).rejects.toThrow(/unknown option.*--refresh/);
   });
-
 });
 
 describe("repository setup command surfaces", () => {
   test("hive init exposes its repository preparation controls", () => {
-    const init = createProgram().commands.find((command) =>
-      command.name() === "init"
+    const init = createProgram().commands.find(
+      (command) => command.name() === "init",
     );
 
     expect(init?.options.map((option) => option.long)).toEqual([
@@ -56,8 +65,8 @@ describe("repository setup command surfaces", () => {
   });
 
   test("hive graphify exposes build and status commands", () => {
-    const graphify = createProgram().commands.find((command) =>
-      command.name() === "graphify"
+    const graphify = createProgram().commands.find(
+      (command) => command.name() === "graphify",
     );
 
     expect(graphify?.commands.map((command) => command.name())).toEqual([

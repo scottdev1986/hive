@@ -2,17 +2,17 @@
 // lesson A1): queen/operator trigger words execute memory recall/writes at
 // the daemon and the labeled result replaces the delivered body; agent
 // senders carry no trigger authority and their text is delivered verbatim.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type MemoryWriteFileResult,
   readMemoryFact,
   writeMemoryFact,
-  type MemoryWriteFileResult,
 } from "../../src/adapters/memory";
-import type { AgentRecord, MemoryWriteInput } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import { MessageDelivery, type SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
@@ -20,10 +20,11 @@ import { MemoryIndex } from "../../src/daemon/memory-index";
 import {
   createMemoryTriggerExecutor,
   detectMemoryTrigger,
-  memoryTriggerAuthority,
   type MemoryTriggerDeps,
+  memoryTriggerAuthority,
 } from "../../src/daemon/memory-triggers";
 import { submitPaste } from "../../src/daemon/testing";
+import type { AgentRecord, MemoryWriteInput } from "../../src/schemas";
 
 // Global-scope memory lives under HIVE_HOME, so the whole file runs against
 // a disposable home (same posture as memory-delta.test.ts).
@@ -98,7 +99,9 @@ async function makeHarness(): Promise<TriggerHarness> {
   const db = new HiveDatabase(":memory:");
   const index = new MemoryIndex(new Database(":memory:"));
   const episodic = new EpisodicStore(":memory:");
-  const write = async (input: MemoryWriteInput): Promise<MemoryWriteFileResult> => {
+  const write = async (
+    input: MemoryWriteInput,
+  ): Promise<MemoryWriteFileResult> => {
     const written = await writeMemoryFact(repo, input);
     for (const id of written.supersededIds) index.removeFact(input.scope, id);
     index.upsertFact(written);
@@ -158,16 +161,20 @@ describe("detectMemoryTrigger", () => {
       kind: "note",
       payload: "the sky is blue",
     });
-    expect(detectMemoryTrigger("  Document This:  Delivery Contract ")).toEqual({
-      kind: "document",
-      payload: "Delivery Contract",
-    });
+    expect(detectMemoryTrigger("  Document This:  Delivery Contract ")).toEqual(
+      {
+        kind: "document",
+        payload: "Delivery Contract",
+      },
+    );
   });
 
   test("the colon is required and the phrase must start the message", () => {
     expect(detectMemoryTrigger("recall delivery boundaries")).toBeNull();
     expect(detectMemoryTrigger("please recall: anything")).toBeNull();
-    expect(detectMemoryTrigger("note this now: no colon after phrase")).toBeNull();
+    expect(
+      detectMemoryTrigger("note this now: no colon after phrase"),
+    ).toBeNull();
     expect(detectMemoryTrigger("a note this: not at the start")).toBeNull();
     expect(detectMemoryTrigger("recall:")).toBeNull();
     expect(detectMemoryTrigger("note this:   ")).toBeNull();
@@ -220,10 +227,14 @@ describe("recall trigger", () => {
       expect(text).toContain("memory_read(scope, id)");
       expect(text).toContain("Urgent cancels the in-flight turn");
       // The episodic audit row carries the trigger provenance.
-      const audit = harness.episodic.eventsFor({ agent: "maya" })
+      const audit = harness.episodic
+        .eventsFor({ agent: "maya" })
         .filter((event) => event.type === "memory-trigger");
       expect(audit).toHaveLength(1);
-      const provenance = JSON.parse(audit[0]!.provenance) as Record<string, unknown>;
+      const provenance = JSON.parse(audit[0]!.provenance) as Record<
+        string,
+        unknown
+      >;
       expect(provenance).toMatchObject({
         sender: "queen",
         target: "maya",
@@ -303,7 +314,11 @@ describe("note this trigger", () => {
   test("operator notes carry source human", async () => {
     const harness = await makeHarness();
     try {
-      await harness.delivery.send("operator", "maya", "note this: the floor is 16 GB");
+      await harness.delivery.send(
+        "operator",
+        "maya",
+        "note this: the floor is 16 GB",
+      );
       const written = harness.index.search("floor");
       const fact = await readMemoryFact(harness.repo, "repo", written[0]!.id);
       expect(fact!.source).toBe("human");
@@ -316,10 +331,18 @@ describe("note this trigger", () => {
   test("the same fact twice becomes an update, not a duplicate, not an error", async () => {
     const harness = await makeHarness();
     try {
-      await harness.delivery.send("queen", "maya", "note this: quota reads tighten");
+      await harness.delivery.send(
+        "queen",
+        "maya",
+        "note this: quota reads tighten",
+      );
       const first = harness.index.search("quota reads")[0]!;
       // Same normalized title, different punctuation/case and a refined body.
-      await harness.delivery.send("queen", "maya", "Note this: Quota reads, tighten!");
+      await harness.delivery.send(
+        "queen",
+        "maya",
+        "Note this: Quota reads, tighten!",
+      );
       expect(harness.sender.calls[1]![1]).toContain("updated existing article");
       const facts = harness.index.search("quota reads");
       expect(facts).toHaveLength(1);
@@ -352,7 +375,9 @@ describe("document this trigger", () => {
       expect(text).toContain(
         '🧠 Hive documented: "Delivery Boundary Semantics" [unverified]',
       );
-      expect(text).toContain("wrote article [repo/delivery-boundary-semantics]");
+      expect(text).toContain(
+        "wrote article [repo/delivery-boundary-semantics]",
+      );
       const written = harness.index.search("Delivery Boundary Semantics");
       expect(written).toHaveLength(1);
       const fact = await readMemoryFact(harness.repo, "repo", written[0]!.id);
@@ -386,9 +411,12 @@ describe("authority and failure isolation", () => {
         "📨 message from sam: note this: agents should not write this",
       );
       // No wiki write, no audit row.
-      expect(harness.index.search("agents should not write this")).toHaveLength(0);
+      expect(harness.index.search("agents should not write this")).toHaveLength(
+        0,
+      );
       expect(
-        harness.episodic.eventsFor({ agent: "maya" })
+        harness.episodic
+          .eventsFor({ agent: "maya" })
           .filter((event) => event.type === "memory-trigger"),
       ).toHaveLength(0);
     } finally {
@@ -411,7 +439,9 @@ describe("authority and failure isolation", () => {
       expect(text).toContain(
         "📨 message from queen: note this: this write will fail",
       );
-      expect(text).toContain("⚠️ Hive memory trigger failed (wiki disk on fire)");
+      expect(text).toContain(
+        "⚠️ Hive memory trigger failed (wiki disk on fire)",
+      );
       expect(text).toContain("delivered unmodified");
     } finally {
       harness.db.close();
@@ -426,7 +456,9 @@ describe("authority and failure isolation", () => {
       const delivery = new MessageDelivery(db, sender);
       db.insertAgent(agent());
       await delivery.send("queen", "maya", "recall: anything");
-      expect(sender.calls[0]![1]).toBe("📨 message from queen: recall: anything");
+      expect(sender.calls[0]![1]).toBe(
+        "📨 message from queen: recall: anything",
+      );
     } finally {
       db.close();
     }

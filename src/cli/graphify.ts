@@ -6,14 +6,14 @@ import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
   buildGraph,
+  type CommandRunner,
   defaultInstallDeps,
-  graphJsonPath,
+  type GraphifyInstallDeps,
   graphifyBin,
   graphifyPin,
   graphifyToolsDir,
+  graphJsonPath,
   installGraphify,
-  type CommandRunner,
-  type GraphifyInstallDeps,
   runCommand,
 } from "../adapters/graphify";
 
@@ -50,7 +50,9 @@ export async function runGraphifyEnable(
   }
   deps.log(`Installed ${installed.detail}.`);
 
-  deps.log("Building the graph (first build on a large repo can take minutes)…");
+  deps.log(
+    "Building the graph (first build on a large repo can take minutes)…",
+  );
   const built = await buildGraph(root, deps.run);
   if (!built.ok) {
     deps.log(

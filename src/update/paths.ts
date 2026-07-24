@@ -21,16 +21,21 @@ import { join, resolve, sep } from "node:path";
 import { IS_RELEASE_BUILD } from "../version";
 
 export function installRoot(): string {
-  return process.env.HIVE_INSTALL_ROOT ??
-    join(homedir(), ".local", "share", "hive");
+  return (
+    process.env.HIVE_INSTALL_ROOT ?? join(homedir(), ".local", "share", "hive")
+  );
 }
 
-export const versionsDir = (root = installRoot()): string => join(root, "versions");
+export const versionsDir = (root = installRoot()): string =>
+  join(root, "versions");
 export const versionDir = (version: string, root = installRoot()): string =>
   join(versionsDir(root), version);
-export const currentLink = (root = installRoot()): string => join(root, "current");
-export const stagingDir = (root = installRoot()): string => join(root, "staging");
-export const stateFile = (root = installRoot()): string => join(root, "state.json");
+export const currentLink = (root = installRoot()): string =>
+  join(root, "current");
+export const stagingDir = (root = installRoot()): string =>
+  join(root, "staging");
+export const stateFile = (root = installRoot()): string =>
+  join(root, "state.json");
 
 /** The compiled CLI inside a version directory. */
 export const cliPath = (dir: string): string => join(dir, "hive");
@@ -40,7 +45,8 @@ export const cliPath = (dir: string): string => join(dir, "hive");
  */
 export const sessiondPath = (dir: string): string => join(dir, "hive-sessiond");
 /** The release Workspace application inside a version directory. */
-export const workspaceAppPath = (dir: string): string => join(dir, "HiveWorkspace.app");
+export const workspaceAppPath = (dir: string): string =>
+  join(dir, "HiveWorkspace.app");
 
 export function binLink(): string {
   return process.env.HIVE_BIN_LINK ?? join(homedir(), ".local", "bin", "hive");

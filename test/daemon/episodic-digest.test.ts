@@ -1,7 +1,8 @@
 // HiveMemory HM-2 WP4: the deterministic session-digest compiler, rolling
 // re-synthesis, the drift audit, and retention-reference compatibility.
-import { describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,7 +69,9 @@ describe("compileDigest", () => {
       const body = digest!.body;
 
       // Header: hint-not-authority label and the event range.
-      expect(body).toContain("# Session digest — agent-maya / session session-1");
+      expect(body).toContain(
+        "# Session digest — agent-maya / session session-1",
+      );
       expect(body).toContain("hint-not-authority");
       expect(body).toContain(`${T0} → ${T2}`);
 
@@ -128,9 +131,9 @@ describe("compileDigest", () => {
         `| path | \`src/daemon/episodic-digest.ts\` | e${ids["status"]} |`,
       );
       expect(table).toContain(`| exit-code | \`2\` | e${ids["error"]} |`);
-      const errorRow = table.split("\n").find((line) =>
-        line.startsWith("| error |")
-      );
+      const errorRow = table
+        .split("\n")
+        .find((line) => line.startsWith("| error |"));
       expect(errorRow).toContain("TypeError: boom");
       expect(errorRow).toContain(`e${ids["error"]}`);
       expect(table).toContain(`| count | \`3 commits\` | e${ids["landed"]} |`);
@@ -178,11 +181,10 @@ describe("compileDigest", () => {
       expect(failures).toContain(`[e${killedId}]`);
 
       // Replace, not merge: still exactly one row for this agent+session.
-      expect(store.digestFor({ agent: "agent-maya", sessionId: "session-1" })!.id)
-        .toBe(second.id);
       expect(
-        store.digestProvenanceBlobs(),
-      ).toHaveLength(1);
+        store.digestFor({ agent: "agent-maya", sessionId: "session-1" })!.id,
+      ).toBe(second.id);
+      expect(store.digestProvenanceBlobs()).toHaveLength(1);
 
       // The drift audit passes on a freshly compiled digest.
       const audit = auditDigestDrift(store, second.id);
@@ -214,7 +216,8 @@ describe("auditDigestDrift", () => {
         // Tamper with the stored body out from under the compiler (there is
         // deliberately no digest-mutation API; go through the file).
         const tamper = new Database(storePath);
-        tamper.query("UPDATE digests SET body = ? WHERE id = ?")
+        tamper
+          .query("UPDATE digests SET body = ? WHERE id = ?")
           .run("agent-authored fiction", digest.id);
         tamper.close();
 

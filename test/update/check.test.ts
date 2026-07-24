@@ -7,10 +7,10 @@ import {
   checkForUpdate,
   checksDisabled,
   isNewer,
+  type LatestRelease,
   readUpdateCache,
   updatesDisabled,
   writeUpdateCache,
-  type LatestRelease,
 } from "../../src/update/check";
 
 let home: string;
@@ -29,8 +29,10 @@ const base = {
   isReleaseBuild: true,
   env: {} as NodeJS.ProcessEnv,
 };
-const latest = (version: string, securityCritical = false): (() => Promise<LatestRelease>) =>
-  () => Promise.resolve({ version, securityCritical });
+const latest =
+  (version: string, securityCritical = false): (() => Promise<LatestRelease>) =>
+  () =>
+    Promise.resolve({ version, securityCritical });
 const offline = (): Promise<LatestRelease> =>
   Promise.reject(new Error("network unreachable"));
 
@@ -49,17 +51,23 @@ describe("version comparison", () => {
 
 describe("opt-outs", () => {
   test("HIVE_DISABLE_UPDATES blocks even a manual update", () => {
-    expect(updatesDisabled({ HIVE_DISABLE_UPDATES: "1" })).toEqual("HIVE_DISABLE_UPDATES=1");
+    expect(updatesDisabled({ HIVE_DISABLE_UPDATES: "1" })).toEqual(
+      "HIVE_DISABLE_UPDATES=1",
+    );
     expect(updatesDisabled({ HIVE_NO_UPDATE_CHECK: "1" })).toEqual(null);
   });
 
   test("HIVE_NO_UPDATE_CHECK stops checks but leaves manual update working", () => {
-    expect(checksDisabled({ HIVE_NO_UPDATE_CHECK: "1" })).toEqual("HIVE_NO_UPDATE_CHECK=1");
+    expect(checksDisabled({ HIVE_NO_UPDATE_CHECK: "1" })).toEqual(
+      "HIVE_NO_UPDATE_CHECK=1",
+    );
     expect(updatesDisabled({ HIVE_NO_UPDATE_CHECK: "1" })).toEqual(null);
   });
 
   test("the ecosystem-wide NO_UPDATE_NOTIFIER is honored", () => {
-    expect(checksDisabled({ NO_UPDATE_NOTIFIER: "1" })).toEqual("NO_UPDATE_NOTIFIER");
+    expect(checksDisabled({ NO_UPDATE_NOTIFIER: "1" })).toEqual(
+      "NO_UPDATE_NOTIFIER",
+    );
   });
 });
 
@@ -80,7 +88,11 @@ describe("checkForUpdate", () => {
   });
 
   test("finds a newer release and caches it", async () => {
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: latest("0.0.7") });
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: latest("0.0.7"),
+    });
     expect(check).toEqual({
       state: "update-available",
       current: "0.0.4",
@@ -95,17 +107,28 @@ describe("checkForUpdate", () => {
   });
 
   test("says up to date when it actually reached the network", async () => {
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: latest("0.0.4") });
-    expect(check).toEqual({ state: "up-to-date", current: "0.0.4", latest: "0.0.4" });
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: latest("0.0.4"),
+    });
+    expect(check).toEqual({
+      state: "up-to-date",
+      current: "0.0.4",
+      latest: "0.0.4",
+    });
   });
 
   test("a fresh cache answers without touching the network", async () => {
-    writeUpdateCache({
-      latestVersion: "0.0.7",
-      checkedAt: NOW - 1000,
-      securityCritical: false,
-      dismissedVersion: null,
-    }, cachePath);
+    writeUpdateCache(
+      {
+        latestVersion: "0.0.7",
+        checkedAt: NOW - 1000,
+        securityCritical: false,
+        dismissedVersion: null,
+      },
+      cachePath,
+    );
     let called = false;
     const check = await checkForUpdate({
       ...base,
@@ -120,18 +143,29 @@ describe("checkForUpdate", () => {
   });
 
   test("an expired cache goes back to the network", async () => {
-    writeUpdateCache({
-      latestVersion: "0.0.5",
-      checkedAt: NOW - CHECK_INTERVAL_MS - 1,
-      securityCritical: false,
-      dismissedVersion: null,
-    }, cachePath);
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: latest("0.0.9") });
+    writeUpdateCache(
+      {
+        latestVersion: "0.0.5",
+        checkedAt: NOW - CHECK_INTERVAL_MS - 1,
+        securityCritical: false,
+        dismissedVersion: null,
+      },
+      cachePath,
+    );
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: latest("0.0.9"),
+    });
     expect(check).toMatchObject({ state: "update-available", latest: "0.0.9" });
   });
 
   test("a failed check with nothing cached says so — it never says up to date", async () => {
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: offline });
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: offline,
+    });
     expect(check).toEqual({
       state: "unavailable",
       current: "0.0.4",
@@ -142,24 +176,38 @@ describe("checkForUpdate", () => {
   test("a failed check never upgrades a stale 'no news' into reassurance", async () => {
     // The cache last saw 0.0.4 as latest, and we are 0.0.4. That is not evidence
     // that 0.0.4 is *still* latest, so the honest answer is "could not check".
-    writeUpdateCache({
-      latestVersion: "0.0.4",
-      checkedAt: NOW - CHECK_INTERVAL_MS - 1,
-      securityCritical: false,
-      dismissedVersion: null,
-    }, cachePath);
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: offline });
+    writeUpdateCache(
+      {
+        latestVersion: "0.0.4",
+        checkedAt: NOW - CHECK_INTERVAL_MS - 1,
+        securityCritical: false,
+        dismissedVersion: null,
+      },
+      cachePath,
+    );
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: offline,
+    });
     expect(check.state).toEqual("unavailable");
   });
 
   test("a failed check still reports a newer version it already knows about", async () => {
-    writeUpdateCache({
-      latestVersion: "0.0.7",
-      checkedAt: NOW - CHECK_INTERVAL_MS - 1,
-      securityCritical: false,
-      dismissedVersion: null,
-    }, cachePath);
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: offline });
+    writeUpdateCache(
+      {
+        latestVersion: "0.0.7",
+        checkedAt: NOW - CHECK_INTERVAL_MS - 1,
+        securityCritical: false,
+        dismissedVersion: null,
+      },
+      cachePath,
+    );
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: offline,
+    });
     expect(check).toMatchObject({
       state: "update-available",
       latest: "0.0.7",
@@ -173,12 +221,15 @@ describe("checkForUpdate", () => {
   });
 
   test("refreshing the cache preserves the skipped version", async () => {
-    writeUpdateCache({
-      latestVersion: "0.0.5",
-      checkedAt: 0,
-      securityCritical: false,
-      dismissedVersion: "0.0.5",
-    }, cachePath);
+    writeUpdateCache(
+      {
+        latestVersion: "0.0.5",
+        checkedAt: 0,
+        securityCritical: false,
+        dismissedVersion: "0.0.5",
+      },
+      cachePath,
+    );
     await checkForUpdate({ ...base, cachePath, fetchLatest: latest("0.0.7") });
     expect(readUpdateCache(cachePath)?.dismissedVersion).toEqual("0.0.5");
   });
@@ -200,7 +251,11 @@ describe("checkForUpdate", () => {
 
   test("a corrupt cache file is ignored rather than fatal", async () => {
     await Bun.write(cachePath, "{ not json");
-    const check = await checkForUpdate({ ...base, cachePath, fetchLatest: latest("0.0.7") });
+    const check = await checkForUpdate({
+      ...base,
+      cachePath,
+      fetchLatest: latest("0.0.7"),
+    });
     expect(check).toMatchObject({ state: "update-available" });
   });
 });

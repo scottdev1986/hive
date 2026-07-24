@@ -17,20 +17,19 @@
  * useful while staging and exactly why the daemon must be restarted explicitly.
  */
 import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   artifactMatches,
-  parseReleaseManifest,
-  selectArtifact,
-  verifyManifest,
   type HiveArch,
+  parseReleaseManifest,
   type ReleaseArtifact,
   type ReleaseManifest,
+  selectArtifact,
+  verifyManifest,
 } from "../release/manifest";
-import type { ProgressCallback, ProgressReporter } from "./progress";
 import { HIVE_ARCH, HIVE_RELEASE_PUBLIC_KEY } from "../version";
 import {
   binLink,
@@ -44,6 +43,7 @@ import {
   versionsDir,
   workspaceAppPath,
 } from "./paths";
+import type { ProgressCallback, ProgressReporter } from "./progress";
 
 const StateSchema = z.object({
   active: z.string().nullable().default(null),
@@ -52,11 +52,13 @@ const StateSchema = z.object({
 });
 export type InstallState = z.infer<typeof StateSchema>;
 
-const VerificationMaterialSchema = z.object({
-  schema: z.literal(1),
-  manifestBase64: z.string(),
-  signature: z.string().min(1),
-}).strict();
+const VerificationMaterialSchema = z
+  .object({
+    schema: z.literal(1),
+    manifestBase64: z.string(),
+    signature: z.string().min(1),
+  })
+  .strict();
 
 const VERIFICATION_MATERIAL_FILE = "release-verification.json";
 
@@ -72,11 +74,18 @@ async function writeVerificationMaterial(
   const path = verificationMaterialPath(directory);
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temporary, `${JSON.stringify({
-      schema: 1,
-      manifestBase64: Buffer.from(manifestBytes).toString("base64"),
-      signature,
-    }, null, 2)}\n`);
+    await writeFile(
+      temporary,
+      `${JSON.stringify(
+        {
+          schema: 1,
+          manifestBase64: Buffer.from(manifestBytes).toString("base64"),
+          signature,
+        },
+        null,
+        2,
+      )}\n`,
+    );
     await rename(temporary, path);
   } finally {
     await rm(temporary, { force: true });
@@ -91,7 +100,10 @@ export function readInstallState(root = installRoot()): InstallState {
   }
 }
 
-export function writeInstallState(state: InstallState, root = installRoot()): void {
+export function writeInstallState(
+  state: InstallState,
+  root = installRoot(),
+): void {
   writeFileSync(stateFile(root), `${JSON.stringify(state, null, 2)}\n`);
 }
 
@@ -130,9 +142,11 @@ function manifestFromSignedBytes(deps: StageDeps): ReleaseManifest {
   let manifest: ReleaseManifest;
   let supplied: ReleaseManifest;
   try {
-    manifest = parseReleaseManifest(JSON.parse(
-      new TextDecoder("utf-8", { fatal: true }).decode(deps.manifestBytes),
-    ));
+    manifest = parseReleaseManifest(
+      JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(deps.manifestBytes),
+      ),
+    );
     supplied = parseReleaseManifest(deps.manifest);
   } catch {
     throw new UpdateError("Refusing update: release manifest is invalid");
@@ -158,12 +172,12 @@ export interface StageResult {
  */
 export async function stageRelease(deps: StageDeps): Promise<StageResult> {
   const root = deps.root ?? installRoot();
-  const publicKey = deps.publicKey === undefined
-    ? HIVE_RELEASE_PUBLIC_KEY
-    : deps.publicKey;
+  const publicKey =
+    deps.publicKey === undefined ? HIVE_RELEASE_PUBLIC_KEY : deps.publicKey;
 
   const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
-  if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
+  if (!trust.verified)
+    throw new UpdateError(`Refusing update: ${trust.reason}`);
   const signature = deps.signature;
   if (!trust.signed || signature === null) {
     throw new UpdateError(
@@ -197,7 +211,9 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
    * bytes the signed manifest named. The digest check is the gate every byte
    * passes through; the progress display is what makes the wait honest.
    */
-  const fetchArtifact = async (artifact: ReleaseArtifact): Promise<Uint8Array> => {
+  const fetchArtifact = async (
+    artifact: ReleaseArtifact,
+  ): Promise<Uint8Array> => {
     const reporter = deps.progress?.(artifact);
     let downloaded: Uint8Array;
     try {
@@ -226,14 +242,16 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
 
   // Execute the candidate before it can ever be `current`. A binary that will
   // not say its own name is not a binary we activate.
-  const reported = await deps.probeVersion(stagedCli).catch(async (error: unknown) => {
-    await rm(staging, { recursive: true, force: true });
-    throw new UpdateError(
-      `Refusing update: staged hive ${version} did not run (${
-        error instanceof Error ? error.message : String(error)
-      })`,
-    );
-  });
+  const reported = await deps
+    .probeVersion(stagedCli)
+    .catch(async (error: unknown) => {
+      await rm(staging, { recursive: true, force: true });
+      throw new UpdateError(
+        `Refusing update: staged hive ${version} did not run (${
+          error instanceof Error ? error.message : String(error)
+        })`,
+      );
+    });
   if (!reported.includes(version)) {
     await rm(staging, { recursive: true, force: true });
     throw new UpdateError(
@@ -335,7 +353,11 @@ async function proveStaged(
     );
   }
 
-  await writeVerificationMaterial(versionDir(version, root), deps.manifestBytes, signature);
+  await writeVerificationMaterial(
+    versionDir(version, root),
+    deps.manifestBytes,
+    signature,
+  );
 
   return {
     version,
@@ -357,12 +379,12 @@ async function proveStaged(
  */
 export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
   const root = deps.root ?? installRoot();
-  const publicKey = deps.publicKey === undefined
-    ? HIVE_RELEASE_PUBLIC_KEY
-    : deps.publicKey;
+  const publicKey =
+    deps.publicKey === undefined ? HIVE_RELEASE_PUBLIC_KEY : deps.publicKey;
 
   const trust = verifyManifest(deps.manifestBytes, deps.signature, publicKey);
-  if (!trust.verified) throw new UpdateError(`Refusing update: ${trust.reason}`);
+  if (!trust.verified)
+    throw new UpdateError(`Refusing update: ${trust.reason}`);
   const signature = deps.signature;
   if (!trust.signed || signature === null) {
     throw new UpdateError(
@@ -401,7 +423,10 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
 }
 
 /** Atomically point `current` at a staged version directory. */
-export async function activate(version: string, root = installRoot()): Promise<void> {
+export async function activate(
+  version: string,
+  root = installRoot(),
+): Promise<void> {
   const target = versionDir(version, root);
   if (!existsSync(cliPath(target))) {
     throw new UpdateError(`hive ${version} is not staged at ${target}`);
@@ -434,7 +459,9 @@ function patchNumber(version: string): number {
 function installedVersions(root: string): string[] {
   try {
     return readdirSync(versionsDir(root), { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && /^\d+\.\d+\.\d+$/.test(entry.name))
+      .filter(
+        (entry) => entry.isDirectory() && /^\d+\.\d+\.\d+$/.test(entry.name),
+      )
       .map((entry) => entry.name)
       .sort((a, b) => patchNumber(b) - patchNumber(a));
   } catch {
@@ -485,14 +512,17 @@ export async function pruneOldVersions(
 ): Promise<readonly string[]> {
   const root = deps.root ?? installRoot();
   const log = deps.log ?? ((message: string) => console.log(message));
-  const remove = deps.remove ?? ((dir: string) => rm(dir, { recursive: true, force: true }));
+  const remove =
+    deps.remove ?? ((dir: string) => rm(dir, { recursive: true, force: true }));
 
   const pruned: string[] = [];
   for (const version of versionsToPrune(root, active, previous)) {
     try {
       await remove(versionDir(version, root));
       pruned.push(version);
-      log(`hive update: pruned hive ${version} (retaining the active version, the rollback target, and the next most recent)`);
+      log(
+        `hive update: pruned hive ${version} (retaining the active version, the rollback target, and the next most recent)`,
+      );
     } catch (error) {
       log(
         `hive update: could not prune hive ${version}: ${
@@ -519,7 +549,12 @@ export interface RollbackDeps extends ActivationDeps {
 
 export type ActivationOutcome =
   | { activated: true; version: string; previous: string | null }
-  | { activated: false; version: string; revertedTo: string | null; reason: string };
+  | {
+      activated: false;
+      version: string;
+      revertedTo: string | null;
+      reason: string;
+    };
 
 /**
  * Activate, then prove it. On failure, put `current` back and keep the staged
@@ -540,7 +575,8 @@ export async function activateWithHealthCheck(
   const previous = state.active;
 
   await activate(version, root);
-  const healthy = await deps.healthCheck(cliPath(currentLink(root)))
+  const healthy = await deps
+    .healthCheck(cliPath(currentLink(root)))
     .catch(() => false);
 
   if (healthy) {
@@ -565,24 +601,37 @@ export async function activateWithHealthCheck(
     activated: false,
     version,
     revertedTo: null,
-    reason: `hive ${version} failed its health check and there is no retained ` +
+    reason:
+      `hive ${version} failed its health check and there is no retained ` +
       "previous version to revert to",
   };
 }
 
-function rollbackVerificationError(version: string, reason: string): UpdateError {
+function rollbackVerificationError(
+  version: string,
+  reason: string,
+): UpdateError {
   return new UpdateError(
     `Refusing rollback: retained hive ${version} ${reason}. ` +
       `Reinstall it with \`hive update ${version}\`, then retry.`,
   );
 }
 
-function verifyRollbackTarget(version: string, deps: RollbackDeps, root: string): void {
+function verifyRollbackTarget(
+  version: string,
+  deps: RollbackDeps,
+  root: string,
+): void {
   let material: z.infer<typeof VerificationMaterialSchema>;
   try {
-    material = VerificationMaterialSchema.parse(JSON.parse(
-      readFileSync(verificationMaterialPath(versionDir(version, root)), "utf8"),
-    ));
+    material = VerificationMaterialSchema.parse(
+      JSON.parse(
+        readFileSync(
+          verificationMaterialPath(versionDir(version, root)),
+          "utf8",
+        ),
+      ),
+    );
   } catch {
     throw rollbackVerificationError(
       version,
@@ -592,12 +641,14 @@ function verifyRollbackTarget(version: string, deps: RollbackDeps, root: string)
 
   const manifestBytes = Buffer.from(material.manifestBase64, "base64");
   if (manifestBytes.toString("base64") !== material.manifestBase64) {
-    throw rollbackVerificationError(version, "has invalid verification material");
+    throw rollbackVerificationError(
+      version,
+      "has invalid verification material",
+    );
   }
 
-  const publicKey = deps.publicKey === undefined
-    ? HIVE_RELEASE_PUBLIC_KEY
-    : deps.publicKey;
+  const publicKey =
+    deps.publicKey === undefined ? HIVE_RELEASE_PUBLIC_KEY : deps.publicKey;
   const trust = verifyManifest(manifestBytes, material.signature, publicKey);
   if (!trust.verified || !trust.signed) {
     const reason = trust.verified
@@ -608,10 +659,16 @@ function verifyRollbackTarget(version: string, deps: RollbackDeps, root: string)
 
   let manifest: ReleaseManifest;
   try {
-    manifest = parseReleaseManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true })
-      .decode(manifestBytes)));
+    manifest = parseReleaseManifest(
+      JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes),
+      ),
+    );
   } catch {
-    throw rollbackVerificationError(version, "has an invalid signed release manifest");
+    throw rollbackVerificationError(
+      version,
+      "has an invalid signed release manifest",
+    );
   }
   if (manifest.version !== version) {
     throw rollbackVerificationError(
@@ -635,7 +692,10 @@ function verifyRollbackTarget(version: string, deps: RollbackDeps, root: string)
     throw rollbackVerificationError(version, "has no readable CLI to verify");
   }
   if (!artifactMatches(artifact, bytes)) {
-    throw rollbackVerificationError(version, "does not match its signed release manifest");
+    throw rollbackVerificationError(
+      version,
+      "does not match its signed release manifest",
+    );
   }
 }
 
@@ -653,7 +713,9 @@ export async function rollback(deps: RollbackDeps): Promise<ActivationOutcome> {
   const target = state.previous;
   verifyRollbackTarget(target, deps, root);
   await activate(target, root);
-  const healthy = await deps.healthCheck(cliPath(currentLink(root))).catch(() => false);
+  const healthy = await deps
+    .healthCheck(cliPath(currentLink(root)))
+    .catch(() => false);
   if (!healthy) {
     // Symmetric with activateWithHealthCheck: never leave `current` pointing at
     // a binary that just failed its own health check, rollback included. The

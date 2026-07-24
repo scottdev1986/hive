@@ -10,19 +10,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { HiveDatabase } from "../../src/daemon/db";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
   releaseDaemonLock,
 } from "../../src/daemon/lifecycle";
+import { HiveDaemon, startDaemon } from "../../src/daemon/server";
+import { SessiondHost } from "../../src/daemon/session-host/sessiond-host";
 import {
   brokerSocketPath,
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
 } from "../../src/daemon/sessiond-broker";
-import { SessiondHost } from "../../src/daemon/session-host/sessiond-host";
-import { HiveDaemon, startDaemon } from "../../src/daemon/server";
-import { HiveDatabase } from "../../src/daemon/db";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 const binary = resolveSessiondBinary({

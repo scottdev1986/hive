@@ -4,19 +4,25 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  CreateBeginPayloadSchema,
-  CreatedPayloadSchema,
-  FRAME_FLAGS,
-  FRAME_HEADER,
-  FRAME_TYPES,
-  HelloPayloadSchema,
-  SessionSpecSchema,
-} from "../../../src/schemas/session-protocol";
 import { HiveDatabase } from "../../../src/daemon/db";
 import type { DaemonHandshake } from "../../../src/daemon/handshake";
-import { HiveTerminalHostAdapter } from "../../../src/daemon/session-host/hive-terminal-host";
 import type { SessionSpec } from "../../../src/daemon/session-host/contract";
+import { HiveTerminalHostAdapter } from "../../../src/daemon/session-host/hive-terminal-host";
+import {
+  encodeSessiondFrame,
+  type SessiondBrokerClient,
+  SessiondBrokerUnavailableError,
+  type SessiondControlClient,
+  type SessiondControlRequest,
+  SessiondCreateAdmissionDisabledError,
+  type SessiondFrame,
+  SessiondFrameDecoder,
+  SessiondHost,
+  SessiondProtocolError,
+  SessiondSocketClient,
+  SessiondWireError,
+  SessiondWireNotReadyError,
+} from "../../../src/daemon/session-host/sessiond-host";
 import type { TerminalHostBindingStore } from "../../../src/daemon/session-host/terminal-host-binding";
 import type {
   ClaimResult,
@@ -29,20 +35,14 @@ import type {
   TerminationResult,
 } from "../../../src/daemon/session-host/terminal-host-contract";
 import {
-  encodeSessiondFrame,
-  SessiondBrokerUnavailableError,
-  type SessiondBrokerClient,
-  SessiondCreateAdmissionDisabledError,
-  SessiondFrameDecoder,
-  SessiondHost,
-  SessiondProtocolError,
-  SessiondSocketClient,
-  SessiondWireError,
-  SessiondWireNotReadyError,
-  type SessiondControlClient,
-  type SessiondControlRequest,
-  type SessiondFrame,
-} from "../../../src/daemon/session-host/sessiond-host";
+  CreateBeginPayloadSchema,
+  CreatedPayloadSchema,
+  FRAME_FLAGS,
+  FRAME_HEADER,
+  FRAME_TYPES,
+  HelloPayloadSchema,
+  SessionSpecSchema,
+} from "../../../src/schemas/session-protocol";
 
 const session: SessionRef = {
   key: "neutral-session-key",
@@ -158,7 +158,8 @@ const createBeginPayload = CreateBeginPayloadSchema.parse({
   launchGrantRevision: 1,
   visibility: brokerVisibility,
 });
-const { visibility: _createVisibility, ...sessionSpecPayload } = createBeginPayload;
+const { visibility: _createVisibility, ...sessionSpecPayload } =
+  createBeginPayload;
 const sessionSpec: SessionSpec = SessionSpecSchema.parse(sessionSpecPayload);
 const pendingBinding = {
   locator: brokerLocator,
@@ -195,7 +196,11 @@ const createdPayload = CreatedPayloadSchema.parse({
     complete: true,
     hostPid: 4_000,
     hostStartToken: "4000:123400",
-    providerRoot: { pid: 4_100, startToken: "4100:123456", processGroupId: 4_100 },
+    providerRoot: {
+      pid: 4_100,
+      startToken: "4100:123456",
+      processGroupId: 4_100,
+    },
     expectedExecutable: "/bin/sh",
     executableVerified: true,
     outputSeq: "0",
@@ -259,11 +264,15 @@ const inspection: SessionInspection = {
   completeness: "complete",
   host: { processId: 4_000, startToken: "4000:123400" },
   child: { processId: 4_100, startToken: "4100:123456" },
-  jobControl: createResult.outcome.state === "running"
-    ? createResult.outcome.jobControl
-    : null,
+  jobControl:
+    createResult.outcome.state === "running"
+      ? createResult.outcome.jobControl
+      : null,
   window: {
-    value: resize.state === "applied" ? resize.readback : createRequest.initialWindow,
+    value:
+      resize.state === "applied"
+        ? resize.readback
+        : createRequest.initialWindow,
     revision: "2",
   },
   output: { closed: false, retained: { start: "0", endExclusive: "19" } },
@@ -297,12 +306,13 @@ const inspectionWire = {
   ...inspection,
   checkpoints: {
     ...inspection.checkpoints,
-    newest: inspection.checkpoints.newest === null
-      ? null
-      : {
-        ...inspection.checkpoints.newest,
-        opaqueBytes: Buffer.from(checkpointBytes).toString("base64"),
-      },
+    newest:
+      inspection.checkpoints.newest === null
+        ? null
+        : {
+            ...inspection.checkpoints.newest,
+            opaqueBytes: Buffer.from(checkpointBytes).toString("base64"),
+          },
   },
 };
 
@@ -330,21 +340,29 @@ const termination: TerminationResult = {
 
 class RecordingClient implements SessiondBrokerClient {
   readonly requests: SessiondControlRequest<unknown>[] = [];
-  readonly creates: Array<Readonly<{
-    beginPayload: typeof createBeginPayload;
-    initialInput: Uint8Array;
-  }>> = [];
+  readonly creates: Array<
+    Readonly<{
+      beginPayload: typeof createBeginPayload;
+      initialInput: Uint8Array;
+    }>
+  > = [];
   closed = false;
 
   constructor(
-    private readonly respond: (request: SessiondControlRequest<unknown>) => unknown,
+    private readonly respond: (
+      request: SessiondControlRequest<unknown>,
+    ) => unknown,
     private readonly createRespond: () => unknown = () => createdPayload,
     readonly engineBuildId: string | null = null,
   ) {}
 
-  async request<Result>(request: SessiondControlRequest<Result>): Promise<Result> {
+  async request<Result>(
+    request: SessiondControlRequest<Result>,
+  ): Promise<Result> {
     this.requests.push(request as SessiondControlRequest<unknown>);
-    return request.responseSchema.parse(this.respond(request as SessiondControlRequest<unknown>));
+    return request.responseSchema.parse(
+      this.respond(request as SessiondControlRequest<unknown>),
+    );
   }
 
   async createTransaction(
@@ -365,30 +383,35 @@ class MockSocket extends EventEmitter {
   destroyed = false;
 
   constructor(
-    private readonly onFrame: (frame: SessiondFrame, socket: MockSocket) => void,
+    private readonly onFrame: (
+      frame: SessiondFrame,
+      socket: MockSocket,
+    ) => void,
   ) {
     super();
   }
 
-  write(
-    chunk: Uint8Array,
-    callback?: (error?: Error | null) => void,
-  ): boolean {
+  write(chunk: Uint8Array, callback?: (error?: Error | null) => void): boolean {
     const bytes = new Uint8Array(chunk);
     this.writes.push(bytes);
     callback?.(null);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
-    const type = Object.entries(FRAME_TYPES)
-      .find(([, code]) => code === typeCode)?.[0] as SessiondFrame["type"] | undefined;
-    if (type === undefined) throw new Error(`unexpected frame type ${typeCode}`);
+    const type = Object.entries(FRAME_TYPES).find(
+      ([, code]) => code === typeCode,
+    )?.[0] as SessiondFrame["type"] | undefined;
+    if (type === undefined)
+      throw new Error(`unexpected frame type ${typeCode}`);
     const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
     const frame: SessiondFrame = {
       type,
       flags: view.getUint16(FRAME_HEADER.offsets.flags),
       requestId: view.getBigUint64(FRAME_HEADER.offsets.requestId),
       streamSeq: view.getBigUint64(FRAME_HEADER.offsets.streamSeq),
-      payload: bytes.slice(FRAME_HEADER.bytes, FRAME_HEADER.bytes + payloadLength),
+      payload: bytes.slice(
+        FRAME_HEADER.bytes,
+        FRAME_HEADER.bytes + payloadLength,
+      ),
     };
     queueMicrotask(() => this.onFrame(frame, this));
     return true;
@@ -419,7 +442,9 @@ function createdResponse(frame: SessiondFrame): SessiondFrame {
 
 describe("sessiond wire framing", () => {
   test("encodes network-order headers and decodes split frames", () => {
-    const payload = new TextEncoder().encode('{"schemaVersion":1,"monoNanos":"7"}');
+    const payload = new TextEncoder().encode(
+      '{"schemaVersion":1,"monoNanos":"7"}',
+    );
     const encoded = encodeSessiondFrame({
       type: "PING",
       flags: 0,
@@ -427,10 +452,16 @@ describe("sessiond wire framing", () => {
       streamSeq: 0n,
       payload,
     });
-    const view = new DataView(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+    const view = new DataView(
+      encoded.buffer,
+      encoded.byteOffset,
+      encoded.byteLength,
+    );
     expect([...encoded.slice(0, 4)]).toEqual([...FRAME_HEADER.magicBytes]);
     expect(view.getUint16(FRAME_HEADER.offsets.type)).toBe(0x0004);
-    expect(view.getUint32(FRAME_HEADER.offsets.payloadLength)).toBe(payload.byteLength);
+    expect(view.getUint32(FRAME_HEADER.offsets.payloadLength)).toBe(
+      payload.byteLength,
+    );
     expect(view.getBigUint64(FRAME_HEADER.offsets.requestId)).toBe(42n);
 
     const decoder = new SessiondFrameDecoder();
@@ -455,7 +486,9 @@ describe("sessiond wire framing", () => {
       payload: new Uint8Array(),
     });
     new DataView(encoded.buffer).setUint16(FRAME_HEADER.offsets.reserved, 1);
-    expect(() => new SessiondFrameDecoder().push(encoded)).toThrow(SessiondProtocolError);
+    expect(() => new SessiondFrameDecoder().push(encoded)).toThrow(
+      SessiondProtocolError,
+    );
   });
 
   test("enforces the negotiated control-frame cap", () => {
@@ -492,10 +525,9 @@ describe("sessiond wire framing", () => {
     });
     const client = new SessiondSocketClient(socket as unknown as Socket);
 
-    await expect(client.createTransaction(
-      createBeginPayload,
-      new Uint8Array(),
-    )).resolves.toEqual(createdPayload);
+    await expect(
+      client.createTransaction(createBeginPayload, new Uint8Array()),
+    ).resolves.toEqual(createdPayload);
 
     expect(socket.writes).toEqual([
       encodeSessiondFrame({
@@ -513,7 +545,8 @@ describe("sessiond wire framing", () => {
         payload: encodeJson({
           schemaVersion: 1,
           totalLength: 0,
-          sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          sha256:
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         }),
       }),
     ]);
@@ -531,8 +564,9 @@ describe("sessiond wire framing", () => {
     });
     const input = new TextEncoder().encode("abcdefg");
 
-    await expect(client.createTransaction(createBeginPayload, input))
-      .resolves.toEqual(createdPayload);
+    await expect(
+      client.createTransaction(createBeginPayload, input),
+    ).resolves.toEqual(createdPayload);
 
     expect(socket.writes).toEqual([
       encodeSessiondFrame({
@@ -571,7 +605,8 @@ describe("sessiond wire framing", () => {
         payload: encodeJson({
           schemaVersion: 1,
           totalLength: 7,
-          sha256: "7d1a54127b222502f5b79b5fb0803061152a44f92b37e23c6527baf665d4da9a",
+          sha256:
+            "7d1a54127b222502f5b79b5fb0803061152a44f92b37e23c6527baf665d4da9a",
         }),
       }),
     ]);
@@ -595,7 +630,8 @@ describe("sessiond wire framing", () => {
     });
     const client = new SessiondSocketClient(socket as unknown as Socket);
 
-    const failure = client.createTransaction(createBeginPayload, new Uint8Array())
+    const failure = client
+      .createTransaction(createBeginPayload, new Uint8Array())
       .catch((error) => error);
     await expect(failure).resolves.toBeInstanceOf(SessiondWireError);
     await expect(failure).resolves.toMatchObject({ code: "IN_DOUBT" });
@@ -620,7 +656,8 @@ describe("sessiond wire framing", () => {
     });
     const client = new SessiondSocketClient(socket as unknown as Socket);
 
-    const failure = client.createTransaction(createBeginPayload, new Uint8Array())
+    const failure = client
+      .createTransaction(createBeginPayload, new Uint8Array())
       .catch((error) => error);
     await expect(failure).resolves.toBeInstanceOf(SessiondWireError);
     await expect(failure).resolves.toMatchObject({ code: "NOT_READY" });
@@ -635,16 +672,21 @@ describe("sessiond wire framing", () => {
       streamChunkMaxBytes: 3,
       automatedMessageMaxBytes: 3,
     });
-    const oversized = client.createTransaction(
-      createBeginPayload,
-      new Uint8Array(4),
-    ).catch((error) => error);
-    await expect(oversized).resolves.toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
+    const oversized = client
+      .createTransaction(createBeginPayload, new Uint8Array(4))
+      .catch((error) => error);
+    await expect(oversized).resolves.toMatchObject({
+      code: "PAYLOAD_TOO_LARGE",
+    });
     expect(socket.writes).toEqual([]);
 
-    const first = client.createTransaction(createBeginPayload, new Uint8Array());
-    await expect(client.createTransaction(createBeginPayload, new Uint8Array()))
-      .rejects.toThrow("create transaction is already active");
+    const first = client.createTransaction(
+      createBeginPayload,
+      new Uint8Array(),
+    );
+    await expect(
+      client.createTransaction(createBeginPayload, new Uint8Array()),
+    ).rejects.toThrow("create transaction is already active");
     client.close();
     await expect(first).rejects.toThrow("sessiond connection closed");
   });
@@ -664,48 +706,58 @@ describe("sessiond wire framing", () => {
           received.push(frame);
           if (frame.type === "HELLO") {
             helloRequestId = frame.requestId;
-            socket.write(encodeSessiondFrame({
-              type: "PING",
-              flags: 0,
-              requestId: 900n,
-              streamSeq: 0n,
-              payload: new TextEncoder().encode(
-                '{"schemaVersion":1,"monoNanos":"7"}',
-              ),
-            }));
+            socket.write(
+              encodeSessiondFrame({
+                type: "PING",
+                flags: 0,
+                requestId: 900n,
+                streamSeq: 0n,
+                payload: new TextEncoder().encode(
+                  '{"schemaVersion":1,"monoNanos":"7"}',
+                ),
+              }),
+            );
           } else if (frame.type === "PONG") {
             expect(frame.flags).toBe(FRAME_FLAGS.response | FRAME_FLAGS.final);
-            socket.write(encodeSessiondFrame({
-              type: "WELCOME",
-              flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-              requestId: helloRequestId!,
-              streamSeq: 0n,
-              payload: new TextEncoder().encode(JSON.stringify({
-                  schemaVersion: 1,
-                  protocol: { major: 1, minor: 0 },
-                  instanceId: handshake.instanceId,
-                  endpointRole: "broker",
-                  buildId: "sessiond-build-hash",
-                  engineBuildId: brokerLocator.engineBuildId,
-                  connectionId: "1",
-                  serverEpoch: "1",
-                  limits: {
-                    controlFrameMaxBytes: 262_144,
-                    maxInputTransactionBytes: 131_072,
-                    streamChunkMaxBytes: 65_536,
-                    automatedMessageMaxBytes: 1_048_576,
-                    viewerQueueMaxBytes: 8_388_608,
-                  },
-                })),
-            }));
+            socket.write(
+              encodeSessiondFrame({
+                type: "WELCOME",
+                flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+                requestId: helloRequestId!,
+                streamSeq: 0n,
+                payload: new TextEncoder().encode(
+                  JSON.stringify({
+                    schemaVersion: 1,
+                    protocol: { major: 1, minor: 0 },
+                    instanceId: handshake.instanceId,
+                    endpointRole: "broker",
+                    buildId: "sessiond-build-hash",
+                    engineBuildId: brokerLocator.engineBuildId,
+                    connectionId: "1",
+                    serverEpoch: "1",
+                    limits: {
+                      controlFrameMaxBytes: 262_144,
+                      maxInputTransactionBytes: 131_072,
+                      streamChunkMaxBytes: 65_536,
+                      automatedMessageMaxBytes: 1_048_576,
+                      viewerQueueMaxBytes: 8_388_608,
+                    },
+                  }),
+                ),
+              }),
+            );
           } else if (frame.type === "CREATE_COMMIT") {
-            socket.write(encodeSessiondFrame({
-              type: "CREATED",
-              flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-              requestId: frame.requestId,
-              streamSeq: 0n,
-              payload: new TextEncoder().encode(JSON.stringify(createdPayload)),
-            }));
+            socket.write(
+              encodeSessiondFrame({
+                type: "CREATED",
+                flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+                requestId: frame.requestId,
+                streamSeq: 0n,
+                payload: new TextEncoder().encode(
+                  JSON.stringify(createdPayload),
+                ),
+              }),
+            );
           }
         }
       });
@@ -720,20 +772,24 @@ describe("sessiond wire framing", () => {
         handshake: async () => handshake,
         pendingBindings,
       });
-      await expect(host.create(sessionSpec, new Uint8Array())).resolves.toEqual({
-        locator: brokerLocator,
-        inspection: createdPayload.inspection,
-        created: true,
-      });
+      await expect(host.create(sessionSpec, new Uint8Array())).resolves.toEqual(
+        {
+          locator: brokerLocator,
+          inspection: createdPayload.inspection,
+          created: true,
+        },
+      );
       expect(received.map((frame) => frame.type)).toEqual([
         "HELLO",
         "PONG",
         "CREATE_BEGIN",
         "CREATE_COMMIT",
       ]);
-      expect(HelloPayloadSchema.parse(JSON.parse(
-        new TextDecoder().decode(received[0]?.payload),
-      ))).toMatchObject({
+      expect(
+        HelloPayloadSchema.parse(
+          JSON.parse(new TextDecoder().decode(received[0]?.payload)),
+        ),
+      ).toMatchObject({
         buildId: handshake.buildHash,
         instanceId: handshake.instanceId,
         clientRole: "daemon",
@@ -748,11 +804,15 @@ describe("sessiond wire framing", () => {
           repoFamilyKey: handshake.repoFamilyKey,
         },
       });
-      expect(JSON.parse(new TextDecoder().decode(received[2]?.payload)))
-        .toEqual(createBeginPayload);
+      expect(
+        JSON.parse(new TextDecoder().decode(received[2]?.payload)),
+      ).toEqual(createBeginPayload);
     } finally {
       await new Promise<void>((resolve, reject) =>
-        server.close((error) => error === undefined ? resolve() : reject(error)));
+        server.close((error) =>
+          error === undefined ? resolve() : reject(error),
+        ),
+      );
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -768,7 +828,9 @@ describe("SessiondHost landed frozen operations", () => {
       });
 
       const failure = host.list().catch((error) => error);
-      await expect(failure).resolves.toBeInstanceOf(SessiondBrokerUnavailableError);
+      await expect(failure).resolves.toBeInstanceOf(
+        SessiondBrokerUnavailableError,
+      );
       await expect(failure).resolves.toMatchObject({
         socketPath: join(directory, "runtime", "sessiond", "broker.sock"),
       });
@@ -778,9 +840,13 @@ describe("SessiondHost landed frozen operations", () => {
   });
 
   test("creates from a product spec and its pre-bound Workspace visibility", async () => {
-    const broker = new RecordingClient(() => {
-      throw new Error("product create must use the transactional seam");
-    }, () => createdPayload, brokerLocator.engineBuildId);
+    const broker = new RecordingClient(
+      () => {
+        throw new Error("product create must use the transactional seam");
+      },
+      () => createdPayload,
+      brokerLocator.engineBuildId,
+    );
     const host = new SessiondHost({
       connectBroker: async () => broker,
       pendingBindings,
@@ -792,10 +858,12 @@ describe("SessiondHost landed frozen operations", () => {
       inspection: createdPayload.inspection,
       created: true,
     });
-    expect(broker.creates).toEqual([{
-      beginPayload: createBeginPayload,
-      initialInput,
-    }]);
+    expect(broker.creates).toEqual([
+      {
+        beginPayload: createBeginPayload,
+        initialInput,
+      },
+    ]);
     expect(broker.requests).toHaveLength(0);
     expect(broker.closed).toBe(true);
   });
@@ -825,14 +893,17 @@ describe("SessiondHost landed frozen operations", () => {
       pendingBindings: bindings,
     });
 
-    await expect(host.create(sessionSpec, new Uint8Array()))
-      .rejects.toMatchObject({ code: "CAPACITY_EXCEEDED" });
+    await expect(
+      host.create(sessionSpec, new Uint8Array()),
+    ).rejects.toMatchObject({ code: "CAPACITY_EXCEEDED" });
     expect(released).toEqual([brokerLocator]);
     expect(broker.closed).toBe(true);
   });
 
   test("composes negotiated create through the adapter and a real binding database", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-create-scaffold-"));
+    const directory = await mkdtemp(
+      join(tmpdir(), "hive-sessiond-create-scaffold-"),
+    );
     const db = new HiveDatabase(join(directory, "hive.db"));
     const transportSession = {
       key: brokerLocator.sessionId,
@@ -846,42 +917,48 @@ describe("SessiondHost landed frozen operations", () => {
     const host = new SessiondHost({
       pendingBindings: db,
       connectBroker: async () => {
-        const broker = new RecordingClient((request) => {
-          switch (request.requestType) {
-            case "LIST":
-              return { schemaVersion: 1, entries: [transportInspection] };
-            case "INSPECT":
-              return { schemaVersion: 1, ...transportInspection };
-            case "VISIBILITY_RENEW":
-              expect(request.payload).toEqual({
-                schemaVersion: 1,
-                locator: brokerLocator,
-                ...brokerVisibility,
-                openTerminalRevision: "2",
-              });
-              return {
-                schemaVersion: 1,
-                locator: brokerLocator,
-                state: "active",
-                expiresAt: "2026-07-18T01:00:30.000Z",
-                openTerminalRevision: "2",
-              };
-            default:
-              throw new Error(`unexpected request: ${request.requestType}`);
-          }
-        }, () => createdPayload, brokerLocator.engineBuildId);
+        const broker = new RecordingClient(
+          (request) => {
+            switch (request.requestType) {
+              case "LIST":
+                return { schemaVersion: 1, entries: [transportInspection] };
+              case "INSPECT":
+                return { schemaVersion: 1, ...transportInspection };
+              case "VISIBILITY_RENEW":
+                expect(request.payload).toEqual({
+                  schemaVersion: 1,
+                  locator: brokerLocator,
+                  ...brokerVisibility,
+                  openTerminalRevision: "2",
+                });
+                return {
+                  schemaVersion: 1,
+                  locator: brokerLocator,
+                  state: "active",
+                  expiresAt: "2026-07-18T01:00:30.000Z",
+                  openTerminalRevision: "2",
+                };
+              default:
+                throw new Error(`unexpected request: ${request.requestType}`);
+            }
+          },
+          () => createdPayload,
+          brokerLocator.engineBuildId,
+        );
         brokers.push(broker);
         return broker;
       },
     });
-    const adapter = new HiveTerminalHostAdapter(host, db, brokerLocator.instanceId);
+    const adapter = new HiveTerminalHostAdapter(
+      host,
+      db,
+      brokerLocator.instanceId,
+    );
 
     try {
-      await expect(adapter.create(
-        sessionSpec,
-        new Uint8Array(),
-        pendingBinding,
-      )).resolves.toEqual({
+      await expect(
+        adapter.create(sessionSpec, new Uint8Array(), pendingBinding),
+      ).resolves.toEqual({
         locator: brokerLocator,
         inspection: createdPayload.inspection,
         created: true,
@@ -893,20 +970,30 @@ describe("SessiondHost landed frozen operations", () => {
         geometry: sessionSpec.geometry,
         visibility: createdPayload.inspection.visibility,
       };
-      expect(db.getTerminalHostBindingByLocator(brokerLocator))
-        .toEqual({ ...pendingBinding, createEvidence });
-      expect(db.database.query(`
+      expect(db.getTerminalHostBindingByLocator(brokerLocator)).toEqual({
+        ...pendingBinding,
+        createEvidence,
+      });
+      expect(
+        db.database
+          .query(`
         SELECT locatorInstanceId, locatorSessionId, locatorGeneration
         FROM terminal_host_bindings
-      `).all()).toEqual([{
-        locatorInstanceId: brokerLocator.instanceId,
-        locatorSessionId: brokerLocator.sessionId,
-        locatorGeneration: brokerLocator.generation,
-      }]);
-      await expect(adapter.renewVisibility(brokerLocator, {
-        ...brokerVisibility,
-        openTerminalRevision: "2",
-      })).resolves.toEqual({
+      `)
+          .all(),
+      ).toEqual([
+        {
+          locatorInstanceId: brokerLocator.instanceId,
+          locatorSessionId: brokerLocator.sessionId,
+          locatorGeneration: brokerLocator.generation,
+        },
+      ]);
+      await expect(
+        adapter.renewVisibility(brokerLocator, {
+          ...brokerVisibility,
+          openTerminalRevision: "2",
+        }),
+      ).resolves.toEqual({
         locator: brokerLocator,
         state: "active",
         expiresAt: "2026-07-18T01:00:30.000Z",
@@ -965,16 +1052,17 @@ describe("SessiondHost landed frozen operations", () => {
           "SESSIOND_INPUT_STATE_UNAVAILABLE",
         ],
       });
-      expect(brokers.flatMap((broker) => broker.creates)).toEqual([{
-        beginPayload: createBeginPayload,
-        initialInput: new Uint8Array(),
-      }]);
-      expect(brokers.flatMap((broker) => broker.requests)
-        .map((request) => request.requestType)).toEqual([
-          "VISIBILITY_RENEW",
-          "LIST",
-          "INSPECT",
-        ]);
+      expect(brokers.flatMap((broker) => broker.creates)).toEqual([
+        {
+          beginPayload: createBeginPayload,
+          initialInput: new Uint8Array(),
+        },
+      ]);
+      expect(
+        brokers
+          .flatMap((broker) => broker.requests)
+          .map((request) => request.requestType),
+      ).toEqual(["VISIBILITY_RENEW", "LIST", "INSPECT"]);
     } finally {
       db.close();
       await rm(directory, { recursive: true, force: true });
@@ -985,8 +1073,9 @@ describe("SessiondHost landed frozen operations", () => {
     const host = new SessiondHost({
       connectBroker: async () => new RecordingClient(() => createdPayload),
     });
-    await expect(host.create(sessionSpec, new Uint8Array()))
-      .rejects.toBeInstanceOf(SessiondCreateAdmissionDisabledError);
+    await expect(
+      host.create(sessionSpec, new Uint8Array()),
+    ).rejects.toBeInstanceOf(SessiondCreateAdmissionDisabledError);
   });
 
   test("discovers the broker engine without caching and closes the connection", async () => {
@@ -1038,12 +1127,15 @@ describe("SessiondHost landed frozen operations", () => {
       pendingBindings,
     });
 
-    await expect(absentHost.discoverEngineBuildId())
-      .rejects.toThrow("did not publish its engine build");
-    await expect(changedHost.discoverEngineBuildId())
-      .resolves.toBe(brokerLocator.engineBuildId);
-    await expect(changedHost.create(sessionSpec, new Uint8Array()))
-      .rejects.toThrow("engine build changed before create");
+    await expect(absentHost.discoverEngineBuildId()).rejects.toThrow(
+      "did not publish its engine build",
+    );
+    await expect(changedHost.discoverEngineBuildId()).resolves.toBe(
+      brokerLocator.engineBuildId,
+    );
+    await expect(
+      changedHost.create(sessionSpec, new Uint8Array()),
+    ).rejects.toThrow("engine build changed before create");
     expect(absent.creates).toEqual([]);
     expect(changed.creates).toEqual([]);
     expect(brokers).toEqual([]);
@@ -1084,11 +1176,17 @@ describe("SessiondHost landed frozen operations", () => {
       claimToken: "claim-token-1",
       transactionId: receipt.transactionId,
       idempotencyKey: "input-idempotency-1",
-      operation: { kind: "bytes" as const, bytes: new TextEncoder().encode("wire-input\n") },
+      operation: {
+        kind: "bytes" as const,
+        bytes: new TextEncoder().encode("wire-input\n"),
+      },
     };
     const resizeRequest = {
       session,
-      window: resize.state === "applied" ? resize.readback : createRequest.initialWindow,
+      window:
+        resize.state === "applied"
+          ? resize.readback
+          : createRequest.initialWindow,
       revision: "2",
       idempotencyKey: "resize-idempotency-1",
     };
@@ -1174,12 +1272,14 @@ describe("SessiondHost landed frozen operations", () => {
     const host = new SessiondHost({
       connectBroker: async () => new RecordingClient(() => createResult),
     });
-    await expect(host.claimInput({
-      session,
-      writer: "writer-1",
-      kind: "human",
-      leaseMilliseconds: 10_000,
-      idempotencyKey: "claim-idempotency-1",
-    })).rejects.toEqual(new SessiondWireNotReadyError("direct host operations"));
+    await expect(
+      host.claimInput({
+        session,
+        writer: "writer-1",
+        kind: "human",
+        leaseMilliseconds: 10_000,
+        idempotencyKey: "claim-idempotency-1",
+      }),
+    ).rejects.toEqual(new SessiondWireNotReadyError("direct host operations"));
   });
 });

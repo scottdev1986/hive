@@ -4,7 +4,9 @@
 // questions from the tree on demand — "which markdown here is worth briefing an
 // agent on?" and "which doc is central?" — and is the surviving piece of the
 // removed repo profiler, kept because scoped briefs depend on it.
-import { readFile, readdir } from "node:fs/promises";
+
+import type { Dirent } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Git helper — cheap, best-effort. A directory that is not a Git checkout
@@ -78,7 +80,7 @@ async function listMarkdownUnder(root: string, dir: string): Promise<string[]> {
 
   const walk = async (relative: string, depth: number): Promise<void> => {
     if (depth > DOC_WALK_MAX_DEPTH) return;
-    let entries;
+    let entries: Dirent[];
     try {
       entries = await readdir(join(root, relative), { withFileTypes: true });
     } catch {
@@ -160,10 +162,12 @@ export function rankPrimaryDoc(
     }
     // Role boost: a design/architecture doc is a natural primary even in a young
     // repo where little cites it yet.
-    const roleBoost = /^(spec|design|architecture|readme)\b/i.test(name) ? 1 : 0;
+    const roleBoost = /^(spec|design|architecture|readme)\b/i.test(name)
+      ? 1
+      : 0;
     score.set(doc, inbound + roleBoost);
   }
-  const ranked = [...docs].sort((a, b) => (score.get(b)! - score.get(a)!));
+  const ranked = [...docs].sort((a, b) => score.get(b)! - score.get(a)!);
   const best = ranked[0]!;
   return (score.get(best) ?? 0) > 0 ? best : null;
 }
@@ -181,8 +185,11 @@ export interface BriefableDocs {
  * the tree on demand. Rank primarily against the root docs (a repo's primary
  * design doc lives at the root); read their text plus the directory docs to
  * count inbound links. */
-export async function discoverBriefableDocs(root: string): Promise<BriefableDocs> {
-  const { rootDocs, briefable, briefableDirectories } = await inventoryDocPaths(root);
+export async function discoverBriefableDocs(
+  root: string,
+): Promise<BriefableDocs> {
+  const { rootDocs, briefable, briefableDirectories } =
+    await inventoryDocPaths(root);
 
   const corpus: Array<{ path: string; text: string }> = [];
   for (const path of briefable) {

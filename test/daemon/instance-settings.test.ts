@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,28 +22,40 @@ test("a named instance reads the live default database and imports Model Control
   try {
     const source = new RoutingPolicyStore(defaultDb);
     source.apply(
-      { op: "set-provider", expectedRevision: 0, provider: "codex", state: "enabled" },
+      {
+        op: "set-provider",
+        expectedRevision: 0,
+        provider: "codex",
+        state: "enabled",
+      },
       "human",
     );
-    source.apply({
-      op: "set-chain",
-      expectedRevision: 1,
-      category: "simple_coding",
-      entries: [{
-        provider: "codex",
-        model: "gpt-5.6-sol",
-        effort: { mode: "exact", value: "high" },
-      }],
-    }, "human");
+    source.apply(
+      {
+        op: "set-chain",
+        expectedRevision: 1,
+        category: "simple_coding",
+        entries: [
+          {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: { mode: "exact", value: "high" },
+          },
+        ],
+      },
+      "human",
+    );
 
     const target = new RoutingPolicyStore(namedDb);
-    target.seedProvisionalBaseline(
-      { vendorDefaults: { codex: "old-suggestion" } },
-    );
-    expect(inheritDefaultModelControlSettings(target, {
-      currentHome: namedHome,
-      sourceHome: defaultHome,
-    })).toBeTrue();
+    target.seedProvisionalBaseline({
+      vendorDefaults: { codex: "old-suggestion" },
+    });
+    expect(
+      inheritDefaultModelControlSettings(target, {
+        currentHome: namedHome,
+        sourceHome: defaultHome,
+      }),
+    ).toBeTrue();
     expect(target.read().providers.codex).toBe("enabled");
     expect(target.read().chains.simple_coding?.[0]).toMatchObject({
       provider: "codex",
@@ -54,13 +66,20 @@ test("a named instance reads the live default database and imports Model Control
     // A later local edit is ownership: inheritance is one-time, not sync.
     const revision = target.read().revision;
     target.apply(
-      { op: "set-provider", expectedRevision: revision, provider: "codex", state: "disabled" },
+      {
+        op: "set-provider",
+        expectedRevision: revision,
+        provider: "codex",
+        state: "disabled",
+      },
       "named-instance-user",
     );
-    expect(inheritDefaultModelControlSettings(target, {
-      currentHome: namedHome,
-      sourceHome: defaultHome,
-    })).toBeFalse();
+    expect(
+      inheritDefaultModelControlSettings(target, {
+        currentHome: namedHome,
+        sourceHome: defaultHome,
+      }),
+    ).toBeFalse();
     expect(target.read().providers.codex).toBe("disabled");
   } finally {
     namedDb.close();
@@ -87,25 +106,37 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
   try {
     const source = new RoutingPolicyStore(defaultDb);
     source.apply(
-      { op: "set-provider", expectedRevision: 0, provider: "codex", state: "enabled" },
+      {
+        op: "set-provider",
+        expectedRevision: 0,
+        provider: "codex",
+        state: "enabled",
+      },
       "human",
     );
-    source.apply({
-      op: "set-chain",
-      expectedRevision: 1,
-      category: "debugging",
-      entries: [{
-        provider: "codex",
-        model: "gpt-5.6-sol",
-        effort: { mode: "exact", value: "high" },
-      }],
-    }, "human");
+    source.apply(
+      {
+        op: "set-chain",
+        expectedRevision: 1,
+        category: "debugging",
+        entries: [
+          {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: { mode: "exact", value: "high" },
+          },
+        ],
+      },
+      "human",
+    );
 
     const first = new RoutingPolicyStore(firstDb);
-    expect(inheritDefaultModelControlSettings(first, {
-      currentHome: firstHome,
-      sourceHome: defaultHome,
-    })).toBeTrue();
+    expect(
+      inheritDefaultModelControlSettings(first, {
+        currentHome: firstHome,
+        sourceHome: defaultHome,
+      }),
+    ).toBeTrue();
     let selected = first.apply(
       { op: "set-selection", expectedRevision: 1, mode: "choice" },
       "human",
@@ -131,21 +162,28 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
     );
 
     const second = new RoutingPolicyStore(secondDb);
-    expect(inheritDefaultModelControlSettings(second, {
-      currentHome: secondHome,
-      sourceHome: defaultHome,
-    })).toBeTrue();
-    expect(inheritOrdinaryWorkspaceSelection(second, {
-      ordinaryWorkspace: true,
-      preferences,
-    })).toBeTrue();
+    expect(
+      inheritDefaultModelControlSettings(second, {
+        currentHome: secondHome,
+        sourceHome: defaultHome,
+      }),
+    ).toBeTrue();
+    expect(
+      inheritOrdinaryWorkspaceSelection(second, {
+        ordinaryWorkspace: true,
+        preferences,
+      }),
+    ).toBeTrue();
     expect(second.read().selection).toEqual({
       global: "choice",
       categories: { debugging: "auto" },
     });
     expect(second.read().providers).toEqual({ codex: "enabled" });
     expect(second.read().chains.debugging?.[0]?.model).toBe("gpt-5.6-sol");
-    expect(second.read().models[0]?.effort).toEqual({ mode: "exact", value: "high" });
+    expect(second.read().models[0]?.effort).toEqual({
+      mode: "exact",
+      value: "high",
+    });
 
     const cleared = first.apply(
       {
@@ -168,15 +206,22 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
     expect(preferences.read()).toEqual({ global: "choice", categories: {} });
 
     const third = new RoutingPolicyStore(thirdDb);
-    expect(inheritDefaultModelControlSettings(third, {
-      currentHome: thirdHome,
-      sourceHome: defaultHome,
-    })).toBeTrue();
-    expect(inheritOrdinaryWorkspaceSelection(third, {
-      ordinaryWorkspace: true,
-      preferences,
-    })).toBeTrue();
-    expect(third.read().selection).toEqual({ global: "choice", categories: {} });
+    expect(
+      inheritDefaultModelControlSettings(third, {
+        currentHome: thirdHome,
+        sourceHome: defaultHome,
+      }),
+    ).toBeTrue();
+    expect(
+      inheritOrdinaryWorkspaceSelection(third, {
+        ordinaryWorkspace: true,
+        preferences,
+      }),
+    ).toBeTrue();
+    expect(third.read().selection).toEqual({
+      global: "choice",
+      categories: {},
+    });
   } finally {
     thirdDb.close();
     secondDb.close();
@@ -198,29 +243,37 @@ test("missing/corrupt shared selection never overwrites named or default policy"
       { op: "set-selection", expectedRevision: 0, mode: "choice" },
       "named-user",
     );
-    expect(inheritDefaultModelControlSettings(target, {
-      currentHome: root,
-      sourceHome: root,
-    })).toBeFalse();
-    expect(inheritOrdinaryWorkspaceSelection(target, {
-      ordinaryWorkspace: false,
-      preferences: { read: () => ({ global: "auto", categories: {} }) },
-    })).toBeFalse();
+    expect(
+      inheritDefaultModelControlSettings(target, {
+        currentHome: root,
+        sourceHome: root,
+      }),
+    ).toBeFalse();
+    expect(
+      inheritOrdinaryWorkspaceSelection(target, {
+        ordinaryWorkspace: false,
+        preferences: { read: () => ({ global: "auto", categories: {} }) },
+      }),
+    ).toBeFalse();
     expect(target.read().selection.global).toBe("choice");
 
-    expect(inheritOrdinaryWorkspaceSelection(target, {
-      ordinaryWorkspace: true,
-      preferences,
-      warn: (warning) => warnings.push(warning),
-    })).toBeFalse();
+    expect(
+      inheritOrdinaryWorkspaceSelection(target, {
+        ordinaryWorkspace: true,
+        preferences,
+        warn: (warning) => warnings.push(warning),
+      }),
+    ).toBeFalse();
     expect(warnings).toEqual([]);
 
     writeFileSync(preferencePath, "not json\n");
-    expect(inheritOrdinaryWorkspaceSelection(target, {
-      ordinaryWorkspace: true,
-      preferences,
-      warn: (warning) => warnings.push(warning),
-    })).toBeFalse();
+    expect(
+      inheritOrdinaryWorkspaceSelection(target, {
+        ordinaryWorkspace: true,
+        preferences,
+        warn: (warning) => warnings.push(warning),
+      }),
+    ).toBeFalse();
     expect(warnings[0]).toContain("Could not inherit");
     expect(target.read().selection.global).toBe("choice");
   } finally {

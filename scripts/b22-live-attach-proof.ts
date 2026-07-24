@@ -39,15 +39,18 @@ if (realShell) {
     if (!shellExecutable.startsWith("/")) throw new Error("not absolute");
     accessSync(shellExecutable, constants.X_OK);
   } catch {
-    console.error(`b22-live-attach-proof: SHELL is not an absolute executable: ${shellExecutable}`);
+    console.error(
+      `b22-live-attach-proof: SHELL is not an absolute executable: ${shellExecutable}`,
+    );
     process.exit(2);
   }
 }
 // Short by necessity: the home canonicalizes under /private/tmp and the host
 // socket path (…/runtime/sessiond/hosts/ses_<36-char uuid>/host.sock) must
 // stay inside the 104-byte sun_path limit.
-const home = process.env.HIVE_B22_HOME
-  ?? `/tmp/hb22-${Math.random().toString(16).slice(2, 6)}`;
+const home =
+  process.env.HIVE_B22_HOME ??
+  `/tmp/hb22-${Math.random().toString(16).slice(2, 6)}`;
 process.env.HIVE_HOME = home;
 const port = Number(process.env.HIVE_B22_PORT ?? "43117");
 const agentName = realShell ? "terminal" : "aria";
@@ -58,7 +61,9 @@ if (a4Action !== undefined && a4Action !== "close") {
   throw new Error(`HIVE_B25_A4_ACTION must be close (got ${a4Action})`);
 }
 if (!workspaceProject.startsWith("/") || !existsSync(workspaceProject)) {
-  throw new Error(`HIVE_B22_WORKSPACE_PROJECT must name an existing absolute directory`);
+  throw new Error(
+    `HIVE_B22_WORKSPACE_PROJECT must name an existing absolute directory`,
+  );
 }
 
 mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -73,7 +78,7 @@ const unixSocketPathBytes = Buffer.byteLength(longestHostSocketPath);
 if (unixSocketPathBytes > 103) {
   console.error(
     "b22-live-attach-proof: HIVE_B22_HOME resolves to a path too long for sessiond host sockets: " +
-    `${canonicalHome} (${unixSocketPathBytes} bytes; maximum 103). Use a shorter path such as /tmp/hv.`,
+      `${canonicalHome} (${unixSocketPathBytes} bytes; maximum 103). Use a shorter path such as /tmp/hv.`,
   );
   process.exit(2);
 }
@@ -91,9 +96,13 @@ const { hiveInstanceSuffix } = await import("../src/daemon/instance-identity");
 const { HiveTerminalHostAdapter } = await import(
   "../src/daemon/session-host/hive-terminal-host"
 );
-const { SessiondHost } = await import("../src/daemon/session-host/sessiond-host");
+const { SessiondHost } = await import(
+  "../src/daemon/session-host/sessiond-host"
+);
 const { macProcessIdentity } = await import("../src/daemon/lifecycle");
-const { mintSessionLocator } = await import("../src/daemon/session-host/locators");
+const { mintSessionLocator } = await import(
+  "../src/daemon/session-host/locators"
+);
 
 // The Workspace's `--hive` binary: passes every verb through to the real CLI
 // except the orchestrator boot, which is a placeholder so a recorded demo
@@ -122,7 +131,10 @@ log(`Workspace project: ${workspaceProject}`);
 // broker-unavailable shutdown in the first place. The broker therefore ignores
 // SIGINT (an ignored disposition survives exec, unlike a handler) and dies on
 // the explicit signal the shutdown path and the exit hook send instead.
-const brokerBinary = join(repoRoot, "native/sessiond/zig-out/bin/hive-sessiond");
+const brokerBinary = join(
+  repoRoot,
+  "native/sessiond/zig-out/bin/hive-sessiond",
+);
 const broker = Bun.spawn(
   ["/bin/sh", "-c", 'trap "" INT; exec "$0" "$@"', brokerBinary, "serve"],
   {
@@ -145,14 +157,18 @@ log(`broker live (pid ${broker.pid}) at ${brokerSocket}`);
 // daemon identity (daemon.lock pid/start-token), so the harness must BE the
 // daemon rather than sit beside it.
 process.env.HIVE_PORT = String(port);
-const { acquireDaemonLock, releaseDaemonLock } = await import("../src/daemon/lifecycle");
+const { acquireDaemonLock, releaseDaemonLock } = await import(
+  "../src/daemon/lifecycle"
+);
 await acquireDaemonLock();
 // The broker no longer dies with the process group, so every exit path — not
 // just the orderly one below — has to take it down or the run leaks a broker.
 process.once("exit", () => {
   try {
     broker.kill();
-  } catch { /* already gone */ }
+  } catch {
+    /* already gone */
+  }
   releaseDaemonLock();
 });
 const { startDaemon, HiveDaemon } = await import("../src/daemon/server");
@@ -160,7 +176,11 @@ const { WorkspaceVisibilityAuthority } = await import(
   "../src/daemon/session-host/workspace-visibility"
 );
 const db = new HiveDatabase(join(home, "hive.db"));
-const bootstrapHost = new SessiondHost({ repoRoot, hiveHome: home, pendingBindings: db });
+const bootstrapHost = new SessiondHost({
+  repoRoot,
+  hiveHome: home,
+  pendingBindings: db,
+});
 const daemon = startDaemon({
   statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
   db,
@@ -193,14 +213,18 @@ log(`daemon live in-process on port ${daemon.listeningPort}`);
 // daemon's own locator-fenced adapter and binding store.
 const instanceId = hiveInstanceSuffix();
 // Runtime-full adapter; the getter's compile-time Pick is narrower.
-const adapter = daemon.sessiondTerminalHost as InstanceType<typeof HiveTerminalHostAdapter>;
+const adapter = daemon.sessiondTerminalHost as InstanceType<
+  typeof HiveTerminalHostAdapter
+>;
 // The broker authenticates against daemon.lock and finishes its own startup
 // recovery before serving; fail loud if the lock never appeared.
 for (let i = 0; i < 100 && !existsSync(join(home, "daemon.lock")); i += 1) {
   await Bun.sleep(100);
 }
 if (!existsSync(join(home, "daemon.lock"))) {
-  throw new Error("daemon.lock was never written — broker auth would fail closed");
+  throw new Error(
+    "daemon.lock was never written — broker auth would fail closed",
+  );
 }
 let engineBuildId = "";
 for (let i = 0; i < 60; i += 1) {
@@ -213,7 +237,12 @@ for (let i = 0; i < 60; i += 1) {
   }
 }
 const locator = {
-  ...mintSessionLocator(instanceId, { kind: "agent", agentId }, 1, engineBuildId),
+  ...mintSessionLocator(
+    instanceId,
+    { kind: "agent", agentId },
+    1,
+    engineBuildId,
+  ),
 };
 const publisher = macProcessIdentity(process.pid);
 const visibility = {
@@ -244,19 +273,29 @@ db.insertAgent({
   writeRevoked: false,
   sessionLocator: locator,
 });
-log(`agent row inserted: ${agentName} → ${locator.sessionId} generation ${locator.generation}`);
+log(
+  `agent row inserted: ${agentName} → ${locator.sessionId} generation ${locator.generation}`,
+);
 
 const ticker =
   '(i=0; while true; do printf "\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  " ' +
   '"$(( (i % 6) + 1 ))" "$i"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf "\\n"; ' +
-  'sleep 0.25; done) & ticker_pid=$!; ' +
-  'trap \'kill "$ticker_pid" 2>/dev/null\' EXIT; ' +
+  "sleep 0.25; done) & ticker_pid=$!; " +
+  "trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; " +
   'while IFS= read -r line; do printf "\\nB2.3 RESPONSE:%s\\n" "$line"; done';
 const shellEnvironment = Object.fromEntries(
-  ["HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"]
-    .flatMap((name) => process.env[name] === undefined
-      ? []
-      : [[name, process.env[name]!]]),
+  [
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "PATH",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TMPDIR",
+  ].flatMap((name) =>
+    process.env[name] === undefined ? [] : [[name, process.env[name]!]],
+  ),
 );
 const spec = {
   schemaVersion: 1 as const,
@@ -265,8 +304,8 @@ const spec = {
   toolSessionId: null,
   cwd: realShell ? repoRoot : home,
   argv: realShell
-    ? [shellExecutable, "-l"] as const
-    : ["/bin/sh", "-c", ticker] as const,
+    ? ([shellExecutable, "-l"] as const)
+    : (["/bin/sh", "-c", ticker] as const),
   environment: realShell
     ? { ...shellEnvironment, TERM: "xterm-256color", SHELL: shellExecutable }
     : { TERM: "xterm-256color", PATH: "/usr/bin:/bin" },
@@ -284,9 +323,12 @@ const spec = {
   launchGrantId: "b22-live-proof-grant",
   launchGrantRevision: 1,
 };
-let created;
+let created: Awaited<ReturnType<typeof adapter.create>>;
 try {
-  created = await adapter.create(spec, new Uint8Array(), { locator, visibility });
+  created = await adapter.create(spec, new Uint8Array(), {
+    locator,
+    visibility,
+  });
 } catch (error) {
   log(`session create failed: ${error}`);
   broker.kill();
@@ -294,18 +336,26 @@ try {
   process.exit(1);
 }
 const createdHostPid = created.inspection.hostPid;
-if (createdHostPid === null) throw new Error("session create returned no live host pid");
-log(`session created: hostPid=${createdHostPid} provider=${created.inspection.providerRoot?.pid}`);
-if (realShell) log(`interactive login shell: ${shellExecutable} -l (cwd ${repoRoot})`);
+if (createdHostPid === null)
+  throw new Error("session create returned no live host pid");
+log(
+  `session created: hostPid=${createdHostPid} provider=${created.inspection.providerRoot?.pid}`,
+);
+if (realShell)
+  log(`interactive login shell: ${shellExecutable} -l (cwd ${repoRoot})`);
 await Bun.sleep(250);
 const { captureProcessTree } = await import("../src/daemon/teardown");
 const processTree = (await captureProcessTree([createdHostPid])).filter(
   (entry) => entry.command !== "sleep 0.25",
 );
 if (processTree.length < 2) {
-  throw new Error(`live session tree did not include a provider: ${JSON.stringify(processTree)}`);
+  throw new Error(
+    `live session tree did not include a provider: ${JSON.stringify(processTree)}`,
+  );
 }
-log(`captured live session tree before action: ${processTree.map((entry) => entry.pid).join(",")}`);
+log(
+  `captured live session tree before action: ${processTree.map((entry) => entry.pid).join(",")}`,
+);
 
 // Sustain the visibility lease from this live publisher process.
 const renewals = setInterval(() => {
@@ -319,7 +369,10 @@ const renewals = setInterval(() => {
 // The Makefile rule for this path renames SwiftPM's output so a debug build
 // never carries the installed app's process name into the unified log (see the
 // Makefile note).
-const workspaceBinary = join(repoRoot, "workspace/.build/debug/HiveWorkspaceDev");
+const workspaceBinary = join(
+  repoRoot,
+  "workspace/.build/debug/HiveWorkspaceDev",
+);
 const launchApp = process.env.HIVE_B22_NO_APP !== "1";
 // The old `make terminal`/`make demo` targets built this binary before running
 // the harness; the make surface is now exactly clean/build/run/test, so the
@@ -339,23 +392,29 @@ if (launchApp) {
   }
 }
 const workspaceArgs = [
-  "--project", workspaceProject,
-  "--port", String(port),
-  "--instance-id", instanceId,
-  "--instance-home", home,
-  "--hive", hiveWrapper,
+  "--project",
+  workspaceProject,
+  "--port",
+  String(port),
+  "--instance-id",
+  instanceId,
+  "--instance-home",
+  home,
+  "--hive",
+  hiveWrapper,
 ];
-log(`launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`);
-const workspace = !launchApp ? null : Bun.spawn(
-  [workspaceBinary, ...workspaceArgs],
-  {
-    cwd: workspaceProject,
-    env: { ...process.env, HIVE_HOME: home },
-    stdin: "ignore",
-    stdout: Bun.file(join(home, "workspace.stdout.log")),
-    stderr: Bun.file(join(home, "workspace.stderr.log")),
-  },
+log(
+  `launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`,
 );
+const workspace = !launchApp
+  ? null
+  : Bun.spawn([workspaceBinary, ...workspaceArgs], {
+      cwd: workspaceProject,
+      env: { ...process.env, HIVE_HOME: home },
+      stdin: "ignore",
+      stdout: Bun.file(join(home, "workspace.stdout.log")),
+      stderr: Bun.file(join(home, "workspace.stderr.log")),
+    });
 if (workspace !== null) log(`workspace app launched (pid ${workspace.pid})`);
 
 let shuttingDown = false;
@@ -366,7 +425,9 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     log(`forced exit (${reason} during shutdown)`);
     try {
       broker.kill("SIGKILL");
-    } catch { /* already gone */ }
+    } catch {
+      /* already gone */
+    }
     process.exit(130);
   }
   shuttingDown = true;
@@ -374,7 +435,9 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
   clearInterval(renewals);
   try {
     workspace?.kill();
-  } catch { /* already gone */ }
+  } catch {
+    /* already gone */
+  }
   // ONE teardown path. daemon.stop() closes every live agent — this session
   // included — through the daemon's own teardown, so terminating here as well
   // would be the two-racing-teardowns bug docs/daemon/agent-teardown.md exists
@@ -394,7 +457,9 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     const hostPid = createdHostPid;
     try {
       process.kill(hostPid, "SIGKILL");
-    } catch { /* already gone */ }
+    } catch {
+      /* already gone */
+    }
     // `kill(pid, 0)` cannot tell a running process from an exited one whose
     // parent has not called waitpid yet: a zombie keeps its pid entry and
     // answers signal 0. The broker is this host's parent and is still up here,
@@ -412,9 +477,13 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     if (state === "") {
       log(`session host ${hostPid} confirmed gone`);
     } else if (state.startsWith("Z")) {
-      log(`session host ${hostPid} exited; zombie awaiting broker reap (stat=${state})`);
+      log(
+        `session host ${hostPid} exited; zombie awaiting broker reap (stat=${state})`,
+      );
     } else {
-      log(`session host ${hostPid} SURVIVED SIGKILL (stat=${state}); exiting non-zero`);
+      log(
+        `session host ${hostPid} SURVIVED SIGKILL (stat=${state}); exiting non-zero`,
+      );
       exitCode = 1;
     }
   }
@@ -423,44 +492,71 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
 };
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
-writeFileSync(join(home, "b22-proof.json"), JSON.stringify({
-  hiveCli: hiveWrapper,
-  port,
-  agent: agentName,
-  mode: realShell ? "shell" : "ticker",
-  workspaceProject,
-  brokerPid: broker.pid,
-  hostPid: createdHostPid,
-  processTree,
-  locator,
-}));
-log("proof descriptor written for opt-in live tests: " + join(home, "b22-proof.json"));
-log(realShell
-  ? "terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down"
-  : "proof stack is up — Ctrl-C to tear down");
-if (workspace !== null && (
-  process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT === "1" || a4Action === "close"
-)) {
+writeFileSync(
+  join(home, "b22-proof.json"),
+  JSON.stringify({
+    hiveCli: hiveWrapper,
+    port,
+    agent: agentName,
+    mode: realShell ? "shell" : "ticker",
+    workspaceProject,
+    brokerPid: broker.pid,
+    hostPid: createdHostPid,
+    processTree,
+    locator,
+  }),
+);
+log(
+  "proof descriptor written for opt-in live tests: " +
+    join(home, "b22-proof.json"),
+);
+log(
+  realShell
+    ? "terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down"
+    : "proof stack is up — Ctrl-C to tear down",
+);
+if (
+  workspace !== null &&
+  (process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT === "1" ||
+    a4Action === "close")
+) {
   const proofExit = await workspace.exited;
   // A signal-driven shutdown kills the app too; that passive exit must not
   // re-enter shutdown and masquerade as the user's second Ctrl-C.
   if (!shuttingDown) {
     log(`Workspace live-resize proof exited ${proofExit}`);
     if (a4Action === "close") {
-      const finalPath = join(home, "runtime/sessiond/hosts", locator.sessionId, "final.json");
-      for (let i = 0; i < 100 && !existsSync(finalPath); i += 1) await Bun.sleep(50);
-      if (!existsSync(finalPath)) throw new Error("A4 close produced no final session record");
+      const finalPath = join(
+        home,
+        "runtime/sessiond/hosts",
+        locator.sessionId,
+        "final.json",
+      );
+      for (let i = 0; i < 100 && !existsSync(finalPath); i += 1)
+        await Bun.sleep(50);
+      if (!existsSync(finalPath))
+        throw new Error("A4 close produced no final session record");
       const final = JSON.parse(readFileSync(finalPath, "utf8")) as {
         state?: string;
         survivors?: unknown[];
       };
-      if (proofExit !== 0 || final.state !== "terminated" || final.survivors?.length !== 0) {
-        throw new Error(`A4 close was not verified: exit=${proofExit} final=${JSON.stringify(final)}`);
+      if (
+        proofExit !== 0 ||
+        final.state !== "terminated" ||
+        final.survivors?.length !== 0
+      ) {
+        throw new Error(
+          `A4 close was not verified: exit=${proofExit} final=${JSON.stringify(final)}`,
+        );
       }
       if (broker.exitCode !== null || daemon.listeningPort === null) {
-        throw new Error("A4 close killed the unrelated daemon/broker control plane");
+        throw new Error(
+          "A4 close killed the unrelated daemon/broker control plane",
+        );
       }
-      log("A4 CLOSE VERIFIED: exact session terminated with no survivors; daemon and broker still live");
+      log(
+        "A4 CLOSE VERIFIED: exact session terminated with no survivors; daemon and broker still live",
+      );
     }
     await shutdown("Workspace live-resize proof complete", proofExit);
   }

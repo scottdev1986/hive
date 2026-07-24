@@ -11,20 +11,20 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { ReleaseManifest } from "../../src/release/manifest";
 import {
   activateWithHealthCheck,
   rollback,
   stageRelease,
 } from "../../src/update/install";
-import type { ReleaseManifest } from "../../src/release/manifest";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 const sha256 = (bytes: Uint8Array): string =>
@@ -33,8 +33,11 @@ const sha256 = (bytes: Uint8Array): string =>
 const RELEASE_KEY = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
-    publicKey: publicKey.export({ format: "der", type: "spki" }).toString("base64"),
-    sign: (bytes: Uint8Array) => sign(null, bytes, privateKey).toString("base64"),
+    publicKey: publicKey
+      .export({ format: "der", type: "spki" })
+      .toString("base64"),
+    sign: (bytes: Uint8Array) =>
+      sign(null, bytes, privateKey).toString("base64"),
   };
 })();
 
@@ -51,7 +54,9 @@ function manifestFor(
   version: string,
   cliBytes: Uint8Array,
   workspaceBytes: Uint8Array,
-  sessiondBytes: Uint8Array = new TextEncoder().encode("#!/bin/sh\necho sessiond\n"),
+  sessiondBytes: Uint8Array = new TextEncoder().encode(
+    "#!/bin/sh\necho sessiond\n",
+  ),
 ): ReleaseManifest {
   return {
     schema: 1,
@@ -109,7 +114,10 @@ async function createInstallerFixture(
   await mkdir(fixtures, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
   await mkdir(join(workspaceRoot, "HiveWorkspace.app"), { recursive: true });
-  await writeFile(join(workspaceRoot, "HiveWorkspace.app", "fixture"), "workspace\n");
+  await writeFile(
+    join(workspaceRoot, "HiveWorkspace.app", "fixture"),
+    "workspace\n",
+  );
 
   const archive = join(fixtures, "HiveWorkspace.tar.gz");
   const tar = Bun.spawn([
@@ -129,7 +137,12 @@ async function createInstallerFixture(
   await writeFile(join(fixtures, "hive-darwin-arm64"), cliBytes);
   await writeFile(join(fixtures, "hive-sessiond-darwin-arm64"), sessiondBytes);
 
-  const manifest = manifestFor(version, cliBytes, workspaceBytes, sessiondBytes);
+  const manifest = manifestFor(
+    version,
+    cliBytes,
+    workspaceBytes,
+    sessiondBytes,
+  );
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   await writeFile(join(fixtures, "hive-release.json"), manifestBytes);
   if (withSignature) {
@@ -199,7 +212,12 @@ async function selfUpdate(
     `#!/bin/sh\necho 'hive ${version}'\n`,
   );
   const sessiondBytes = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
-  const manifest = manifestFor(version, cliBytes, fixture.workspaceBytes, sessiondBytes);
+  const manifest = manifestFor(
+    version,
+    cliBytes,
+    fixture.workspaceBytes,
+    sessiondBytes,
+  );
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   await stageRelease({
     manifest,
@@ -210,7 +228,8 @@ async function selfUpdate(
     publicKey: RELEASE_KEY.publicKey,
     download: async (name) => {
       if (name === "hive-sessiond-darwin-arm64") return sessiondBytes;
-      if (name !== "hive-darwin-arm64") throw new Error(`unexpected asset ${name}`);
+      if (name !== "hive-darwin-arm64")
+        throw new Error(`unexpected asset ${name}`);
       return cliBytes;
     },
     probeVersion: async () => `hive ${version}`,
@@ -237,8 +256,9 @@ describe("the standalone installer", () => {
     });
 
     expect(outcome).toMatchObject({ activated: true, version: "1.2.3" });
-    expect(await readlink(join(fixture.installRoot, "current")))
-      .toBe("versions/1.2.3");
+    expect(await readlink(join(fixture.installRoot, "current"))).toBe(
+      "versions/1.2.3",
+    );
   });
 
   test("rollback refuses a shell-installed version whose bytes were changed", async () => {
@@ -251,14 +271,17 @@ describe("the standalone installer", () => {
       "#!/bin/sh\necho tampered\n",
     );
 
-    await expect(rollback({
-      root: fixture.installRoot,
-      arch: "arm64",
-      publicKey: RELEASE_KEY.publicKey,
-      healthCheck: async () => true,
-    })).rejects.toThrow(/does not match its signed release manifest/);
-    expect(await readlink(join(fixture.installRoot, "current")))
-      .toBe("versions/1.2.4");
+    await expect(
+      rollback({
+        root: fixture.installRoot,
+        arch: "arm64",
+        publicKey: RELEASE_KEY.publicKey,
+        healthCheck: async () => true,
+      }),
+    ).rejects.toThrow(/does not match its signed release manifest/);
+    expect(await readlink(join(fixture.installRoot, "current"))).toBe(
+      "versions/1.2.4",
+    );
   });
 
   test("a release without a signature is refused before installation", async () => {
@@ -266,7 +289,9 @@ describe("the standalone installer", () => {
     const installed = await runInstaller(fixture, "1.2.3");
 
     expect(installed.exitCode).toBe(1);
-    expect(installed.stderr).toContain("release has no Hive manifest signature");
+    expect(installed.stderr).toContain(
+      "release has no Hive manifest signature",
+    );
     expect(
       await Bun.file(join(fixture.installRoot, "versions", "1.2.3")).exists(),
     ).toBe(false);
@@ -301,41 +326,60 @@ describe("the standalone installer", () => {
     const workingBinary = join(versionDir, "hive");
     await writeFile(workingBinary, "#!/bin/sh\necho 'hive 1.2.3'\n");
     await chmod(workingBinary, 0o755);
-    await writeFile(join(versionDir, "HiveWorkspace.app", "known-good"), "kept\n");
+    await writeFile(
+      join(versionDir, "HiveWorkspace.app", "known-good"),
+      "kept\n",
+    );
     await symlink("versions/1.2.3", join(installRoot, "current"));
     await symlink(join(installRoot, "current", "hive"), join(binDir, "hive"));
 
-    const badBinary = new TextEncoder().encode("#!/bin/sh\necho 'hive 9.9.9'\n");
-    const sessiondBytes = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
+    const badBinary = new TextEncoder().encode(
+      "#!/bin/sh\necho 'hive 9.9.9'\n",
+    );
+    const sessiondBytes = new TextEncoder().encode(
+      "#!/bin/sh\necho sessiond\n",
+    );
     await writeFile(join(fixtures, "hive-darwin-arm64"), badBinary);
-    await writeFile(join(fixtures, "hive-sessiond-darwin-arm64"), sessiondBytes);
+    await writeFile(
+      join(fixtures, "hive-sessiond-darwin-arm64"),
+      sessiondBytes,
+    );
     const workspaceRoot = join(root, "workspace-archive");
     await mkdir(join(workspaceRoot, "HiveWorkspace.app"), { recursive: true });
-    await writeFile(join(workspaceRoot, "HiveWorkspace.app", "replacement"), "new\n");
+    await writeFile(
+      join(workspaceRoot, "HiveWorkspace.app", "replacement"),
+      "new\n",
+    );
     const tar = Bun.spawn([
-      "tar", "-czf", join(fixtures, "HiveWorkspace.tar.gz"),
-      "-C", workspaceRoot, "HiveWorkspace.app",
+      "tar",
+      "-czf",
+      join(fixtures, "HiveWorkspace.tar.gz"),
+      "-C",
+      workspaceRoot,
+      "HiveWorkspace.app",
     ]);
     expect(await tar.exited).toBe(0);
     const workspaceBytes = new Uint8Array(
       await Bun.file(join(fixtures, "HiveWorkspace.tar.gz")).arrayBuffer(),
     );
-    const manifestBytes = new TextEncoder().encode(JSON.stringify({
-      artifacts: [
-        {
-          name: "hive-darwin-arm64",
-          sha256: sha256(badBinary),
-        },
-        {
-          name: "hive-sessiond-darwin-arm64",
-          sha256: sha256(sessiondBytes),
-        },
-        {
-          name: "HiveWorkspace.tar.gz",
-          sha256: sha256(workspaceBytes),
-        },
-      ],
-    }));
+    const manifestBytes = new TextEncoder().encode(
+      JSON.stringify({
+        artifacts: [
+          {
+            name: "hive-darwin-arm64",
+            sha256: sha256(badBinary),
+          },
+          {
+            name: "hive-sessiond-darwin-arm64",
+            sha256: sha256(sessiondBytes),
+          },
+          {
+            name: "HiveWorkspace.tar.gz",
+            sha256: sha256(workspaceBytes),
+          },
+        ],
+      }),
+    );
     await writeFile(join(fixtures, "hive-release.json"), manifestBytes);
     await writeFile(
       join(fixtures, "hive-release.json.sig"),
@@ -385,8 +429,11 @@ fi
     expect(exitCode).not.toBe(0);
     expect(stderr).toContain("expected 1.2.3");
     expect(await readlink(join(installRoot, "current"))).toBe("versions/1.2.3");
-    expect(await Bun.file(join(versionDir, "HiveWorkspace.app", "known-good")).text())
-      .toBe("kept\n");
+    expect(
+      await Bun.file(
+        join(versionDir, "HiveWorkspace.app", "known-good"),
+      ).text(),
+    ).toBe("kept\n");
     expect(await Bun.$`${workingBinary} --version`.text()).toBe("hive 1.2.3\n");
   });
 });

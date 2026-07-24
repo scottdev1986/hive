@@ -17,7 +17,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentRecord } from "../src/schemas";
 import {
   memoryLiveSelfTestCli,
   runMemoryLiveSelfTest,
@@ -27,7 +26,8 @@ import { HiveDatabase } from "../src/daemon/db";
 import { EpisodicStore } from "../src/daemon/episodic-store";
 import type { MemoryEmbedder } from "../src/daemon/memory-embeddings";
 import { HiveDaemon } from "../src/daemon/server";
-import type { SpawnRequest, Spawner } from "../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../src/daemon/spawner";
+import type { AgentRecord } from "../src/schemas";
 import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
 
 const tempRoots: string[] = [];
@@ -41,7 +41,9 @@ afterEach(async () => {
     await daemon.stop().catch(() => undefined);
   }
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -69,7 +71,9 @@ function mockEmbedder(): MemoryEmbedder {
   };
 }
 
-async function makeLiveDaemon(options: { failingLoad?: boolean } = {}): Promise<{
+async function makeLiveDaemon(
+  options: { failingLoad?: boolean } = {},
+): Promise<{
   daemon: HiveDaemon;
   home: string;
   repoRoot: string;
@@ -89,8 +93,8 @@ async function makeLiveDaemon(options: { failingLoad?: boolean } = {}): Promise<
     memoryEmbeddingLoad: () =>
       options.failingLoad === true
         ? Promise.reject(
-          new Error("embedding-runtime-missing: no bundle in the test"),
-        )
+            new Error("embedding-runtime-missing: no bundle in the test"),
+          )
         : Promise.resolve(mockEmbedder()),
   });
   daemons.push(daemon);
@@ -142,24 +146,20 @@ describe("hive memory self-test --live (defect D3)", () => {
     expect(cleanup).toContain("self-test canary, safe to delete");
   }, 30_000);
 
-  test(
-    "degraded flow: a down semantic leg FAILS the run with the state named " +
-      "(the D1 regression)",
-    async () => {
-      await makeLiveDaemon({ failingLoad: true });
-      const report = await runMemoryLiveSelfTest({ settleBudgetMs: 5_000 });
-      expect(report.ok).toBe(false);
-      const output = report.lines.join("\n");
-      expect(output).toContain("FAIL");
-      expect(output).toContain("embedding-runtime-missing");
-      // The semantic-recall assertion is the loud one: the recall envelope
-      // itself names the degraded state.
-      const semantic = lineFor(report.lines, "semantic-recall");
-      expect(semantic).toContain("FAIL");
-      expect(semantic).toContain("degraded:embedding-runtime-missing");
-    },
-    30_000,
-  );
+  test("degraded flow: a down semantic leg FAILS the run with the state named " +
+    "(the D1 regression)", async () => {
+    await makeLiveDaemon({ failingLoad: true });
+    const report = await runMemoryLiveSelfTest({ settleBudgetMs: 5_000 });
+    expect(report.ok).toBe(false);
+    const output = report.lines.join("\n");
+    expect(output).toContain("FAIL");
+    expect(output).toContain("embedding-runtime-missing");
+    // The semantic-recall assertion is the loud one: the recall envelope
+    // itself names the degraded state.
+    const semantic = lineFor(report.lines, "semantic-recall");
+    expect(semantic).toContain("FAIL");
+    expect(semantic).toContain("degraded:embedding-runtime-missing");
+  }, 30_000);
 
   test("no daemon: an honest nonzero failure, never a green run", async () => {
     const home = await makeTempDir("hive-self-test-live-empty-home-");

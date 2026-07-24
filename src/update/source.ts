@@ -10,12 +10,12 @@
 import { z } from "zod";
 import {
   MANIFEST_ASSET,
-  SIGNATURE_ASSET,
   parseReleaseManifest,
   type ReleaseManifest,
+  SIGNATURE_ASSET,
 } from "../release/manifest";
-import type { ProgressCallback } from "./progress";
 import { HIVE_UPDATE_REPO } from "../version";
+import type { ProgressCallback } from "./progress";
 
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const METADATA_TIMEOUT_MS = 10_000;
@@ -66,9 +66,10 @@ async function bytes(
 
   const header = response.headers.get("content-length");
   const declared = header === null ? null : Number.parseInt(header, 10);
-  const total = declared !== null && Number.isSafeInteger(declared) && declared >= 0
-    ? declared
-    : null;
+  const total =
+    declared !== null && Number.isSafeInteger(declared) && declared >= 0
+      ? declared
+      : null;
 
   if (response.body === null) {
     // No stream to read (a mocked or bodiless response). Fall back rather than
@@ -108,16 +109,18 @@ export async function githubReleaseSource(
   repo = HIVE_UPDATE_REPO,
   fetcher: typeof fetch = fetch,
 ): Promise<ReleaseSource> {
-  const path = version === "latest"
-    ? `releases/latest`
-    : `releases/tags/v${version}`;
-  const response = await fetcher(`https://api.github.com/repos/${repo}/${path}`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
+  const path =
+    version === "latest" ? `releases/latest` : `releases/tags/v${version}`;
+  const response = await fetcher(
+    `https://api.github.com/repos/${repo}/${path}`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
     },
-    signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
-  });
+  );
   if (!response.ok) {
     throw new Error(
       version === "latest"
@@ -127,11 +130,14 @@ export async function githubReleaseSource(
   }
   const release = ReleaseSchema.parse(await response.json());
   const assetUrl = (name: string): string | null =>
-    release.assets.find((asset) => asset.name === name)?.browser_download_url ?? null;
+    release.assets.find((asset) => asset.name === name)?.browser_download_url ??
+    null;
 
   const manifestUrl = assetUrl(MANIFEST_ASSET);
   if (manifestUrl === null) {
-    throw new Error(`release ${release.tag_name} publishes no ${MANIFEST_ASSET}`);
+    throw new Error(
+      `release ${release.tag_name} publishes no ${MANIFEST_ASSET}`,
+    );
   }
   const manifestBytes = await bytes(manifestUrl, fetcher);
   const manifest = parseReleaseManifest(
@@ -154,9 +160,10 @@ export async function githubReleaseSource(
   }
 
   const signatureUrl = assetUrl(SIGNATURE_ASSET);
-  const signature = signatureUrl === null
-    ? null
-    : new TextDecoder().decode(await bytes(signatureUrl, fetcher)).trim();
+  const signature =
+    signatureUrl === null
+      ? null
+      : new TextDecoder().decode(await bytes(signatureUrl, fetcher)).trim();
 
   return {
     manifest,
@@ -165,7 +172,9 @@ export async function githubReleaseSource(
     download: async (assetName: string, onProgress?: ProgressCallback) => {
       const url = assetUrl(assetName);
       if (url === null) {
-        throw new Error(`release ${release.tag_name} publishes no ${assetName}`);
+        throw new Error(
+          `release ${release.tag_name} publishes no ${assetName}`,
+        );
       }
       return bytes(url, fetcher, onProgress);
     },

@@ -22,8 +22,12 @@ export interface RecoverySessionArtifact {
 }
 
 export function isMissingRecoveryArtifact(error: unknown): boolean {
-  return typeof error === "object" && error !== null &&
-    "code" in error && error.code === "ENOENT";
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
 }
 
 export function invalidRecoveryArtifactEvidence(
@@ -65,8 +69,8 @@ export function selectRecoverySessionId(
       `Invalid agent creation timestamp for ${provider} recovery`,
     );
   }
-  const eligible = artifacts.filter((artifact) =>
-    artifact.createdAtMs >= threshold
+  const eligible = artifacts.filter(
+    (artifact) => artifact.createdAtMs >= threshold,
   );
   if (eligible.length === 0) return null;
   if (eligible.length > 1) {

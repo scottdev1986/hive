@@ -98,10 +98,7 @@ describe("buildCodexMcpExclusionArgs", () => {
   });
 
   test("never detaches Hive's own server", () => {
-    const result = buildCodexMcpExclusionArgs([
-      ...HIVE_MCP_SERVERS,
-      "idea",
-    ]);
+    const result = buildCodexMcpExclusionArgs([...HIVE_MCP_SERVERS, "idea"]);
     expect(result.args).toEqual(["-c", "mcp_servers.idea.enabled=false"]);
     expect(result.excluded).toEqual(["idea"]);
   });
@@ -114,10 +111,10 @@ describe("buildCodexMcpExclusionArgs", () => {
   });
 
   test("honours an explicit keep list", () => {
-    const result = buildCodexMcpExclusionArgs(["idea", "docs"], [
-      "hive",
-      "docs",
-    ]);
+    const result = buildCodexMcpExclusionArgs(
+      ["idea", "docs"],
+      ["hive", "docs"],
+    );
     expect(result.excluded).toEqual(["idea"]);
   });
 
@@ -129,16 +126,19 @@ describe("buildCodexMcpExclusionArgs", () => {
 describe("listInheritedCodexMcpServers", () => {
   test("reads the global config without writing it", async () => {
     const home = join(tempRoot, "codex");
-    await Bun.write(join(home, "config.toml"), "[mcp_servers.idea]\nurl = 'x'\n");
+    await Bun.write(
+      join(home, "config.toml"),
+      "[mcp_servers.idea]\nurl = 'x'\n",
+    );
     const before = await Bun.file(join(home, "config.toml")).text();
     expect(await listInheritedCodexMcpServers(home)).toEqual(["idea"]);
     expect(await Bun.file(join(home, "config.toml")).text()).toBe(before);
   });
 
   test("a missing config inherits nothing", async () => {
-    expect(await listInheritedCodexMcpServers(join(tempRoot, "absent"))).toEqual(
-      [],
-    );
+    expect(
+      await listInheritedCodexMcpServers(join(tempRoot, "absent")),
+    ).toEqual([]);
   });
 
   test("codexHome honours CODEX_HOME", () => {

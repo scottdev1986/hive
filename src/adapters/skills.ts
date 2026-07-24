@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -11,8 +12,8 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { type CapabilityProvider, unknownVendor } from "../schemas";
 import { SHIPPED_SKILLS, shippedSkillsFor } from "../skills/shipped";
-import { unknownVendor, type CapabilityProvider } from "../schemas";
 
 /** The shared vendor enum keeps skill provisioning exhaustive. */
 export type SkillTool = CapabilityProvider;
@@ -70,7 +71,7 @@ async function isSkillDirectory(path: string): Promise<boolean> {
 }
 
 async function discoverSkills(root: string): Promise<Map<string, string>> {
-  let entries;
+  let entries: Dirent[];
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch (error) {
@@ -198,12 +199,13 @@ export async function installShippedSkills(
     }
 
     const skillFile = join(destination, "SKILL.md");
-    const current = existing === null
-      ? null
-      : await readFile(skillFile, "utf8").catch((error: unknown) => {
-        if (isMissingFileError(error)) return null;
-        throw error;
-      });
+    const current =
+      existing === null
+        ? null
+        : await readFile(skillFile, "utf8").catch((error: unknown) => {
+            if (isMissingFileError(error)) return null;
+            throw error;
+          });
 
     if (current === skill.content) {
       report.unchanged.push(skill.name);
@@ -244,7 +246,9 @@ export async function provisionSkills(
   // half-provisioned worktree that a later read would call provisioned.
   const nativeRoot = join(worktreePath, nativeSkillDirectory(tool));
   const globalSkills = await discoverSkills(globalSkillsPath);
-  const repoSkills = await discoverSkills(join(worktreePath, ".hive", "skills"));
+  const repoSkills = await discoverSkills(
+    join(worktreePath, ".hive", "skills"),
+  );
 
   // Repository skills intentionally override global skills of the same name.
   const skills = new Map([...globalSkills, ...repoSkills]);
@@ -252,7 +256,7 @@ export async function provisionSkills(
     await mkdir(nativeRoot, { recursive: true });
     await Promise.all(
       [...skills.entries()].map(([name, source]) =>
-        linkSkill(source, join(nativeRoot, name))
+        linkSkill(source, join(nativeRoot, name)),
       ),
     );
   }
@@ -285,11 +289,12 @@ async function removeForeignShippedSkills(
     });
     if (existing === null || existing.isSymbolicLink()) continue;
 
-    const current = await readFile(join(destination, "SKILL.md"), "utf8")
-      .catch((error: unknown) => {
+    const current = await readFile(join(destination, "SKILL.md"), "utf8").catch(
+      (error: unknown) => {
         if (isMissingFileError(error)) return null;
         throw error;
-      });
+      },
+    );
     // Only Hive's own, unmodified copy. Anything else is the human's.
     if (current !== skill.content) continue;
     await rm(destination, { recursive: true, force: true });

@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { lastAssistantModel, readLiveClaudeModel } from "../../src/daemon/live-model";
 import { claudeProjectDirectory } from "../../src/adapters/tools/claude";
+import {
+  lastAssistantModel,
+  readLiveClaudeModel,
+} from "../../src/daemon/live-model";
 
 const turn = (type: string, model?: string): string =>
   JSON.stringify(
@@ -29,7 +32,8 @@ describe("lastAssistantModel", () => {
   test("a tail that begins mid-line survives it", () => {
     // We read the last 64KB of a possibly-huge file, so the first line is
     // routinely a fragment. It must be skipped, not throw.
-    const tail = `{"type":"assist` + "\n" + turn("assistant", "claude-opus-4-8");
+    const tail =
+      `{"type":"assist` + "\n" + turn("assistant", "claude-opus-4-8");
     expect(lastAssistantModel(tail)).toBe("claude-opus-4-8");
   });
 
@@ -48,8 +52,10 @@ describe("readLiveClaudeModel", () => {
       await mkdir(directory, { recursive: true });
       await writeFile(
         join(directory, "session.jsonl"),
-        [turn("assistant", "claude-fable-5"), turn("assistant", "claude-opus-4-8")]
-          .join("\n"),
+        [
+          turn("assistant", "claude-fable-5"),
+          turn("assistant", "claude-opus-4-8"),
+        ].join("\n"),
       );
       expect(await readLiveClaudeModel(worktree, "session", home)).toBe(
         "claude-opus-4-8",

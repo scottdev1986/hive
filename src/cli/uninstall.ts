@@ -41,42 +41,45 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, rm, rmdir } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  type CommandRunner,
   GRAPHIFY_IGNORE_MARKER,
   graphOutDir,
   runCommand,
-  type CommandRunner,
 } from "../adapters/graphify";
-import { projectStateDir } from "../daemon/project-state";
 import { nativeSkillDirectory, type SkillTool } from "../adapters/skills";
-import { CAPABILITY_PROVIDERS } from "../schemas";
-import { shippedSkillsFor } from "../skills/shipped";
-import { binLink, detectInstallMethod, installRoot } from "../update/paths";
-import { stopHive } from "./control";
-import { fetchAgentStatus } from "./mcp";
-import { confirmOnTty, type ConfirmFn } from "./prompt";
-import { repairLeakedProjectConfig } from "./project-config-cleanup";
-import {
-  instanceMutationBlockers,
-  listInstances,
-  machineHiveHome,
-  type InstanceMutationBlocker,
-} from "../daemon/instances";
-import { daemonInstanceLiveness, readDaemonPort } from "../daemon/lifecycle";
-import {
-  expectedDaemonHandshake,
-  readDaemonHandshake,
-} from "../daemon/handshake";
 import {
   branchOwner,
   clearBranchOwnership,
   listWorktrees,
 } from "../adapters/worktrees";
-import { hiveInstanceSuffix, isDefaultHiveHome } from "../daemon/instance-identity";
+import {
+  expectedDaemonHandshake,
+  readDaemonHandshake,
+} from "../daemon/handshake";
+import {
+  hiveInstanceSuffix,
+  isDefaultHiveHome,
+} from "../daemon/instance-identity";
+import {
+  type InstanceMutationBlocker,
+  instanceMutationBlockers,
+  listInstances,
+  machineHiveHome,
+} from "../daemon/instances";
+import { daemonInstanceLiveness, readDaemonPort } from "../daemon/lifecycle";
 import {
   acquireMachineMutationLease,
   type MachineMutationLease,
   type MachineMutationPurpose,
 } from "../daemon/mutation-lease";
+import { projectStateDir } from "../daemon/project-state";
+import { CAPABILITY_PROVIDERS } from "../schemas";
+import { shippedSkillsFor } from "../skills/shipped";
+import { binLink, detectInstallMethod, installRoot } from "../update/paths";
+import { stopHive } from "./control";
+import { fetchAgentStatus } from "./mcp";
+import { repairLeakedProjectConfig } from "./project-config-cleanup";
+import { type ConfirmFn, confirmOnTty } from "./prompt";
 
 export interface UninstallDeps {
   run: CommandRunner;
@@ -89,7 +92,9 @@ export interface UninstallDeps {
   currentInstanceOwnsProject: (root: string) => Promise<boolean>;
   liveTeams: () => Promise<readonly InstanceMutationBlocker[]>;
   stopInstances: () => Promise<void>;
-  acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
+  acquireLease: (
+    purpose: MachineMutationPurpose,
+  ) => Promise<MachineMutationLease>;
 }
 
 async function stopInstances(): Promise<void> {
@@ -102,9 +107,11 @@ async function stopInstances(): Promise<void> {
     process.kill(instance.pid, "SIGTERM");
   }
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const states = await Promise.all(instances.map((instance) =>
-      daemonInstanceLiveness(instance.home, instance.instanceId)
-    ));
+    const states = await Promise.all(
+      instances.map((instance) =>
+        daemonInstanceLiveness(instance.home, instance.instanceId),
+      ),
+    );
     if (states.every((state) => state === "dead")) return;
     await Bun.sleep(50);
   }
@@ -124,20 +131,23 @@ export const defaultUninstallDeps: UninstallDeps = {
         readDaemonHandshake(port),
         expectedDaemonHandshake(root),
       ]);
-      return actual.instanceId === expected.instanceId &&
+      return (
+        actual.instanceId === expected.instanceId &&
         actual.hiveUuid === expected.hiveUuid &&
         actual.identityKey === expected.identityKey &&
-        actual.repoFamilyKey === expected.repoFamilyKey;
+        actual.repoFamilyKey === expected.repoFamilyKey
+      );
     } catch {
       return false;
     }
   },
-  liveTeams: () => instanceMutationBlockers(async (port) => {
-    const agents = await fetchAgentStatus(port);
-    return agents
-      .filter((agent) => agent.status !== "dead" && agent.status !== "done")
-      .map((agent) => agent.name);
-  }),
+  liveTeams: () =>
+    instanceMutationBlockers(async (port) => {
+      const agents = await fetchAgentStatus(port);
+      return agents
+        .filter((agent) => agent.status !== "dead" && agent.status !== "done")
+        .map((agent) => agent.name);
+    }),
   stopInstances,
   acquireLease: acquireMachineMutationLease,
 };
@@ -150,16 +160,22 @@ function commandFailure(
   action: string,
   result: Awaited<ReturnType<CommandRunner>>,
 ): Error {
-  const detail = result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`;
+  const detail =
+    result.stderr.trim() || result.stdout.trim() || `exit ${result.exitCode}`;
   return new Error(`${action}: ${detail}`);
 }
 
 function liveTeamRefusal(blockers: readonly InstanceMutationBlocker[]): string {
-  return "Refusing machine uninstall while a Hive instance has a live or unobservable team: " +
-    blockers.map(({ instance, liveAgents }) =>
-      `${instance.name} (${liveAgents.join(", ")})`
-    ).join("; ") +
-    "\nFix: let every team finish and make every instance observable, then rerun `hive uninstall`.";
+  return (
+    "Refusing machine uninstall while a Hive instance has a live or unobservable team: " +
+    blockers
+      .map(
+        ({ instance, liveAgents }) =>
+          `${instance.name} (${liveAgents.join(", ")})`,
+      )
+      .join("; ") +
+    "\nFix: let every team finish and make every instance observable, then rerun `hive uninstall`."
+  );
 }
 
 /** Confirm a destructive plan: explicit `--yes` wins, a TTY is asked
@@ -175,7 +191,9 @@ async function confirmed(
   if (yes === true) return true;
   const answer = await deps.confirm(question, false);
   if (answer === null) {
-    deps.log("Refusing to uninstall without confirmation; pass --yes to proceed non-interactively.");
+    deps.log(
+      "Refusing to uninstall without confirmation; pass --yes to proceed non-interactively.",
+    );
     return false;
   }
   return answer;
@@ -194,8 +212,9 @@ async function removeShippedSkills(
   if (!existsSync(nativeRoot)) return;
   for (const skill of shippedSkillsFor(tool)) {
     const directory = join(nativeRoot, skill.name);
-    const current = await readFile(join(directory, "SKILL.md"), "utf8")
-      .catch(() => null);
+    const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
+      () => null,
+    );
     if (current === null) continue;
     if (current === skill.content) {
       await rm(directory, { recursive: true, force: true });
@@ -226,40 +245,42 @@ async function removeWorktreesAndBranches(
   const worktreeMarker = `${join(".hive", "worktrees")}/`;
   const registered = new Map(
     worktrees
-      .filter((worktree) =>
-        worktree.path.includes(worktreeMarker)
-      )
+      .filter((worktree) => worktree.path.includes(worktreeMarker))
       .map((worktree) => [basename(worktree.path), worktree]),
   );
   const entries = await readdir(container).catch(() => [] as string[]);
   for (const entry of entries) {
     const path = resolve(container, entry);
     const worktree = registered.get(entry);
-    const owner = worktree?.branch === null || worktree?.branch === undefined
-      ? undefined
-      : await branchOwner(root, worktree.branch);
+    const owner =
+      worktree?.branch === null || worktree?.branch === undefined
+        ? undefined
+        : await branchOwner(root, worktree.branch);
     const owned = owner === instanceId || (owner === undefined && allowLegacy);
     if (!owned) {
       log(`Left sibling-owned worktree ${path}.`);
       continue;
     }
-    const removed = await run(
-      ["git", "worktree", "remove", "--force", path],
-      { cwd: root, timeoutMs: 30_000 },
-    );
+    const removed = await run(["git", "worktree", "remove", "--force", path], {
+      cwd: root,
+      timeoutMs: 30_000,
+    });
     if (removed.exitCode !== 0 && allowLegacy && worktree === undefined) {
       // A directory that is not a registered worktree (stale leftovers) is
       // only safely attributable to the legacy default instance.
       await rm(path, { recursive: true, force: true });
     } else if (removed.exitCode !== 0) {
-      throw commandFailure(`Git could not remove owned worktree ${path}`, removed);
+      throw commandFailure(
+        `Git could not remove owned worktree ${path}`,
+        removed,
+      );
     }
     log(`Removed worktree ${path}.`);
   }
-  const pruned = await run(
-    ["git", "worktree", "prune"],
-    { cwd: root, timeoutMs: 30_000 },
-  );
+  const pruned = await run(["git", "worktree", "prune"], {
+    cwd: root,
+    timeoutMs: 30_000,
+  });
   if (pruned.exitCode !== 0) {
     throw commandFailure("Git could not prune removed worktrees", pruned);
   }
@@ -275,18 +296,24 @@ async function removeWorktreesAndBranches(
   if (branches.exitCode !== 0) {
     throw commandFailure("Git could not list Hive branches", branches);
   }
-  for (const branch of branches.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0)) {
+  for (const branch of branches.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)) {
     const owner = await branchOwner(root, branch);
     if (owner !== instanceId && !(owner === undefined && allowLegacy)) {
       log(`Left sibling-owned branch ${branch}.`);
       continue;
     }
-    const deleted = await run(
-      ["git", "branch", "-D", branch],
-      { cwd: root, timeoutMs: 30_000 },
-    );
+    const deleted = await run(["git", "branch", "-D", branch], {
+      cwd: root,
+      timeoutMs: 30_000,
+    });
     if (deleted.exitCode !== 0) {
-      throw commandFailure(`Git could not delete owned branch ${branch}`, deleted);
+      throw commandFailure(
+        `Git could not delete owned branch ${branch}`,
+        deleted,
+      );
     }
     await clearBranchOwnership(root, branch);
     log(`Deleted branch ${branch}.`);
@@ -307,7 +334,9 @@ export async function runUninstallRepo(
     "  - deletes graphify-out/, the generated .graphifyignore, and this repo's derived state under ~/.hive/projects/",
     "The graphify tool under ~/.hive/tools is shared across repos and stays; `hive uninstall` removes it.",
   ];
-  if (!(await confirmed(plan, "Remove Hive from this repo?", options.yes, deps))) {
+  if (
+    !(await confirmed(plan, "Remove Hive from this repo?", options.yes, deps))
+  ) {
     return 1;
   }
 
@@ -341,7 +370,10 @@ export async function runUninstallRepo(
   // Hive's to delete; a user-authored one stays — the same rule purge obeys.
   const ignorePath = join(root, ".graphifyignore");
   const ignoreContent = await readFile(ignorePath, "utf8").catch(() => null);
-  if (ignoreContent !== null && ignoreContent.startsWith(GRAPHIFY_IGNORE_MARKER)) {
+  if (
+    ignoreContent !== null &&
+    ignoreContent.startsWith(GRAPHIFY_IGNORE_MARKER)
+  ) {
     await rm(ignorePath, { force: true });
     deps.log("Removed the generated .graphifyignore.");
   }
@@ -368,8 +400,12 @@ export async function runUninstallMachine(
     "  - stops every idle daemon and this instance's leftover sessions",
     `  - deletes ${hiveHome} — all Hive state, memory, the graphify tool, and any skills you authored under ${join(hiveHome, "skills")}`,
     ...(method === "native"
-      ? [`  - deletes the installed releases (${installRoot()}) and the \`hive\` command (${binLink()})`]
-      : [`  - leaves the hive binary alone: this install is ${method}, not Hive-managed`]),
+      ? [
+          `  - deletes the installed releases (${installRoot()}) and the \`hive\` command (${binLink()})`,
+        ]
+      : [
+          `  - leaves the hive binary alone: this install is ${method}, not Hive-managed`,
+        ]),
     "Repos keep the skills Hive installed into them; run `hive uninstall --repo` in a repo first to clean it.",
   ];
   if (!(await confirmed(plan, "Completely remove Hive?", options.yes, deps))) {
@@ -380,9 +416,7 @@ export async function runUninstallMachine(
   try {
     lease = await deps.acquireLease("machine-uninstall");
   } catch (error) {
-    deps.log(
-      `Refusing machine uninstall: ${errorMessage(error)}`,
-    );
+    deps.log(`Refusing machine uninstall: ${errorMessage(error)}`);
     return 1;
   }
 
@@ -396,9 +430,9 @@ export async function runUninstallMachine(
       await deps.stopInstances();
     } catch (error) {
       deps.log(
-        `Refusing to remove the machine-wide binary because a Hive instance did not stop: ${
-          errorMessage(error)
-        }\nFix: stop every Hive daemon, then rerun \`hive uninstall\`.`,
+        `Refusing to remove the machine-wide binary because a Hive instance did not stop: ${errorMessage(
+          error,
+        )}\nFix: stop every Hive daemon, then rerun \`hive uninstall\`.`,
       );
       return 1;
     }
@@ -406,9 +440,9 @@ export async function runUninstallMachine(
       await deps.stopCurrentInstance();
     } catch (error) {
       deps.log(
-        `Refusing machine uninstall because this instance's sessions did not stop: ${
-          errorMessage(error)
-        }\nFix: stop the sessions, then rerun \`hive uninstall\`.`,
+        `Refusing machine uninstall because this instance's sessions did not stop: ${errorMessage(
+          error,
+        )}\nFix: stop the sessions, then rerun \`hive uninstall\`.`,
       );
       return 1;
     }

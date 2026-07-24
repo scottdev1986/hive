@@ -25,7 +25,10 @@ const git = async (args: string[]): Promise<string> => {
 };
 
 const lines = (text: string): string[] =>
-  text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
 const commit = process.argv[2] ?? "HEAD";
 const plan = planRelease({

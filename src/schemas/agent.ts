@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { RoutingCategorySchema } from "./routing-policy";
 import { CapabilityProviderSchema, EffortLevelSchema } from "./capability";
+import { RoutingCategorySchema } from "./routing-policy";
 import { SessionLocatorSchema } from "./session-protocol";
 
 // Preferred user-facing name of the root orchestrator. It is not a spawned
@@ -83,11 +83,13 @@ export function isTerminalAgentStatus(
 
 const RETIRED_VIEWER_FIELD = ["terminal", "Handle"].join("");
 
-export const DeliveryBlockedSchema = z.strictObject({
-  messageId: z.string().min(1),
-  queuedMinutes: z.number().int().nonnegative(),
-  diagnostic: z.string(),
-}).readonly();
+export const DeliveryBlockedSchema = z
+  .strictObject({
+    messageId: z.string().min(1),
+    queuedMinutes: z.number().int().nonnegative(),
+    diagnostic: z.string(),
+  })
+  .readonly();
 
 const AgentRecordShape = {
   // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive.
@@ -184,7 +186,8 @@ export const AgentRecordObjectSchema = z.object(AgentRecordShape);
 
 export const AgentRecordSchema = z.preprocess((value) => {
   if (
-    typeof value === "object" && value !== null &&
+    typeof value === "object" &&
+    value !== null &&
     RETIRED_VIEWER_FIELD in value
   ) {
     throw new Error("retired external-viewer state is not accepted");

@@ -60,7 +60,9 @@ describe("worker vendor skills name the root queen (systematic)", () => {
       // Grok-only operational sites (also in the QA line list).
       if (relative.includes("hive-grok")) {
         expect(text).toContain("report it to queen naming the tool");
-        expect(text).toContain("Report it to queen with the model and tool name");
+        expect(text).toContain(
+          "Report it to queen with the model and tool name",
+        );
         expect(text).toContain("wait for queen");
       }
 

@@ -5,17 +5,17 @@ import { fileURLToPath } from "node:url";
 import { resolveBinding } from "./binding";
 import { prepareClaude } from "./claude";
 import { prepareCodex } from "./codex";
-import { evidenceForResults, plannedEvidence } from "./evidence";
 import { evaluate } from "./evaluator";
+import { evidenceForResults, plannedEvidence } from "./evidence";
 import { expectedCost, INVALID_MODEL, PROMPTS } from "./prompts";
 import {
-  PROVIDERS,
-  SCENARIOS,
-  scenarioApplies,
   type ConformanceReport,
+  PROVIDERS,
   type PreparedAdapter,
   type Provider,
+  SCENARIOS,
   type Scenario,
+  scenarioApplies,
 } from "./types";
 
 type Mode = "dry-run" | "probe" | "live";
@@ -66,7 +66,8 @@ The fixture never invokes guessed subcommands. In particular it never runs 'clau
 
 function requireValue(args: string[], index: number, flag: string): string {
   const value = args[index + 1];
-  if (value === undefined || value.startsWith("--")) throw new Error(`${flag} requires a value`);
+  if (value === undefined || value.startsWith("--"))
+    throw new Error(`${flag} requires a value`);
   return value;
 }
 
@@ -105,7 +106,8 @@ export function parseArgs(args: string[]): Options {
       const value = requireValue(args, index, arg);
       index += 1;
       if (value === "all") scenarios.splice(0, scenarios.length, ...SCENARIOS);
-      else if ((SCENARIOS as readonly string[]).includes(value)) scenarios.push(value as Scenario);
+      else if ((SCENARIOS as readonly string[]).includes(value))
+        scenarios.push(value as Scenario);
       else throw new Error(`Unknown scenario: ${value}`);
     } else if (arg === "--claude") {
       claudePath = requireValue(args, index, arg);
@@ -136,7 +138,8 @@ export function parseArgs(args: string[]): Options {
   return {
     mode,
     providers,
-    scenarios: scenarios.length === 0 ? [...SCENARIOS] : [...new Set(scenarios)],
+    scenarios:
+      scenarios.length === 0 ? [...SCENARIOS] : [...new Set(scenarios)],
     allowBillable,
     claudePath,
     codexPath,
@@ -154,7 +157,8 @@ export function requiresBillableAuthorization(options: Options): string[] {
     for (const scenario of options.scenarios) {
       if (!scenarioApplies(provider, scenario)) continue;
       const cost = expectedCost(provider, scenario);
-      if (cost !== "non-billable") gated.push(`${provider}/${scenario}:${cost}`);
+      if (cost !== "non-billable")
+        gated.push(`${provider}/${scenario}:${cost}`);
     }
   }
   return gated;
@@ -162,11 +166,15 @@ export function requiresBillableAuthorization(options: Options): string[] {
 
 function discoveredExecutable(provider: Provider, explicit?: string): string {
   if (explicit !== undefined) {
-    if (!isAbsolute(explicit)) throw new Error(`--${provider} must be an absolute path`);
+    if (!isAbsolute(explicit))
+      throw new Error(`--${provider} must be an absolute path`);
     return explicit;
   }
   const discovered = Bun.which(provider);
-  if (discovered === null) throw new Error(`Could not discover ${provider}; pass --${provider} /absolute/path`);
+  if (discovered === null)
+    throw new Error(
+      `Could not discover ${provider}; pass --${provider} /absolute/path`,
+    );
   return discovered;
 }
 
@@ -178,13 +186,20 @@ function printPlan(options: Options): void {
   for (const provider of options.providers) {
     for (const scenario of options.scenarios) {
       if (!scenarioApplies(provider, scenario)) continue;
-      console.log(`- ${provider}/${scenario}: ${expectedCost(provider, scenario)} — ${PROMPTS[scenario].purpose}`);
+      console.log(
+        `- ${provider}/${scenario}: ${expectedCost(provider, scenario)} — ${PROMPTS[scenario].purpose}`,
+      );
     }
   }
-  console.log("no guessed provider subcommands are used; fallback flags are never configured");
+  console.log(
+    "no guessed provider subcommands are used; fallback flags are never configured",
+  );
 }
 
-async function prepareAdapters(options: Options, runDirectory: string): Promise<PreparedAdapter[]> {
+async function prepareAdapters(
+  options: Options,
+  runDirectory: string,
+): Promise<PreparedAdapter[]> {
   const adapters: PreparedAdapter[] = [];
   for (const provider of options.providers) {
     const requested = discoveredExecutable(
@@ -193,19 +208,20 @@ async function prepareAdapters(options: Options, runDirectory: string): Promise<
     );
     const binding = await resolveBinding(provider, requested);
     const preflightDirectory = join(runDirectory, provider, "preflight");
-    const adapter = provider === "claude"
-      ? await prepareClaude({
-        binding,
-        selectedModel: options.claudeModel,
-        preflightDirectory,
-        timeoutMs: options.timeoutMs,
-      })
-      : await prepareCodex({
-        binding,
-        selectedModel: options.codexModel,
-        preflightDirectory,
-        timeoutMs: options.timeoutMs,
-      });
+    const adapter =
+      provider === "claude"
+        ? await prepareClaude({
+            binding,
+            selectedModel: options.claudeModel,
+            preflightDirectory,
+            timeoutMs: options.timeoutMs,
+          })
+        : await prepareCodex({
+            binding,
+            selectedModel: options.codexModel,
+            preflightDirectory,
+            timeoutMs: options.timeoutMs,
+          });
     adapters.push(adapter);
   }
   return adapters;
@@ -230,7 +246,9 @@ async function main(): Promise<void> {
   const id = runId();
   const outputRoot = isAbsolute(options.outputDirectory)
     ? options.outputDirectory
-    : await realpath(options.outputDirectory).catch(() => join(process.cwd(), options.outputDirectory));
+    : await realpath(options.outputDirectory).catch(() =>
+        join(process.cwd(), options.outputDirectory),
+      );
   const directory = join(outputRoot, id);
   await mkdir(directory, { recursive: true });
   const startedAt = new Date().toISOString();
@@ -244,8 +262,13 @@ async function main(): Promise<void> {
       provenance: adapter.preflightProvenance,
       billable: "no",
     }));
-    await Bun.write(join(directory, "preflight.json"), `${JSON.stringify(preflight, null, 2)}\n`);
-    console.log(`non-billable preflight written to ${join(directory, "preflight.json")}`);
+    await Bun.write(
+      join(directory, "preflight.json"),
+      `${JSON.stringify(preflight, null, 2)}\n`,
+    );
+    console.log(
+      `non-billable preflight written to ${join(directory, "preflight.json")}`,
+    );
     return;
   }
 
@@ -264,8 +287,12 @@ async function main(): Promise<void> {
       });
       const result = evaluate(run);
       results.push(result);
-      console.log(`${result.outcome.toUpperCase()} ${adapter.provider}/${scenario}`);
-      for (const item of result.assertions.filter((assertion) => !assertion.pass)) {
+      console.log(
+        `${result.outcome.toUpperCase()} ${adapter.provider}/${scenario}`,
+      );
+      for (const item of result.assertions.filter(
+        (assertion) => !assertion.pass,
+      )) {
         console.log(`  FAIL ${item.id}: ${item.detail}`);
       }
     }
@@ -300,6 +327,6 @@ export function dryRunEvidence(options: Options) {
   return options.providers.flatMap((provider) =>
     options.scenarios
       .filter((scenario) => scenarioApplies(provider, scenario))
-      .map((scenario) => plannedEvidence(provider, scenario))
+      .map((scenario) => plannedEvidence(provider, scenario)),
   );
 }

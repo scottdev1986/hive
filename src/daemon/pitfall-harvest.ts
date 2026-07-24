@@ -17,19 +17,20 @@
 // into the lifecycle path that triggered the harvest.
 import {
   discoverMemoryFacts,
+  type MemoryWriteFileResult,
   normalizeTitle,
   writeMemoryFact as writeMemoryFactFile,
-  type MemoryWriteFileResult,
 } from "../adapters/memory";
 import type { MemoryScope, MemoryWriteInput } from "../schemas";
-import { extractExactValues, type ExactValue } from "./episodic-digest";
+import { type ExactValue, extractExactValues } from "./episodic-digest";
 import type { EpisodicEvent, EpisodicStore } from "./episodic-store";
 
 /** Same failure classification the digest's Failures section uses. */
 const FAILURE_PATTERN = /error|fail|blocked|kill/i;
 
 const ERROR_PATTERN = /\b(\w*(?:Error|Exception))\s*:?\s*([^\n;.]{0,100})/;
-const EXIT_CODE_PATTERN = /\bexit(?:ed)?(?:\s+with)?(?:\s+code)?[\s:=]\s*(\d{1,5})\b/i;
+const EXIT_CODE_PATTERN =
+  /\bexit(?:ed)?(?:\s+with)?(?:\s+code)?[\s:=]\s*(\d{1,5})\b/i;
 
 const TITLE_MAX = 110;
 const EXACT_VALUES_MAX = 12;
@@ -62,7 +63,9 @@ function failureSignature(event: EpisodicEvent): FailureSignature {
   const text = event.summary;
   const error = ERROR_PATTERN.exec(text);
   if (error !== null) {
-    const label = sanitizeLabel(`${error[1]}: ${error[2]}`.replace(/:\s*$/, ""));
+    const label = sanitizeLabel(
+      `${error[1]}: ${error[2]}`.replace(/:\s*$/, ""),
+    );
     return { key: `error:${label.toLowerCase()}`, label };
   }
   const exit = EXIT_CODE_PATTERN.exec(text);
@@ -107,7 +110,9 @@ export interface HarvestPitfallsDeps {
   write?: (input: MemoryWriteInput) => Promise<MemoryWriteFileResult>;
   /** Advisory search for "Possibly related:" links (dedup layer 2). The
    * daemon passes its FTS MemoryIndex; omitting it skips the advisory. */
-  search?: (query: string) => Array<{ scope: MemoryScope; id: string; title: string }>;
+  search?: (
+    query: string,
+  ) => Array<{ scope: MemoryScope; id: string; title: string }>;
 }
 
 function candidateBody(input: {
@@ -123,20 +128,23 @@ function candidateBody(input: {
   const exactValues: ExactValue[] = [];
   for (const event of cluster) extractExactValues(event, exactValues);
   const seen = new Set<string>();
-  const exactRows = exactValues.filter((row) => {
-    const key = `${row.kind}${row.value}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, EXACT_VALUES_MAX);
+  const exactRows = exactValues
+    .filter((row) => {
+      const key = `${row.kind}${row.value}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, EXACT_VALUES_MAX);
 
   const lines: string[] = [
     "## What failed",
     "",
-    ...cluster.map((event) =>
-      `- [e${event.id}] ${event.ts} \`${event.type}\` — ${
-        event.summary.replace(/\s+/g, " ").trim()
-      }`
+    ...cluster.map(
+      (event) =>
+        `- [e${event.id}] ${event.ts} \`${event.type}\` — ${event.summary
+          .replace(/\s+/g, " ")
+          .trim()}`,
     ),
     "",
     "## Context",
@@ -148,7 +156,12 @@ function candidateBody(input: {
     "",
   ];
   if (exactRows.length > 0) {
-    lines.push("## Exact values", "", "| kind | value | source |", "| --- | --- | --- |");
+    lines.push(
+      "## Exact values",
+      "",
+      "| kind | value | source |",
+      "| --- | --- | --- |",
+    );
     for (const row of exactRows) {
       lines.push(`| ${row.kind} | \`${row.value}\` | e${row.eventId} |`);
     }
@@ -190,18 +203,22 @@ function candidateBody(input: {
 export async function harvestPitfalls(
   deps: HarvestPitfallsDeps,
 ): Promise<PitfallHarvestReport> {
-  const write = deps.write ??
+  const write =
+    deps.write ??
     ((input: MemoryWriteInput) => writeMemoryFactFile(deps.repoRoot, input));
   const report: PitfallHarvestReport = { candidates: [], errors: [] };
 
   const events = deps.store.eventsFor({ agent: deps.agent });
   const failures = events.filter((event) =>
-    FAILURE_PATTERN.test(`${event.type} ${event.summary}`)
+    FAILURE_PATTERN.test(`${event.type} ${event.summary}`),
   );
   if (failures.length === 0) return report;
 
   // Cluster by normalized error signature, first occurrence's label wins.
-  const clusters = new Map<string, { label: string; events: EpisodicEvent[] }>();
+  const clusters = new Map<
+    string,
+    { label: string; events: EpisodicEvent[] }
+  >();
   for (const event of failures) {
     const signature = failureSignature(event);
     const cluster = clusters.get(signature.key);
@@ -226,15 +243,16 @@ export async function harvestPitfalls(
   for (const [signature, cluster] of clusters) {
     try {
       const title = `Pitfall: ${cluster.label}`.slice(0, TITLE_MAX);
-      const duplicate = articles.find((article) =>
-        normalizeTitle(article.title) === normalizeTitle(title)
+      const duplicate = articles.find(
+        (article) => normalizeTitle(article.title) === normalizeTitle(title),
       );
       const related: PitfallCandidate["related"] = [];
       if (duplicate === undefined && deps.search !== undefined) {
         // Advisory (dedup layer 2): the cluster's most distinctive token is
         // the FTS probe — an exact-title hit is the duplicate path above, so
         // anything left here is similar-but-distinct and earns a link.
-        const probe = cluster.label.split(/\s+/)
+        const probe = cluster.label
+          .split(/\s+/)
           .filter((token) => /^[a-z0-9]{4,}$/i.test(token))
           .sort((a, b) => b.length - a.length)[0];
         if (probe !== undefined) {
@@ -242,10 +260,12 @@ export async function harvestPitfalls(
           for (const hit of deps.search(probe)) {
             if (normalizeTitle(hit.title) === normalized) continue;
             if (
-              related.some((candidate) =>
-                candidate.scope === hit.scope && candidate.id === hit.id
+              related.some(
+                (candidate) =>
+                  candidate.scope === hit.scope && candidate.id === hit.id,
               )
-            ) continue;
+            )
+              continue;
             related.push({ scope: hit.scope, id: hit.id, title: hit.title });
             if (related.length >= ADVISORY_MAX) break;
           }
@@ -267,10 +287,13 @@ export async function harvestPitfalls(
         body,
         tags: ["pitfall", "harvest"],
         source: "orchestrator",
-        evidence: `Harvested from ${cluster.events.length} failure event(s) ` +
-          `(${
-            cluster.events.map((event) => `e${event.id}`).join(", ")
-          }) of agent ${deps.agent}, session ${deps.sessionId ?? "unknown"}` +
+        evidence:
+          `Harvested from ${cluster.events.length} failure event(s) ` +
+          `(${cluster.events
+            .map((event) => `e${event.id}`)
+            .join(
+              ", ",
+            )}) of agent ${deps.agent}, session ${deps.sessionId ?? "unknown"}` +
           (digest === null ? "" : `, digest #${digest.id}`),
         status: "unverified",
         kind: "pitfall",

@@ -1,5 +1,5 @@
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -11,7 +11,6 @@ import {
 import { createServer, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BoundedWal, isoNow, WalOverflowError } from "./wal";
 import type {
   ChildIdentity,
   CommandEnvelope,
@@ -23,8 +22,12 @@ import type {
   SemanticEvent,
   WalRecord,
 } from "./types";
+import { BoundedWal, isoNow, WalOverflowError } from "./wal";
 
-const fixturePath = resolve(dirname(fileURLToPath(import.meta.url)), "provider-fixture.ts");
+const fixturePath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "provider-fixture.ts",
+);
 
 function hash(contents: Buffer | string): string {
   return createHash("sha256").update(contents).digest("hex");
@@ -44,10 +47,14 @@ function commandForPid(pid: number): string {
   return child.exitCode === 0 ? child.stdout.toString().trim() : "";
 }
 
-function killVerifiedProcessGroup(identity: ChildIdentity, ledgerPath: string): void {
+function killVerifiedProcessGroup(
+  identity: ChildIdentity,
+  ledgerPath: string,
+): void {
   if (!processExists(identity.pid)) return;
   const command = commandForPid(identity.pid);
-  if (!command.includes("provider-fixture.ts") || !command.includes(ledgerPath)) return;
+  if (!command.includes("provider-fixture.ts") || !command.includes(ledgerPath))
+    return;
   try {
     process.kill(-identity.processGroupId, "SIGKILL");
   } catch {
@@ -59,7 +66,9 @@ function killVerifiedProcessGroup(identity: ChildIdentity, ledgerPath: string): 
   }
 }
 
-function withoutPrompt(command: CommandEnvelope): Omit<CommandEnvelope, "prompt"> {
+function withoutPrompt(
+  command: CommandEnvelope,
+): Omit<CommandEnvelope, "prompt"> {
   const { prompt: _prompt, ...safe } = command;
   return safe;
 }
@@ -83,22 +92,35 @@ export class AgentHost {
   constructor(readonly config: HostConfig) {
     mkdirSync(config.stateDir, { recursive: true });
     this.ledgerPath = join(config.stateDir, "provider-ledger.json");
-    this.wal = new BoundedWal(join(config.stateDir, "host.wal.jsonl"), config.maxWalBytes);
+    this.wal = new BoundedWal(
+      join(config.stateDir, "host.wal.jsonl"),
+      config.maxWalBytes,
+    );
     this.restore();
   }
 
   async start(): Promise<void> {
     const previousChild = this.latestChildIdentity();
-    if (previousChild !== null) killVerifiedProcessGroup(previousChild, this.ledgerPath);
-    if (this.phase === "terminal_durable" || this.phase === "unknown_outcome" ||
-        this.phase === "wal_overflow") return;
+    if (previousChild !== null)
+      killVerifiedProcessGroup(previousChild, this.ledgerPath);
+    if (
+      this.phase === "terminal_durable" ||
+      this.phase === "unknown_outcome" ||
+      this.phase === "wal_overflow"
+    )
+      return;
     if (this.currentCommand === null) {
       this.spawnProvider(false);
       return;
     }
-    const written = this.hasRecord("COMMAND_WRITTEN", this.currentCommand.commandId);
+    const written = this.hasRecord(
+      "COMMAND_WRITTEN",
+      this.currentCommand.commandId,
+    );
     if (!written) {
-      await this.recordUnknown("accepted command had no durable terminal outcome after host loss");
+      await this.recordUnknown(
+        "accepted command had no durable terminal outcome after host loss",
+      );
       return;
     }
     await this.resumeOrUnknown("host_restart");
@@ -111,7 +133,10 @@ export class AgentHost {
       tenantId: this.config.tenantId,
       childIdentity: this.childIdentity,
       vendorSessionId: this.vendorSessionId,
-      lastAcceptedCommand: this.currentCommand === null ? null : withoutPrompt(this.currentCommand),
+      lastAcceptedCommand:
+        this.currentCommand === null
+          ? null
+          : withoutPrompt(this.currentCommand),
       lastEventSequence: events.at(-1)?.sequence ?? 0,
       highWaterMark,
       inFlightPhase: this.phase,
@@ -125,31 +150,48 @@ export class AgentHost {
     const existing = this.currentCommand;
     if (existing !== null) {
       if (existing.commandId === command.commandId) return;
-      throw new Error("a command is already accepted for this prototype session");
+      throw new Error(
+        "a command is already accepted for this prototype session",
+      );
     }
     this.currentCommand = command;
     this.phase = "before_accept";
     await this.pauseAt("before_accept");
     if (this.commandCannotContinue()) return;
-    this.append({ kind: "ACCEPTED", at: isoNow(), command: withoutPrompt(command) });
+    this.append({
+      kind: "ACCEPTED",
+      at: isoNow(),
+      command: withoutPrompt(command),
+    });
     this.phase = "accepted";
     await this.pauseAt("after_accept_before_write");
     if (this.commandCannotContinue()) return;
     if (this.child === null || this.child.stdin.destroyed) {
-      await this.recordUnknown("provider unavailable after ACCEPTED and before write");
+      await this.recordUnknown(
+        "provider unavailable after ACCEPTED and before write",
+      );
       return;
     }
     await new Promise<void>((resolveWrite, rejectWrite) => {
-      this.child!.stdin.write(`${JSON.stringify({
-        type: "command",
-        commandId: command.commandId,
-        prompt: command.prompt,
-      })}\n`, (error) => error ? rejectWrite(error) : resolveWrite());
+      this.child!.stdin.write(
+        `${JSON.stringify({
+          type: "command",
+          commandId: command.commandId,
+          prompt: command.prompt,
+        })}\n`,
+        (error) => (error ? rejectWrite(error) : resolveWrite()),
+      );
     }).catch(async () => {
-      await this.recordUnknown("provider pipe failed while writing an accepted command");
+      await this.recordUnknown(
+        "provider pipe failed while writing an accepted command",
+      );
     });
     if (this.commandCannotContinue()) return;
-    this.append({ kind: "COMMAND_WRITTEN", at: isoNow(), commandId: command.commandId });
+    this.append({
+      kind: "COMMAND_WRITTEN",
+      at: isoNow(),
+      commandId: command.commandId,
+    });
     this.phase = "written";
     await this.pauseAt("after_write_before_first_event");
   }
@@ -160,20 +202,37 @@ export class AgentHost {
     this.barrierPromise = null;
   }
 
-  async approve(approvalId: string, decision: "approve" | "deny"): Promise<void> {
-    const duplicate = this.wal.all().some((record) =>
-      record.kind === "APPROVAL_WRITTEN" && record.approvalId === approvalId
-    );
+  async approve(
+    approvalId: string,
+    decision: "approve" | "deny",
+  ): Promise<void> {
+    const duplicate = this.wal
+      .all()
+      .some(
+        (record) =>
+          record.kind === "APPROVAL_WRITTEN" &&
+          record.approvalId === approvalId,
+      );
     if (duplicate) return;
-    if (this.pendingApprovalId !== approvalId) throw new Error("approval is not pending");
-    this.append({ kind: "APPROVAL_WRITTEN", at: isoNow(), approvalId, decision });
+    if (this.pendingApprovalId !== approvalId)
+      throw new Error("approval is not pending");
+    this.append({
+      kind: "APPROVAL_WRITTEN",
+      at: isoNow(),
+      approvalId,
+      decision,
+    });
     if (this.child === null || this.child.stdin.destroyed) {
-      await this.recordUnknown("approval was accepted but provider delivery is ambiguous");
+      await this.recordUnknown(
+        "approval was accepted but provider delivery is ambiguous",
+      );
       return;
     }
     await new Promise<void>((resolveWrite, rejectWrite) => {
-      this.child!.stdin.write(`${JSON.stringify({ type: "approval", approvalId, decision })}\n`,
-        (error) => error ? rejectWrite(error) : resolveWrite());
+      this.child!.stdin.write(
+        `${JSON.stringify({ type: "approval", approvalId, decision })}\n`,
+        (error) => (error ? rejectWrite(error) : resolveWrite()),
+      );
     }).catch(async () => {
       await this.recordUnknown("approval pipe failed after durable acceptance");
     });
@@ -183,7 +242,10 @@ export class AgentHost {
 
   acknowledge(highWaterMark: number): void {
     const lastSequence = this.wal.events().at(-1)?.sequence ?? 0;
-    if (highWaterMark < this.wal.highWaterMark() || highWaterMark > lastSequence) {
+    if (
+      highWaterMark < this.wal.highWaterMark() ||
+      highWaterMark > lastSequence
+    ) {
       throw new Error("invalid broker high-water mark");
     }
     this.append({ kind: "ACK", at: isoNow(), highWaterMark });
@@ -200,67 +262,100 @@ export class AgentHost {
 
   private restore(): void {
     const records = this.wal.all();
-    const accepted = [...records].reverse().find(
-      (record): record is Extract<WalRecord, { kind: "ACCEPTED" }> => record.kind === "ACCEPTED",
-    );
+    const accepted = [...records]
+      .reverse()
+      .find(
+        (record): record is Extract<WalRecord, { kind: "ACCEPTED" }> =>
+          record.kind === "ACCEPTED",
+      );
     if (accepted !== undefined) {
-      this.currentCommand = { ...accepted.command, prompt: "[prompt intentionally absent from WAL]" };
+      this.currentCommand = {
+        ...accepted.command,
+        prompt: "[prompt intentionally absent from WAL]",
+      };
     }
     const events = this.wal.events();
     for (const event of events) {
-      if (event.type === "session_started" && typeof event.payload.vendorSessionId === "string") {
+      if (
+        event.type === "session_started" &&
+        typeof event.payload.vendorSessionId === "string"
+      ) {
         this.vendorSessionId = event.payload.vendorSessionId;
       }
-      if (event.type === "approval_requested" && typeof event.payload.approvalId === "string") {
+      if (
+        event.type === "approval_requested" &&
+        typeof event.payload.approvalId === "string"
+      ) {
         this.pendingApprovalId = event.payload.approvalId;
       }
       if (event.type === "tool_result") this.pendingApprovalId = null;
     }
     const terminal = events.at(-1);
-    if (existsSync(join(this.config.stateDir, "wal-overflow.json"))) this.phase = "wal_overflow";
-    else if (terminal?.type === "turn_completed") this.phase = "terminal_durable";
-    else if (terminal?.type === "UNKNOWN_OUTCOME") this.phase = "unknown_outcome";
+    if (existsSync(join(this.config.stateDir, "wal-overflow.json")))
+      this.phase = "wal_overflow";
+    else if (terminal?.type === "turn_completed")
+      this.phase = "terminal_durable";
+    else if (terminal?.type === "UNKNOWN_OUTCOME")
+      this.phase = "unknown_outcome";
     else if (this.pendingApprovalId !== null) this.phase = "awaiting_approval";
     else if (this.currentCommand !== null) {
-      this.phase = this.hasRecord("COMMAND_WRITTEN", this.currentCommand.commandId)
+      this.phase = this.hasRecord(
+        "COMMAND_WRITTEN",
+        this.currentCommand.commandId,
+      )
         ? "written"
         : "accepted";
     }
   }
 
   private latestChildIdentity(): ChildIdentity | null {
-    const record = [...this.wal.all()].reverse().find(
-      (candidate): candidate is Extract<WalRecord, { kind: "CHILD" }> => candidate.kind === "CHILD",
-    );
+    const record = [...this.wal.all()]
+      .reverse()
+      .find(
+        (candidate): candidate is Extract<WalRecord, { kind: "CHILD" }> =>
+          candidate.kind === "CHILD",
+      );
     return record?.child ?? null;
   }
 
   private hasRecord(kind: WalRecord["kind"], commandId: string): boolean {
-    return this.wal.all().some((record) =>
-      record.kind === kind && "commandId" in record && record.commandId === commandId
-    );
+    return this.wal
+      .all()
+      .some(
+        (record) =>
+          record.kind === kind &&
+          "commandId" in record &&
+          record.commandId === commandId,
+      );
   }
 
   private spawnProvider(resume: boolean): void {
     const executable = process.execPath;
-    const argv = [fixturePath, "--vendor", this.config.vendor, "--ledger", this.ledgerPath,
-      "--resume", String(resume)];
+    const argv = [
+      fixturePath,
+      "--vendor",
+      this.config.vendor,
+      "--ledger",
+      this.ledgerPath,
+      "--resume",
+      String(resume),
+    ];
     const child = spawn(executable, argv, {
       cwd: this.config.stateDir,
       detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    if (child.pid === undefined) throw new Error("provider fixture did not start");
+    if (child.pid === undefined)
+      throw new Error("provider fixture did not start");
     this.child = child;
     this.providerBuffer = "";
     const identity: ChildIdentity = {
       pid: child.pid,
       processGroupId: child.pid,
       executable,
-      executableBindingHash: hash(Buffer.concat([
-        readFileSync(executable),
-        readFileSync(fixturePath),
-      ])),
+      executableBindingHash: hash(
+        Buffer.concat([readFileSync(executable), readFileSync(fixturePath)]),
+      ),
       argvHash: hash(argv.join("\0")),
       vendor: this.config.vendor,
     };
@@ -268,19 +363,31 @@ export class AgentHost {
     this.append({ kind: "CHILD", at: isoNow(), child: identity });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      this.providerQueue = this.providerQueue.then(() => this.consumeProvider(chunk)).catch((error) => {
-        if (!(error instanceof WalOverflowError)) {
-          writeFileSync(join(this.config.stateDir, "host.error.log"), `${String(error)}\n`, { flag: "a" });
-        }
-      });
+      this.providerQueue = this.providerQueue
+        .then(() => this.consumeProvider(chunk))
+        .catch((error) => {
+          if (!(error instanceof WalOverflowError)) {
+            writeFileSync(
+              join(this.config.stateDir, "host.error.log"),
+              `${String(error)}\n`,
+              { flag: "a" },
+            );
+          }
+        });
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      writeFileSync(join(this.config.stateDir, "provider.stderr.log"), chunk, { flag: "a" });
+      writeFileSync(join(this.config.stateDir, "provider.stderr.log"), chunk, {
+        flag: "a",
+      });
     });
     child.once("exit", () => {
       if (this.child === child) this.child = null;
-      if (!this.shuttingDown && this.phase !== "terminal_durable" &&
-          this.phase !== "unknown_outcome" && !this.recovering) {
+      if (
+        !this.shuttingDown &&
+        this.phase !== "terminal_durable" &&
+        this.phase !== "unknown_outcome" &&
+        !this.recovering
+      ) {
         void this.resumeOrUnknown("provider_exit");
       }
     });
@@ -299,8 +406,14 @@ export class AgentHost {
         providerEventId: string;
         payload: Record<string, unknown>;
       };
-      if (this.wal.events().some((event) => event.providerEventId === message.providerEventId)) continue;
-      if (this.phase === "written") await this.pauseAt("after_write_before_first_event");
+      if (
+        this.wal
+          .events()
+          .some((event) => event.providerEventId === message.providerEventId)
+      )
+        continue;
+      if (this.phase === "written")
+        await this.pauseAt("after_write_before_first_event");
       if (message.type === "assistant_final") {
         this.phase = "provider_final";
         await this.pauseAt("after_provider_final_before_wal");
@@ -318,10 +431,16 @@ export class AgentHost {
         payload: message.payload,
       };
       this.append({ kind: "EVENT", at: isoNow(), event });
-      if (message.type === "session_started" && typeof message.payload.vendorSessionId === "string") {
+      if (
+        message.type === "session_started" &&
+        typeof message.payload.vendorSessionId === "string"
+      ) {
         this.vendorSessionId = message.payload.vendorSessionId;
       }
-      if (message.type === "approval_requested" && typeof message.payload.approvalId === "string") {
+      if (
+        message.type === "approval_requested" &&
+        typeof message.payload.approvalId === "string"
+      ) {
         this.pendingApprovalId = message.payload.approvalId;
         this.phase = "awaiting_approval";
         await this.pauseAt("during_tool_approval");
@@ -335,30 +454,60 @@ export class AgentHost {
   }
 
   private async resumeOrUnknown(reason: string): Promise<void> {
-    if (this.recovering || this.shuttingDown || this.phase === "terminal_durable" ||
-        this.phase === "unknown_outcome") return;
+    if (
+      this.recovering ||
+      this.shuttingDown ||
+      this.phase === "terminal_durable" ||
+      this.phase === "unknown_outcome"
+    )
+      return;
     this.recovering = true;
     try {
-      const accepted = this.wal.all().some((record) => record.kind === "ACCEPTED");
+      const accepted = this.wal
+        .all()
+        .some((record) => record.kind === "ACCEPTED");
       if (!accepted) {
         this.spawnProvider(false);
         return;
       }
       if (!existsSync(this.ledgerPath)) {
-        await this.recordUnknown(`${reason}: provider has no durable vendor session`);
+        await this.recordUnknown(
+          `${reason}: provider has no durable vendor session`,
+        );
         return;
       }
-      const ledger = JSON.parse(readFileSync(this.ledgerPath, "utf8")) as ProviderLedger;
-      if (ledger.commandId !== this.currentCommand?.commandId || ledger.state === "idle") {
-        await this.recordUnknown(`${reason}: provider session cannot reconcile accepted command`);
+      const ledger = JSON.parse(
+        readFileSync(this.ledgerPath, "utf8"),
+      ) as ProviderLedger;
+      if (
+        ledger.commandId !== this.currentCommand?.commandId ||
+        ledger.state === "idle"
+      ) {
+        await this.recordUnknown(
+          `${reason}: provider session cannot reconcile accepted command`,
+        );
         return;
       }
-      const approvalWasWritten = this.pendingApprovalId !== null && this.wal.all().some((record) =>
-        record.kind === "APPROVAL_WRITTEN" && record.approvalId === this.pendingApprovalId
-      );
-      const toolResultIsDurable = this.wal.events().some((event) => event.type === "tool_result");
-      if (approvalWasWritten && !toolResultIsDurable && ledger.state !== "completed") {
-        await this.recordUnknown(`${reason}: approval delivery has no durable provider outcome`);
+      const approvalWasWritten =
+        this.pendingApprovalId !== null &&
+        this.wal
+          .all()
+          .some(
+            (record) =>
+              record.kind === "APPROVAL_WRITTEN" &&
+              record.approvalId === this.pendingApprovalId,
+          );
+      const toolResultIsDurable = this.wal
+        .events()
+        .some((event) => event.type === "tool_result");
+      if (
+        approvalWasWritten &&
+        !toolResultIsDurable &&
+        ledger.state !== "completed"
+      ) {
+        await this.recordUnknown(
+          `${reason}: approval delivery has no durable provider outcome`,
+        );
         return;
       }
       this.vendorSessionId = ledger.vendorSessionId;
@@ -378,7 +527,8 @@ export class AgentHost {
         },
       });
       this.spawnProvider(true);
-      this.phase = ledger.state === "pending_approval" ? "awaiting_approval" : "running";
+      this.phase =
+        ledger.state === "pending_approval" ? "awaiting_approval" : "running";
     } finally {
       this.recovering = false;
     }
@@ -414,12 +564,17 @@ export class AgentHost {
     } catch (error) {
       if (!(error instanceof WalOverflowError)) throw error;
       this.phase = "wal_overflow";
-      writeFileSync(join(this.config.stateDir, "wal-overflow.json"), `${JSON.stringify({
-        at: isoNow(),
-        reason: error.message,
-      })}\n`, { mode: 0o600 });
+      writeFileSync(
+        join(this.config.stateDir, "wal-overflow.json"),
+        `${JSON.stringify({
+          at: isoNow(),
+          reason: error.message,
+        })}\n`,
+        { mode: 0o600 },
+      );
       const identity = this.childIdentity;
-      if (identity !== null) killVerifiedProcessGroup(identity, this.ledgerPath);
+      if (identity !== null)
+        killVerifiedProcessGroup(identity, this.ledgerPath);
       throw error;
     }
   }
@@ -428,9 +583,13 @@ export class AgentHost {
     if (this.config.boundary !== boundary) return;
     const marker = join(this.config.stateDir, "boundary.json");
     if (existsSync(marker)) return;
-    writeFileSync(marker, `${JSON.stringify({ boundary, at: isoNow(), pid: process.pid })}\n`, {
-      mode: 0o600,
-    });
+    writeFileSync(
+      marker,
+      `${JSON.stringify({ boundary, at: isoNow(), pid: process.pid })}\n`,
+      {
+        mode: 0o600,
+      },
+    );
     this.barrierPromise = new Promise<void>((resolveBarrier) => {
       this.barrierRelease = resolveBarrier;
     });
@@ -438,12 +597,19 @@ export class AgentHost {
   }
 
   private commandCannotContinue(): boolean {
-    return this.phase === "unknown_outcome" || this.phase === "wal_overflow" || this.shuttingDown;
+    return (
+      this.phase === "unknown_outcome" ||
+      this.phase === "wal_overflow" ||
+      this.shuttingDown
+    );
   }
 }
 
 function authorized(config: HostConfig, request: RpcRequest): void {
-  if (request.tenantId !== config.tenantId || request.authToken !== config.authToken) {
+  if (
+    request.tenantId !== config.tenantId ||
+    request.authToken !== config.authToken
+  ) {
     throw new Error("unauthorized tenant or capability");
   }
 }
@@ -453,7 +619,9 @@ export async function serve(config: HostConfig): Promise<void> {
   await host.start();
   mkdirSync(dirname(config.socketPath), { recursive: true });
   if (existsSync(config.socketPath)) unlinkSync(config.socketPath);
-  const server = createServer((socket) => handleSocket(host, config, socket, server));
+  const server = createServer((socket) =>
+    handleSocket(host, config, socket, server),
+  );
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once("error", rejectListen);
     server.listen(config.socketPath, () => resolveListen());
@@ -491,7 +659,8 @@ function handleSocket(
           authorized(config, request);
           let result: unknown = {};
           if (request.action === "start") {
-            if (request.command === undefined) throw new Error("command required");
+            if (request.command === undefined)
+              throw new Error("command required");
             void host.accept(request.command).catch(() => undefined);
             result = { acceptedForProcessing: true };
           } else if (request.action === "snapshot") {
@@ -499,12 +668,16 @@ function handleSocket(
           } else if (request.action === "release") {
             host.releaseBoundary();
           } else if (request.action === "approve") {
-            if (request.approvalId === undefined || request.decision === undefined) {
+            if (
+              request.approvalId === undefined ||
+              request.decision === undefined
+            ) {
               throw new Error("approval decision required");
             }
             await host.approve(request.approvalId, request.decision);
           } else if (request.action === "ack") {
-            if (request.highWaterMark === undefined) throw new Error("high-water mark required");
+            if (request.highWaterMark === undefined)
+              throw new Error("high-water mark required");
             host.acknowledge(request.highWaterMark);
           } else if (request.action === "shutdown") {
             await host.shutdown();
@@ -514,10 +687,12 @@ function handleSocket(
           }
           socket.write(`${JSON.stringify({ ok: true, result })}\n`);
         } catch (error) {
-          socket.write(`${JSON.stringify({
-            ok: false,
-            error: error instanceof Error ? error.message : String(error),
-          })}\n`);
+          socket.write(
+            `${JSON.stringify({
+              ok: false,
+              error: error instanceof Error ? error.message : String(error),
+            })}\n`,
+          );
         }
       })();
     }

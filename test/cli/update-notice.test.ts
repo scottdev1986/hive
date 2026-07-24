@@ -2,8 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { plain } from "../../src/update/notice";
-import type { UpdateCheck } from "../../src/update/check";
 import {
   readLastNoticeAt,
   resolveUpdateNotice,
@@ -11,6 +9,8 @@ import {
   withTrailingUpdateNotice,
   writeLastNoticeAt,
 } from "../../src/cli/update-notice";
+import type { UpdateCheck } from "../../src/update/check";
+import { plain } from "../../src/update/notice";
 
 const updateAvailable: UpdateCheck = {
   state: "update-available",
@@ -38,27 +38,27 @@ describe("wantsUpdateNotice", () => {
   });
 
   test("suppresses under CI, even CI=false — presence is the convention", () => {
-    expect(wantsUpdateNotice(argv("status"), { CI: "true" }, true)).toEqual(false);
+    expect(wantsUpdateNotice(argv("status"), { CI: "true" }, true)).toEqual(
+      false,
+    );
     expect(wantsUpdateNotice(argv("status"), { CI: "" }, true)).toEqual(false);
   });
 
   test("never decorates session boundaries, the updater, or machine surfaces", () => {
-    for (
-      const command of [
-        undefined, // bare `hive` — startSession already prints the start notice
-        "init",
-        "claude",
-        "codex",
-        "update",
-        "event",
-        "statusline",
-        "credential",
-        "statusline",
-        "daemon",
-        "workspace-feed",
-        "workspace-orchestrator",
-      ]
-    ) {
+    for (const command of [
+      undefined, // bare `hive` — startSession already prints the start notice
+      "init",
+      "claude",
+      "codex",
+      "update",
+      "event",
+      "statusline",
+      "credential",
+      "statusline",
+      "daemon",
+      "workspace-feed",
+      "workspace-orchestrator",
+    ]) {
       expect(wantsUpdateNotice(argv(command), {}, true)).toEqual(false);
     }
   });
@@ -93,14 +93,19 @@ describe("withTrailingUpdateNotice", () => {
 
   test("a failed command surfaces its error, not a version advertisement", async () => {
     const written: string[] = [];
-    await expect(withTrailingUpdateNotice(
-      true,
-      async () => {
-        throw new Error("command failed");
-      },
-      { check: async () => updateAvailable, statePath: "/nonexistent/x.json" },
-      (line) => written.push(line),
-    )).rejects.toThrow("command failed");
+    await expect(
+      withTrailingUpdateNotice(
+        true,
+        async () => {
+          throw new Error("command failed");
+        },
+        {
+          check: async () => updateAvailable,
+          statePath: "/nonexistent/x.json",
+        },
+        (line) => written.push(line),
+      ),
+    ).rejects.toThrow("command failed");
     expect(written).toEqual([]);
   });
 
@@ -173,7 +178,10 @@ describe("24-hour display suppression", () => {
   test("a security release bypasses the rate limit", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-notice-security-"));
     const statePath = join(home, "update-notice.json");
-    const security: UpdateCheck = { ...updateAvailable, securityCritical: true };
+    const security: UpdateCheck = {
+      ...updateAvailable,
+      securityCritical: true,
+    };
     try {
       writeLastNoticeAt(1_750_000_000_000, statePath);
       const line = await resolveUpdateNotice({

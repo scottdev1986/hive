@@ -2,8 +2,11 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import {
+  projectRootOrCwd,
+  resolveProjectRoot,
+} from "../../src/cli/project-root";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
-import { projectRootOrCwd, resolveProjectRoot } from "../../src/cli/project-root";
 
 const dirs: string[] = [];
 afterAll(() => {

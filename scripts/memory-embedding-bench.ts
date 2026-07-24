@@ -18,7 +18,8 @@ import {
 } from "../src/daemon/memory-embeddings";
 import type { MemoryEmbeddingModel } from "../src/schemas";
 
-const model = (Bun.env.BENCH_MODEL ?? "bge-small-en-v1.5") as MemoryEmbeddingModel;
+const model = (Bun.env.BENCH_MODEL ??
+  "bge-small-en-v1.5") as MemoryEmbeddingModel;
 
 const rssMb = (): number => process.memoryUsage.rss() / 1e6;
 
@@ -77,7 +78,9 @@ if (embedder === null) {
   console.error(`FAIL: ${JSON.stringify(service.status())}`);
   process.exit(1);
 }
-console.log(`model load: ${loadMs.toFixed(0)} ms (includes any first-run download)`);
+console.log(
+  `model load: ${loadMs.toFixed(0)} ms (includes any first-run download)`,
+);
 console.log(`RSS after load: ${rssMb().toFixed(0)} MB`);
 console.log(`dimensions: ${embedder.dimensions}`);
 

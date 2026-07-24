@@ -29,7 +29,8 @@ async function readLimited(
     const { done, value } = await reader.read();
     if (done) return text + decoder.decode();
     text += decoder.decode(value, { stream: true });
-    if (text.length > limit) throw new Error(`Probe output exceeded ${limit} bytes`);
+    if (text.length > limit)
+      throw new Error(`Probe output exceeded ${limit} bytes`);
   }
 }
 
@@ -48,7 +49,9 @@ async function versionProbe(path: string): Promise<string> {
       child.exited,
     ]);
     if (exitCode !== 0) {
-      throw new Error(`Version probe failed (${exitCode}): ${(stderr || stdout).trim()}`);
+      throw new Error(
+        `Version probe failed (${exitCode}): ${(stderr || stdout).trim()}`,
+      );
     }
     return stdout.trim() || stderr.trim();
   } finally {
@@ -82,12 +85,16 @@ export async function resolveBinding(
   requestedPath: string,
 ): Promise<InstallationBinding> {
   if (!isAbsolute(requestedPath)) {
-    throw new Error(`${provider} binding must be an absolute path: ${requestedPath}`);
+    throw new Error(
+      `${provider} binding must be an absolute path: ${requestedPath}`,
+    );
   }
   const executablePath = await realpath(requestedPath);
   const info = await stat(executablePath);
   if (!info.isFile() || (info.mode & 0o111) === 0) {
-    throw new Error(`${provider} binding is not an executable file: ${executablePath}`);
+    throw new Error(
+      `${provider} binding is not an executable file: ${executablePath}`,
+    );
   }
   const [sha256, version] = await Promise.all([
     hashFile(executablePath),

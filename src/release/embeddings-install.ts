@@ -19,15 +19,15 @@
  */
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  artifactMatches,
-  selectArtifact,
-  verifyManifest,
-  type HiveArch,
-} from "./manifest";
-import { EMBEDDINGS_RUNTIME_ASSET } from "./embeddings-runtime";
 import { githubReleaseSource, type ReleaseSource } from "../update/source";
 import { HIVE_ARCH, HIVE_RELEASE_PUBLIC_KEY, HIVE_VERSION } from "../version";
+import { EMBEDDINGS_RUNTIME_ASSET } from "./embeddings-runtime";
+import {
+  artifactMatches,
+  type HiveArch,
+  selectArtifact,
+  verifyManifest,
+} from "./manifest";
 
 export type EmbeddingsInstallOutcome =
   | { ok: true; detail: string }
@@ -157,9 +157,7 @@ export async function installEmbeddingsFromRelease(
     };
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
-    return fail(
-      error instanceof Error ? error.message : String(error),
-    );
+    return fail(error instanceof Error ? error.message : String(error));
   }
 }
 

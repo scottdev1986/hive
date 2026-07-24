@@ -2,8 +2,9 @@
 // the delta composer (wiki-log parsing, pitfall section, token budget), the
 // per-agent high-water mark, and the delivery-lane integration that carries
 // the delta into a delivered message.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,11 +14,6 @@ import {
   writeMemoryFact,
 } from "../../src/adapters/memory";
 import { loadHiveConfig } from "../../src/config/load";
-import {
-  HiveConfigSchema,
-  type AgentRecord,
-  type MemoryWriteInput,
-} from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import { MessageDelivery, type SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
@@ -31,6 +27,11 @@ import { MemoryIndex } from "../../src/daemon/memory-index";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
 import { submitPaste } from "../../src/daemon/testing";
+import {
+  type AgentRecord,
+  HiveConfigSchema,
+  type MemoryWriteInput,
+} from "../../src/schemas";
 
 // Global-scope memory lives under HIVE_HOME, so the whole file runs against
 // a disposable home (same posture as memory-retention.test.ts).
@@ -54,9 +55,7 @@ async function makeRepo(): Promise<string> {
   return await mkdtemp(join(tempRoot, "repo-"));
 }
 
-function input(
-  overrides: Partial<MemoryWriteInput> = {},
-): MemoryWriteInput {
+function input(overrides: Partial<MemoryWriteInput> = {}): MemoryWriteInput {
   return {
     scope: "repo",
     topic: "testing",
@@ -139,17 +138,20 @@ describe("readWikiLog", () => {
     const repo = await makeRepo();
     const logDir = join(getRepoMemoryRoot(repo), "wiki");
     await mkdir(logDir, { recursive: true });
-    await writeFile(join(logDir, "log.md"), [
-      "# Hive Memory Log",
-      "",
-      "## [2026-07-22] ingest | A title with a | pipe inside",
-      "## not-an-entry",
-      "## [22-07-2026] bad-date | nope",
-      "## [2026-07-22] missing pipe",
-      "random junk",
-      "## [2026-07-22] stale-demote | Second entry",
-      "",
-    ].join("\n"));
+    await writeFile(
+      join(logDir, "log.md"),
+      [
+        "# Hive Memory Log",
+        "",
+        "## [2026-07-22] ingest | A title with a | pipe inside",
+        "## not-an-entry",
+        "## [22-07-2026] bad-date | nope",
+        "## [2026-07-22] missing pipe",
+        "random junk",
+        "## [2026-07-22] stale-demote | Second entry",
+        "",
+      ].join("\n"),
+    );
 
     const read = await readWikiLog(repo);
     expect(read.totals).toEqual({ repo: 2, global: 0 });
@@ -221,16 +223,22 @@ describe("composeMemoryDelta", () => {
 
   test("a task-matching pitfall appears even when older than the mark; non-matching articles do not", async () => {
     const repo = await makeRepo();
-    await writeMemoryFact(repo, input({
-      id: "sqlite-pitfall",
-      topic: "memory",
-      title: "sqlite deadlock on the events table",
-      kind: "pitfall",
-    }));
-    await writeMemoryFact(repo, input({
-      id: "garden",
-      title: "garden watering schedule",
-    }));
+    await writeMemoryFact(
+      repo,
+      input({
+        id: "sqlite-pitfall",
+        topic: "memory",
+        title: "sqlite deadlock on the events table",
+        kind: "pitfall",
+      }),
+    );
+    await writeMemoryFact(
+      repo,
+      input({
+        id: "garden",
+        title: "garden watering schedule",
+      }),
+    );
     // The mark is past everything: by log position alone there is no delta.
     const mark = (await readWikiLog(repo)).totals;
     const index = new MemoryIndex(new Database(":memory:"));
@@ -263,17 +271,23 @@ describe("composeMemoryDelta", () => {
 
   test("a flood of changes truncates at the budget with a loud marker; pitfalls survive", async () => {
     const repo = await makeRepo();
-    await writeMemoryFact(repo, input({
-      id: "sqlite-pitfall",
-      topic: "memory",
-      title: "sqlite deadlock on the events table",
-      kind: "pitfall",
-    }));
+    await writeMemoryFact(
+      repo,
+      input({
+        id: "sqlite-pitfall",
+        topic: "memory",
+        title: "sqlite deadlock on the events table",
+        kind: "pitfall",
+      }),
+    );
     for (let i = 1; i <= 30; i++) {
-      await writeMemoryFact(repo, input({
-        id: `flood-${i}`,
-        title: `Flood change number ${i} with a fairly long title to spend budget`,
-      }));
+      await writeMemoryFact(
+        repo,
+        input({
+          id: `flood-${i}`,
+          title: `Flood change number ${i} with a fairly long title to spend budget`,
+        }),
+      );
     }
     const index = new MemoryIndex(new Database(":memory:"));
     await index.rebuild(repo);
@@ -293,11 +307,13 @@ describe("composeMemoryDelta", () => {
     expect(delta!.block).toContain("sqlite-pitfall");
     // Loud truncation: the marker names how many changes were cut, and
     // shown + omitted accounts for every change.
-    const marker = delta!.block.match(/… (\d+) more changes — use memory_search or memory_query/);
+    const marker = delta!.block.match(
+      /… (\d+) more changes — use memory_search or memory_query/,
+    );
     expect(marker).not.toBeNull();
-    const shown = delta!.block.split("\n").filter((line) =>
-      line.startsWith("- [repo]")
-    ).length;
+    const shown = delta!.block
+      .split("\n")
+      .filter((line) => line.startsWith("- [repo]")).length;
     expect(shown + Number(marker![1])).toBe(31);
     // The ceiling holds (chars/4 estimate; a handful of join newlines of slack).
     expect(Math.ceil(delta!.block.length / 4)).toBeLessThanOrEqual(310);
@@ -305,13 +321,15 @@ describe("composeMemoryDelta", () => {
 
   test("an empty delta composes to null — inject nothing", async () => {
     const repo = await makeRepo();
-    expect(await composeMemoryDelta({
-      repoRoot: repo,
-      brief: "anything at all",
-      highWater: { repo: 0, global: 0 },
-      budgetTokens: 300,
-      memory: null,
-    })).toBeNull();
+    expect(
+      await composeMemoryDelta({
+        repoRoot: repo,
+        brief: "anything at all",
+        highWater: { repo: 0, global: 0 },
+        budgetTokens: 300,
+        memory: null,
+      }),
+    ).toBeNull();
   });
 });
 
@@ -361,7 +379,9 @@ describe("wake-delta delivery integration", () => {
       expect(message.deliveredAt === null).toBe(false);
       expect(sender.calls).toHaveLength(1);
       const deliveredText = sender.calls[0]![1];
-      expect(deliveredText).toContain("📨 message from sam: Please review this.");
+      expect(deliveredText).toContain(
+        "📨 message from sam: Please review this.",
+      );
       expect(deliveredText).toContain(
         "🧠 Hive memory update since your last turn — 1 change",
       );
@@ -474,7 +494,10 @@ describe("wake-delta delivery integration", () => {
 
     // Same seed, no budget configured: delivery is byte-identical to before.
     const repo2 = await makeRepo();
-    await writeMemoryFact(repo2, input({ id: "alpha", title: "Alpha article" }));
+    await writeMemoryFact(
+      repo2,
+      input({ id: "alpha", title: "Alpha article" }),
+    );
     const store2 = new EpisodicStore(join(repo2, "episodic.db"));
     const db2 = new HiveDatabase(":memory:");
     const sender2 = new SubmittingSessionSender(db2);
@@ -510,23 +533,26 @@ describe("[memory] wake_budget_tokens config", () => {
         .wake_budget_tokens,
     ).toBe(150);
     expect(() =>
-      HiveConfigSchema.parse({ memory: { wake_budget_tokens: 0 } })
+      HiveConfigSchema.parse({ memory: { wake_budget_tokens: 0 } }),
     ).toThrow();
     expect(() =>
-      HiveConfigSchema.parse({ memory: { wake_budget_tokens: -1 } })
+      HiveConfigSchema.parse({ memory: { wake_budget_tokens: -1 } }),
     ).toThrow();
     expect(() =>
-      HiveConfigSchema.parse({ memory: { wake_budget_tokens: 1.5 } })
+      HiveConfigSchema.parse({ memory: { wake_budget_tokens: 1.5 } }),
     ).toThrow();
     // Strict: an unknown key is a typo, and a typo must not parse.
     expect(() =>
-      HiveConfigSchema.parse({ memory: { wake_budget_token: 300 } })
+      HiveConfigSchema.parse({ memory: { wake_budget_token: 300 } }),
     ).toThrow();
   });
 
   test("round-trips through config.toml and a bad value fails the loader loudly", async () => {
     const home = Bun.env.HIVE_HOME!;
-    await writeFile(join(home, "config.toml"), "[memory]\nwake_budget_tokens = 222\n");
+    await writeFile(
+      join(home, "config.toml"),
+      "[memory]\nwake_budget_tokens = 222\n",
+    );
     try {
       const config = await loadHiveConfig();
       expect(config.memory.wake_budget_tokens).toBe(222);
@@ -534,7 +560,10 @@ describe("[memory] wake_budget_tokens config", () => {
     } finally {
       await rm(join(home, "config.toml"), { force: true });
     }
-    await writeFile(join(home, "config.toml"), "[memory]\nwake_budget_tokens = -5\n");
+    await writeFile(
+      join(home, "config.toml"),
+      "[memory]\nwake_budget_tokens = -5\n",
+    );
     try {
       await expect(loadHiveConfig()).rejects.toThrow("Invalid hive config");
     } finally {

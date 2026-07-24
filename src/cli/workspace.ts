@@ -24,9 +24,12 @@
  * activates a CLI release activates its Workspace in the same atomic rename.
  * They cannot skew.
  */
+
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { getHiveHome } from "../daemon/db";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   checkForUpdate,
   fetchLatestFromGitHub,
@@ -34,20 +37,18 @@ import {
   readUpdateCache,
   type UpdateCheck,
 } from "../update/check";
+import { renderStartNotice } from "../update/notice";
 import {
   currentLink,
   detectInstallMethod,
   installRoot,
   workspaceAppPath,
 } from "../update/paths";
-import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
-import { getHiveHome } from "../daemon/db";
 import { isRepoInitialized, runInitCli } from "./init";
-import { startSession, type StartDeps, type StartedSession } from "./start";
-import { resolveProjectRoot } from "./project-root";
 import type { OrchestratorTool } from "./orchestrator";
+import { resolveProjectRoot } from "./project-root";
+import { type StartDeps, type StartedSession, startSession } from "./start";
 
 export class WorkspaceNotInstalledError extends Error {}
 
@@ -143,27 +144,28 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
     throw new WorkspaceNotInstalledError(
       IS_RELEASE_BUILD
         ? `the Workspace app is missing from ${currentLink(root)}\n` +
-          "Fix: run `hive update` to repair the installation"
+            "Fix: run `hive update` to repair the installation"
         : INSTALL_HINT,
     );
   }
-  const args = deps.session === undefined
-    ? []
-    : [
-        "--project",
-        deps.session.cwd,
-        "--port",
-        String(deps.session.port),
-        "--instance-id",
-        hiveInstanceSuffix(),
-        "--instance-home",
-        getHiveHome(),
-        "--hive",
-        deps.session.hivePath ?? process.execPath,
-        ...(deps.session.orchestrator === undefined
-          ? []
-          : ["--orchestrator", deps.session.orchestrator]),
-      ];
+  const args =
+    deps.session === undefined
+      ? []
+      : [
+          "--project",
+          deps.session.cwd,
+          "--port",
+          String(deps.session.port),
+          "--instance-id",
+          hiveInstanceSuffix(),
+          "--instance-home",
+          getHiveHome(),
+          "--hive",
+          deps.session.hivePath ?? process.execPath,
+          ...(deps.session.orchestrator === undefined
+            ? []
+            : ["--orchestrator", deps.session.orchestrator]),
+        ];
   return (deps.open ?? openApp)(app, args);
 }
 
@@ -194,7 +196,9 @@ export interface RunWorkspaceDeps {
  * same question init asks (TTY-gated; without a terminal it declines for the
  * run with one line). Init failing does not stop the launch — the session
  * boundary below still brings a fresh daemon up, and init can be re-run. */
-export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number> {
+export async function runWorkspace(
+  deps: RunWorkspaceDeps = {},
+): Promise<number> {
   const cwd = deps.cwd ?? process.cwd();
   const root = (deps.resolveRoot ?? resolveProjectRoot)(cwd);
   if (root !== null) {
@@ -202,12 +206,13 @@ export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number>
       (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
         `No Hive here yet — initializing ${root} first (\`hive init\`: skills, memory):`,
       );
-      await (deps.init ?? ((r: string) => runInitCli({ cwd: r })))(root)
-        .catch((error: unknown) => {
+      await (deps.init ?? ((r: string) => runInitCli({ cwd: r })))(root).catch(
+        (error: unknown) => {
           (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
             `init did not complete (${error instanceof Error ? error.message : String(error)}); starting anyway — re-run \`hive init\` to finish.`,
           );
-        });
+        },
+      );
     }
     const session = await (deps.start ?? startSession)({ cwd: root });
     return (deps.launch ?? launchWorkspace)({
@@ -221,18 +226,26 @@ export async function runWorkspace(deps: RunWorkspaceDeps = {}): Promise<number>
     });
   }
   try {
-    const check = await (deps.checkUpdate ?? (() => checkForUpdate({
-      fetchLatest: () => fetchLatestFromGitHub(),
-      now: () => Date.now(),
-      force: true,
-    })))();
-    if (check.state === "update-available" &&
-      (check.securityCritical || !isDismissed(check.latest, readUpdateCache()))) {
+    const check = await (
+      deps.checkUpdate ??
+      (() =>
+        checkForUpdate({
+          fetchLatest: () => fetchLatestFromGitHub(),
+          now: () => Date.now(),
+          force: true,
+        }))
+    )();
+    if (
+      check.state === "update-available" &&
+      (check.securityCritical || !isDismissed(check.latest, readUpdateCache()))
+    ) {
       const line = renderStartNotice({
         check,
         installMethod: detectInstallMethod(process.execPath),
       });
-      (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(line);
+      (deps.write ?? ((text: string) => process.stderr.write(`${text}\n`)))(
+        line,
+      );
     }
   } catch {
     // Update discovery must never turn a standalone app launch into an error.

@@ -1,18 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import {
-  graphJsonPath,
-  servingGraphPath,
-} from "../../src/adapters/graphify";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { graphJsonPath, servingGraphPath } from "../../src/adapters/graphify";
 import { HiveDatabase } from "../../src/daemon/db";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const tempRoots: string[] = [];
 const previousHome = process.env.HIVE_HOME;
@@ -20,7 +17,9 @@ const previousHome = process.env.HIVE_HOME;
 afterEach(async () => {
   process.env.HIVE_HOME = previousHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -53,7 +52,10 @@ async function connectedClient(daemon: HiveDaemon): Promise<Client> {
     new URL("http://hive/mcp"),
     { fetch: actingAs(daemon, "operator", "operator") },
   );
-  const client = new Client({ name: "hive-graph-locate-test", version: "1.0.0" });
+  const client = new Client({
+    name: "hive-graph-locate-test",
+    version: "1.0.0",
+  });
   await client.connect(transport);
   return client;
 }
@@ -66,9 +68,11 @@ async function locate(
     name: "graph_locate",
     arguments: { question },
   });
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -77,13 +81,43 @@ async function locate(
 
 const SYNTHETIC_GRAPH = JSON.stringify({
   nodes: [
-    { id: "auth", label: "auth.ts", source_file: "src/auth.ts", source_location: "L1", community: 1 },
-    { id: "auth_login", label: "loginUser()", source_file: "src/auth.ts", source_location: "L9", community: 1 },
-    { id: "session", label: "session.ts", source_file: "src/session.ts", source_location: "L1", community: 1 },
-    { id: "session_create", label: "createSession()", source_file: "src/session.ts", source_location: "L5", community: 1 },
+    {
+      id: "auth",
+      label: "auth.ts",
+      source_file: "src/auth.ts",
+      source_location: "L1",
+      community: 1,
+    },
+    {
+      id: "auth_login",
+      label: "loginUser()",
+      source_file: "src/auth.ts",
+      source_location: "L9",
+      community: 1,
+    },
+    {
+      id: "session",
+      label: "session.ts",
+      source_file: "src/session.ts",
+      source_location: "L1",
+      community: 1,
+    },
+    {
+      id: "session_create",
+      label: "createSession()",
+      source_file: "src/session.ts",
+      source_location: "L5",
+      community: 1,
+    },
   ],
   links: [
-    { relation: "imports_from", confidence: "EXTRACTED", context: "import", source: "auth", target: "session" },
+    {
+      relation: "imports_from",
+      confidence: "EXTRACTED",
+      context: "import",
+      source: "auth",
+      target: "session",
+    },
   ],
 });
 
@@ -95,9 +129,14 @@ describe("graph_locate over the daemon's real MCP interface", () => {
     await writeFile(graphJsonPath(repoRoot), SYNTHETIC_GRAPH);
     const client = await connectedClient(daemon);
     try {
-      const result = await locate(client, "where does user login create a session");
+      const result = await locate(
+        client,
+        "where does user login create a session",
+      );
       expect(result.available).toBe(true);
-      expect(result.answer).toContain("NODE loginUser() [src=src/auth.ts loc=L9");
+      expect(result.answer).toContain(
+        "NODE loginUser() [src=src/auth.ts loc=L9",
+      );
       expect(result.answer).toContain(
         "EDGE auth.ts --imports_from [EXTRACTED context=import]--> session.ts",
       );
@@ -118,7 +157,10 @@ describe("graph_locate over the daemon's real MCP interface", () => {
     await writeFile(servingGraphPath(repoRoot), SYNTHETIC_GRAPH);
     const client = await connectedClient(daemon);
     try {
-      const result = await locate(client, "where does user login create a session");
+      const result = await locate(
+        client,
+        "where does user login create a session",
+      );
       expect(result.available).toBe(true);
       expect(result.answer).toContain("NODE loginUser()");
     } finally {
@@ -134,7 +176,10 @@ describe("graph_locate over the daemon's real MCP interface", () => {
     await writeFile(graphJsonPath(repoRoot), SYNTHETIC_GRAPH);
     const client = await connectedClient(daemon);
     try {
-      const result = await locate(client, "kubernetes ingress reconciliation loop");
+      const result = await locate(
+        client,
+        "kubernetes ingress reconciliation loop",
+      );
       expect(result.available).toBe(true);
       expect(result.answer).toContain("No strong leads");
       expect(result.answer).toContain("grep");

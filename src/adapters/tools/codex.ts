@@ -1,30 +1,23 @@
-import {
-  chmod,
-  mkdir,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { createReadStream, realpathSync } from "node:fs";
+import { createReadStream, type Dirent, realpathSync } from "node:fs";
+import { chmod, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import {
+  type GraphifyHookKind,
   graphifyHookPath,
   writeGraphifyHook,
-  type GraphifyHookKind,
 } from "./graphify-hook";
-import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
+import { resolveProviderExecutable } from "./provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
+  type RecoverySessionArtifact,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-  type RecoverySessionArtifact,
 } from "./recovery-session";
-import { resolveProviderExecutable } from "./provider-executable";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */
@@ -205,9 +198,7 @@ function buildCodexConfigArgs(
   ): string =>
     `hooks.${event}=[{${
       matcher === undefined ? "" : `matcher=${tomlString(matcher)},`
-    }hooks=[{type="command",command=${
-      tomlString(command)
-    },timeout=5}]}]`;
+    }hooks=[{type="command",command=${tomlString(command)},timeout=5}]}]`;
   args.push(
     ...buildCodexTrustArgs(options.worktreePath),
     "--dangerously-bypass-hook-trust",
@@ -246,27 +237,26 @@ function buildCodexConfigArgs(
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     ...((options.dangerous ?? false)
-      ? [
-        "-c",
-        'mcp_servers.hive.default_tools_approval_mode="approve"',
-      ]
+      ? ["-c", 'mcp_servers.hive.default_tools_approval_mode="approve"']
       : []),
     ...((options.withCapabilityToken ?? false)
       ? [
-        "-c",
-        `mcp_servers.hive.bearer_token_env_var=${tomlString(CODEX_CAPABILITY_TOKEN_ENV)}`,
-      ]
-      : []),
-    ...(options.graphifyUrl === undefined ? [] : [
-      "-c",
-      `mcp_servers.graphify.url=${tomlString(options.graphifyUrl)}`,
-      ...((options.dangerous ?? false)
-        ? [
           "-c",
-          'mcp_servers.graphify.default_tools_approval_mode="approve"',
+          `mcp_servers.hive.bearer_token_env_var=${tomlString(CODEX_CAPABILITY_TOKEN_ENV)}`,
         ]
-        : []),
-    ]),
+      : []),
+    ...(options.graphifyUrl === undefined
+      ? []
+      : [
+          "-c",
+          `mcp_servers.graphify.url=${tomlString(options.graphifyUrl)}`,
+          ...((options.dangerous ?? false)
+            ? [
+                "-c",
+                'mcp_servers.graphify.default_tools_approval_mode="approve"',
+              ]
+            : []),
+        ]),
     // Detach the human's own servers from this agent. Same override channel as
     // hooks and trust, so spawn and resume stay one shape. When Hive attaches
     // graphify, "graphify" joins the keep-set: otherwise a user's inherited
@@ -308,10 +298,10 @@ export function buildCodexResumeCommand(
 }
 
 export function resolveWorkingCodexExecutable() {
-  return resolveProviderExecutable(
-    "codex",
-    [".local/bin/codex", ".codex/bin/codex"],
-  );
+  return resolveProviderExecutable("codex", [
+    ".local/bin/codex",
+    ".codex/bin/codex",
+  ]);
 }
 
 export function codexSessionsDirectory(home = homedir()): string {
@@ -341,7 +331,8 @@ async function findCodexRollout(
   for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
     const meta = await readRolloutSessionMeta(rollout.path);
     if (
-      meta !== null && meta.cwd === target &&
+      meta !== null &&
+      meta.cwd === target &&
       (sessionId === undefined || meta.sessionId === sessionId)
     ) {
       return {
@@ -362,7 +353,7 @@ async function listCodexRollouts(
   const pending = [codexSessionsDirectory(home)];
   while (pending.length > 0) {
     const directory = pending.pop()!;
-    let entries;
+    let entries: Dirent[];
     try {
       entries = await readdir(directory, { withFileTypes: true });
     } catch (error) {
@@ -476,8 +467,10 @@ async function readRolloutSessionMeta(
     return null;
   }
   if (
-    typeof parsed !== "object" || parsed === null ||
-    !("type" in parsed) || parsed.type !== "session_meta"
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("type" in parsed) ||
+    parsed.type !== "session_meta"
   ) {
     if (strictEvidence) {
       invalidRecoveryArtifactEvidence(
@@ -489,9 +482,11 @@ async function readRolloutSessionMeta(
     return null;
   }
   if (
-    !("payload" in parsed) || typeof parsed.payload !== "object" ||
+    !("payload" in parsed) ||
+    typeof parsed.payload !== "object" ||
     parsed.payload === null
-  ) throw new Error(`Invalid Codex session_meta in ${path}`);
+  )
+    throw new Error(`Invalid Codex session_meta in ${path}`);
   const payload = parsed.payload as Record<string, unknown>;
   const sessionId = payload.id ?? payload.session_id;
   if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
@@ -550,9 +545,9 @@ export async function writeCodexAgentConfig(
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
     writeGraphifyHook(graphifyPath, options.graphifyUrl),
     options.capabilityToken === undefined
-      // A leftover token from an earlier process must not outlive the spawn
-      // that owned it.
-      ? rm(tokenPath, { force: true })
+      ? // A leftover token from an earlier process must not outlive the spawn
+        // that owned it.
+        rm(tokenPath, { force: true })
       : writeFile(tokenPath, options.capabilityToken, { mode: 0o600 }),
   ]);
   await Promise.all([

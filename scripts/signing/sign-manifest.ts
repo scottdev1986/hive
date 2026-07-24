@@ -29,7 +29,10 @@ function loadPrivateKey(base64: string) {
   });
 }
 
-export function signManifest(manifestBytes: Uint8Array, privateKeyBase64: string): string {
+export function signManifest(
+  manifestBytes: Uint8Array,
+  privateKeyBase64: string,
+): string {
   const key = loadPrivateKey(privateKeyBase64);
   return edSign(null, manifestBytes, key).toString("base64");
 }

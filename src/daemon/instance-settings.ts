@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { HiveDatabase, getHiveHome } from "./db";
+import { getHiveHome, HiveDatabase } from "./db";
 import { defaultHiveHome, ORDINARY_WORKSPACE_RUNTIME } from "./instances";
 import {
+  type RoutingPolicyStore,
   readRoutingPolicyDatabase,
-  RoutingPolicyStore,
 } from "./routing-policy-store";
 import { SelectionPreferenceStore } from "./selection-preferences";
 
@@ -65,11 +65,14 @@ export function inheritOrdinaryWorkspaceSelection(
   target: RoutingPolicyStore,
   options: OrdinarySelectionInheritanceOptions = {},
 ): boolean {
-  const ordinary = options.ordinaryWorkspace ??
+  const ordinary =
+    options.ordinaryWorkspace ??
     process.env[ORDINARY_WORKSPACE_RUNTIME] === "1";
   if (!ordinary) return false;
   try {
-    const selection = (options.preferences ?? new SelectionPreferenceStore()).read();
+    const selection = (
+      options.preferences ?? new SelectionPreferenceStore()
+    ).read();
     if (selection === null) return false;
     return target.importSelectionPreference(selection, options.now).imported;
   } catch (error) {

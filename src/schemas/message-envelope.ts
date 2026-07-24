@@ -2,10 +2,10 @@ import { z } from "zod";
 import { ControlIntentSchema, MessagePrioritySchema } from "./message";
 import {
   DecimalUint64Schema,
+  domainUuidV7Schema,
   PositiveGenerationSchema,
   Rfc3339UtcMillisecondsSchema,
   SessionLocatorSchema,
-  domainUuidV7Schema,
 } from "./session-protocol";
 
 /**
@@ -30,8 +30,12 @@ export const TERMINAL_DELIVERY_EVIDENCE = [
   "attempt-in-doubt",
 ] as const;
 
-export const TerminalDeliveryEvidenceSchema = z.enum(TERMINAL_DELIVERY_EVIDENCE);
-export type TerminalDeliveryEvidence = z.infer<typeof TerminalDeliveryEvidenceSchema>;
+export const TerminalDeliveryEvidenceSchema = z.enum(
+  TERMINAL_DELIVERY_EVIDENCE,
+);
+export type TerminalDeliveryEvidence = z.infer<
+  typeof TerminalDeliveryEvidenceSchema
+>;
 
 export const PROVIDER_ADAPTER_CONTRACTS = {
   "claude-tui": {
@@ -61,29 +65,37 @@ export const TERMINAL_MESSAGE_LIMITS = {
   automatedPayloadBytes: 1024 * 1024,
 } as const;
 
-export const TerminalDeliveryAttemptSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  transactionId: domainUuidV7Schema("txn"),
-  messageId: domainUuidV7Schema("msg"),
-  locator: SessionLocatorSchema,
-  recipientGeneration: PositiveGenerationSchema,
-  adapter: z.enum(TERMINAL_PROVIDER_ADAPTERS),
-  priority: MessagePrioritySchema,
-  intent: ControlIntentSchema,
-  evidence: TerminalDeliveryEvidenceSchema,
-  byteRange: z.strictObject({
-    start: DecimalUint64Schema,
-    endExclusive: DecimalUint64Schema,
-  }).nullable(),
-  nativeEndpointReceipt: z.string().min(1).nullable(),
-  startedAt: Rfc3339UtcMillisecondsSchema,
-  completedAt: Rfc3339UtcMillisecondsSchema.nullable(),
-  evidenceRefs: z.array(z.string().min(1)),
-}).refine(
-  ({ byteRange, nativeEndpointReceipt }) => (byteRange === null) !== (nativeEndpointReceipt === null),
-  "exactly one transport receipt form is required",
-).meta({ "x-hive-exactly-one-of": ["byteRange", "nativeEndpointReceipt"] });
-export type TerminalDeliveryAttempt = z.infer<typeof TerminalDeliveryAttemptSchema>;
+export const TerminalDeliveryAttemptSchema = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    transactionId: domainUuidV7Schema("txn"),
+    messageId: domainUuidV7Schema("msg"),
+    locator: SessionLocatorSchema,
+    recipientGeneration: PositiveGenerationSchema,
+    adapter: z.enum(TERMINAL_PROVIDER_ADAPTERS),
+    priority: MessagePrioritySchema,
+    intent: ControlIntentSchema,
+    evidence: TerminalDeliveryEvidenceSchema,
+    byteRange: z
+      .strictObject({
+        start: DecimalUint64Schema,
+        endExclusive: DecimalUint64Schema,
+      })
+      .nullable(),
+    nativeEndpointReceipt: z.string().min(1).nullable(),
+    startedAt: Rfc3339UtcMillisecondsSchema,
+    completedAt: Rfc3339UtcMillisecondsSchema.nullable(),
+    evidenceRefs: z.array(z.string().min(1)),
+  })
+  .refine(
+    ({ byteRange, nativeEndpointReceipt }) =>
+      (byteRange === null) !== (nativeEndpointReceipt === null),
+    "exactly one transport receipt form is required",
+  )
+  .meta({ "x-hive-exactly-one-of": ["byteRange", "nativeEndpointReceipt"] });
+export type TerminalDeliveryAttempt = z.infer<
+  typeof TerminalDeliveryAttemptSchema
+>;
 
 export const MESSAGE_TERMINAL_WIRE_SCHEMAS = {
   terminalDeliveryAttempt: TerminalDeliveryAttemptSchema,

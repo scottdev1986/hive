@@ -8,8 +8,8 @@ import {
   readMemoryFact,
   writeMemoryFact,
 } from "../adapters/memory";
-import { runMemoryConsolidation } from "../daemon/memory-consolidate";
 import { EpisodicStore } from "../daemon/episodic-store";
+import { runMemoryConsolidation } from "../daemon/memory-consolidate";
 import {
   MemoryEmbeddingIndex,
   MemoryEmbeddingService,
@@ -123,9 +123,10 @@ function buildCanaries(): Canary[] {
   return CANARY_TOKENS.map((token, index) => {
     const { topic, phrase } = CANARY_TOPICS[index % CANARY_TOPICS.length]!;
     const capitalized = token[0]!.toUpperCase() + token.slice(1);
-    const status: MemoryVerificationStatus = index === CONFLICTED_INDEX
-      ? "conflicted"
-      : CANARY_STATUSES[index % CANARY_STATUSES.length]!;
+    const status: MemoryVerificationStatus =
+      index === CONFLICTED_INDEX
+        ? "conflicted"
+        : CANARY_STATUSES[index % CANARY_STATUSES.length]!;
     const kind: MemoryKind = PITFALL_INDICES.has(index) ? "pitfall" : "article";
     let body =
       `Self-test canary ${token} covering ${phrase}. ` +
@@ -203,7 +204,8 @@ const CONSOLIDATION_PAIR = [
 // loading onnxruntime into a context that cannot host it (the live-model
 // proof lives in test/memory-embedding-live.test.ts). CI pairs this with
 // --strict so a skip there is a failure, not a silent gap (defect D4).
-export const MEMORY_SELF_TEST_EMBEDDINGS_ENV = "HIVE_MEMORY_SELF_TEST_EMBEDDINGS";
+export const MEMORY_SELF_TEST_EMBEDDINGS_ENV =
+  "HIVE_MEMORY_SELF_TEST_EMBEDDINGS";
 
 function canaryWriteInput(canary: Canary): MemoryWriteInput {
   return {
@@ -359,8 +361,10 @@ export async function probeMemorySelfTest(
     for (const canary of CANARIES) {
       const fact = await readMemoryFact(root, "repo", canary.id);
       if (
-        fact === null || fact.title !== canary.title ||
-        fact.status !== canary.status || fact.kind !== canary.kind
+        fact === null ||
+        fact.title !== canary.title ||
+        fact.status !== canary.status ||
+        fact.kind !== canary.kind
       ) {
         mismatched.push(canary.id);
       }
@@ -396,7 +400,10 @@ export async function probeMemorySelfTest(
         title: canary.title.toUpperCase(),
       });
     } catch (error) {
-      if (error instanceof Error && /duplicate memory article title/i.test(error.message)) {
+      if (
+        error instanceof Error &&
+        /duplicate memory article title/i.test(error.message)
+      ) {
         return "normalized-title duplicate rejected with the colliding id named";
       }
       throw error;
@@ -436,8 +443,10 @@ export async function probeMemorySelfTest(
       await deleteMemoryFact(root, "repo", DELETE_GUARD_TARGET);
     } catch (error) {
       if (error instanceof Error && /still referenced/.test(error.message)) {
-        return `delete of ${DELETE_GUARD_TARGET} refused while ` +
-          `${DELETE_GUARD_REFERENCER} supersedes it`;
+        return (
+          `delete of ${DELETE_GUARD_TARGET} refused while ` +
+          `${DELETE_GUARD_REFERENCER} supersedes it`
+        );
       }
       throw error;
     }
@@ -450,9 +459,8 @@ export async function probeMemorySelfTest(
   // embedding service is unavailable both print SKIP and do not fail the run
   // — the exit code reflects only what was provable here, and the real-model
   // proof lives in test/memory-embedding-live.test.ts.
-  const embedder = options.service === undefined
-    ? null
-    : await options.service.embedder();
+  const embedder =
+    options.service === undefined ? null : await options.service.embedder();
   const skippedDetail = "embeddings unavailable";
   let semanticRecall: SelfTestAssertion;
   let consolidationDryRun: SelfTestAssertion;
@@ -497,8 +505,13 @@ export async function probeMemorySelfTest(
           SEMANTIC_PARAPHRASE_QUERY,
           5,
         );
-        if (hits === null) throw new Error("semantic surface went unavailable mid-run");
-        if (!hits.some((hit) => hit.scope === "repo" && hit.id === SEMANTIC_CANARY_ID)) {
+        if (hits === null)
+          throw new Error("semantic surface went unavailable mid-run");
+        if (
+          !hits.some(
+            (hit) => hit.scope === "repo" && hit.id === SEMANTIC_CANARY_ID,
+          )
+        ) {
           throw new Error(
             `paraphrase query did not rank ${SEMANTIC_CANARY_ID} in the ` +
               `semantic top 5 (got: ${hits.map((hit) => hit.id).join(", ") || "no hits"})`,
@@ -511,7 +524,8 @@ export async function probeMemorySelfTest(
         const before = new Map<string, string>();
         for (const id of [CONSOLIDATION_OLDER_ID, CONSOLIDATION_NEWER_ID]) {
           const fact = await readMemoryFact(root, "repo", id);
-          if (fact === null) throw new Error(`planted pair member ${id} missing`);
+          if (fact === null)
+            throw new Error(`planted pair member ${id} missing`);
           before.set(id, await readFile(fact.path, "utf8"));
         }
         const report = await runMemoryConsolidation({
@@ -532,11 +546,18 @@ export async function probeMemorySelfTest(
               `(identical: ${report.identical.length}, similar: ${report.similar.length})`,
           );
         }
-        const bucket = report.identical.includes(pair) ? "identical" : "similar";
+        const bucket = report.identical.includes(pair)
+          ? "identical"
+          : "similar";
         for (const [id, contents] of before) {
           const fact = await readMemoryFact(root, "repo", id);
-          if (fact === null || await readFile(fact.path, "utf8") !== contents) {
-            throw new Error(`report mode modified ${id} — consolidation must be read-only without --apply`);
+          if (
+            fact === null ||
+            (await readFile(fact.path, "utf8")) !== contents
+          ) {
+            throw new Error(
+              `report mode modified ${id} — consolidation must be read-only without --apply`,
+            );
           }
         }
         return (
@@ -580,11 +601,11 @@ export function applyStrictMode(
   return assertions.map((assertion) =>
     assertion.skipped === true
       ? {
-        name: assertion.name,
-        passed: false,
-        detail: `skipped in strict mode (${assertion.detail})`,
-      }
-      : assertion
+          name: assertion.name,
+          passed: false,
+          detail: `skipped in strict mode (${assertion.detail})`,
+        }
+      : assertion,
   );
 }
 
@@ -600,12 +621,13 @@ export async function runMemorySelfTest(
 ): Promise<MemorySelfTestReport> {
   const base = await mkdtemp(join(tmpdir(), "hive-memory-self-test-"));
   const previousHome = process.env.HIVE_HOME;
-  const service = options.service ??
+  const service =
+    options.service ??
     (process.env[MEMORY_SELF_TEST_EMBEDDINGS_ENV] === "1"
       ? new MemoryEmbeddingService(
-        { provider: "local", model: "bge-small-en-v1.5" },
-        { cacheDir: memoryModelsDir() },
-      )
+          { provider: "local", model: "bge-small-en-v1.5" },
+          { cacheDir: memoryModelsDir() },
+        )
       : undefined);
   process.env.HIVE_HOME = join(base, "hive-home");
   try {
@@ -619,13 +641,18 @@ export async function runMemorySelfTest(
       options.strict === true,
     );
     return {
-      ok: assertions.every((assertion) =>
-        assertion.passed || assertion.skipped === true
+      ok: assertions.every(
+        (assertion) => assertion.passed || assertion.skipped === true,
       ),
-      lines: assertions.map((assertion) =>
-        `${
-          assertion.skipped === true ? "SKIP" : assertion.passed ? "PASS" : "FAIL"
-        } ${assertion.name} — ` + assertion.detail
+      lines: assertions.map(
+        (assertion) =>
+          `${
+            assertion.skipped === true
+              ? "SKIP"
+              : assertion.passed
+                ? "PASS"
+                : "FAIL"
+          } ${assertion.name} — ` + assertion.detail,
       ),
     };
   } finally {
@@ -645,10 +672,10 @@ export async function memorySelfTestCli(
   console.log(
     report.ok
       ? `memory self-test: all ${passed} assertions passed` +
-        (skipped.length > 0
-          ? ` (${skipped.length} skipped — embeddings unavailable; set ` +
-            `${MEMORY_SELF_TEST_EMBEDDINGS_ENV}=1 to prove the semantic leg)`
-          : "")
+          (skipped.length > 0
+            ? ` (${skipped.length} skipped — embeddings unavailable; set ` +
+              `${MEMORY_SELF_TEST_EMBEDDINGS_ENV}=1 to prove the semantic leg)`
+            : "")
       : "memory self-test: FAILED — the memory system is not recalling correctly",
   );
   return report.ok ? 0 : 1;

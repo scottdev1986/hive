@@ -1,14 +1,22 @@
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import type { Dirent } from "node:fs";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { resolveProviderExecutable } from "./provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
+  type RecoverySessionArtifact,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-  type RecoverySessionArtifact,
 } from "./recovery-session";
-import { resolveProviderExecutable } from "./provider-executable";
 
 export interface GrokSpawnOptions {
   model: string;
@@ -80,21 +88,24 @@ export function probeGrokCliVersion(
       killSignal: "SIGKILL",
     });
     if (result.exitCode !== 0) return null;
-    return parseGrokCliVersion(result.stdout.toString()) ?? {
-      version: null,
-      buildHash: null,
-      channel: null,
-    };
+    return (
+      parseGrokCliVersion(result.stdout.toString()) ?? {
+        version: null,
+        buildHash: null,
+        channel: null,
+      }
+    );
   } catch {
     return null;
   }
 }
 
 export function resolveWorkingGrokExecutable() {
-  return resolveProviderExecutable(
-    "grok",
-    [".local/bin/grok", ".grok/bin/grok", ".opencode/bin/grok"],
-  );
+  return resolveProviderExecutable("grok", [
+    ".local/bin/grok",
+    ".grok/bin/grok",
+    ".opencode/bin/grok",
+  ]);
 }
 
 export function probeGrokDefaultModel(executable = "grok"): string | null {
@@ -121,7 +132,10 @@ function grokPermissionArgs(readOnly: boolean): string[] {
   if (!readOnly) return ["--always-approve"];
   return [
     ...GROK_READ_ONLY_PERMISSION_RULES.deny.flatMap((rule) => ["--deny", rule]),
-    ...GROK_READ_ONLY_PERMISSION_RULES.allow.flatMap((rule) => ["--allow", rule]),
+    ...GROK_READ_ONLY_PERMISSION_RULES.allow.flatMap((rule) => [
+      "--allow",
+      rule,
+    ]),
   ];
 }
 
@@ -178,7 +192,8 @@ function stripHiveMcpTables(source: string): string {
   for (const line of lines) {
     const header = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/.exec(line)?.[1];
     if (header !== undefined) {
-      skipping = header === "mcp_servers.hive" ||
+      skipping =
+        header === "mcp_servers.hive" ||
         header.startsWith("mcp_servers.hive.") ||
         header === "mcp_servers.graphify" ||
         header.startsWith("mcp_servers.graphify.");
@@ -209,15 +224,19 @@ export async function writeGrokAgentConfig(
   await mkdir(directory, { recursive: true });
   const existing = await readFile(path, "utf8").catch((error: unknown) => {
     if (
-      typeof error === "object" && error !== null && "code" in error &&
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
       error.code === "ENOENT"
-    ) return "";
+    )
+      return "";
     throw error;
   });
   const prefix = stripHiveMcpTables(existing);
-  const authorization = options.capabilityToken === undefined
-    ? existingHiveAuthorization(existing)
-    : `Bearer ${options.capabilityToken}`;
+  const authorization =
+    options.capabilityToken === undefined
+      ? existingHiveAuthorization(existing)
+      : `Bearer ${options.capabilityToken}`;
   const owned = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
@@ -238,9 +257,13 @@ export async function writeGrokAgentConfig(
           "enabled = true",
         ]),
   ].join("\n");
-  await writeFile(path, `${prefix.length === 0 ? "" : `${prefix}\n\n`}${owned}\n`, {
-    mode: 0o600,
-  });
+  await writeFile(
+    path,
+    `${prefix.length === 0 ? "" : `${prefix}\n\n`}${owned}\n`,
+    {
+      mode: 0o600,
+    },
+  );
 }
 
 export async function removeGrokAgentConfig(
@@ -249,9 +272,12 @@ export async function removeGrokAgentConfig(
   const path = join(worktreePath, ".grok", "config.toml");
   const existing = await readFile(path, "utf8").catch((error: unknown) => {
     if (
-      typeof error === "object" && error !== null && "code" in error &&
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
       error.code === "ENOENT"
-    ) return null;
+    )
+      return null;
     throw error;
   });
   if (existing === null) return false;
@@ -267,7 +293,8 @@ export async function removeGrokAgentConfig(
   if (
     typeof hiveUrl !== "string" ||
     !/^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(hiveUrl)
-  ) return false;
+  )
+    return false;
   const remaining = stripHiveMcpTables(existing);
   if (remaining.trim().length === 0) await rm(path, { force: true });
   else await writeFile(path, `${remaining}\n`, { mode: 0o600 });
@@ -315,7 +342,7 @@ async function findGrokSummaries(
 ): Promise<GrokSummaryLocation[]> {
   const target = resolve(worktreePath);
   const root = grokSessionsDirectory(home);
-  let projects;
+  let projects: Dirent[];
   try {
     projects = await readdir(root, { withFileTypes: true });
   } catch (error) {
@@ -348,7 +375,7 @@ async function findGrokSummaries(
     if (project.name !== encodeURIComponent(target) && recordedCwd !== target) {
       continue;
     }
-    let sessions;
+    let sessions: Dirent[];
     try {
       sessions = await readdir(projectPath, { withFileTypes: true });
     } catch (error) {
@@ -400,7 +427,8 @@ async function findGrokSummaries(
       if (
         info.cwd !== target ||
         (sessionId !== undefined && info.id !== sessionId)
-      ) continue;
+      )
+        continue;
       if (
         parsed.current_model_id !== undefined &&
         typeof parsed.current_model_id !== "string"
@@ -414,9 +442,10 @@ async function findGrokSummaries(
         }
         throw new Error(`Invalid Grok summary at ${summaryPath}`);
       }
-      const model = typeof parsed.current_model_id === "string"
-        ? parsed.current_model_id
-        : null;
+      const model =
+        typeof parsed.current_model_id === "string"
+          ? parsed.current_model_id
+          : null;
       summaries.push({
         id: info.id,
         model,
@@ -469,8 +498,10 @@ export async function findLatestGrokSessionDirectory(
   sessionId?: string,
   home?: string,
 ): Promise<string | null> {
-  return (await findLatestGrokSummary(worktreePath, home, sessionId))
-    ?.directory ?? null;
+  return (
+    (await findLatestGrokSummary(worktreePath, home, sessionId))?.directory ??
+    null
+  );
 }
 
 export async function readLiveGrokModel(
@@ -478,5 +509,7 @@ export async function readLiveGrokModel(
   sessionId?: string,
   home?: string,
 ): Promise<string | null> {
-  return (await findLatestGrokSummary(worktreePath, home, sessionId))?.model ?? null;
+  return (
+    (await findLatestGrokSummary(worktreePath, home, sessionId))?.model ?? null
+  );
 }

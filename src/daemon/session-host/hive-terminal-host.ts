@@ -1,13 +1,5 @@
 import { createHash } from "node:crypto";
-import type {
-  ClaimResult,
-  InputReceipt,
-  ResizeResult,
-  SessionInspection as NeutralSessionInspection,
-  SessionRef,
-  TerminalHost,
-  TerminationResult as NeutralTerminationResult,
-} from "./terminal-host-contract";
+import type { AgentRecord } from "../../schemas";
 import type {
   AttachGrant,
   AttachRequest,
@@ -21,13 +13,21 @@ import type {
   VisibilityLease,
   VisibilityRequest,
 } from "./contract";
-import type { AgentRecord } from "../../schemas";
 import { sameSessionLocator } from "./locators";
 import {
-  HiveTerminalBindingSchema,
   type HiveTerminalBinding,
+  HiveTerminalBindingSchema,
   type TerminalHostBindingStore,
 } from "./terminal-host-binding";
+import type {
+  ClaimResult,
+  InputReceipt,
+  SessionInspection as NeutralSessionInspection,
+  TerminationResult as NeutralTerminationResult,
+  ResizeResult,
+  SessionRef,
+  TerminalHost,
+} from "./terminal-host-contract";
 
 /** A sessiond host can outlive the vendor process it launched. A stale
  * executable identity is therefore death evidence, unlike missing identity
@@ -35,9 +35,11 @@ import {
 export function sessiondVendorProcessIsDead(
   inspection: Pick<SessionInspection, "presence" | "diagnosticIds">,
 ): boolean {
-  return inspection.presence === "exited" ||
+  return (
+    inspection.presence === "exited" ||
     inspection.presence === "lost" ||
-    inspection.diagnosticIds.includes("SESSIOND_EXECUTABLE_EVIDENCE_STALE");
+    inspection.diagnosticIds.includes("SESSIOND_EXECUTABLE_EVIDENCE_STALE")
+  );
 }
 
 /**
@@ -54,7 +56,9 @@ export function requireSessiondAgentLocator(
     locator.subject.kind !== "agent" ||
     locator.subject.agentId !== agent.id
   ) {
-    throw new Error(`Agent ${agent.id} has a mismatched sessiond SessionLocator`);
+    throw new Error(
+      `Agent ${agent.id} has a mismatched sessiond SessionLocator`,
+    );
   }
   return HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
 }
@@ -63,7 +67,8 @@ export function requireSessiondRootLocator(
   locator: SessionLocator | undefined,
 ): HiveTerminalBinding["locator"] {
   if (
-    locator === undefined || locator.hostKind !== "sessiond" ||
+    locator === undefined ||
+    locator.hostKind !== "sessiond" ||
     locator.subject.kind !== "root"
   ) {
     throw new Error("Queen has a mismatched sessiond SessionLocator");
@@ -73,13 +78,9 @@ export function requireSessiondRootLocator(
 
 type TerminalLifecycleHost = Pick<
   TerminalHost,
-  | "claimInput"
-  | "submitInput"
-  | "resize"
-  | "inspect"
-  | "list"
-  | "terminate"
-> & Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
+  "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
+> &
+  Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
 
 export type HiveTerminalPolicy = Pick<
   HiveTerminalBinding,
@@ -92,7 +93,9 @@ export interface HiveTerminalHostAdapterOptions {
 
 export class TerminalHostBindingNotFoundError extends Error {
   constructor() {
-    super("sessiond locator has no terminal-host binding in this Hive instance");
+    super(
+      "sessiond locator has no terminal-host binding in this Hive instance",
+    );
     this.name = "TerminalHostBindingNotFoundError";
   }
 }
@@ -136,7 +139,10 @@ function presenceForLifecycle(
   }
 }
 
-function terminationIdempotencyKey(requestId: string, session: SessionRef): string {
+function terminationIdempotencyKey(
+  requestId: string,
+  session: SessionRef,
+): string {
   return createHash("sha256")
     .update("hive-sessiond-terminate-v1\0")
     .update(requestId)
@@ -329,27 +335,31 @@ export class HiveTerminalHostAdapter {
     diagnostics.add(VIEWER_COUNT_DIAGNOSTIC);
     diagnostics.add(RESOURCES_DIAGNOSTIC);
 
-    const providerRoot = inspection.child !== null &&
-        inspection.jobControl?.completeness === "complete"
-      ? {
-          pid: inspection.child.processId,
-          startToken: inspection.child.startToken,
-          processGroupId: inspection.jobControl.childProcessGroupId,
-        }
-      : null;
+    const providerRoot =
+      inspection.child !== null &&
+      inspection.jobControl?.completeness === "complete"
+        ? {
+            pid: inspection.child.processId,
+            startToken: inspection.child.startToken,
+            processGroupId: inspection.jobControl.childProcessGroupId,
+          }
+        : null;
     if (inspection.lifecycle === "running" && providerRoot === null) {
       diagnostics.add("SESSIOND_PROVIDER_ROOT_UNAVAILABLE");
     }
 
-    const executableVerified = inspection.lifecycle === "running" &&
+    const executableVerified =
+      inspection.lifecycle === "running" &&
       created.executableVerified &&
       created.verifiedProviderRoot !== null &&
       inspection.child?.processId === created.verifiedProviderRoot.pid &&
       inspection.child.startToken === created.verifiedProviderRoot.startToken;
     if (!executableVerified) {
-      diagnostics.add(created.executableVerified
-        ? "SESSIOND_EXECUTABLE_EVIDENCE_STALE"
-        : "SESSIOND_EXECUTABLE_UNVERIFIED");
+      diagnostics.add(
+        created.executableVerified
+          ? "SESSIOND_EXECUTABLE_EVIDENCE_STALE"
+          : "SESSIOND_EXECUTABLE_UNVERIFIED",
+      );
     }
 
     const checkpoint = inspection.checkpoints.newest;
@@ -357,27 +367,31 @@ export class HiveTerminalHostAdapter {
       diagnostics.add("SESSIOND_CHECKPOINT_CURSOR_UNAVAILABLE");
     }
 
-    const inputFree = inspection.inputOwner === null &&
+    const inputFree =
+      inspection.inputOwner === null &&
       inspection.lifecycle === "running" &&
       inspection.completeness === "complete" &&
       inspection.diagnostics.length === 0;
     if (!inputFree) diagnostics.add(INPUT_STATE_DIAGNOSTIC);
 
-    const pixelsDerived = inspection.window.value.widthPixels === 0 ||
+    const pixelsDerived =
+      inspection.window.value.widthPixels === 0 ||
       inspection.window.value.heightPixels === 0;
     if (pixelsDerived) {
       diagnostics.add("SESSIOND_PIXEL_GEOMETRY_DERIVED_NO_VIEWER");
     }
-    const visibility = inspection.lifecycle !== "running" &&
-        Date.parse(created.visibility.expiresAt) <= this.now().getTime()
-      ? { ...created.visibility, state: "expired" as const }
-      : created.visibility;
+    const visibility =
+      inspection.lifecycle !== "running" &&
+      Date.parse(created.visibility.expiresAt) <= this.now().getTime()
+        ? { ...created.visibility, state: "expired" as const }
+        : created.visibility;
 
     return {
       schemaVersion: 1,
       locator: binding.locator,
       presence: presenceForLifecycle(inspection.lifecycle),
-      complete: inspection.completeness === "complete" && diagnostics.size === 0,
+      complete:
+        inspection.completeness === "complete" && diagnostics.size === 0,
       hostPid: inspection.host?.processId ?? null,
       hostStartToken: inspection.host?.startToken ?? null,
       providerRoot,
@@ -395,9 +409,11 @@ export class HiveTerminalHostAdapter {
       geometry: {
         columns: inspection.window.value.columns,
         rows: inspection.window.value.rows,
-        widthPx: inspection.window.value.widthPixels ||
+        widthPx:
+          inspection.window.value.widthPixels ||
           inspection.window.value.columns * created.geometry.cellWidthPx,
-        heightPx: inspection.window.value.heightPixels ||
+        heightPx:
+          inspection.window.value.heightPixels ||
           inspection.window.value.rows * created.geometry.cellHeightPx,
         cellWidthPx: created.geometry.cellWidthPx,
         cellHeightPx: created.geometry.cellHeightPx,
@@ -420,9 +436,11 @@ export class HiveTerminalHostAdapter {
     result: NeutralTerminationResult,
   ): TerminationResult {
     const diagnostics = new Set(result.diagnostics);
-    const complete = result.completeness === "complete" &&
+    const complete =
+      result.completeness === "complete" &&
       result.reap.completeness === "complete";
-    const terminated = result.state === "terminated" &&
+    const terminated =
+      result.state === "terminated" &&
       complete &&
       result.reap.reaped &&
       result.survivors.length === 0;

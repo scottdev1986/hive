@@ -11,10 +11,11 @@
  * patch-per-push cadence the number is noise, and the security flag plus the
  * staged-and-waiting line already say everything the count would imply.
  */
-import type { InstallMethod } from "./paths";
-import { updateCommand } from "./paths";
+
 import type { UpdateCache, UpdateCheck } from "./check";
 import { CHECK_INTERVAL_MS, isDismissed } from "./check";
+import type { InstallMethod } from "./paths";
+import { updateCommand } from "./paths";
 
 export interface NoticeContext {
   readonly check: UpdateCheck;
@@ -106,7 +107,9 @@ export interface PassiveNoticeContext extends NoticeContext {
  * The passive notice for every other human command. Null means silence, which
  * is the common case and the correct default.
  */
-export function renderUpdateNotice(context: PassiveNoticeContext): string | null {
+export function renderUpdateNotice(
+  context: PassiveNoticeContext,
+): string | null {
   const { check, cache, interactive } = context;
   if (!interactive) return null;
   if (check.state !== "update-available") return null;
@@ -117,7 +120,10 @@ export function renderUpdateNotice(context: PassiveNoticeContext): string | null
   if (!check.securityCritical) {
     if (isDismissed(check.latest, cache)) return null;
     const lastNoticeAt = context.lastNoticeAt ?? null;
-    if (lastNoticeAt !== null && context.now - lastNoticeAt < CHECK_INTERVAL_MS) {
+    if (
+      lastNoticeAt !== null &&
+      context.now - lastNoticeAt < CHECK_INTERVAL_MS
+    ) {
       return null;
     }
   }
@@ -133,6 +139,11 @@ export function renderUpdateNotice(context: PassiveNoticeContext): string | null
   return check.securityCritical ? yellow(line) : dim(line);
 }
 
+const ANSI_SGR_PATTERN = new RegExp(
+  `${String.fromCharCode(27)}\\[[0-9;]*m`,
+  "g",
+);
+
 /** Strip SGR so tests and non-TTY consumers can assert on words, not escapes. */
 export const plain = (text: string): string =>
-  text.replace(/\u001B\[[0-9;]*m/g, "");
+  text.replace(ANSI_SGR_PATTERN, "");

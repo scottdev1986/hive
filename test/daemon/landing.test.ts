@@ -49,7 +49,10 @@ async function repo(): Promise<string> {
   return root;
 }
 
-const landFails = async (root: string, branch = "hive/writer"): Promise<string> => {
+const landFails = async (
+  root: string,
+  branch = "hive/writer",
+): Promise<string> => {
   try {
     await landBranch(root, branch);
   } catch (error) {
@@ -62,7 +65,11 @@ describe("runGit", () => {
   test("a fast failure is not a timeout — the bug the landing path shipped", async () => {
     const root = await repo();
     try {
-      const result = await runGit(root, ["merge", "--ff-only", "no-such-branch"]);
+      const result = await runGit(root, [
+        "merge",
+        "--ff-only",
+        "no-such-branch",
+      ]);
       // Bun sets `Subprocess.killed` on *any* exited process, so the old code's
       // `if (proc.killed && exitCode !== 0)` fired here and reported "git merge
       // timed out after 30000ms" — for a command that failed in milliseconds and
@@ -102,10 +109,13 @@ describe("the repository landing lease", () => {
     });
     await owner.exited;
     try {
-      await writeFile(lock, `${JSON.stringify({
-        pid: owner.pid,
-        token: crypto.randomUUID(),
-      })}\n`);
+      await writeFile(
+        lock,
+        `${JSON.stringify({
+          pid: owner.pid,
+          token: crypto.randomUUID(),
+        })}\n`,
+      );
       const { commit } = await landBranch(root, "hive/writer");
       expect(commit).toBe(git(root, ["rev-parse", "HEAD"]));
       expect(await Bun.file(lock).exists()).toBe(false);
@@ -123,10 +133,14 @@ describe("a blocked land says which file blocked it", () => {
 
       const message = await landFails(root);
       expect(message).toContain("app.ts");
-      expect(message).toContain("uncommitted changes the merge would overwrite");
+      expect(message).toContain(
+        "uncommitted changes the merge would overwrite",
+      );
       expect(message).toContain("Fix:");
       // The promise the message makes, which the code has to keep.
-      expect(message).toContain("will not discard uncommitted changes it did not write");
+      expect(message).toContain(
+        "will not discard uncommitted changes it did not write",
+      );
       // And it kept it: the edit is still there, unmerged and intact.
       expect(await Bun.file(join(root, "app.ts")).text()).toContain("// mine");
       expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
@@ -149,7 +163,9 @@ describe("a blocked land says which file blocked it", () => {
       expect(message).toContain("Fix:");
       expect(message).toContain("mv feature.ts feature.ts.mine");
       expect(message).not.toContain("untracked working tree files");
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe("my scratch notes\n");
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "my scratch notes\n",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -183,8 +199,12 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
 
       const { commit } = await landBranch(root, "hive/writer");
       expect(commit).toHaveLength(40);
-      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe("logo-bytes-v1\n");
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe("export const f = 1;\n");
+      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe(
+        "logo-bytes-v1\n",
+      );
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "export const f = 1;\n",
+      );
       // Not just present: tracked, exactly as the branch committed them.
       expect(git(root, ["status", "--porcelain"])).toBe("");
     } finally {
@@ -200,7 +220,10 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
       // file path — and diagnosis used to miss it entirely, handing the agent
       // git's raw "untracked working tree files would be overwritten by merge".
       await mkdir(join(root, "assets"));
-      await writeFile(join(root, "assets", "logo.png"), "logo-bytes-v2 EDITED BY USER\n");
+      await writeFile(
+        join(root, "assets", "logo.png"),
+        "logo-bytes-v2 EDITED BY USER\n",
+      );
 
       const message = await landFails(root);
       expect(message).toContain("assets/logo.png");
@@ -222,14 +245,19 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
     try {
       await mkdir(join(root, "assets"));
       await writeFile(join(root, "assets", "logo.png"), "logo-bytes-v1\n"); // identical
-      await writeFile(join(root, "feature.ts"), "not what the agent committed\n"); // differs
+      await writeFile(
+        join(root, "feature.ts"),
+        "not what the agent committed\n",
+      ); // differs
 
       const message = await landFails(root);
       expect(message).toContain("feature.ts");
       expect(message).not.toContain("assets/logo.png");
       // A refused land removes NOTHING — the identical copy is only ever
       // removed on the way into a merge that immediately restores it.
-      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe("logo-bytes-v1\n");
+      expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe(
+        "logo-bytes-v1\n",
+      );
       expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
         "not what the agent committed\n",
       );

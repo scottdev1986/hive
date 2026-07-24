@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
-import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import {
-  rootSessionIdForLaunchRequest,
+  daemonOrchestratorSessiondControl,
+  OrchestratorLaunchFailedError,
+  type OrchestratorSessiondControl,
+  runOrchestratorSessiondLaunch,
+} from "../../src/cli/orchestrator-sessiond";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
+import {
   type RootSessiondLocator,
+  rootSessionIdForLaunchRequest,
 } from "../../src/daemon/orchestrator-host";
 import type {
   OrchestratorSessiondLaunch,
   OrchestratorSessiondSnapshot,
 } from "../../src/daemon/orchestrator-sessiond";
-import {
-  daemonOrchestratorSessiondControl,
-  OrchestratorLaunchFailedError,
-  runOrchestratorSessiondLaunch,
-  type OrchestratorSessiondControl,
-} from "../../src/cli/orchestrator-sessiond";
+import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 
 const launch: OrchestratorSessiondLaunch = {
   requestId: mintSessionRequestId(1_750_000_000_000),
@@ -58,13 +58,16 @@ describe("sessiond orchestrator launch client", () => {
     const control: OrchestratorSessiondControl = {
       start: async (request) => {
         starts.push(request);
-        return snapshot(starts.length === 1 ? "awaiting-visibility" : "running");
+        return snapshot(
+          starts.length === 1 ? "awaiting-visibility" : "running",
+        );
       },
       inspect: async () => inspections.shift() ?? null,
     };
 
-    await expect(runOrchestratorSessiondLaunch(launch, control, async () => {}))
-      .resolves.toBe(0);
+    await expect(
+      runOrchestratorSessiondLaunch(launch, control, async () => {}),
+    ).resolves.toBe(0);
     expect(starts).toEqual([launch, launch]);
   });
 
@@ -75,8 +78,9 @@ describe("sessiond orchestrator launch client", () => {
       inspect: async () => snapshot("running", drifted),
     };
 
-    await expect(runOrchestratorSessiondLaunch(launch, control, async () => {}))
-      .rejects.toThrow("locator changed");
+    await expect(
+      runOrchestratorSessiondLaunch(launch, control, async () => {}),
+    ).rejects.toThrow("locator changed");
   });
 
   test("returns a typed failure instead of falling back after sessiond launch refusal", async () => {
@@ -87,8 +91,11 @@ describe("sessiond orchestrator launch client", () => {
       }),
       inspect: async () => null,
     };
-    const error = await runOrchestratorSessiondLaunch(launch, control, async () => {})
-      .catch((cause: unknown) => cause);
+    const error = await runOrchestratorSessiondLaunch(
+      launch,
+      control,
+      async () => {},
+    ).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
     expect(error).toMatchObject({
       code: "ORCHESTRATOR_LAUNCH_FAILED",
@@ -97,9 +104,8 @@ describe("sessiond orchestrator launch client", () => {
   });
 
   test("HTTP launch refusal is typed before a queen process can exist", async () => {
-    const control = daemonOrchestratorSessiondControl(
-      4317,
-      async () => Response.json({ error: "sessiond is unavailable" }, { status: 503 }),
+    const control = daemonOrchestratorSessiondControl(4317, async () =>
+      Response.json({ error: "sessiond is unavailable" }, { status: 503 }),
     );
     const error = await control.start(launch).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
@@ -117,8 +123,11 @@ describe("sessiond orchestrator launch client", () => {
       inspect: async () => null,
     };
 
-    const error = await runOrchestratorSessiondLaunch(launch, control, async () => {})
-      .catch((cause: unknown) => cause);
+    const error = await runOrchestratorSessiondLaunch(
+      launch,
+      control,
+      async () => {},
+    ).catch((cause: unknown) => cause);
     expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
     expect(error).toMatchObject({ code: "ORCHESTRATOR_LAUNCH_FAILED" });
     expect((error as Error).message).toContain("ECONNREFUSED");

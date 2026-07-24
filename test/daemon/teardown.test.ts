@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { parseProcessTable, runPs } from "../../src/daemon/resources";
+import { SessiondBrokerUnavailableError } from "../../src/daemon/session-host/sessiond-host";
 import {
   captureProcessTree,
+  type ReapDependencies,
   reapCapturedTree,
   stopSessiondAgentSession,
-  type ReapDependencies,
 } from "../../src/daemon/teardown";
-import { parseProcessTable, runPs } from "../../src/daemon/resources";
 import type { AgentRecord } from "../../src/schemas";
 import { TerminationRequestSchema } from "../../src/schemas/session-protocol";
-import { SessiondBrokerUnavailableError } from "../../src/daemon/session-host/sessiond-host";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -176,14 +176,18 @@ describe("reapProcessTree", () => {
     });
     let childPid: number | undefined;
     try {
-      expect(await waitForProcess((processes) => {
-        childPid = processes.find((entry) => entry.ppid === shell.pid)?.pid;
-        return childPid !== undefined;
-      })).toBe(true);
+      expect(
+        await waitForProcess((processes) => {
+          childPid = processes.find((entry) => entry.ppid === shell.pid)?.pid;
+          return childPid !== undefined;
+        }),
+      ).toBe(true);
       expect(childPid).toBeDefined();
-      expect(await waitForProcess((processes) =>
-        processes.some((entry) => entry.pid === unrelated.pid)
-      )).toBe(true);
+      expect(
+        await waitForProcess((processes) =>
+          processes.some((entry) => entry.pid === unrelated.pid),
+        ),
+      ).toBe(true);
 
       const captured = await captureProcessTree([shell.pid]);
       expect(captured.map((entry) => entry.pid)).toContain(shell.pid);
@@ -191,22 +195,26 @@ describe("reapProcessTree", () => {
 
       shell.kill("SIGKILL");
       await shell.exited;
-      expect(await waitForProcess((processes) =>
-        processes.some((entry) =>
-          entry.pid === childPid && entry.ppid !== shell.pid
-        )
-      )).toBe(true);
+      expect(
+        await waitForProcess((processes) =>
+          processes.some(
+            (entry) => entry.pid === childPid && entry.ppid !== shell.pid,
+          ),
+        ),
+      ).toBe(true);
 
       const outcome = await reapCapturedTree(captured);
 
       expect(outcome.survivors).toEqual([]);
       expect(outcome.killed.map((entry) => entry.pid)).toContain(childPid!);
-      expect(await waitForProcess((processes) =>
-        !processes.some((entry) => entry.pid === childPid)
-      )).toBe(true);
-      expect((await realProcesses()).some((entry) =>
-        entry.pid === unrelated.pid
-      )).toBe(true);
+      expect(
+        await waitForProcess(
+          (processes) => !processes.some((entry) => entry.pid === childPid),
+        ),
+      ).toBe(true);
+      expect(
+        (await realProcesses()).some((entry) => entry.pid === unrelated.pid),
+      ).toBe(true);
     } finally {
       if (childPid !== undefined) {
         try {
@@ -253,25 +261,31 @@ describe("reapProcessTree", () => {
     let capabilityRevoked = false;
     const requests: unknown[] = [];
 
-    await expect(stopSessiondAgentSession(record, {
-      terminalHost: {
-        terminate: async (locator, request) => {
-          expect(capabilityRevoked).toBe(true);
-          expect(locator).toEqual(sessionLocator);
-          requests.push(request);
-          return {
-            locator: sessionLocator,
-            state: "terminated",
-            exit: null,
-            survivors: [],
-            errors: [],
-          };
+    await expect(
+      stopSessiondAgentSession(
+        record,
+        {
+          terminalHost: {
+            terminate: async (locator, request) => {
+              expect(capabilityRevoked).toBe(true);
+              expect(locator).toEqual(sessionLocator);
+              requests.push(request);
+              return {
+                locator: sessionLocator,
+                state: "terminated",
+                exit: null,
+                survivors: [],
+                errors: [],
+              };
+            },
+          },
+          readHostPid: async () => null,
         },
-      },
-      readHostPid: async () => null,
-    }, () => {
-      capabilityRevoked = true;
-    })).resolves.toEqual({ killed: [], survivors: [] });
+        () => {
+          capabilityRevoked = true;
+        },
+      ),
+    ).resolves.toEqual({ killed: [], survivors: [] });
     expect(requests).toHaveLength(1);
     expect(TerminationRequestSchema.parse(requests[0])).toMatchObject({
       mode: "immediate",
@@ -279,22 +293,26 @@ describe("reapProcessTree", () => {
       requestId: expect.stringMatching(/^req_[0-9a-f-]+$/),
     });
 
-    await expect(stopSessiondAgentSession(record, {
-      terminalHost: {
-        terminate: async () => ({
-          locator: sessionLocator,
-          state: "unknown",
-          exit: null,
-          survivors: [],
-          errors: [{
-            phase: "neutral-control",
-            code: "UNKNOWN",
-            diagnosticId: "no positive readback",
-          }],
-        }),
-      },
-      readHostPid: async () => null,
-    })).rejects.toThrow("not positively verified");
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: {
+          terminate: async () => ({
+            locator: sessionLocator,
+            state: "unknown",
+            exit: null,
+            survivors: [],
+            errors: [
+              {
+                phase: "neutral-control",
+                code: "UNKNOWN",
+                diagnosticId: "no positive readback",
+              },
+            ],
+          }),
+        },
+        readHostPid: async () => null,
+      }),
+    ).rejects.toThrow("not positively verified");
   });
 
   test("an unreachable broker is an already-dead session, but survivors still refuse", async () => {
@@ -338,24 +356,28 @@ describe("reapProcessTree", () => {
     // Nothing of the session's tree is left standing, so refusing would strand
     // shutdown to save a session that no longer exists.
     const empty = world([{ pid: 1, ppid: 0, command: "init" }]);
-    await expect(stopSessiondAgentSession(record, {
-      terminalHost: brokerGone,
-      reap: empty.dependencies,
-      readHostPid: async () => null,
-      selfPid: 1,
-    })).resolves.toEqual({ killed: [], survivors: [] });
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: brokerGone,
+        reap: empty.dependencies,
+        readHostPid: async () => null,
+        selfPid: 1,
+      }),
+    ).resolves.toEqual({ killed: [], survivors: [] });
 
     // The guarantee the refusal exists for: a captured process that survives
     // SIGKILL is live work, and an unreachable broker does not excuse it.
     const wedged = world([
       { pid: 100, ppid: 1, command: "sessiond host", unkillable: true },
     ]);
-    await expect(stopSessiondAgentSession(record, {
-      terminalHost: brokerGone,
-      reap: wedged.dependencies,
-      readHostPid: async () => 100,
-      selfPid: 1,
-    })).rejects.toThrow("sessiond broker is unavailable");
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: brokerGone,
+        reap: wedged.dependencies,
+        readHostPid: async () => 100,
+        selfPid: 1,
+      }),
+    ).rejects.toThrow("sessiond broker is unavailable");
   });
 
   test("refuses capture after the root has vanished", async () => {
@@ -375,9 +397,7 @@ describe("reapProcessTree", () => {
   });
 
   test("refuses to report reaping when the verification probe sees no positive control", async () => {
-    const { dependencies } = world([
-      { pid: 100, ppid: 1, command: "-zsh" },
-    ]);
+    const { dependencies } = world([{ pid: 100, ppid: 1, command: "-zsh" }]);
     dependencies.psState = async () => "";
 
     await expect(reapProcessTree([100], dependencies, 1)).rejects.toThrow(
@@ -390,8 +410,10 @@ describe("reapProcessTree", () => {
       { pid: 100, ppid: 1, command: "-zsh" },
     ]);
 
-    expect(await reapProcessTree([], dependencies, 1))
-      .toEqual({ killed: [], survivors: [] });
+    expect(await reapProcessTree([], dependencies, 1)).toEqual({
+      killed: [],
+      survivors: [],
+    });
     expect(signalled).toEqual([]);
   });
 });

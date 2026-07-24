@@ -42,7 +42,9 @@ function lockValue(key: string): string {
 }
 
 function lockSha(): string {
-  const result = Bun.spawnSync(["/usr/bin/shasum", "-a", "256", lock], { stdout: "pipe" });
+  const result = Bun.spawnSync(["/usr/bin/shasum", "-a", "256", lock], {
+    stdout: "pipe",
+  });
   return result.stdout.toString().slice(0, 16);
 }
 
@@ -54,7 +56,11 @@ function lockSha(): string {
  * restage whenever nothing is staged yet, which is true of any worktree where `make
  * build` has not run, and that restage says nothing about the artifact's identity.
  */
-function seedCache(source: Record<string, string>): { cache: string; stamp: string; staged: string } {
+function seedCache(source: Record<string, string>): {
+  cache: string;
+  stamp: string;
+  staged: string;
+} {
   const cache = mkdtempSync(join(tmpdir(), "ghostty-make-wiring-"));
   const artifact = join(
     cache,
@@ -64,11 +70,15 @@ function seedCache(source: Record<string, string>): { cache: string; stamp: stri
   mkdirSync(join(artifact, "GhosttyKit.xcframework"), { recursive: true });
   writeFileSync(
     join(artifact, "artifact-manifest.json"),
-    JSON.stringify({
-      schemaVersion: 1,
-      source,
-      buildEnvironment: { optimizeMode: "ReleaseFast" },
-    }, null, 2),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        source,
+        buildEnvironment: { optimizeMode: "ReleaseFast" },
+      },
+      null,
+      2,
+    ),
   );
   const staged = join(cache, "staged", "GhosttyKit.xcframework");
   mkdirSync(staged, { recursive: true });
@@ -103,11 +113,14 @@ function lockedIdentity(): Record<string, string> {
  * is the same silent staleness this file exists to catch.
  */
 function planBuild(cache: string, staged: string): string {
-  const result = Bun.spawnSync(["make", "-n", "build", `NATIVE_CACHE=${cache}`, `GHOSTTYKIT=${staged}`], {
-    cwd: root,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const result = Bun.spawnSync(
+    ["make", "-n", "build", `NATIVE_CACHE=${cache}`, `GHOSTTYKIT=${staged}`],
+    {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   return result.stdout.toString() + result.stderr.toString();
 }
 

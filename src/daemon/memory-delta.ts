@@ -30,7 +30,9 @@ import type { MemoryHighWater } from "./episodic-store";
 import type { MemoryIndex } from "./memory-index";
 
 const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error &&
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
   error.code === "ENOENT";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -137,8 +139,8 @@ export async function composeMemoryDelta(
   options: ComposeMemoryDeltaOptions,
 ): Promise<ComposedMemoryDelta | null> {
   const { entries, totals } = await readWikiLog(options.repoRoot);
-  const changes = entries.filter((entry) =>
-    entry.ordinal > options.highWater[entry.scope]
+  const changes = entries.filter(
+    (entry) => entry.ordinal > options.highWater[entry.scope],
   );
 
   // Facts are read once and serve both sections: the pitfall kind lookup and
@@ -147,11 +149,12 @@ export async function composeMemoryDelta(
   // so a log entry's title resolves to at most one article.
   const facts = await listMemoryFacts(options.repoRoot);
   const statusByTitle = new Map(
-    facts.map((fact) =>
-      [
-        `${fact.scope}:${normalizeTitle(fact.title)}`,
-        factVerificationFlag(fact),
-      ] as const
+    facts.map(
+      (fact) =>
+        [
+          `${fact.scope}:${normalizeTitle(fact.title)}`,
+          factVerificationFlag(fact),
+        ] as const,
     ),
   );
 
@@ -162,9 +165,9 @@ export async function composeMemoryDelta(
   const brief = options.brief?.trim() ?? "";
   if (brief.length > 0 && options.memory !== null) {
     const pitfalls = new Set(
-      facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
-        `${fact.scope}:${fact.id}`
-      ),
+      facts
+        .filter((fact) => fact.kind === "pitfall")
+        .map((fact) => `${fact.scope}:${fact.id}`),
     );
     if (pitfalls.size > 0) {
       for (const hit of options.memory.search(brief, { limit: 8 })) {
@@ -182,8 +185,11 @@ export async function composeMemoryDelta(
     const flag = statusByTitle.get(
       `${entry.scope}:${normalizeTitle(entry.title)}`,
     );
-    return `- [${entry.scope}] ${entry.date} ${OP_LABELS[entry.op] ?? entry.op}: ` +
-      entry.title + (flag === null || flag === undefined ? "" : ` [${flag}]`);
+    return (
+      `- [${entry.scope}] ${entry.date} ${OP_LABELS[entry.op] ?? entry.op}: ` +
+      entry.title +
+      (flag === null || flag === undefined ? "" : ` [${flag}]`)
+    );
   });
 
   if (pitfallLines.length === 0 && changeLines.length === 0) return null;
@@ -194,7 +200,11 @@ export async function composeMemoryDelta(
     "Hive daemon: durable memory, not part of the sender's message. " +
     "[unverified] and [stale] entries are hints to reconcile before acting, " +
     "not authority.)";
-  const sections: Array<{ kind: "pitfall" | "change"; header: string; lines: string[] }> = [];
+  const sections: Array<{
+    kind: "pitfall" | "change";
+    header: string;
+    lines: string[];
+  }> = [];
   if (pitfallLines.length > 0) {
     sections.push({
       kind: "pitfall",
@@ -203,14 +213,19 @@ export async function composeMemoryDelta(
     });
   }
   if (changeLines.length > 0) {
-    sections.push({ kind: "change", header: "Wiki changes:", lines: changeLines });
+    sections.push({
+      kind: "change",
+      header: "Wiki changes:",
+      lines: changeLines,
+    });
   }
 
   // Strict priority fill: pitfalls first, then changes; the first line that
   // would cross the ceiling stops the fill and everything remaining counts
   // toward the loud truncation marker.
   const budget = options.budgetTokens;
-  const kept: Array<{ kind: "section" | "pitfall" | "change"; text: string }> = [];
+  const kept: Array<{ kind: "section" | "pitfall" | "change"; text: string }> =
+    [];
   let used = estimateTokens(header);
   let stopped = false;
   let omittedPitfalls = 0;
@@ -245,11 +260,12 @@ export async function composeMemoryDelta(
 
   const marker = (): string | null => {
     if (omittedPitfalls === 0 && omittedChanges === 0) return null;
-    const what = omittedPitfalls > 0
-      ? omittedChanges > 0
-        ? `${omittedPitfalls} more pitfalls and ${omittedChanges} more changes`
-        : `${omittedPitfalls} more pitfalls`
-      : `${omittedChanges} more changes`;
+    const what =
+      omittedPitfalls > 0
+        ? omittedChanges > 0
+          ? `${omittedPitfalls} more pitfalls and ${omittedChanges} more changes`
+          : `${omittedPitfalls} more pitfalls`
+        : `${omittedChanges} more changes`;
     return `… ${what} — use memory_search or memory_query to see them`;
   };
 
@@ -257,7 +273,11 @@ export async function composeMemoryDelta(
   // content lines give way to it — changes first (they sit last), so
   // pitfalls survive truncation.
   let text = marker();
-  while (text !== null && used + estimateTokens(text) > budget && kept.length > 0) {
+  while (
+    text !== null &&
+    used + estimateTokens(text) > budget &&
+    kept.length > 0
+  ) {
     const dropped = kept.pop()!;
     used -= estimateTokens(dropped.text);
     if (dropped.kind === "pitfall") omittedPitfalls += 1;
@@ -291,7 +311,9 @@ export interface WakeDeltaDeps {
   budgetTokens: number;
 }
 
-export function createWakeDeltaProvider(deps: WakeDeltaDeps): WakeDeltaProvider {
+export function createWakeDeltaProvider(
+  deps: WakeDeltaDeps,
+): WakeDeltaProvider {
   return {
     async compose(recipient) {
       const mark = deps.store.memoryHighWater(recipient.name);

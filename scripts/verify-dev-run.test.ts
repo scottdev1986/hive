@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -27,9 +23,11 @@ describe("make run verification", () => {
   });
 
   test("rejects announcements without a valid build id or absolute path", () => {
-    expect(parseDaemonStartupAnnouncement(
-      'Hive daemon ready: {"engineBuildId":"debug","binaryPath":"relative/hive"}',
-    )).toBeNull();
+    expect(
+      parseDaemonStartupAnnouncement(
+        'Hive daemon ready: {"engineBuildId":"debug","binaryPath":"relative/hive"}',
+      ),
+    ).toBeNull();
   });
 
   test("surfaces an exited daemon's lock error without waiting for the timeout", async () => {
@@ -40,7 +38,10 @@ describe("make run verification", () => {
       stderr: "ignore",
     });
     try {
-      writeFileSync(log, "hive: Could not acquire Hive daemon lock at /tmp/daemon.lock\n");
+      writeFileSync(
+        log,
+        "hive: Could not acquire Hive daemon lock at /tmp/daemon.lock\n",
+      );
       await child.exited;
       const startedAt = Date.now();
       await expect(observeAnnouncement(log, child.pid, 5_000)).rejects.toThrow(
@@ -55,10 +56,13 @@ describe("make run verification", () => {
   test("negative control: a live silent daemon still reaches the bounded timeout", async () => {
     const fixture = mkdtempSync(join(tmpdir(), "hive-run-live-"));
     const log = join(fixture, "daemon.log");
-    const child = Bun.spawn([process.execPath, "-e", "await Bun.sleep(10_000)"], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    const child = Bun.spawn(
+      [process.execPath, "-e", "await Bun.sleep(10_000)"],
+      {
+        stdout: "ignore",
+        stderr: "ignore",
+      },
+    );
     try {
       writeFileSync(log, "hive: planted diagnostic while still starting\n");
       await expect(observeAnnouncement(log, child.pid, 75)).rejects.toThrow(
@@ -74,13 +78,13 @@ describe("make run verification", () => {
   test("accepts matching build-input content after unrelated commits", () => {
     const builtSourceHash = "12".repeat(32);
     expect(() =>
-      assertBinaryFreshness("/tmp/hive", builtSourceHash, builtSourceHash)
+      assertBinaryFreshness("/tmp/hive", builtSourceHash, builtSourceHash),
     ).not.toThrow();
   });
 
   test("positive control: changed build-input content fires and names both hashes", () => {
     expect(() =>
-      assertBinaryFreshness("/tmp/hive", "12".repeat(32), "34".repeat(32))
+      assertBinaryFreshness("/tmp/hive", "12".repeat(32), "34".repeat(32)),
     ).toThrow("built from source 12121212, current source is 34343434");
   });
 });

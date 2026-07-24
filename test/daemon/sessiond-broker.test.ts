@@ -16,8 +16,8 @@ import {
   readLocalPeerPid,
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
-  socketFileDescriptor,
   type SubprocessLike,
+  socketFileDescriptor,
 } from "../../src/daemon/sessiond-broker";
 
 let roots: string[] = [];
@@ -401,7 +401,8 @@ describe("SessiondBrokerSupervisor (kernel-ready gate)", () => {
         binary: "/tmp/fake",
         hiveHome: home,
         readyTimeoutMs: 2_000,
-        spawn: () => makeChild({ pid: childPid, exitAfterMs: 5_000, exitCode: 1 }),
+        spawn: () =>
+          makeChild({ pid: childPid, exitAfterMs: 5_000, exitCode: 1 }),
         proveReady: async ({ socketPath, childPid: expected }) => {
           const client = await connectUnixSocket(socketPath);
           try {

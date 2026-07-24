@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { buildModelControlSnapshot } from "../../src/cli/model-control";
-import {
-  known,
-  unknown,
-  type CapabilityProvider,
-} from "../../src/schemas/capability";
 import {
   buildModelControlSnapshotFixture,
   MODEL_CONTROL_SNAPSHOT_FIXTURE,
   modelControlSnapshotFixtureDependencies,
 } from "../../scripts/test-fixtures/model-control-snapshot";
+import { buildModelControlSnapshot } from "../../src/cli/model-control";
+import {
+  type CapabilityProvider,
+  known,
+  unknown,
+} from "../../src/schemas/capability";
 
 /**
  * Positive controls for the Model Control Center read surface. Every negative
@@ -36,7 +36,8 @@ describe("buildModelControlSnapshot", () => {
       unknown("field-absent", "grok.models_cache", AT),
     );
     const claude = snapshot.providers.claude;
-    if (claude.status !== "ok") throw new Error("claude discovery should be ok");
+    if (claude.status !== "ok")
+      throw new Error("claude discovery should be ok");
     expect(claude.records[0]?.supportedEffortLevels).toEqual(
       known(["low", "medium", "high"], "claude.initialize", AT),
     );
@@ -48,7 +49,8 @@ describe("buildModelControlSnapshot", () => {
     );
     expect(snapshot.quota).not.toBeNull();
     const pool = snapshot.quota?.[0];
-    if (pool === undefined || !("origin" in pool)) throw new Error("expected a pool");
+    if (pool === undefined || !("origin" in pool))
+      throw new Error("expected a pool");
     expect(pool.fiveHour.used).toBe(63);
     // A never-observed window stays null. Null is unknown, not zero.
     expect(pool.weekly.used).toBeNull();
@@ -90,7 +92,9 @@ describe("buildModelControlSnapshot", () => {
   test("a token collector failure is unknown, never an empty measured session", async () => {
     const snapshot = await buildModelControlSnapshot(
       modelControlSnapshotFixtureDependencies({
-        tokenUsage: async () => { throw new Error("token artifact unreadable"); },
+        tokenUsage: async () => {
+          throw new Error("token artifact unreadable");
+        },
       }),
     );
     expect(snapshot.tokenUsage).toBeNull();
@@ -119,7 +123,8 @@ describe("buildModelControlSnapshot", () => {
   test("a probe that throws becomes unavailable-with-reason, not a blank card", async () => {
     const dependencies = modelControlSnapshotFixtureDependencies();
     const discover = dependencies.discover;
-    if (discover === undefined) throw new Error("fixture discover dependency is missing");
+    if (discover === undefined)
+      throw new Error("fixture discover dependency is missing");
     const snapshot = await buildModelControlSnapshot({
       ...dependencies,
       discover: (provider: CapabilityProvider) =>
@@ -153,15 +158,17 @@ describe("buildModelControlSnapshot", () => {
     const contract = await Bun.file(MODEL_CONTROL_SNAPSHOT_FIXTURE).json();
     expect(snapshot).toEqual(contract);
     expect(contract.generatedAt).toBe(AT);
-    expect(Object.keys(contract.providers).sort()).toEqual(
-      ["claude", "codex", "grok", "kimi", "opencode"],
+    expect(Object.keys(contract.providers).sort()).toEqual([
+      "claude",
+      "codex",
+      "grok",
+      "kimi",
+      "opencode",
+    ]);
+    expect(contract.providers.grok.records[0].supportsEffort.state).toBe(
+      "known",
     );
-    expect(
-      contract.providers.grok.records[0].supportsEffort.state,
-    ).toBe("known");
-    expect(
-      contract.providers.grok.records[0].supportsEffort.value,
-    ).toBe(false);
+    expect(contract.providers.grok.records[0].supportsEffort.value).toBe(false);
     expect(contract.usageSurfaces.grok).toBe("metered");
     expect(contract.quota[0].fiveHour.used).toBe(63);
   });

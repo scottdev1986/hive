@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
 import {
   buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
@@ -10,14 +19,13 @@ import {
   probeOpencodeDefaultModel,
   writeOpencodeAgentConfig,
 } from "../../../src/adapters/tools/opencode";
-import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 async function worktree(): Promise<string> {
@@ -35,29 +43,35 @@ describe("opencode adapter", () => {
 
   test("launches a writer with the model and no permission flags", () => {
     expect(buildOpencodeSpawnCommand(writer)).toEqual([
-      "opencode", "-m", "openai/gpt-5.5",
+      "opencode",
+      "-m",
+      "openai/gpt-5.5",
     ]);
-    expect(buildOpencodeSpawnCommand({ ...writer, executable: "/opt/opencode" }))
-      .toEqual(["/opt/opencode", "-m", "openai/gpt-5.5"]);
+    expect(
+      buildOpencodeSpawnCommand({ ...writer, executable: "/opt/opencode" }),
+    ).toEqual(["/opt/opencode", "-m", "openai/gpt-5.5"]);
   });
 
   test("the read-only barrier lives in config; dangerous is --auto on argv", () => {
     // readOnly changes no argv: the barrier is agent.hive's permission set
     // in the worktree opencode.json (see the config test below).
     expect(buildOpencodeSpawnCommand({ ...writer, readOnly: true })).toEqual([
-      "opencode", "-m", "openai/gpt-5.5",
+      "opencode",
+      "-m",
+      "openai/gpt-5.5",
     ]);
     expect(buildOpencodeSpawnCommand({ ...writer, dangerous: true })).toEqual([
-      "opencode", "-m", "openai/gpt-5.5", "--auto",
+      "opencode",
+      "-m",
+      "openai/gpt-5.5",
+      "--auto",
     ]);
   });
 
   test("the hive agent rides argv only when the brief is configured", () => {
     expect(
       buildOpencodeSpawnCommand({ ...writer, agent: OPENCODE_HIVE_AGENT }),
-    ).toEqual([
-      "opencode", "-m", "openai/gpt-5.5", "--agent", "hive",
-    ]);
+    ).toEqual(["opencode", "-m", "openai/gpt-5.5", "--agent", "hive"]);
   });
 
   test("resume uses -s and replays current process flags", () => {
@@ -67,7 +81,13 @@ describe("opencode adapter", () => {
         "ses_abc",
       ),
     ).toEqual([
-      "opencode", "-s", "ses_abc", "-m", "openai/gpt-5.5", "--agent", "hive",
+      "opencode",
+      "-s",
+      "ses_abc",
+      "-m",
+      "openai/gpt-5.5",
+      "--agent",
+      "hive",
     ]);
     expect(buildOpencodeSpawnCommand(writer)).not.toContain("-s");
   });
@@ -84,10 +104,13 @@ describe("opencode adapter", () => {
 
   test("writes project config with capability auth, the brief agent, and the barrier", async () => {
     const root = await worktree();
-    await writeFile(join(root, "opencode.json"), JSON.stringify({
-      agent: { review: { description: "the repo's own agent" } },
-      mcp: { other: { type: "local", command: ["other"] } },
-    }));
+    await writeFile(
+      join(root, "opencode.json"),
+      JSON.stringify({
+        agent: { review: { description: "the repo's own agent" } },
+        mcp: { other: { type: "local", command: ["other"] } },
+      }),
+    );
     await writeOpencodeAgentConfig(root, {
       daemonPort: 4317,
       capabilityToken: "secret-token",
@@ -160,7 +183,11 @@ describe("opencode adapter", () => {
       kickoff: "Begin the assigned task.",
     });
     expect(prepared.argv).toEqual([
-      "opencode", "-m", "openai/gpt-5.5", "--agent", "hive",
+      "opencode",
+      "-m",
+      "openai/gpt-5.5",
+      "--agent",
+      "hive",
     ]);
     expect(prepared.command).toBe(
       `${prepared.argv.map((token) => `'${token}'`).join(" ")} '--prompt' 'Begin the assigned task.'`,
@@ -199,62 +226,96 @@ describe("opencode adapter", () => {
     // A fake opencode CLI answering `session list --format json`.
     const sessions: Array<Record<string, unknown>> = [];
     const fake = join(home, "opencode-fake");
-    await writeFile(fake, [
-      "#!/bin/sh",
-      `printf '%s' '${JSON.stringify(sessions)}'`,
-      "",
-    ].join("\n"));
-    await chmod(fake, 0o755);
-    expect(await discoverOpencodeRecoverySessionId(
-      target,
-      "2026-07-13T12:00:00.000Z",
+    await writeFile(
       fake,
-    )).toBeNull();
+      ["#!/bin/sh", `printf '%s' '${JSON.stringify(sessions)}'`, ""].join("\n"),
+    );
+    await chmod(fake, 0o755);
+    expect(
+      await discoverOpencodeRecoverySessionId(
+        target,
+        "2026-07-13T12:00:00.000Z",
+        fake,
+      ),
+    ).toBeNull();
 
     const writeSessions = async (entries: Array<Record<string, unknown>>) =>
-      writeFile(fake, [
-        "#!/bin/sh",
-        `printf '%s' '${JSON.stringify(entries)}'`,
-        "",
-      ].join("\n"));
+      writeFile(
+        fake,
+        ["#!/bin/sh", `printf '%s' '${JSON.stringify(entries)}'`, ""].join(
+          "\n",
+        ),
+      );
     // A session for another directory is never a candidate.
     await writeSessions([
-      { id: "ses_other", created: 1783952059000, directory: join(home, "other") },
-      { id: "ses_old", created: Date.parse("2026-07-13T11:59:59.000Z"), directory: target },
+      {
+        id: "ses_other",
+        created: 1783952059000,
+        directory: join(home, "other"),
+      },
+      {
+        id: "ses_old",
+        created: Date.parse("2026-07-13T11:59:59.000Z"),
+        directory: target,
+      },
     ]);
-    expect(await discoverOpencodeRecoverySessionId(
-      target,
-      "2026-07-13T12:00:00.000Z",
-      fake,
-    )).toBeNull();
+    expect(
+      await discoverOpencodeRecoverySessionId(
+        target,
+        "2026-07-13T12:00:00.000Z",
+        fake,
+      ),
+    ).toBeNull();
 
     await writeSessions([
-      { id: "ses_old", created: Date.parse("2026-07-13T11:59:59.000Z"), directory: target },
-      { id: "ses_current", created: Date.parse("2026-07-13T12:00:01.000Z"), directory: target },
+      {
+        id: "ses_old",
+        created: Date.parse("2026-07-13T11:59:59.000Z"),
+        directory: target,
+      },
+      {
+        id: "ses_current",
+        created: Date.parse("2026-07-13T12:00:01.000Z"),
+        directory: target,
+      },
     ]);
-    expect(await discoverOpencodeRecoverySessionId(
-      target,
-      "2026-07-13T12:00:00.000Z",
-      fake,
-    )).toBe("ses_current");
+    expect(
+      await discoverOpencodeRecoverySessionId(
+        target,
+        "2026-07-13T12:00:00.000Z",
+        fake,
+      ),
+    ).toBe("ses_current");
 
     await writeSessions([
-      { id: "ses_a", created: Date.parse("2026-07-13T12:00:01.000Z"), directory: target },
-      { id: "ses_b", created: Date.parse("2026-07-13T12:00:02.000Z"), directory: target },
+      {
+        id: "ses_a",
+        created: Date.parse("2026-07-13T12:00:01.000Z"),
+        directory: target,
+      },
+      {
+        id: "ses_b",
+        created: Date.parse("2026-07-13T12:00:02.000Z"),
+        directory: target,
+      },
     ]);
-    expect(discoverOpencodeRecoverySessionId(
-      target,
-      "2026-07-13T12:00:00.000Z",
-      fake,
-    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    expect(
+      discoverOpencodeRecoverySessionId(
+        target,
+        "2026-07-13T12:00:00.000Z",
+        fake,
+      ),
+    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
 
     // A CLI that cannot answer at all is no candidates, never an error.
     await writeFile(fake, "#!/bin/sh\nexit 1\n");
     await chmod(fake, 0o755);
-    expect(await discoverOpencodeRecoverySessionId(
-      target,
-      "2026-07-13T12:00:00.000Z",
-      fake,
-    )).toBeNull();
+    expect(
+      await discoverOpencodeRecoverySessionId(
+        target,
+        "2026-07-13T12:00:00.000Z",
+        fake,
+      ),
+    ).toBeNull();
   });
 });

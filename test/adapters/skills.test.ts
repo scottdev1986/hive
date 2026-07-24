@@ -38,7 +38,9 @@ async function linkTarget(path: string): Promise<string> {
 
 afterEach(async () => {
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -83,10 +85,12 @@ describe("skill provisioning", () => {
     await makeSkill(native, "shared", "vendor shared");
     await makeSkill(join(worktree, ".hive", "skills"), "shared", "canonical");
 
-    await expect(provisionSkills(worktree, "claude", join(root, "global")))
-      .rejects.toThrow("native path already exists");
-    expect(await readFile(join(native, "vendor-only", "SKILL.md"), "utf8"))
-      .toEqual("# vendor\n");
+    await expect(
+      provisionSkills(worktree, "claude", join(root, "global")),
+    ).rejects.toThrow("native path already exists");
+    expect(
+      await readFile(join(native, "vendor-only", "SKILL.md"), "utf8"),
+    ).toEqual("# vendor\n");
   });
 
   test("installs the shipped skills even when the user has none of their own", async () => {
@@ -152,15 +156,18 @@ describe("skill provisioning", () => {
 
     await provisionSkills(worktree, "codex", join(root, "missing-global"));
 
-    expect(await readFile(join(native, "hive-claude", "SKILL.md"), "utf8"))
-      .toEqual(mine);
+    expect(
+      await readFile(join(native, "hive-claude", "SKILL.md"), "utf8"),
+    ).toEqual(mine);
   });
 
   test("a skill is withheld from a directory a reader it is not addressed to would see", () => {
-    const contract = shippedSkillsFor("codex")
-      .find((skill) => skill.name === "hive-codex")!;
-    const neutral = shippedSkillsFor("codex")
-      .find((skill) => skill.name === "hive-memory")!;
+    const contract = shippedSkillsFor("codex").find(
+      (skill) => skill.name === "hive-codex",
+    )!;
+    const neutral = shippedSkillsFor("codex").find(
+      (skill) => skill.name === "hive-memory",
+    )!;
 
     expect(skillAddressesEveryReader(contract, ["codex"])).toBe(true);
     expect(skillAddressesEveryReader(neutral, ["codex"])).toBe(true);

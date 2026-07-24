@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { Dirent } from "node:fs";
 import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -7,16 +8,16 @@ import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import {
-  TokenUsageRoleSchema,
-  TokenUsageSnapshotSchema,
   type AgentRecord,
+  isLiveAgent,
   type TokenCounts,
   type TokenUsageBreakdown,
+  TokenUsageRoleSchema,
   type TokenUsageSession,
   type TokenUsageSnapshot,
+  TokenUsageSnapshotSchema,
   type TokenUsageSubject,
 } from "../schemas";
-import { isLiveAgent } from "../schemas";
 import type { HiveDatabase } from "./db";
 
 const SubjectRowSchema = z.object({
@@ -68,7 +69,10 @@ export interface TokenArtifactUpdate {
  * the store, daemon wire, and Settings UI remain unchanged. */
 export interface TokenUsageAdapter {
   readonly provider: string;
-  discover(subject: SubjectRow, knownPaths: string[]): Promise<{
+  discover(
+    subject: SubjectRow,
+    knownPaths: string[],
+  ): Promise<{
     providerSessionId?: string;
     paths: string[];
   }>;
@@ -106,7 +110,7 @@ const observedCount = (value: unknown): number | null =>
 
 const record = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 
 async function jsonlFiles(directory: string): Promise<string[]> {
@@ -114,7 +118,7 @@ async function jsonlFiles(directory: string): Promise<string[]> {
   const pending = [directory];
   while (pending.length > 0) {
     const current = pending.pop()!;
-    let entries;
+    let entries: Dirent[];
     try {
       entries = await readdir(current, { withFileTypes: true });
     } catch {
@@ -166,14 +170,18 @@ class ClaudeTokenUsageAdapter implements TokenUsageAdapter {
       // Claude's input total is three separate counters. If one is absent,
       // there is no honest total to publish for this message.
       if (
-        input === null || cacheCreation === null || cacheRead === null ||
+        input === null ||
+        cacheCreation === null ||
+        cacheRead === null ||
         output === null
-      ) continue;
-      const id = typeof message?.id === "string"
-        ? message.id
-        : typeof entry?.uuid === "string"
-        ? entry.uuid
-        : null;
+      )
+        continue;
+      const id =
+        typeof message?.id === "string"
+          ? message.id
+          : typeof entry?.uuid === "string"
+            ? entry.uuid
+            : null;
       if (id === null) continue;
       events.push({
         key: `message:${id}`,
@@ -184,9 +192,10 @@ class ClaudeTokenUsageAdapter implements TokenUsageAdapter {
           outputTokens: output,
           reasoningTokens: null,
         },
-        observedAt: typeof entry?.timestamp === "string"
-          ? entry.timestamp
-          : new Date().toISOString(),
+        observedAt:
+          typeof entry?.timestamp === "string"
+            ? entry.timestamp
+            : new Date().toISOString(),
         source: "claude-transcript",
       });
     }
@@ -241,9 +250,10 @@ class CodexTokenUsageAdapter implements TokenUsageAdapter {
           outputTokens: output,
           reasoningTokens: observedCount(usage.reasoning_output_tokens),
         },
-        observedAt: typeof entry?.timestamp === "string"
-          ? entry.timestamp
-          : new Date().toISOString(),
+        observedAt:
+          typeof entry?.timestamp === "string"
+            ? entry.timestamp
+            : new Date().toISOString(),
         source: "codex-rollout",
       };
     }
@@ -287,19 +297,22 @@ class GrokTokenUsageAdapter implements TokenUsageAdapter {
       const params = record(entry?.params);
       const update = record(params?.update);
       const usage = record(update?.usage);
-      if (update?.sessionUpdate !== "turn_completed" || usage === null) continue;
+      if (update?.sessionUpdate !== "turn_completed" || usage === null)
+        continue;
       const input = observedCount(usage.inputTokens);
       const output = observedCount(usage.outputTokens);
       if (input === null || output === null) continue;
-      const promptId = typeof update.prompt_id === "string"
-        ? update.prompt_id
-        : typeof entry?.timestamp === "number"
-        ? String(entry.timestamp)
-        : null;
+      const promptId =
+        typeof update.prompt_id === "string"
+          ? update.prompt_id
+          : typeof entry?.timestamp === "number"
+            ? String(entry.timestamp)
+            : null;
       if (promptId === null) continue;
-      const timestamp = typeof entry?.timestamp === "number"
-        ? new Date(entry.timestamp * 1_000).toISOString()
-        : new Date().toISOString();
+      const timestamp =
+        typeof entry?.timestamp === "number"
+          ? new Date(entry.timestamp * 1_000).toISOString()
+          : new Date().toISOString();
       events.push({
         key: `turn:${promptId}`,
         counts: {
@@ -317,7 +330,9 @@ class GrokTokenUsageAdapter implements TokenUsageAdapter {
   }
 }
 
-export function defaultTokenUsageAdapters(home = homedir()): TokenUsageAdapter[] {
+export function defaultTokenUsageAdapters(
+  home = homedir(),
+): TokenUsageAdapter[] {
   return [
     new ClaudeTokenUsageAdapter(home),
     new CodexTokenUsageAdapter(home),
@@ -334,7 +349,9 @@ export class TokenUsageStore {
     adapters: TokenUsageAdapter[] = defaultTokenUsageAdapters(),
   ) {
     this.database = db.database;
-    this.adapters = new Map(adapters.map((adapter) => [adapter.provider, adapter]));
+    this.adapters = new Map(
+      adapters.map((adapter) => [adapter.provider, adapter]),
+    );
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS token_usage_sessions (
         id TEXT PRIMARY KEY,
@@ -401,14 +418,20 @@ export class TokenUsageStore {
    * because artifacts/events reference this table, and restored in a finally even
    * if it throws. Non-profiler rows are copied through untouched. */
   private migrateSubjects(): void {
-    const hasProfileRunId = z.object({ name: z.string() }).array().parse(
-      this.database.query("PRAGMA table_info(token_usage_subjects)").all(),
-    ).some((column) => column.name === "profileRunId");
+    const hasProfileRunId = z
+      .object({ name: z.string() })
+      .array()
+      .parse(
+        this.database.query("PRAGMA table_info(token_usage_subjects)").all(),
+      )
+      .some((column) => column.name === "profileRunId");
     if (!hasProfileRunId) return;
     // Restore enforcement to whatever it was, even if the rebuild throws.
-    const enforced = z.array(z.object({ foreign_keys: z.number() })).parse(
-      this.database.query("PRAGMA foreign_keys").all(),
-    )[0]?.foreign_keys ?? 1;
+    const enforced =
+      z
+        .array(z.object({ foreign_keys: z.number() }))
+        .parse(this.database.query("PRAGMA foreign_keys").all())[0]
+        ?.foreign_keys ?? 1;
     this.database.exec("PRAGMA foreign_keys = OFF");
     try {
       this.database.transaction(() => {
@@ -452,39 +475,56 @@ export class TokenUsageStore {
     }
   }
 
-  private activeSession(repoRoot?: string): { id: string; repoRoot: string; startedAt: string } | null {
-    const row = repoRoot === undefined
-      ? this.database.query(`
+  private activeSession(
+    repoRoot?: string,
+  ): { id: string; repoRoot: string; startedAt: string } | null {
+    const row =
+      repoRoot === undefined
+        ? this.database
+            .query(`
           SELECT id, repoRoot, startedAt FROM token_usage_sessions
           WHERE endedAt IS NULL ORDER BY startedAt DESC LIMIT 1
-        `).get()
-      : this.database.query(`
+        `)
+            .get()
+        : this.database
+            .query(`
           SELECT id, repoRoot, startedAt FROM token_usage_sessions
           WHERE repoRoot = ? AND endedAt IS NULL LIMIT 1
-        `).get(repoRoot);
-    return z.object({ id: z.string(), repoRoot: z.string(), startedAt: z.string() })
-      .nullable().parse(row);
+        `)
+            .get(repoRoot);
+    return z
+      .object({ id: z.string(), repoRoot: z.string(), startedAt: z.string() })
+      .nullable()
+      .parse(row);
   }
 
-  async startSession(repoRoot: string, at = new Date().toISOString()): Promise<string> {
+  async startSession(
+    repoRoot: string,
+    at = new Date().toISOString(),
+  ): Promise<string> {
     const active = this.activeSession(repoRoot);
-    if (active !== null && this.db.listAgents().some(isLiveAgent)) return active.id;
+    if (active !== null && this.db.listAgents().some(isLiveAgent))
+      return active.id;
     if (active !== null) await this.endSession(active.id, at);
     const id = crypto.randomUUID();
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO token_usage_sessions (id, repoRoot, startedAt, endedAt)
       VALUES (?, ?, ?, NULL)
-    `).run(id, repoRoot, at);
+    `)
+      .run(id, repoRoot, at);
     await this.syncWorkers(id);
     return id;
   }
 
   async endSession(id: string, at = new Date().toISOString()): Promise<void> {
     await this.refreshSession(id);
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE token_usage_sessions SET endedAt = COALESCE(endedAt, ?)
       WHERE id = ?
-    `).run(at, id);
+    `)
+      .run(at, id);
   }
 
   startOrchestrator(
@@ -494,20 +534,24 @@ export class TokenUsageStore {
     at = new Date().toISOString(),
   ): string {
     const id = crypto.randomUUID();
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, startedAt, endedAt, unknownReason
       ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', ?, NULL, ?, NULL, ?, NULL, NULL)
-    `).run(id, sessionId, provider, cwd, at);
+    `)
+      .run(id, sessionId, provider, cwd, at);
     return id;
   }
 
   async endSubject(id: string, at = new Date().toISOString()): Promise<void> {
     await this.refreshSubject(id);
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE token_usage_subjects SET endedAt = COALESCE(endedAt, ?) WHERE id = ?
-    `).run(at, id);
+    `)
+      .run(at, id);
   }
 
   registerOrchestratorProviderSession(
@@ -516,55 +560,64 @@ export class TokenUsageStore {
   ): void {
     const active = this.activeSession(repoRoot);
     if (active === null) return;
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE token_usage_subjects SET providerSessionId = ?
       WHERE id = (
         SELECT id FROM token_usage_subjects
         WHERE sessionId = ? AND role = 'orchestrator' AND endedAt IS NULL
         ORDER BY startedAt DESC LIMIT 1
       )
-    `).run(providerSessionId, active.id);
+    `)
+      .run(providerSessionId, active.id);
   }
 
   private async syncWorkers(sessionId: string): Promise<void> {
-    const session = z.object({ startedAt: z.string() }).parse(
-      this.database.query("SELECT startedAt FROM token_usage_sessions WHERE id = ?")
-        .get(sessionId),
-    );
+    const session = z
+      .object({ startedAt: z.string() })
+      .parse(
+        this.database
+          .query("SELECT startedAt FROM token_usage_sessions WHERE id = ?")
+          .get(sessionId),
+      );
     for (const agent of this.db.listAgents()) {
       if (agent.createdAt < session.startedAt && !isLiveAgent(agent)) continue;
       const cwd = agent.worktreePath;
       if (cwd === null) continue;
-      this.database.query(`
+      this.database
+        .query(`
         INSERT OR IGNORE INTO token_usage_subjects (
           id, sessionId, agentId, name, role, provider, model, cwd,
           providerSessionId, startedAt, endedAt, unknownReason
         ) VALUES (?, ?, ?, ?, 'worker', ?, ?, ?, ?, ?, ?, NULL)
-      `).run(
-        crypto.randomUUID(),
-        sessionId,
-        agent.id,
-        agent.name,
-        agent.tool,
-        agent.liveModel ?? agent.model,
-        cwd,
-        agent.toolSessionId ?? null,
-        agent.createdAt,
-        agent.closedAt ?? null,
-      );
-      this.database.query(`
+      `)
+        .run(
+          crypto.randomUUID(),
+          sessionId,
+          agent.id,
+          agent.name,
+          agent.tool,
+          agent.liveModel ?? agent.model,
+          cwd,
+          agent.toolSessionId ?? null,
+          agent.createdAt,
+          agent.closedAt ?? null,
+        );
+      this.database
+        .query(`
         UPDATE token_usage_subjects SET
           providerSessionId = COALESCE(?, providerSessionId),
           model = COALESCE(?, model),
           endedAt = COALESCE(?, endedAt)
         WHERE sessionId = ? AND agentId = ?
-      `).run(
-        agent.toolSessionId ?? null,
-        agent.liveModel ?? agent.model,
-        agent.closedAt ?? null,
-        sessionId,
-        agent.id,
-      );
+      `)
+        .run(
+          agent.toolSessionId ?? null,
+          agent.liveModel ?? agent.model,
+          agent.closedAt ?? null,
+          sessionId,
+          agent.id,
+        );
     }
   }
 
@@ -575,8 +628,12 @@ export class TokenUsageStore {
 
   async refreshSession(sessionId: string): Promise<void> {
     await this.syncWorkers(sessionId);
-    const ids = z.object({ id: z.string() }).array().parse(
-      this.database.query(`
+    const ids = z
+      .object({ id: z.string() })
+      .array()
+      .parse(
+        this.database
+          .query(`
         SELECT id FROM token_usage_subjects AS subject
         WHERE sessionId = ? AND (
           endedAt IS NULL OR unknownReason IS NOT NULL OR NOT EXISTS (
@@ -585,66 +642,83 @@ export class TokenUsageStore {
           )
         )
         ORDER BY startedAt
-      `).all(sessionId),
-    );
+      `)
+          .all(sessionId),
+      );
     for (const { id } of ids) await this.refreshSubject(id);
   }
 
   async refreshSubject(id: string): Promise<void> {
     const subject = SubjectRowSchema.nullable().parse(
-      this.database.query("SELECT * FROM token_usage_subjects WHERE id = ?").get(id),
+      this.database
+        .query("SELECT * FROM token_usage_subjects WHERE id = ?")
+        .get(id),
     );
     if (subject === null) return;
     const adapter = this.adapters.get(subject.provider);
     if (adapter === undefined) {
-      this.database.query(
-        "UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?",
-      ).run(`No token collector is installed for provider ${subject.provider}`, id);
+      this.database
+        .query("UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?")
+        .run(
+          `No token collector is installed for provider ${subject.provider}`,
+          id,
+        );
       return;
     }
     if (subject.providerSessionId === null) {
-      this.database.query(
-        "UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?",
-      ).run(
-        `${subject.provider} provider session id has not been observed`,
-        id,
-      );
+      this.database
+        .query("UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?")
+        .run(
+          `${subject.provider} provider session id has not been observed`,
+          id,
+        );
       return;
     }
     const artifacts = ArtifactRowSchema.array().parse(
-      this.database.query(`
+      this.database
+        .query(`
         SELECT path, cursorBytes FROM token_usage_artifacts WHERE subjectId = ?
-      `).all(id),
+      `)
+        .all(id),
     );
     let discovered: Awaited<ReturnType<TokenUsageAdapter["discover"]>>;
     try {
-      discovered = await adapter.discover(subject, artifacts.map((row) => row.path));
-    } catch (error) {
-      this.database.query(
-        "UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?",
-      ).run(
-        `Could not discover ${subject.provider} token artifacts: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        id,
+      discovered = await adapter.discover(
+        subject,
+        artifacts.map((row) => row.path),
       );
+    } catch (error) {
+      this.database
+        .query("UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?")
+        .run(
+          `Could not discover ${subject.provider} token artifacts: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          id,
+        );
       return;
     }
     if (discovered.providerSessionId !== undefined) {
-      this.database.query(`
+      this.database
+        .query(`
         UPDATE token_usage_subjects SET providerSessionId = ? WHERE id = ?
-      `).run(discovered.providerSessionId, id);
+      `)
+        .run(discovered.providerSessionId, id);
     }
     for (const path of discovered.paths) {
-      this.database.query(`
+      this.database
+        .query(`
         INSERT OR IGNORE INTO token_usage_artifacts (subjectId, path, cursorBytes)
         VALUES (?, ?, 0)
-      `).run(id, path);
+      `)
+        .run(id, path);
     }
     const currentArtifacts = ArtifactRowSchema.array().parse(
-      this.database.query(`
+      this.database
+        .query(`
         SELECT path, cursorBytes FROM token_usage_artifacts WHERE subjectId = ?
-      `).all(id),
+      `)
+        .all(id),
     );
     let readFailure: string | null = null;
     for (const artifact of currentArtifacts) {
@@ -659,27 +733,35 @@ export class TokenUsageStore {
       }
       this.database.transaction(() => {
         for (const event of update.events) this.upsertEvent(id, event);
-        this.database.query(`
+        this.database
+          .query(`
           UPDATE token_usage_artifacts SET cursorBytes = ?
           WHERE subjectId = ? AND path = ?
-        `).run(update.cursorBytes, id, artifact.path);
+        `)
+          .run(update.cursorBytes, id, artifact.path);
       })();
     }
-    const measured = z.object({ count: z.number() }).parse(
-      this.database.query(
-        "SELECT COUNT(*) AS count FROM token_usage_events WHERE subjectId = ?",
-      ).get(id),
-    ).count > 0;
-    this.database.query(
-      "UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?",
-    ).run(
-      readFailure ?? (measured
-        ? null
-        : discovered.paths.length === 0
-        ? `${subject.provider} has not produced a token artifact for this session`
-        : `${subject.provider} has not reported token usage yet`),
-      id,
-    );
+    const measured =
+      z
+        .object({ count: z.number() })
+        .parse(
+          this.database
+            .query(
+              "SELECT COUNT(*) AS count FROM token_usage_events WHERE subjectId = ?",
+            )
+            .get(id),
+        ).count > 0;
+    this.database
+      .query("UPDATE token_usage_subjects SET unknownReason = ? WHERE id = ?")
+      .run(
+        readFailure ??
+          (measured
+            ? null
+            : discovered.paths.length === 0
+              ? `${subject.provider} has not produced a token artifact for this session`
+              : `${subject.provider} has not reported token usage yet`),
+        id,
+      );
   }
 
   private upsertEvent(subjectId: string, event: NormalizedTokenEvent): void {
@@ -696,7 +778,8 @@ export class TokenUsageStore {
       event.source,
     ];
     if (event.cumulative === true) {
-      this.database.query(`
+      this.database
+        .query(`
         INSERT INTO token_usage_events (
           subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
           cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
@@ -715,10 +798,12 @@ export class TokenUsageStore {
             ELSE MAX(reasoningTokens, excluded.reasoningTokens) END,
           observedAt = MAX(observedAt, excluded.observedAt),
           source = excluded.source
-      `).run(...values);
+      `)
+        .run(...values);
       return;
     }
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
@@ -737,16 +822,19 @@ export class TokenUsageStore {
           ELSE MAX(reasoningTokens, excluded.reasoningTokens) END,
         observedAt = MAX(observedAt, excluded.observedAt),
         source = excluded.source
-    `).run(...values);
+    `)
+      .run(...values);
   }
 
   private subjectReading(subject: SubjectRow): TokenUsageSubject {
     const rows = EventRowSchema.array().parse(
-      this.database.query(`
+      this.database
+        .query(`
         SELECT inputTokens, cachedInputTokens, cacheCreationInputTokens,
           outputTokens, reasoningTokens, observedAt, source
         FROM token_usage_events WHERE subjectId = ?
-      `).all(subject.id),
+      `)
+        .all(subject.id),
     );
     if (rows.length === 0 || subject.unknownReason !== null) {
       return {
@@ -759,19 +847,22 @@ export class TokenUsageStore {
         endedAt: subject.endedAt,
         reading: {
           state: "unknown",
-          reason: subject.unknownReason ?? "No provider token reading has been observed",
+          reason:
+            subject.unknownReason ??
+            "No provider token reading has been observed",
         },
       };
     }
     const nullableSum = (
       key: "cachedInputTokens" | "cacheCreationInputTokens" | "reasoningTokens",
-    ): number | null => rows.every((row) => row[key] !== null)
-      ? rows.reduce((sum, row) => sum + (row[key] ?? 0), 0)
-      : null;
+    ): number | null =>
+      rows.every((row) => row[key] !== null)
+        ? rows.reduce((sum, row) => sum + (row[key] ?? 0), 0)
+        : null;
     const inputTokens = rows.reduce((sum, row) => sum + row.inputTokens, 0);
     const outputTokens = rows.reduce((sum, row) => sum + row.outputTokens, 0);
     const observedAt = rows.reduce(
-      (latest, row) => row.observedAt > latest ? row.observedAt : latest,
+      (latest, row) => (row.observedAt > latest ? row.observedAt : latest),
       rows[0]!.observedAt,
     );
     return {
@@ -799,50 +890,84 @@ export class TokenUsageStore {
   }
 
   private breakdown(subjects: TokenUsageSubject[]): TokenUsageBreakdown {
-    const measured = subjects.filter((subject) => subject.reading.state === "measured");
+    const measured = subjects.filter(
+      (subject) => subject.reading.state === "measured",
+    );
     const aggregateNullable = (
       key: "cachedInputTokens" | "cacheCreationInputTokens" | "reasoningTokens",
-    ): number | null => measured.every((subject) =>
-      subject.reading.state === "measured" && subject.reading.counts[key] !== null
-    )
-      ? measured.reduce((sum, subject) =>
-        sum + (subject.reading.state === "measured"
-          ? subject.reading.counts[key] ?? 0
-          : 0), 0)
-      : null;
-    const inputTokens = measured.reduce((sum, subject) =>
-      sum + (subject.reading.state === "measured" ? subject.reading.counts.inputTokens : 0), 0);
-    const outputTokens = measured.reduce((sum, subject) =>
-      sum + (subject.reading.state === "measured" ? subject.reading.counts.outputTokens : 0), 0);
+    ): number | null =>
+      measured.every(
+        (subject) =>
+          subject.reading.state === "measured" &&
+          subject.reading.counts[key] !== null,
+      )
+        ? measured.reduce(
+            (sum, subject) =>
+              sum +
+              (subject.reading.state === "measured"
+                ? (subject.reading.counts[key] ?? 0)
+                : 0),
+            0,
+          )
+        : null;
+    const inputTokens = measured.reduce(
+      (sum, subject) =>
+        sum +
+        (subject.reading.state === "measured"
+          ? subject.reading.counts.inputTokens
+          : 0),
+      0,
+    );
+    const outputTokens = measured.reduce(
+      (sum, subject) =>
+        sum +
+        (subject.reading.state === "measured"
+          ? subject.reading.counts.outputTokens
+          : 0),
+      0,
+    );
     return {
       subjectCount: measured.length,
-      counts: measured.length === 0
-        ? null
-        : {
-            inputTokens,
-            cachedInputTokens: aggregateNullable("cachedInputTokens"),
-            cacheCreationInputTokens: aggregateNullable("cacheCreationInputTokens"),
-            outputTokens,
-            reasoningTokens: aggregateNullable("reasoningTokens"),
-            totalTokens: inputTokens + outputTokens,
-          },
+      counts:
+        measured.length === 0
+          ? null
+          : {
+              inputTokens,
+              cachedInputTokens: aggregateNullable("cachedInputTokens"),
+              cacheCreationInputTokens: aggregateNullable(
+                "cacheCreationInputTokens",
+              ),
+              outputTokens,
+              reasoningTokens: aggregateNullable("reasoningTokens"),
+              totalTokens: inputTokens + outputTokens,
+            },
     };
   }
 
   private readSession(id: string): TokenUsageSession {
-    const session = z.object({
-      id: z.string().uuid(),
-      repoRoot: z.string(),
-      startedAt: z.string(),
-      endedAt: z.string().nullable(),
-    }).parse(this.database.query(
-      "SELECT id, repoRoot, startedAt, endedAt FROM token_usage_sessions WHERE id = ?",
-    ).get(id));
-    const subjects = SubjectRowSchema.array().parse(
-      this.database.query(`
+    const session = z
+      .object({
+        id: z.string().uuid(),
+        repoRoot: z.string(),
+        startedAt: z.string(),
+        endedAt: z.string().nullable(),
+      })
+      .parse(
+        this.database
+          .query(
+            "SELECT id, repoRoot, startedAt, endedAt FROM token_usage_sessions WHERE id = ?",
+          )
+          .get(id),
+      );
+    const subjects = SubjectRowSchema.array()
+      .parse(
+        this.database
+          .query(`
         SELECT * FROM token_usage_subjects WHERE sessionId = ? ORDER BY startedAt
-      `).all(id),
-    ).map((subject) => this.subjectReading(subject));
+      `)
+          .all(id),
+      )
+      .map((subject) => this.subjectReading(subject));
     const unknownSubjects = subjects
       .filter((subject) => subject.reading.state === "unknown")
       .map((subject) => `${subject.name} (${subject.provider})`);
@@ -887,7 +1012,8 @@ export class TokenUsageStore {
       params.push(filter.agentId);
     }
     const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
-    const rows = this.database.query(`
+    const rows = this.database
+      .query(`
       SELECT subject.agentId AS agentId, subject.name AS name,
         subject.role AS role, subject.provider AS provider,
         COALESCE(SUM(event.inputTokens), 0) AS inputTokens,
@@ -899,17 +1025,21 @@ export class TokenUsageStore {
       ${where}
       GROUP BY subject.id
       ORDER BY inputTokens + outputTokens DESC, subject.startedAt
-    `).all(...params);
-    return z.object({
-      agentId: z.string().nullable(),
-      name: z.string(),
-      role: z.string(),
-      provider: z.string(),
-      inputTokens: z.number(),
-      outputTokens: z.number(),
-      lastObservedAt: z.string().nullable(),
-      eventCount: z.number(),
-    }).array().parse(rows)
+    `)
+      .all(...params);
+    return z
+      .object({
+        agentId: z.string().nullable(),
+        name: z.string(),
+        role: z.string(),
+        provider: z.string(),
+        inputTokens: z.number(),
+        outputTokens: z.number(),
+        lastObservedAt: z.string().nullable(),
+        eventCount: z.number(),
+      })
+      .array()
+      .parse(rows)
       .filter((row) => row.eventCount > 0)
       .map(({ eventCount: _eventCount, ...row }) => ({
         ...row,
@@ -919,16 +1049,23 @@ export class TokenUsageStore {
 
   async snapshot(repoRoot?: string, limit = 20): Promise<TokenUsageSnapshot> {
     await this.refreshCurrent(repoRoot);
-    const rows = z.object({ id: z.string() }).array().parse(
-      repoRoot === undefined
-        ? this.database.query(`
+    const rows = z
+      .object({ id: z.string() })
+      .array()
+      .parse(
+        repoRoot === undefined
+          ? this.database
+              .query(`
             SELECT id FROM token_usage_sessions ORDER BY startedAt DESC LIMIT ?
-          `).all(limit)
-        : this.database.query(`
+          `)
+              .all(limit)
+          : this.database
+              .query(`
             SELECT id FROM token_usage_sessions WHERE repoRoot = ?
             ORDER BY startedAt DESC LIMIT ?
-          `).all(repoRoot, limit),
-    );
+          `)
+              .all(repoRoot, limit),
+      );
     return TokenUsageSnapshotSchema.parse({
       generatedAt: new Date().toISOString(),
       currentSessionId: this.activeSession(repoRoot)?.id ?? null,

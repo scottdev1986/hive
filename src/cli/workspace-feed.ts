@@ -25,22 +25,24 @@
  * 30 s of continuous unreachability — a daemon restart mid-session must look
  * like a hiccup, not a teardown.
  */
-import type { AgentRecord } from "../schemas";
-import { isAutonomy, type Autonomy } from "../config/autonomy";
-import type { OrchestratorStatus } from "../daemon/orchestrator-status";
-import {
-  RootSessiondLocatorSchema,
-  type OrchestratorHostKind,
-  type RootSessiondLocator,
-} from "../daemon/orchestrator-host";
-import type { OrchestratorSessiondSnapshot } from "../daemon/orchestrator-sessiond";
+
+import { type Autonomy, isAutonomy } from "../config/autonomy";
+import { verifyDaemonInstance } from "../daemon/handshake";
 import { macProcessIdentity } from "../daemon/lifecycle";
 import {
-  WorkspaceVisibilityInventoryInputSchema,
+  type OrchestratorHostKind,
+  type RootSessiondLocator,
+  RootSessiondLocatorSchema,
+} from "../daemon/orchestrator-host";
+import type { OrchestratorSessiondSnapshot } from "../daemon/orchestrator-sessiond";
+import type { OrchestratorStatus } from "../daemon/orchestrator-status";
+import {
   type WorkspaceVisibilityInventoryInput,
+  WorkspaceVisibilityInventoryInputSchema,
 } from "../daemon/session-host/workspace-visibility";
-import { fetchAgentStatus } from "./mcp";
+import type { AgentRecord } from "../schemas";
 import { operatorFetch } from "./credential";
+import { fetchAgentStatus } from "./mcp";
 
 export const FEED_VERSION = 1;
 export const FEED_POLL_MS = 1_000;
@@ -71,6 +73,9 @@ export interface WorkspaceOrchestratorSnapshot {
 }
 
 export interface WorkspaceFeedDeps {
+  /** Kept inside the retry loop so a daemon that is still starting is a
+   * transient outage, not an immediate feed exit. */
+  readonly verifyInstance?: (port: number) => Promise<void>;
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
   /** Reads the daemon's live autonomy dial for the app's Agents menu. Errors
    * degrade to null (field omitted) — the menu goes unknown, the agent list
@@ -82,7 +87,10 @@ export interface WorkspaceFeedDeps {
     port: number,
   ) => Promise<WorkspaceOrchestratorSnapshot | null>;
   readonly write?: (line: string) => void;
-  readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  readonly sleep?: (
+    milliseconds: number,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   readonly now?: () => number;
   readonly signal?: AbortSignal;
   /** Overrides FEED_STATUS_TIMEOUT_MS; tests use a short one. */
@@ -130,7 +138,9 @@ export async function publishWorkspaceVisibility(
   deps: WorkspaceVisibilityPublishDeps = {},
 ): Promise<{ durationMs: number }> {
   const parsed = WorkspaceVisibilityInventoryInputSchema.parse(inventory);
-  const processIdentity = (deps.observeProcess ?? macProcessIdentity)(workspacePid);
+  const processIdentity = (deps.observeProcess ?? macProcessIdentity)(
+    workspacePid,
+  );
   const timeoutMs = deps.timeoutMs ?? FEED_VISIBILITY_PUBLISH_TIMEOUT_MS;
   const now = deps.now ?? Date.now;
   const startedAt = now();
@@ -171,9 +181,11 @@ export async function publishWorkspaceVisibility(
         );
         const body = response.ok
           ? null
-          : await response.json().catch(() => null) as
-            | { error?: unknown; diagnostic?: unknown; reason?: unknown }
-            | null;
+          : ((await response.json().catch(() => null)) as {
+              error?: unknown;
+              diagnostic?: unknown;
+              reason?: unknown;
+            } | null);
         return [response, body] as const;
       })(),
       expiry,
@@ -182,9 +194,12 @@ export async function publishWorkspaceVisibility(
     clearTimeout(timer);
   }
   if (response.ok) return { durationMs: now() - startedAt };
-  const detail = typeof body?.diagnostic === "string"
-    ? body.diagnostic
-    : typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+  const detail =
+    typeof body?.diagnostic === "string"
+      ? body.diagnostic
+      : typeof body?.error === "string"
+        ? body.error
+        : `HTTP ${response.status}`;
   throw new WorkspaceVisibilityPublishError(
     response.status,
     typeof body?.reason === "string" ? body.reason : null,
@@ -236,29 +251,37 @@ export class WorkspaceVisibilityPublisher {
     const inventory = this.pending;
     if (inventory === null) return;
     this.pending = null;
-    const run = this.runOne(inventory).catch((error: unknown) => {
-      this.report(error);
-    }).then(() => {
-      this.inFlight = null;
-      this.pump();
-    });
+    const run = this.runOne(inventory)
+      .catch((error: unknown) => {
+        this.report(error);
+      })
+      .then(() => {
+        this.inFlight = null;
+        this.pump();
+      });
     this.inFlight = run;
   }
 
-  private async runOne(inventory: WorkspaceVisibilityInventoryInput): Promise<void> {
+  private async runOne(
+    inventory: WorkspaceVisibilityInventoryInput,
+  ): Promise<void> {
     try {
       const { durationMs } = await this.publish(inventory);
       if (durationMs >= this.slowMs) {
-        this.write(JSON.stringify({
-          v: FEED_VERSION,
-          error: `workspace visibility publish was slow: ${durationMs}ms ` +
-            `for revision ${inventory.inventoryRevision}`,
-        }));
+        this.write(
+          JSON.stringify({
+            v: FEED_VERSION,
+            error:
+              `workspace visibility publish was slow: ${durationMs}ms ` +
+              `for revision ${inventory.inventoryRevision}`,
+          }),
+        );
       }
     } catch (error) {
       if (
         error instanceof WorkspaceVisibilityPublishError &&
-        error.status === 409 && error.reason === "source-identity-mismatch"
+        error.status === 409 &&
+        error.reason === "source-identity-mismatch"
       ) {
         this.halted = true;
         this.pending = null;
@@ -271,10 +294,12 @@ export class WorkspaceVisibilityPublisher {
   }
 
   private report(error: unknown): void {
-    this.write(JSON.stringify({
-      v: FEED_VERSION,
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    this.write(
+      JSON.stringify({
+        v: FEED_VERSION,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
   }
 
   async flush(): Promise<void> {
@@ -287,9 +312,9 @@ export class WorkspaceVisibilityPublisher {
 async function getAutonomy(port: number): Promise<Autonomy | null> {
   const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`);
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as
-    | { autonomy?: unknown }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    autonomy?: unknown;
+  } | null;
   return isAutonomy(body?.autonomy) ? body.autonomy : null;
 }
 
@@ -317,17 +342,19 @@ export function parseWorkspaceOrchestratorSnapshot(
   const body = value as Record<string, unknown>;
   const status = parseOrchestratorStatus(body.status);
   const host = body.host === "sessiond" ? "sessiond" : null;
-  const hostState = body.hostState === "awaiting-visibility" ||
-      body.hostState === "running" || body.hostState === "exited" ||
-      body.hostState === "failed"
-    ? body.hostState
-    : null;
-  const hostDiagnostic = typeof body.hostDiagnostic === "string"
-    ? body.hostDiagnostic
-    : null;
+  const hostState =
+    body.hostState === "awaiting-visibility" ||
+    body.hostState === "running" ||
+    body.hostState === "exited" ||
+    body.hostState === "failed"
+      ? body.hostState
+      : null;
+  const hostDiagnostic =
+    typeof body.hostDiagnostic === "string" ? body.hostDiagnostic : null;
   const locator = RootSessiondLocatorSchema.safeParse(body.sessionLocator);
   const sessionLocator = locator.success ? locator.data : null;
-  if (host === null || (status === null && sessionLocator === null)) return null;
+  if (host === null || (status === null && sessionLocator === null))
+    return null;
   return { status, host, hostState, hostDiagnostic, sessionLocator };
 }
 
@@ -336,8 +363,10 @@ export function parseWorkspaceOrchestratorSnapshot(
 export function parseOrchestratorStatus(
   value: unknown,
 ): OrchestratorStatus | null {
-  return value === "spawning" || value === "working" || value === "idle" ||
-      value === "exited"
+  return value === "spawning" ||
+    value === "working" ||
+    value === "idle" ||
+    value === "exited"
     ? value
     : null;
 }
@@ -387,11 +416,12 @@ export async function runWorkspaceFeed(
   port: number,
   deps: WorkspaceFeedDeps = {},
 ): Promise<number> {
+  const verifyInstance = deps.verifyInstance ?? (async () => {});
   const fetchStatus = deps.fetchStatus ?? fetchAgentStatus;
   const fetchAutonomy = deps.fetchAutonomy ?? getAutonomy;
   const fetchOrchestrator = deps.fetchOrchestrator ?? getOrchestratorStatus;
-  const write = deps.write ??
-    ((line: string) => void process.stdout.write(`${line}\n`));
+  const write =
+    deps.write ?? ((line: string) => void process.stdout.write(`${line}\n`));
   const sleep = deps.sleep ?? abortableSleep;
   const now = deps.now ?? Date.now;
   const signal = deps.signal;
@@ -406,6 +436,7 @@ export async function runWorkspaceFeed(
 
   while (signal?.aborted !== true) {
     try {
+      await withTimeout(verifyInstance(port), statusTimeoutMs);
       const agents = await withTimeout(fetchStatus(port), statusTimeoutMs);
       // Autonomy rides the same snapshot line so the app's menu tracks the
       // dial. Best-effort by design: its failure must never take the agent
@@ -416,17 +447,19 @@ export async function runWorkspaceFeed(
       // measured ready locator still reaches Workspace before the first turn.
       const orchestrator = await fetchOrchestrator(port).catch(() => null);
       const snapshot = JSON.stringify({ agents, autonomy, orchestrator });
-      const heartbeatDue = lastEmitAt === null ||
-        now() - lastEmitAt >= FEED_HEARTBEAT_MS;
+      const heartbeatDue =
+        lastEmitAt === null || now() - lastEmitAt >= FEED_HEARTBEAT_MS;
       // A recovery from an error state re-emits even an unchanged snapshot:
       // the last thing on the wire must never remain a stale error.
       if (snapshot !== lastSnapshot || heartbeatDue || lastError !== null) {
-        write(JSON.stringify({
-          v: FEED_VERSION,
-          agents,
-          ...(autonomy === null ? {} : { autonomy }),
-          ...(orchestrator === null ? {} : { orchestrator }),
-        }));
+        write(
+          JSON.stringify({
+            v: FEED_VERSION,
+            agents,
+            ...(autonomy === null ? {} : { autonomy }),
+            ...(orchestrator === null ? {} : { orchestrator }),
+          }),
+        );
         lastSnapshot = snapshot;
         lastEmitAt = now();
       }
@@ -459,6 +492,7 @@ export async function runWorkspaceFeed(
 export async function runWorkspaceFeedCli(
   port: number,
   workspaceSessionId: string,
+  instanceId: string,
 ): Promise<number> {
   const controller = new AbortController();
   const stop = (): void => controller.abort();
@@ -468,14 +502,22 @@ export async function runWorkspaceFeedCli(
   let input = Buffer.alloc(0);
   const publisher = new WorkspaceVisibilityPublisher(
     (inventory) =>
-      publishWorkspaceVisibility(port, workspaceSessionId, workspacePid, inventory),
+      publishWorkspaceVisibility(
+        port,
+        workspaceSessionId,
+        workspacePid,
+        inventory,
+      ),
     (line) => void process.stdout.write(`${line}\n`),
   );
   const publishLine = (line: Uint8Array): void => {
     publisher.publishLine(line);
   };
   const consumeInput = (chunk: Buffer | string): void => {
-    input = Buffer.concat([input, typeof chunk === "string" ? Buffer.from(chunk) : chunk]);
+    input = Buffer.concat([
+      input,
+      typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+    ]);
     let newline = input.indexOf(0x0a);
     while (newline >= 0) {
       publishLine(input.subarray(0, newline));
@@ -490,7 +532,11 @@ export async function runWorkspaceFeedCli(
   process.stdin.on("end", stop);
   process.stdin.on("error", stop);
   try {
-    return await runWorkspaceFeed(port, { signal: controller.signal });
+    return await runWorkspaceFeed(port, {
+      signal: controller.signal,
+      verifyInstance: (daemonPort) =>
+        verifyDaemonInstance(daemonPort, instanceId),
+    });
   } finally {
     if (input.byteLength > 0) publishLine(input);
     await publisher.flush();

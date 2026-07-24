@@ -7,9 +7,9 @@ import {
   buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
   OPENCODE_HIVE_AGENT,
+  type OpencodeSpawnOptions,
   resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
-  type OpencodeSpawnOptions,
 } from "../opencode";
 import type { AgentAdapter } from "./agent-adapter";
 
@@ -40,9 +40,10 @@ export const opencodeAgentAdapter: AgentAdapter = {
         ? {}
         : { agent: OPENCODE_HIVE_AGENT }),
     };
-    const argv = context.resumeSessionId === undefined
-      ? buildOpencodeSpawnCommand(options)
-      : buildOpencodeResumeCommand(options, context.resumeSessionId);
+    const argv =
+      context.resumeSessionId === undefined
+        ? buildOpencodeSpawnCommand(options)
+        : buildOpencodeResumeCommand(options, context.resumeSessionId);
     return {
       argv,
       command: shellJoin(
@@ -53,7 +54,7 @@ export const opencodeAgentAdapter: AgentAdapter = {
     };
   },
   discover: (
-    executable = resolveWorkingOpencodeExecutable()?.path ?? "opencode"
+    executable = resolveWorkingOpencodeExecutable()?.path ?? "opencode",
   ) =>
     new OpencodeCapabilityProbe(
       new OpencodeCliCapabilityTransport(executable),

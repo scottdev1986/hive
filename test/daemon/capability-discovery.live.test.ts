@@ -54,8 +54,9 @@ suite("live capability discovery", () => {
     // `includeHidden` is requested, so the vendor's internal entries arrive
     // flagged rather than silently absent. That is what lets Hive decline to
     // route them instead of taking a stale manifest's word about them.
-    const hidden = result.records.filter((record) =>
-      record.hidden.state === "known" && record.hidden.value === true
+    const hidden = result.records.filter(
+      (record) =>
+        record.hidden.state === "known" && record.hidden.value === true,
     );
     expect(hidden.length).toBeGreaterThan(0);
   }, 60_000);

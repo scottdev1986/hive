@@ -30,8 +30,8 @@ import {
 } from "../daemon/memory-embeddings";
 import {
   defaultReleaseInstallDeps,
-  installEmbeddingsFromRelease,
   type EmbeddingsInstallOutcome,
+  installEmbeddingsFromRelease,
 } from "../release/embeddings-install";
 import {
   findSourceNodeModules,
@@ -39,6 +39,7 @@ import {
 } from "../release/embeddings-runtime";
 import { HIVE_VERSION } from "../version";
 
+export type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 // The bundling pipeline moved to src/release/embeddings-runtime.ts (shared
 // with the release build); these re-exports keep the existing import sites
 // and unit tests working against one implementation.
@@ -47,7 +48,6 @@ export {
   findSourceNodeModules,
   stageEmbeddingRuntime,
 } from "../release/embeddings-runtime";
-export type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 
 const PROBE_MODEL = "bge-small-en-v1.5" as const;
 
@@ -92,7 +92,10 @@ async function installFromCheckout(
   probe: EmbeddingsProbe,
 ): Promise<EmbeddingsInstallOutcome> {
   try {
-    const bundlePath = await stageEmbeddingRuntime(sourceNodeModules, runtimeDir);
+    const bundlePath = await stageEmbeddingRuntime(
+      sourceNodeModules,
+      runtimeDir,
+    );
     const result = await probe(runtimeDir);
     return {
       ok: true,
@@ -234,7 +237,8 @@ export async function ensureEmbeddingsRuntimeForRelease(
 ): Promise<EmbeddingsInstallOutcome> {
   const probe = deps.probe ?? defaultProbe;
   if (version === HIVE_VERSION) return ensureEmbeddingsRuntime(probe);
-  const install = deps.installFromRelease ??
+  const install =
+    deps.installFromRelease ??
     ((runtimeDir: string, pinned: string) =>
       installEmbeddingsFromRelease(
         defaultReleaseInstallDeps({ runtimeDir, probe, version: pinned }),

@@ -6,7 +6,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await sourceFiles(path));
+    if (entry.isDirectory()) files.push(...(await sourceFiles(path)));
     else if (entry.isFile()) files.push(path);
   }
   return files;
@@ -28,7 +28,9 @@ describe("terminal containment", () => {
       const source = await readFile(path, "utf8");
       for (const token of forbidden) {
         if (source.includes(token)) {
-          violations.push(`${relative(join(import.meta.dir, "../../src"), path)}: ${token}`);
+          violations.push(
+            `${relative(join(import.meta.dir, "../../src"), path)}: ${token}`,
+          );
         }
       }
       const externalOpen = new RegExp(
@@ -36,7 +38,9 @@ describe("terminal containment", () => {
         "i",
       );
       if (externalOpen.test(source)) {
-        violations.push(`${relative(join(import.meta.dir, "../../src"), path)}: external open -a`);
+        violations.push(
+          `${relative(join(import.meta.dir, "../../src"), path)}: external open -a`,
+        );
       }
     }
     expect(violations).toEqual([]);

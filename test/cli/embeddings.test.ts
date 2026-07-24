@@ -8,11 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   collectFastembedClosure,
+  type EmbeddingsProvisionDeps,
   ensureEmbeddingsRuntimeForRelease,
   findSourceNodeModules,
   provisionEmbeddingsRuntime,
   runEmbeddingsInstall,
-  type EmbeddingsProvisionDeps,
 } from "../../src/cli/embeddings";
 import { HIVE_VERSION } from "../../src/version";
 
@@ -20,7 +20,9 @@ const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -70,13 +72,20 @@ describe("collectFastembedClosure", () => {
       JSON.stringify({
         name: "a",
         version: "1.0.0",
-        optionalDependencies: { "native-host": "0.0.0", "native-other": "0.0.0" },
+        optionalDependencies: {
+          "native-host": "0.0.0",
+          "native-other": "0.0.0",
+        },
       }),
     );
     await plantPackage(nm, "native-host");
 
     const closure = await collectFastembedClosure(nm);
-    expect([...closure.keys()].sort()).toEqual(["a", "fastembed", "native-host"]);
+    expect([...closure.keys()].sort()).toEqual([
+      "a",
+      "fastembed",
+      "native-host",
+    ]);
   });
 
   test("a missing dependency is an explicit error, not a silent skip", async () => {
@@ -297,7 +306,10 @@ describe("ensureEmbeddingsRuntimeForRelease — hive update's step, keyed to the
         },
       });
 
-      expect(outcome).toEqual({ ok: true, detail: "runtime from hive 9.9.9 installed" });
+      expect(outcome).toEqual({
+        ok: true,
+        detail: "runtime from hive 9.9.9 installed",
+      });
       expect(calls).toEqual([[runtimeDir, "9.9.9"]]);
       // No skip-path probe: a version bump never trusts the old install.
       expect(probes).toBe(0);

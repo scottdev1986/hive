@@ -42,7 +42,7 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
     const fixtureRoles = [
       ...new Set(
         snapshot.sessions.flatMap((session) =>
-          session.subjects.map((subject) => subject.role as string)
+          session.subjects.map((subject) => subject.role as string),
         ),
       ),
     ].sort();

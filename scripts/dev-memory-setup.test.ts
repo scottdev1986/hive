@@ -3,7 +3,15 @@
 // state is never touched, stale links are refreshed, the real dirs are
 // created when absent, and daemon runtime state is never linked.
 import { afterEach, describe, expect, test } from "bun:test";
-import { lstat, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readlink,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,7 +24,9 @@ const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -68,10 +78,12 @@ describe("shareMemoryState", () => {
     await writeFile(join(devHome, "memory", "probe.md"), "dev wrote this");
     await writeFile(join(devHome, "project-registry.json"), '{"via":"dev"}');
 
-    expect(await Bun.file(join(realHome, "memory", "probe.md")).text())
-      .toBe("dev wrote this");
-    expect(await Bun.file(join(realHome, "project-registry.json")).text())
-      .toBe('{"via":"dev"}');
+    expect(await Bun.file(join(realHome, "memory", "probe.md")).text()).toBe(
+      "dev wrote this",
+    );
+    expect(await Bun.file(join(realHome, "project-registry.json")).text()).toBe(
+      '{"via":"dev"}',
+    );
   });
 
   test("creates and links every shared path before the first installed release", async () => {
@@ -83,7 +95,9 @@ describe("shareMemoryState", () => {
     expect((await lstat(join(realHome, "projects"))).isDirectory()).toBe(true);
     expect((await lstat(join(realHome, "models"))).isDirectory()).toBe(true);
     expect(
-      JSON.parse(await Bun.file(join(realHome, "project-registry.json")).text()),
+      JSON.parse(
+        await Bun.file(join(realHome, "project-registry.json")).text(),
+      ),
     ).toEqual({ records: [], tombstones: [] });
     expect(result.linked.sort()).toEqual([...SHARED_STATE_NAMES].sort());
     expect(result.skipped).toEqual([]);
@@ -108,8 +122,9 @@ describe("shareMemoryState", () => {
     const stat = await lstat(devOnly);
     expect(stat.isSymbolicLink()).toBe(false);
     expect(stat.isDirectory()).toBe(true);
-    expect(await Bun.file(join(devOnly, "dev-only.md")).text())
-      .toBe("private dev memory");
+    expect(await Bun.file(join(devOnly, "dev-only.md")).text()).toBe(
+      "private dev memory",
+    );
   });
 
   test("a stale symlink is refreshed to point at the real home", async () => {
@@ -122,8 +137,9 @@ describe("shareMemoryState", () => {
     const result = await shareMemoryState(devHome, realHome);
 
     expect(result.refreshed).toEqual(["projects"]);
-    expect(await linkTarget(join(devHome, "projects")))
-      .toBe(join(realHome, "projects"));
+    expect(await linkTarget(join(devHome, "projects"))).toBe(
+      join(realHome, "projects"),
+    );
     // The stale target itself is dev-home data; refreshing never deletes it.
     expect((await lstat(elsewhere)).isDirectory()).toBe(true);
   });
@@ -153,14 +169,27 @@ describe("shareMemoryState", () => {
     for (const name of runtimeState) {
       await writeFile(join(realHome, name), "real runtime state");
     }
-    for (const name of ["credentials", "runtime", "logs", "instances", "tools"]) {
+    for (const name of [
+      "credentials",
+      "runtime",
+      "logs",
+      "instances",
+      "tools",
+    ]) {
       await mkdir(join(realHome, name), { recursive: true });
     }
 
     const result = await shareMemoryState(devHome, realHome);
 
     expect(result.warnings).toEqual([]);
-    for (const name of [...runtimeState, "credentials", "runtime", "logs", "instances", "tools"]) {
+    for (const name of [
+      ...runtimeState,
+      "credentials",
+      "runtime",
+      "logs",
+      "instances",
+      "tools",
+    ]) {
       await expect(lstat(join(devHome, name))).rejects.toMatchObject({
         code: "ENOENT",
       });

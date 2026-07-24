@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { UpdateCheck } from "../../src/update/check";
-import { plain, renderStartNotice, renderUpdateNotice } from "../../src/update/notice";
+import {
+  plain,
+  renderStartNotice,
+  renderUpdateNotice,
+} from "../../src/update/notice";
 
-const available = (over: Partial<Extract<UpdateCheck, { state: "update-available" }>> = {}) => ({
+const available = (
+  over: Partial<Extract<UpdateCheck, { state: "update-available" }>> = {},
+) => ({
   state: "update-available" as const,
   current: "0.0.4",
   latest: "0.0.7",
@@ -11,7 +17,10 @@ const available = (over: Partial<Extract<UpdateCheck, { state: "update-available
   ...over,
 });
 
-const start = (check: UpdateCheck, over: Record<string, unknown> = {}): string =>
+const start = (
+  check: UpdateCheck,
+  over: Record<string, unknown> = {},
+): string =>
   plain(renderStartNotice({ check, installMethod: "native", ...over }));
 
 describe("hive init session notice", () => {
@@ -22,8 +31,9 @@ describe("hive init session notice", () => {
   });
 
   test("says up to date only when it actually checked", () => {
-    expect(start({ state: "up-to-date", current: "0.0.7", latest: "0.0.7" }))
-      .toEqual("hive 0.0.7 is the latest release");
+    expect(
+      start({ state: "up-to-date", current: "0.0.7", latest: "0.0.7" }),
+    ).toEqual("hive 0.0.7 is the latest release");
   });
 
   test("a failed check says it could not check, never that you are up to date", () => {
@@ -40,13 +50,21 @@ describe("hive init session notice", () => {
   });
 
   test("a source checkout never claims a release version", () => {
-    expect(start({ state: "dev-build", current: "0.0.0-dev" }))
-      .toEqual("hive 0.0.0-dev (source checkout) — update checks are disabled");
+    expect(start({ state: "dev-build", current: "0.0.0-dev" })).toEqual(
+      "hive 0.0.0-dev (source checkout) — update checks are disabled",
+    );
   });
 
   test("disabled checks name the variable that disabled them", () => {
-    expect(start({ state: "disabled", current: "0.0.4", reason: "HIVE_NO_UPDATE_CHECK=1" }))
-      .toEqual("hive 0.0.4 — update checks are disabled (HIVE_NO_UPDATE_CHECK=1)");
+    expect(
+      start({
+        state: "disabled",
+        current: "0.0.4",
+        reason: "HIVE_NO_UPDATE_CHECK=1",
+      }),
+    ).toEqual(
+      "hive 0.0.4 — update checks are disabled (HIVE_NO_UPDATE_CHECK=1)",
+    );
   });
 
   test("a staged update names the all-team activation gate", () => {
@@ -72,7 +90,10 @@ describe("hive init session notice", () => {
       check: available({ securityCritical: true }),
       installMethod: "native",
     });
-    const ordinary = renderStartNotice({ check: available(), installMethod: "native" });
+    const ordinary = renderStartNotice({
+      check: available(),
+      installMethod: "native",
+    });
     expect(security).toStartWith("\u001B[33m");
     expect(ordinary).toStartWith("\u001B[2m");
   });
@@ -96,14 +117,22 @@ const passive = (over: Record<string, unknown> = {}): string | null => {
 
 describe("passive notice", () => {
   test("prints one actionable line", () => {
-    expect(passive()).toEqual("hive 0.0.7 available (you have 0.0.4) — run hive update");
+    expect(passive()).toEqual(
+      "hive 0.0.7 available (you have 0.0.4) — run hive update",
+    );
   });
 
   test("is silent when there is nothing to do", () => {
-    expect(passive({ check: { state: "up-to-date", current: "0.0.7", latest: "0.0.7" } }))
-      .toEqual(null);
-    expect(passive({ check: { state: "unavailable", current: "0.0.4", reason: "offline" } }))
-      .toEqual(null);
+    expect(
+      passive({
+        check: { state: "up-to-date", current: "0.0.7", latest: "0.0.7" },
+      }),
+    ).toEqual(null);
+    expect(
+      passive({
+        check: { state: "unavailable", current: "0.0.4", reason: "offline" },
+      }),
+    ).toEqual(null);
   });
 
   test("is silent when stderr is not a terminal", () => {
@@ -127,12 +156,15 @@ describe("passive notice", () => {
       securityCritical: false,
       dismissedVersion: "0.0.7",
     };
-    expect(passive({ cache, check: available({ latest: "0.0.8" }) }))
-      .toEqual("hive 0.0.8 available (you have 0.0.4) — run hive update");
+    expect(passive({ cache, check: available({ latest: "0.0.8" }) })).toEqual(
+      "hive 0.0.8 available (you have 0.0.4) — run hive update",
+    );
   });
 
   test("is silent inside the 24 hour rate limit", () => {
-    expect(passive({ now: 1_000_000, lastNoticeAt: 1_000_000 - 60_000 })).toEqual(null);
+    expect(
+      passive({ now: 1_000_000, lastNoticeAt: 1_000_000 - 60_000 }),
+    ).toEqual(null);
   });
 
   test("speaks once the rate limit expires", () => {
@@ -152,14 +184,18 @@ describe("passive notice", () => {
       check: available({ securityCritical: true }),
       lastNoticeAt: 1_000_000,
     });
-    expect(line).toEqual("hive 0.0.7 available — security release, run hive update");
+    expect(line).toEqual(
+      "hive 0.0.7 available — security release, run hive update",
+    );
   });
 
   test("even a security release stays silent on a non-terminal", () => {
     // Hook output and CI logs are not places to shout.
-    expect(passive({
-      check: available({ securityCritical: true }),
-      interactive: false,
-    })).toEqual(null);
+    expect(
+      passive({
+        check: available({ securityCritical: true }),
+        interactive: false,
+      }),
+    ).toEqual(null);
   });
 });

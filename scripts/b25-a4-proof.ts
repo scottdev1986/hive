@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from "node:crypto";
 /** B2.5.2 live A4 qualification over the existing real sessiond/Workspace stack. */
 import {
   existsSync,
@@ -7,7 +8,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 
 interface ProofLocator {
@@ -56,13 +56,18 @@ type Stack = {
   result: string;
   stdout: string;
   stderr: string;
-  child: Bun.Subprocess<"ignore", ReturnType<typeof Bun.file>, ReturnType<typeof Bun.file>>;
+  child: Bun.Subprocess<
+    "ignore",
+    ReturnType<typeof Bun.file>,
+    ReturnType<typeof Bun.file>
+  >;
 };
 
 const repoRoot = resolve(import.meta.dir, "..");
 const workspaceRoot = join(repoRoot, "workspace");
-const evidence = process.env.HIVE_B25_EVIDENCE
-  ?? join(repoRoot, "raw/qualification/hive-b25-production-pane");
+const evidence =
+  process.env.HIVE_B25_EVIDENCE ??
+  join(repoRoot, "raw/qualification/hive-b25-production-pane");
 const basePort = Number(process.env.HIVE_B25_A4_PORT ?? "43142");
 const suffix = Math.random().toString(16).slice(2, 6);
 const head = command(["git", "rev-parse", "HEAD"], repoRoot);
@@ -83,7 +88,8 @@ for (const path of [
   join(repoRoot, "native/sessiond/zig-out/bin/hive-sessiond"),
   join(workspaceRoot, ".build/debug/HiveWorkspaceDev"),
 ]) {
-  if (!existsSync(path)) throw new Error(`required HEAD-built artifact is missing: ${path}`);
+  if (!existsSync(path))
+    throw new Error(`required HEAD-built artifact is missing: ${path}`);
 }
 
 mkdirSync(join(evidence, "matrix"), { recursive: true });
@@ -93,12 +99,17 @@ mkdirSync(join(evidence, "captures"), { recursive: true });
 function command(argv: string[], cwd: string): string {
   const result = Bun.spawnSync(argv, { cwd, stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) {
-    throw new Error(`${argv.join(" ")} failed: ${result.stderr.toString().trim()}`);
+    throw new Error(
+      `${argv.join(" ")} failed: ${result.stderr.toString().trim()}`,
+    );
   }
   return result.stdout.toString().trim();
 }
 
-function runAllowFailure(argv: string[], cwd: string): {
+function runAllowFailure(
+  argv: string[],
+  cwd: string,
+): {
   exitCode: number;
   output: string;
 } {
@@ -119,15 +130,26 @@ function stamp(lines: string[], message: string): void {
 
 function makePlainProject(tag: string): string {
   const project = `/tmp/hb25-${tag}-${suffix}`;
-  if (existsSync(project)) throw new Error(`refusing to reuse project ${project}`);
+  if (existsSync(project))
+    throw new Error(`refusing to reuse project ${project}`);
   mkdirSync(project, { mode: 0o700 });
   writeFileSync(join(project, "README.md"), `# B2.5 ${tag} plain repository\n`);
   command(["git", "init", "-q", "-b", "main"], project);
   command(["git", "add", "README.md"], project);
-  command([
-    "git", "-c", "user.name=Hive B2.5", "-c", "user.email=b25@hive.local",
-    "commit", "-q", "-m", "plain qualification repository",
-  ], project);
+  command(
+    [
+      "git",
+      "-c",
+      "user.name=Hive B2.5",
+      "-c",
+      "user.email=b25@hive.local",
+      "commit",
+      "-q",
+      "-m",
+      "plain qualification repository",
+    ],
+    project,
+  );
   assertPlainProject(project);
   return project;
 }
@@ -152,7 +174,10 @@ function verifyPlainProjectMutation(project: string): void {
   } finally {
     unlinkSync(mutation);
   }
-  if (!rejected) throw new Error("package.json mutation did not break the plain-project check");
+  if (!rejected)
+    throw new Error(
+      "package.json mutation did not break the plain-project check",
+    );
   assertPlainProject(project);
 }
 
@@ -163,7 +188,8 @@ function processStates(): Map<number, string> {
     const match = line.trim().match(/^(\d+)\s+(\S+)/);
     if (match !== null) states.set(Number(match[1]), match[2]!);
   }
-  if (!states.has(process.pid)) throw new Error("process-state positive control cannot see harness pid");
+  if (!states.has(process.pid))
+    throw new Error("process-state positive control cannot see harness pid");
   return states;
 }
 
@@ -175,16 +201,24 @@ function liveProcesses(tree: ProofProcess[]): ProofProcess[] {
   });
 }
 
-function processReadback(tree: ProofProcess[]): Array<ProofProcess & { state: string }> {
+function processReadback(
+  tree: ProofProcess[],
+): Array<ProofProcess & { state: string }> {
   const states = processStates();
-  return tree.map((entry) => ({ ...entry, state: states.get(entry.pid) ?? "absent" }));
+  return tree.map((entry) => ({
+    ...entry,
+    state: states.get(entry.pid) ?? "absent",
+  }));
 }
 
 function requireWholeTreeAlive(proof: B22Proof): void {
-  if (proof.processTree.length < 2) throw new Error("captured tree has no provider process");
+  if (proof.processTree.length < 2)
+    throw new Error("captured tree has no provider process");
   const live = liveProcesses(proof.processTree);
   if (live.length !== proof.processTree.length) {
-    throw new Error(`pre-action tree is not wholly alive: ${JSON.stringify({ live, tree: proof.processTree })}`);
+    throw new Error(
+      `pre-action tree is not wholly alive: ${JSON.stringify({ live, tree: proof.processTree })}`,
+    );
   }
 }
 
@@ -195,7 +229,8 @@ async function waitTreeAbsent(tree: ProofProcess[]): Promise<void> {
     await Bun.sleep(100);
     live = liveProcesses(tree);
   }
-  if (live.length > 0) throw new Error(`captured processes survived: ${JSON.stringify(live)}`);
+  if (live.length > 0)
+    throw new Error(`captured processes survived: ${JSON.stringify(live)}`);
 }
 
 async function waitForFile(path: string, label: string): Promise<void> {
@@ -204,7 +239,11 @@ async function waitForFile(path: string, label: string): Promise<void> {
   if (!existsSync(path)) throw new Error(`${label} did not appear: ${path}`);
 }
 
-async function waitForText(path: string, text: string, label: string): Promise<void> {
+async function waitForText(
+  path: string,
+  text: string,
+  label: string,
+): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (existsSync(path) && readFileSync(path, "utf8").includes(text)) return;
@@ -216,7 +255,8 @@ async function waitForText(path: string, text: string, label: string): Promise<v
 async function waitForExit(stack: Stack, timeoutMs = 60_000): Promise<number> {
   const timeout = Bun.sleep(timeoutMs).then(() => null);
   const exit = await Promise.race([stack.child.exited, timeout]);
-  if (exit === null) throw new Error(`stack ${stack.home} did not exit in ${timeoutMs}ms`);
+  if (exit === null)
+    throw new Error(`stack ${stack.home} did not exit in ${timeoutMs}ms`);
   return exit;
 }
 
@@ -225,7 +265,12 @@ async function stopStack(stack: Stack): Promise<number> {
   return waitForExit(stack);
 }
 
-function startStack(tag: string, port: number, project: string, action?: "close"): Stack {
+function startStack(
+  tag: string,
+  port: number,
+  project: string,
+  action?: "close",
+): Stack {
   const home = `/tmp/hb25-${tag[0]}${suffix}`;
   if (existsSync(home)) throw new Error(`refusing to reuse home ${home}`);
   mkdirSync(home, { mode: 0o700 });
@@ -244,13 +289,16 @@ function startStack(tag: string, port: number, project: string, action?: "close"
     HIVE_B25_A4_RESULT: action === undefined ? undefined : result,
     HIVE_B22_NO_APP: action === undefined ? "1" : undefined,
   };
-  const child = Bun.spawn([process.execPath, join(repoRoot, "scripts/b22-live-attach-proof.ts")], {
-    cwd: repoRoot,
-    env,
-    stdin: "ignore",
-    stdout: Bun.file(stdout),
-    stderr: Bun.file(stderr),
-  });
+  const child = Bun.spawn(
+    [process.execPath, join(repoRoot, "scripts/b22-live-attach-proof.ts")],
+    {
+      cwd: repoRoot,
+      env,
+      stdin: "ignore",
+      stdout: Bun.file(stdout),
+      stderr: Bun.file(stderr),
+    },
+  );
   return { home, project, trigger, result, stdout, stderr, child };
 }
 
@@ -259,7 +307,9 @@ async function loadProof(stack: Stack): Promise<B22Proof> {
   const deadline = Date.now() + 45_000;
   while (!existsSync(path) && Date.now() < deadline) {
     if (stack.child.exitCode !== null) {
-      throw new Error(`stack exited ${stack.child.exitCode}: ${readFileSync(stack.stderr, "utf8")}`);
+      throw new Error(
+        `stack exited ${stack.child.exitCode}: ${readFileSync(stack.stderr, "utf8")}`,
+      );
     }
     await Bun.sleep(100);
   }
@@ -286,7 +336,8 @@ async function runSwiftTest(
   ]);
   const output = `${stdout}${stderr}`;
   writeFileSync(outputPath, output);
-  if (exit !== 0) throw new Error(`${filter} failed (${exit}); see ${outputPath}`);
+  if (exit !== 0)
+    throw new Error(`${filter} failed (${exit}); see ${outputPath}`);
   return output;
 }
 
@@ -315,36 +366,67 @@ async function rendererKill(): Promise<void> {
   const referenceReportPath = join(stack.home, "renderer-reference.json");
   const replayPath = join(stack.home, "renderer-replay.bin");
   const replayReportPath = join(stack.home, "renderer-replay.json");
-  const referenceTestPath = join(evidence, "matrix", "a4-renderer-kill-reference-xctest.txt");
-  const replayTestPath = join(evidence, "matrix", "a4-renderer-kill-replay-xctest.txt");
+  const referenceTestPath = join(
+    evidence,
+    "matrix",
+    "a4-renderer-kill-reference-xctest.txt",
+  );
+  const replayTestPath = join(
+    evidence,
+    "matrix",
+    "a4-renderer-kill-replay-xctest.txt",
+  );
   let renderer: Bun.Subprocess | null = null;
   try {
     const proof = await loadProof(stack);
     requireWholeTreeAlive(proof);
     stamp(lines, `HEAD=${head}`);
     stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
-    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
-    stamp(lines, `captured-before-renderer-kill=${JSON.stringify(proof.processTree)}`);
+    stamp(
+      lines,
+      `session=${proof.locator.sessionId} generation=${proof.locator.generation}`,
+    );
+    stamp(
+      lines,
+      `captured-before-renderer-kill=${JSON.stringify(proof.processTree)}`,
+    );
 
-    renderer = Bun.spawn([
-      "swift", "test", "--filter", "LiveHostAttachTests.testA4RendererKillReplayProbe",
-    ], {
-      cwd: workspaceRoot,
-      env: rendererEnvironment(stack, "reference", referencePath, referenceReportPath),
-      stdin: "ignore",
-      stdout: Bun.file(referenceTestPath),
-      stderr: Bun.file(referenceTestPath),
-    });
+    renderer = Bun.spawn(
+      [
+        "swift",
+        "test",
+        "--filter",
+        "LiveHostAttachTests.testA4RendererKillReplayProbe",
+      ],
+      {
+        cwd: workspaceRoot,
+        env: rendererEnvironment(
+          stack,
+          "reference",
+          referencePath,
+          referenceReportPath,
+        ),
+        stdin: "ignore",
+        stdout: Bun.file(referenceTestPath),
+        stderr: Bun.file(referenceTestPath),
+      },
+    );
     await waitForFile(referenceReportPath, "renderer reference report");
     const referenceReport = JSON.parse(
       readFileSync(referenceReportPath, "utf8"),
     ) as RendererReport;
     if (referenceReport.phase !== "reference" || referenceReport.pid <= 1) {
-      throw new Error(`invalid renderer reference report: ${JSON.stringify(referenceReport)}`);
+      throw new Error(
+        `invalid renderer reference report: ${JSON.stringify(referenceReport)}`,
+      );
     }
-    const rendererTree = [{ pid: referenceReport.pid, command: "A4 Swift renderer probe" }];
+    const rendererTree = [
+      { pid: referenceReport.pid, command: "A4 Swift renderer probe" },
+    ];
     if (liveProcesses(rendererTree).length !== 1) {
-      throw new Error(`renderer positive control cannot see pid ${referenceReport.pid}`);
+      throw new Error(
+        `renderer positive control cannot see pid ${referenceReport.pid}`,
+      );
     }
     process.kill(referenceReport.pid, "SIGKILL");
     await waitTreeAbsent(rendererTree);
@@ -353,68 +435,131 @@ async function rendererKill(): Promise<void> {
       Bun.sleep(30_000).then(() => null),
     ]);
     if (killedExit === null || killedExit === 0) {
-      throw new Error(`renderer test runner did not report killed child: ${killedExit}`);
+      throw new Error(
+        `renderer test runner did not report killed child: ${killedExit}`,
+      );
     }
     requireWholeTreeAlive(proof);
     const afterRendererKill = processReadback(proof.processTree);
-    stamp(lines, `SIGKILL renderer pid=${referenceReport.pid}; runnerExit=${killedExit}`);
-    stamp(lines, `GREEN provider tree remained live after renderer death=${JSON.stringify(afterRendererKill)}`);
+    stamp(
+      lines,
+      `SIGKILL renderer pid=${referenceReport.pid}; runnerExit=${killedExit}`,
+    );
+    stamp(
+      lines,
+      `GREEN provider tree remained live after renderer death=${JSON.stringify(afterRendererKill)}`,
+    );
 
     await runSwiftTest(
       "LiveHostAttachTests.testA4RendererKillReplayProbe",
       replayTestPath,
-      rendererEnvironment(stack, "replay", replayPath, replayReportPath, referencePath),
+      rendererEnvironment(
+        stack,
+        "replay",
+        replayPath,
+        replayReportPath,
+        referencePath,
+      ),
     );
-    const replayReport = JSON.parse(readFileSync(replayReportPath, "utf8")) as RendererReport;
+    const replayReport = JSON.parse(
+      readFileSync(replayReportPath, "utf8"),
+    ) as RendererReport;
     const referenceBytes = readFileSync(referencePath);
     const replayBytes = readFileSync(replayPath);
-    if (!referenceBytes.equals(replayBytes) || referenceBytes.byteLength === 0) {
+    if (
+      !referenceBytes.equals(replayBytes) ||
+      referenceBytes.byteLength === 0
+    ) {
       throw new Error("renderer reconnect capture is not byte-identical");
     }
-    const referenceCapture = join(evidence, "captures", "a4-renderer-before-kill.bin");
-    const replayCapture = join(evidence, "captures", "a4-renderer-after-reconnect.bin");
+    const referenceCapture = join(
+      evidence,
+      "captures",
+      "a4-renderer-before-kill.bin",
+    );
+    const replayCapture = join(
+      evidence,
+      "captures",
+      "a4-renderer-after-reconnect.bin",
+    );
     writeFileSync(referenceCapture, referenceBytes);
     writeFileSync(replayCapture, replayBytes);
     requireWholeTreeAlive(proof);
     const journal = journalEvidence(stack, proof);
-    stamp(lines, `GREEN same-generation renderer reconnect highWater=${replayReport.highWater}`);
-    stamp(lines, `GREEN byte-identical replay bytes=${referenceBytes.byteLength} sha256=${digest(referenceBytes)}`);
+    stamp(
+      lines,
+      `GREEN same-generation renderer reconnect highWater=${replayReport.highWater}`,
+    );
+    stamp(
+      lines,
+      `GREEN byte-identical replay bytes=${referenceBytes.byteLength} sha256=${digest(referenceBytes)}`,
+    );
     // The window's lower edge is measured, not asserted: sliceFrom refuses an
     // afterSeq below the journal's retained start (CheckpointUnavailable), so a
     // reconnect that reaches firstCorrectFrame at afterSeq=0 proves the retained
     // range still begins at 0. The upper edge is the spec capacity, §18
     // terminal_state.zig journal_max_bytes.
-    stamp(lines, `BOUND: reconnect at afterSeq=0 was served, so the retained range still starts at sequence 0; capacity is ${JOURNAL_MAX_BYTES} bytes (§18)`);
+    stamp(
+      lines,
+      `BOUND: reconnect at afterSeq=0 was served, so the retained range still starts at sequence 0; capacity is ${JOURNAL_MAX_BYTES} bytes (§18)`,
+    );
     const exitCode = await stopStack(stack);
-    if (exitCode !== 0) throw new Error(`renderer stack cleanup exited ${exitCode}`);
+    if (exitCode !== 0)
+      throw new Error(`renderer stack cleanup exited ${exitCode}`);
     await waitTreeAbsent(proof.processTree);
     const final = finalRecord(stack, proof);
     const postTeardownReadback = processReadback(proof.processTree);
-    stamp(lines, `GREEN post-teardown ps readback=${JSON.stringify(postTeardownReadback)}`);
+    stamp(
+      lines,
+      `GREEN post-teardown ps readback=${JSON.stringify(postTeardownReadback)}`,
+    );
     stamp(lines, "RESULT: A4 kill-renderer/live-replay/zero-survivors GREEN");
     writeMatrix("a4-renderer-kill.txt", lines);
     writeManifest("a4-renderer-kill.json", {
-      cell: "a4-renderer-kill", ok: true, head, startedAt,
-      home: stack.home, project, port: proof.port, locator: proof.locator,
+      cell: "a4-renderer-kill",
+      ok: true,
+      head,
+      startedAt,
+      home: stack.home,
+      project,
+      port: proof.port,
+      locator: proof.locator,
       capturedProcessTree: proof.processTree,
-      renderer: { pid: referenceReport.pid, signal: "SIGKILL", runnerExit: killedExit },
-      afterRendererKill, referenceReport, replayReport,
+      renderer: {
+        pid: referenceReport.pid,
+        signal: "SIGKILL",
+        runnerExit: killedExit,
+      },
+      afterRendererKill,
+      referenceReport,
+      replayReport,
       boundedWindow: {
         fromSeq: 0,
-        fromSeqProof: "reconnect at afterSeq=0 reached firstCorrectFrame; sliceFrom refuses afterSeq below the retained start",
+        fromSeqProof:
+          "reconnect at afterSeq=0 reached firstCorrectFrame; sliceFrom refuses afterSeq below the retained start",
         throughSeq: referenceReport.highWater,
         capturedBytes: referenceBytes.byteLength,
         journalCapacityBytes: JOURNAL_MAX_BYTES,
-        journalCapacitySource: "native/sessiond/src/terminal_state.zig journal_max_bytes (§18)",
+        journalCapacitySource:
+          "native/sessiond/src/terminal_state.zig journal_max_bytes (§18)",
       },
-      referenceCapture: { path: referenceCapture, sha256: digest(referenceBytes) },
+      referenceCapture: {
+        path: referenceCapture,
+        sha256: digest(referenceBytes),
+      },
       replayCapture: { path: replayCapture, sha256: digest(replayBytes) },
-      journal, final, postTeardownReadback,
+      journal,
+      final,
+      postTeardownReadback,
     });
   } catch (error) {
-    if (renderer !== null && renderer.exitCode === null) renderer.kill("SIGKILL");
+    if (renderer !== null && renderer.exitCode === null)
+      renderer.kill("SIGKILL");
     await stopStack(stack).catch(() => undefined);
-    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    stamp(
+      lines,
+      `FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     writeMatrix(`diagnostic-a4-renderer-kill-${suffix}.txt`, lines);
     throw error;
   }
@@ -427,30 +572,56 @@ async function brokerKill(): Promise<void> {
   try {
     const proof = await loadProof(stack);
     requireWholeTreeAlive(proof);
-    const brokerTree = [{ pid: proof.brokerPid, command: "hive-sessiond serve" }];
+    const brokerTree = [
+      { pid: proof.brokerPid, command: "hive-sessiond serve" },
+    ];
     if (liveProcesses(brokerTree).length !== 1) {
-      throw new Error(`broker positive control cannot see pid ${proof.brokerPid}`);
+      throw new Error(
+        `broker positive control cannot see pid ${proof.brokerPid}`,
+      );
     }
     stamp(lines, `HEAD=${head}`);
     stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
-    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
-    stamp(lines, `captured-before-broker-kill=${JSON.stringify(proof.processTree)}`);
+    stamp(
+      lines,
+      `session=${proof.locator.sessionId} generation=${proof.locator.generation}`,
+    );
+    stamp(
+      lines,
+      `captured-before-broker-kill=${JSON.stringify(proof.processTree)}`,
+    );
     process.kill(proof.brokerPid, "SIGKILL");
     await waitTreeAbsent(brokerTree);
     stamp(lines, `SIGKILL broker pid=${proof.brokerPid}; ps readback=absent`);
 
     const geometry = JSON.stringify({
-      columns: 80, rows: 24, widthPx: 800, heightPx: 480,
-      cellWidthPx: 10, cellHeightPx: 20,
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
     });
-    const loss = runAllowFailure([
-      proof.hiveCli, "workspace-attach", proof.agent,
-      "--port", String(proof.port),
-      "--session-locator", JSON.stringify(proof.locator),
-      "--viewer-id", "a4-broker-kill",
-      "--geometry", geometry,
-    ], project);
-    if (loss.exitCode === 0 || !loss.output.includes("sessiond broker is unavailable")) {
+    const loss = runAllowFailure(
+      [
+        proof.hiveCli,
+        "workspace-attach",
+        proof.agent,
+        "--port",
+        String(proof.port),
+        "--session-locator",
+        JSON.stringify(proof.locator),
+        "--viewer-id",
+        "a4-broker-kill",
+        "--geometry",
+        geometry,
+      ],
+      project,
+    );
+    if (
+      loss.exitCode === 0 ||
+      !loss.output.includes("sessiond broker is unavailable")
+    ) {
       throw new Error(`broker loss was not explicit: ${JSON.stringify(loss)}`);
     }
     const transcriptPath = join(stack.home, "b22-proof-transcript.log");
@@ -459,37 +630,67 @@ async function brokerKill(): Promise<void> {
       "visibility renewal failed: SessiondBrokerUnavailableError",
       "typed broker-loss renewal readback",
     );
-    const typedRenewal = readFileSync(transcriptPath, "utf8").split("\n")
-      .find((line) => line.includes("visibility renewal failed: SessiondBrokerUnavailableError"));
-    if (typedRenewal === undefined) throw new Error("typed broker loss line disappeared");
+    const typedRenewal = readFileSync(transcriptPath, "utf8")
+      .split("\n")
+      .find((line) =>
+        line.includes(
+          "visibility renewal failed: SessiondBrokerUnavailableError",
+        ),
+      );
+    if (typedRenewal === undefined)
+      throw new Error("typed broker loss line disappeared");
     stamp(lines, `GREEN typed attach loss: ${loss.output}`);
     stamp(lines, `GREEN typed renewal loss: ${typedRenewal}`);
 
     const finalPath = join(
-      stack.home, "runtime/sessiond/hosts", proof.locator.sessionId, "final.json",
+      stack.home,
+      "runtime/sessiond/hosts",
+      proof.locator.sessionId,
+      "final.json",
     );
     await waitForFile(finalPath, "broker-loss visibility-expiry final record");
     await waitTreeAbsent(proof.processTree);
     const final = finalRecord(stack, proof);
     const postExpiryReadback = processReadback(proof.processTree);
     const exitCode = await stopStack(stack);
-    if (exitCode !== 0) throw new Error(`broker stack cleanup exited ${exitCode}`);
-    stamp(lines, "GREEN no fabricated clean exit: broker loss remained explicit until lease teardown");
-    stamp(lines, `GREEN post-expiry ps readback=${JSON.stringify(postExpiryReadback)}`);
+    if (exitCode !== 0)
+      throw new Error(`broker stack cleanup exited ${exitCode}`);
+    stamp(
+      lines,
+      "GREEN no fabricated clean exit: broker loss remained explicit until lease teardown",
+    );
+    stamp(
+      lines,
+      `GREEN post-expiry ps readback=${JSON.stringify(postExpiryReadback)}`,
+    );
     stamp(lines, "RESULT: A4 kill-broker/typed-loss/zero-survivors GREEN");
     writeMatrix("a4-broker-kill.txt", lines);
     writeManifest("a4-broker-kill.json", {
-      cell: "a4-broker-kill", ok: true, head, startedAt,
-      home: stack.home, project, port: proof.port, locator: proof.locator,
-      broker: { pid: proof.brokerPid, signal: "SIGKILL", postKillState: "absent" },
+      cell: "a4-broker-kill",
+      ok: true,
+      head,
+      startedAt,
+      home: stack.home,
+      project,
+      port: proof.port,
+      locator: proof.locator,
+      broker: {
+        pid: proof.brokerPid,
+        signal: "SIGKILL",
+        postKillState: "absent",
+      },
       capturedProcessTree: proof.processTree,
       typedLoss: { attach: loss, visibilityRenewal: typedRenewal },
       visibilityExpiryBoundMilliseconds: 15_000,
-      final, postExpiryReadback,
+      final,
+      postExpiryReadback,
     });
   } catch (error) {
     await stopStack(stack).catch(() => undefined);
-    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    stamp(
+      lines,
+      `FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     writeMatrix(`diagnostic-a4-broker-kill-${suffix}.txt`, lines);
     throw error;
   }
@@ -500,23 +701,39 @@ async function staleLocatorTypedError(): Promise<void> {
   const project = makePlainProject("stale-locator");
   const stack = startStack("zstale", basePort + 2, project);
   const geometry = JSON.stringify({
-    columns: 80, rows: 24, widthPx: 800, heightPx: 480,
-    cellWidthPx: 10, cellHeightPx: 20,
+    columns: 80,
+    rows: 24,
+    widthPx: 800,
+    heightPx: 480,
+    cellWidthPx: 10,
+    cellHeightPx: 20,
   });
   try {
     const proof = await loadProof(stack);
     const attach = (viewerId: string) =>
-      runAllowFailure([
-        proof.hiveCli, "workspace-attach", proof.agent,
-        "--port", String(proof.port),
-        "--session-locator", JSON.stringify(proof.locator),
-        "--viewer-id", viewerId,
-        "--geometry", geometry,
-      ], project);
+      runAllowFailure(
+        [
+          proof.hiveCli,
+          "workspace-attach",
+          proof.agent,
+          "--port",
+          String(proof.port),
+          "--session-locator",
+          JSON.stringify(proof.locator),
+          "--viewer-id",
+          viewerId,
+          "--geometry",
+          geometry,
+        ],
+        project,
+      );
     requireWholeTreeAlive(proof);
     stamp(lines, `HEAD=${head}`);
     stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
-    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
+    stamp(
+      lines,
+      `session=${proof.locator.sessionId} generation=${proof.locator.generation}`,
+    );
     stamp(lines, `captured-before-kill=${JSON.stringify(proof.processTree)}`);
 
     // Positive control: the SAME locator string this cell later replays must
@@ -524,106 +741,194 @@ async function staleLocatorTypedError(): Promise<void> {
     // the kill could just be a malformed request the reader cannot tell apart.
     const live = attach("a4-stale-positive-control");
     if (live.exitCode !== 0) {
-      throw new Error(`positive control failed: live locator did not attach: ${JSON.stringify(live)}`);
+      throw new Error(
+        `positive control failed: live locator did not attach: ${JSON.stringify(live)}`,
+      );
     }
-    stamp(lines, "POSITIVE CONTROL live locator attached exit=0 (the reader can see a live answer)");
+    stamp(
+      lines,
+      "POSITIVE CONTROL live locator attached exit=0 (the reader can see a live answer)",
+    );
 
-    const kill = runAllowFailure([
-      proof.hiveCli, "kill", proof.agent,
-      "--port", String(proof.port),
-      "--session-locator", JSON.stringify(proof.locator),
-    ], project);
-    if (kill.exitCode !== 0) throw new Error(`exact-locator kill failed: ${JSON.stringify(kill)}`);
+    const kill = runAllowFailure(
+      [
+        proof.hiveCli,
+        "kill",
+        proof.agent,
+        "--port",
+        String(proof.port),
+        "--session-locator",
+        JSON.stringify(proof.locator),
+      ],
+      project,
+    );
+    if (kill.exitCode !== 0)
+      throw new Error(`exact-locator kill failed: ${JSON.stringify(kill)}`);
     await waitTreeAbsent(proof.processTree);
     const final = finalRecord(stack, proof);
     const postKillReadback = processReadback(proof.processTree);
     stamp(lines, `killed the exact generation: ${kill.output}`);
-    stamp(lines, `GREEN post-kill ps readback=${JSON.stringify(postKillReadback)}`);
+    stamp(
+      lines,
+      `GREEN post-kill ps readback=${JSON.stringify(postKillReadback)}`,
+    );
 
     // I5: the locator now names a generation that no longer exists.
     const stale = attach("a4-stale-after-kill");
     if (stale.exitCode === 0) {
-      throw new Error(`stale locator returned a live answer: ${JSON.stringify(stale)}`);
+      throw new Error(
+        `stale locator returned a live answer: ${JSON.stringify(stale)}`,
+      );
     }
-    const staleKill = runAllowFailure([
-      proof.hiveCli, "kill", proof.agent,
-      "--port", String(proof.port),
-      "--session-locator", JSON.stringify(proof.locator),
-    ], project);
-    stamp(lines, `stale-locator attach: exit=${stale.exitCode} ${stale.output}`);
-    stamp(lines, `stale-locator kill: exit=${staleKill.exitCode} ${staleKill.output}`);
+    const staleKill = runAllowFailure(
+      [
+        proof.hiveCli,
+        "kill",
+        proof.agent,
+        "--port",
+        String(proof.port),
+        "--session-locator",
+        JSON.stringify(proof.locator),
+      ],
+      project,
+    );
+    stamp(
+      lines,
+      `stale-locator attach: exit=${stale.exitCode} ${stale.output}`,
+    );
+    stamp(
+      lines,
+      `stale-locator kill: exit=${staleKill.exitCode} ${staleKill.output}`,
+    );
 
     // I5 asks for two things of a locator naming a dead generation: a refusal
     // (never a false-live answer, never a silent null) and a refusal that names
     // the generation. Both are measured, neither is assumed.
     const attachRefused = stale.exitCode !== 0;
-    const attachTyped = STALE_LOCATOR_REASONS.find((reason) => stale.output.includes(reason));
+    const attachTyped = STALE_LOCATOR_REASONS.find((reason) =>
+      stale.output.includes(reason),
+    );
     const killRefused = staleKill.exitCode !== 0;
-    const killTyped = STALE_LOCATOR_REASONS.find((reason) => staleKill.output.includes(reason));
-    const ok = attachRefused && killRefused &&
-      attachTyped !== undefined && killTyped !== undefined;
+    const killTyped = STALE_LOCATOR_REASONS.find((reason) =>
+      staleKill.output.includes(reason),
+    );
+    const ok =
+      attachRefused &&
+      killRefused &&
+      attachTyped !== undefined &&
+      killTyped !== undefined;
     const exitCode = await stopStack(stack);
-    if (exitCode !== 0) throw new Error(`stale-locator stack cleanup exited ${exitCode}`);
+    if (exitCode !== 0)
+      throw new Error(`stale-locator stack cleanup exited ${exitCode}`);
 
     if (attachRefused) {
-      stamp(lines, "GREEN stale-locator attach refused: no false-live answer, no silent null");
+      stamp(
+        lines,
+        "GREEN stale-locator attach refused: no false-live answer, no silent null",
+      );
     } else {
       stamp(lines, "VIOLATION stale-locator attach returned a live answer");
     }
     if (attachTyped === undefined) {
-      stamp(lines, `GAP stale-locator attach refusal names no generation; expected one of ${STALE_LOCATOR_REASONS.join(", ")}`);
+      stamp(
+        lines,
+        `GAP stale-locator attach refusal names no generation; expected one of ${STALE_LOCATOR_REASONS.join(", ")}`,
+      );
     }
     if (killRefused) {
       stamp(lines, "GREEN stale-locator kill refused");
     } else {
-      stamp(lines, "VIOLATION stale-locator kill reported SUCCESS for a generation that no longer exists — a fabricated result, which is exactly the false answer I5 forbids");
+      stamp(
+        lines,
+        "VIOLATION stale-locator kill reported SUCCESS for a generation that no longer exists — a fabricated result, which is exactly the false answer I5 forbids",
+      );
     }
-    stamp(lines, ok
-      ? "RESULT: A4 stale locator typed error (I5) GREEN"
-      : "RESULT: A4 stale locator (I5) NOT GREEN — see violations above");
-    if (!ok) console.log("a4-stale-locator: NOT GREEN — I5 gap recorded, see the manifest");
+    stamp(
+      lines,
+      ok
+        ? "RESULT: A4 stale locator typed error (I5) GREEN"
+        : "RESULT: A4 stale locator (I5) NOT GREEN — see violations above",
+    );
+    if (!ok)
+      console.log(
+        "a4-stale-locator: NOT GREEN — I5 gap recorded, see the manifest",
+      );
     writeMatrix("a4-stale-locator.txt", lines);
     writeManifest("a4-stale-locator.json", {
-      cell: "a4-stale-locator", ok,
+      cell: "a4-stale-locator",
+      ok,
       status: ok ? "GREEN" : "I5-TYPED-STALE-REFUSAL-GAP",
-      head, startedAt,
-      home: stack.home, project, port: proof.port, locator: proof.locator,
+      head,
+      startedAt,
+      home: stack.home,
+      project,
+      port: proof.port,
+      locator: proof.locator,
       capturedProcessTree: proof.processTree,
-      positiveControl: { viewerId: "a4-stale-positive-control", exitCode: live.exitCode },
-      exactGenerationKill: kill, final, postKillReadback,
-      staleAttach: { ...stale, refused: attachRefused, namedGeneration: attachTyped ?? null },
-      staleKill: { ...staleKill, refused: killRefused, namedGeneration: killTyped ?? null },
+      positiveControl: {
+        viewerId: "a4-stale-positive-control",
+        exitCode: live.exitCode,
+      },
+      exactGenerationKill: kill,
+      final,
+      postKillReadback,
+      staleAttach: {
+        ...stale,
+        refused: attachRefused,
+        namedGeneration: attachTyped ?? null,
+      },
+      staleKill: {
+        ...staleKill,
+        refused: killRefused,
+        namedGeneration: killTyped ?? null,
+      },
       recognisedReasons: STALE_LOCATOR_REASONS,
     });
   } catch (error) {
     await stopStack(stack).catch(() => undefined);
-    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    stamp(
+      lines,
+      `FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     writeMatrix(`diagnostic-a4-stale-locator-${suffix}.txt`, lines);
     throw error;
   }
 }
 
-function journalEvidence(stack: Stack, proof: B22Proof): {
+function journalEvidence(
+  stack: Stack,
+  proof: B22Proof,
+): {
   path: string;
   bytes: number;
   sha256: string;
 } {
   const path = join(
-    stack.home, "runtime/sessiond/hosts", proof.locator.sessionId, "journal.bin",
+    stack.home,
+    "runtime/sessiond/hosts",
+    proof.locator.sessionId,
+    "journal.bin",
   );
   const bytes = readFileSync(path);
-  if (bytes.byteLength <= 16) throw new Error("live journal has no PTY payload");
+  if (bytes.byteLength <= 16)
+    throw new Error("live journal has no PTY payload");
   return { path, bytes: bytes.byteLength, sha256: digest(bytes) };
 }
 
 function finalRecord(stack: Stack, proof: B22Proof): FinalRecord {
   const path = join(
-    stack.home, "runtime/sessiond/hosts", proof.locator.sessionId, "final.json",
+    stack.home,
+    "runtime/sessiond/hosts",
+    proof.locator.sessionId,
+    "final.json",
   );
-  if (!existsSync(path)) throw new Error(`final session record is missing: ${path}`);
+  if (!existsSync(path))
+    throw new Error(`final session record is missing: ${path}`);
   const record = JSON.parse(readFileSync(path, "utf8")) as FinalRecord;
   if (record.state !== "terminated" || record.survivors?.length !== 0) {
-    throw new Error(`session termination is not exact: ${JSON.stringify(record)}`);
+    throw new Error(
+      `session termination is not exact: ${JSON.stringify(record)}`,
+    );
   }
   return record;
 }
@@ -632,14 +937,29 @@ function mutatedLocator(proof: B22Proof): ProofLocator {
   return { ...proof.locator, generation: proof.locator.generation + 1 };
 }
 
-function wrongLocatorKill(proof: B22Proof): { exitCode: number; output: string } {
-  const result = runAllowFailure([
-    proof.hiveCli, "kill", proof.agent,
-    "--port", String(proof.port),
-    "--session-locator", JSON.stringify(mutatedLocator(proof)),
-  ], proof.workspaceProject);
-  if (result.exitCode === 0 || !result.output.toLowerCase().includes("session")) {
-    throw new Error(`wrong-locator kill did not fail closed: ${JSON.stringify(result)}`);
+function wrongLocatorKill(proof: B22Proof): {
+  exitCode: number;
+  output: string;
+} {
+  const result = runAllowFailure(
+    [
+      proof.hiveCli,
+      "kill",
+      proof.agent,
+      "--port",
+      String(proof.port),
+      "--session-locator",
+      JSON.stringify(mutatedLocator(proof)),
+    ],
+    proof.workspaceProject,
+  );
+  if (
+    result.exitCode === 0 ||
+    !result.output.toLowerCase().includes("session")
+  ) {
+    throw new Error(
+      `wrong-locator kill did not fail closed: ${JSON.stringify(result)}`,
+    );
   }
   requireWholeTreeAlive(proof);
   return result;
@@ -666,76 +986,149 @@ async function reconnectReplay(): Promise<void> {
     requireWholeTreeAlive(proof);
     stamp(lines, `HEAD=${head}`);
     stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
-    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
-    stamp(lines, `pre-action process tree=${proof.processTree.map((entry) => entry.pid).join(",")}`);
+    stamp(
+      lines,
+      `session=${proof.locator.sessionId} generation=${proof.locator.generation}`,
+    );
+    stamp(
+      lines,
+      `pre-action process tree=${proof.processTree.map((entry) => entry.pid).join(",")}`,
+    );
 
     const testPath = join(evidence, "matrix", "a4-reconnect-xctest.txt");
-    const child = Bun.spawn(["swift", "test", "--filter", "LiveHostAttachTests.testLiveAttachReplayReconnectAndFence"], {
-      cwd: workspaceRoot,
-      env: { ...process.env, HIVE_B22_PROOF_HOME: stack.home },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const child = Bun.spawn(
+      [
+        "swift",
+        "test",
+        "--filter",
+        "LiveHostAttachTests.testLiveAttachReplayReconnectAndFence",
+      ],
+      {
+        cwd: workspaceRoot,
+        env: { ...process.env, HIVE_B22_PROOF_HOME: stack.home },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     const [stdout, stderr, exit] = await Promise.all([
-      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
     ]);
     writeFileSync(testPath, `${stdout}${stderr}`);
     if (exit !== 0) throw new Error(`live reconnect XCTest failed (${exit})`);
-    stamp(lines, "GREEN live sessiond attach -> replay -> contiguous live output -> same-locator reconnect");
+    stamp(
+      lines,
+      "GREEN live sessiond attach -> replay -> contiguous live output -> same-locator reconnect",
+    );
 
     const geometry = JSON.stringify({
-      columns: 80, rows: 24, widthPx: 800, heightPx: 480,
-      cellWidthPx: 10, cellHeightPx: 20,
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
     });
-    const wrong = runAllowFailure([
-      proof.hiveCli, "workspace-attach", proof.agent,
-      "--port", String(proof.port),
-      "--session-locator", JSON.stringify(mutatedLocator(proof)),
-      "--viewer-id", "b25-mutated-replay",
-      "--geometry", geometry,
-    ], project);
-    if (wrong.exitCode === 0 || !wrong.output.includes("session-locator-mismatch")) {
-      throw new Error(`wrong-generation reconnect was not fenced: ${JSON.stringify(wrong)}`);
+    const wrong = runAllowFailure(
+      [
+        proof.hiveCli,
+        "workspace-attach",
+        proof.agent,
+        "--port",
+        String(proof.port),
+        "--session-locator",
+        JSON.stringify(mutatedLocator(proof)),
+        "--viewer-id",
+        "b25-mutated-replay",
+        "--geometry",
+        geometry,
+      ],
+      project,
+    );
+    if (
+      wrong.exitCode === 0 ||
+      !wrong.output.includes("session-locator-mismatch")
+    ) {
+      throw new Error(
+        `wrong-generation reconnect was not fenced: ${JSON.stringify(wrong)}`,
+      );
     }
     requireWholeTreeAlive(proof);
-    stamp(lines, `MUTATION VERIFIED wrong-generation attach refused: ${wrong.output}`);
+    stamp(
+      lines,
+      `MUTATION VERIFIED wrong-generation attach refused: ${wrong.output}`,
+    );
     const journal = journalEvidence(stack, proof);
-    stamp(lines, `journal=${journal.path} bytes=${journal.bytes} sha256=${journal.sha256}`);
+    stamp(
+      lines,
+      `journal=${journal.path} bytes=${journal.bytes} sha256=${journal.sha256}`,
+    );
     stamp(lines, `xctest=${testPath}`);
     const exitCode = await stopStack(stack);
-    if (exitCode !== 0) throw new Error(`reconnect stack cleanup exited ${exitCode}`);
+    if (exitCode !== 0)
+      throw new Error(`reconnect stack cleanup exited ${exitCode}`);
     stamp(lines, "RESULT: A4 restart/reconnect/replay GREEN");
     writeMatrix("a4-reconnect-replay.txt", lines);
     writeManifest("a4-reconnect-replay.json", {
-      cell: "a4-reconnect-replay", ok: true, head, startedAt,
-      home: stack.home, project, port: proof.port, locator: proof.locator,
-      processTree: proof.processTree, journal, xctest: testPath,
-      mutation: { generation: proof.locator.generation + 1, exitCode: wrong.exitCode, output: wrong.output },
+      cell: "a4-reconnect-replay",
+      ok: true,
+      head,
+      startedAt,
+      home: stack.home,
+      project,
+      port: proof.port,
+      locator: proof.locator,
+      processTree: proof.processTree,
+      journal,
+      xctest: testPath,
+      mutation: {
+        generation: proof.locator.generation + 1,
+        exitCode: wrong.exitCode,
+        output: wrong.output,
+      },
     });
   } catch (error) {
     await stopStack(stack).catch(() => undefined);
-    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    stamp(
+      lines,
+      `FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     writeMatrix(`diagnostic-a4-reconnect-${suffix}.txt`, lines);
     throw error;
   }
 }
 
-async function exactClose(): Promise<{ project: string; proof: B22Proof; stack: Stack }> {
+async function exactClose(): Promise<{
+  project: string;
+  proof: B22Proof;
+  stack: Stack;
+}> {
   const lines: string[] = [];
   const project = makePlainProject("close");
   const stack = startStack("close", basePort + 1, project, "close");
   try {
     const proof = await loadProof(stack);
-    await waitForText(stack.result, "A4 CLOSE READY", "Workspace close readiness");
+    await waitForText(
+      stack.result,
+      "A4 CLOSE READY",
+      "Workspace close readiness",
+    );
     requireWholeTreeAlive(proof);
     assertPlainProject(project);
     stamp(lines, `HEAD=${head}`);
     stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
-    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
+    stamp(
+      lines,
+      `session=${proof.locator.sessionId} generation=${proof.locator.generation}`,
+    );
     stamp(lines, `captured-before-close=${JSON.stringify(proof.processTree)}`);
     const wrong = wrongLocatorKill(proof);
-    stamp(lines, `MUTATION VERIFIED wrong-locator pane target survived: ${wrong.output}`);
+    stamp(
+      lines,
+      `MUTATION VERIFIED wrong-locator pane target survived: ${wrong.output}`,
+    );
     writeFileSync(stack.trigger, "close\n");
     const exitCode = await waitForExit(stack);
     if (exitCode !== 0) throw new Error(`close stack exited ${exitCode}`);
@@ -743,40 +1136,67 @@ async function exactClose(): Promise<{ project: string; proof: B22Proof; stack: 
     const final = finalRecord(stack, proof);
     const workspaceResult = readFileSync(stack.result, "utf8").trim();
     if (!workspaceResult.includes("A4 CLOSE PROOF OK")) {
-      throw new Error(`Workspace did not confirm its close: ${workspaceResult}`);
+      throw new Error(
+        `Workspace did not confirm its close: ${workspaceResult}`,
+      );
     }
-    const driver = readFileSync(join(stack.home, "b22-proof-transcript.log"), "utf8");
+    const driver = readFileSync(
+      join(stack.home, "b22-proof-transcript.log"),
+      "utf8",
+    );
     if (!driver.includes("A4 CLOSE VERIFIED")) {
-      throw new Error("driver did not observe daemon/broker survival after exact close");
+      throw new Error(
+        "driver did not observe daemon/broker survival after exact close",
+      );
     }
     stamp(lines, workspaceResult.replaceAll("\n", " | "));
-    stamp(lines, "GREEN captured target process tree absent after real pane close");
+    stamp(
+      lines,
+      "GREEN captured target process tree absent after real pane close",
+    );
     stamp(lines, "GREEN session final state=terminated survivors=[]");
-    stamp(lines, "GREEN unrelated daemon and broker survived until post-close readback");
+    stamp(
+      lines,
+      "GREEN unrelated daemon and broker survived until post-close readback",
+    );
     stamp(lines, "RESULT: A4 exact per-pane close GREEN");
     writeMatrix("a4-exact-close.txt", lines);
     writeManifest("a4-exact-close.json", {
-      cell: "a4-exact-close", ok: true, head, startedAt,
-      home: stack.home, project, port: proof.port, locator: proof.locator,
-      capturedProcessTree: proof.processTree, final,
-      workspaceResult, mutation: { generation: proof.locator.generation + 1, ...wrong },
+      cell: "a4-exact-close",
+      ok: true,
+      head,
+      startedAt,
+      home: stack.home,
+      project,
+      port: proof.port,
+      locator: proof.locator,
+      capturedProcessTree: proof.processTree,
+      final,
+      workspaceResult,
+      mutation: { generation: proof.locator.generation + 1, ...wrong },
       unrelatedControlPlaneSurvivedClose: true,
     });
     return { project, proof, stack };
   } catch (error) {
     await stopStack(stack).catch(() => undefined);
-    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    stamp(
+      lines,
+      `FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     writeMatrix(`diagnostic-a4-close-${suffix}.txt`, lines);
     throw error;
   }
 }
 
-async function concurrentQuit(unitPath: string): Promise<{ project: string; proof: B22Proof; stack: Stack }> {
+async function concurrentQuit(
+  unitPath: string,
+): Promise<{ project: string; proof: B22Proof; stack: Stack }> {
   const lines: string[] = [];
   const faithfulPending = {
     requiresUnlockedProductionStack: true,
     diagnostic: "matrix/diagnostic-a4-quit-harness-entanglement.txt",
-    reason: "b22 driver hosts the daemon in-process, so its app-quit path cannot measure the daemon-self-owned production shutdown handshake",
+    reason:
+      "b22 driver hosts the daemon in-process, so its app-quit path cannot measure the daemon-self-owned production shutdown handshake",
   };
   const status = faithfulPending.requiresUnlockedProductionStack
     ? "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK"
@@ -789,7 +1209,10 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
     assertPlainProject(project);
     stamp(lines, `HEAD=${head}`);
     stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
-    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
+    stamp(
+      lines,
+      `session=${proof.locator.sessionId} generation=${proof.locator.generation}`,
+    );
     stamp(lines, `captured-before-quit=${JSON.stringify(proof.processTree)}`);
     const stop = Bun.spawn([proof.hiveCli, "stop"], {
       cwd: project,
@@ -811,27 +1234,63 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
     if (exitCode !== 0) throw new Error(`quit stack exited ${exitCode}`);
     await waitTreeAbsent(proof.processTree);
     const final = finalRecord(stack, proof);
-    const driver = readFileSync(join(stack.home, "b22-proof-transcript.log"), "utf8");
-    if (!driver.includes("shutting down (SIGTERM)") || !driver.includes("daemon stopped; session torn down")) {
+    const driver = readFileSync(
+      join(stack.home, "b22-proof-transcript.log"),
+      "utf8",
+    );
+    if (
+      !driver.includes("shutting down (SIGTERM)") ||
+      !driver.includes("daemon stopped; session torn down")
+    ) {
       throw new Error("Workspace quit did not drive verified hive stop");
     }
     stamp(lines, `GREEN live hive stop output: ${stopOutput}`);
-    stamp(lines, "GREEN live provider process tree absent after verified hive stop");
+    stamp(
+      lines,
+      "GREEN live provider process tree absent after verified hive stop",
+    );
     stamp(lines, "GREEN session final state=terminated survivors=[]");
-    stamp(lines, `COMPOSED Workspace quit request/wait + failure refusal: ${unitPath}`);
-    stamp(lines, "COMPOSED real production Workspace/vendor lifecycle: diagnostic-p14-locked-screen-crop.txt");
-    stamp(lines, "MUTATION VERIFIED termination-failure refusal cancels quit and surfaces the survivor");
-    stamp(lines, "INTERIM RESULT: live stop/tree teardown GREEN; Workspace request/wait behavior GREEN by composition");
-    stamp(lines, `NEGATIVE EVIDENCE: the in-process b22 driver cannot faithfully drive app quit; see ${faithfulPending.diagnostic.replace("matrix/", "")}`);
-    stamp(lines, "RESULT: COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK on daemon-self-owned production stack");
+    stamp(
+      lines,
+      `COMPOSED Workspace quit request/wait + failure refusal: ${unitPath}`,
+    );
+    stamp(
+      lines,
+      "COMPOSED real production Workspace/vendor lifecycle: diagnostic-p14-locked-screen-crop.txt",
+    );
+    stamp(
+      lines,
+      "MUTATION VERIFIED termination-failure refusal cancels quit and surfaces the survivor",
+    );
+    stamp(
+      lines,
+      "INTERIM RESULT: live stop/tree teardown GREEN; Workspace request/wait behavior GREEN by composition",
+    );
+    stamp(
+      lines,
+      `NEGATIVE EVIDENCE: the in-process b22 driver cannot faithfully drive app quit; see ${faithfulPending.diagnostic.replace("matrix/", "")}`,
+    );
+    stamp(
+      lines,
+      "RESULT: COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK on daemon-self-owned production stack",
+    );
     writeMatrix("a4-quit.txt", lines);
     writeManifest("a4-quit.json", {
-      cell: "a4-quit", ok: !faithfulPending.requiresUnlockedProductionStack, status,
-      head, startedAt,
-      home: stack.home, project, port: proof.port, locator: proof.locator,
-      capturedProcessTree: proof.processTree, final, stopOutput,
+      cell: "a4-quit",
+      ok: !faithfulPending.requiresUnlockedProductionStack,
+      status,
+      head,
+      startedAt,
+      home: stack.home,
+      project,
+      port: proof.port,
+      locator: proof.locator,
+      capturedProcessTree: proof.processTree,
+      final,
+      stopOutput,
       composition: {
-        productionWorkspaceVendor: "matrix/diagnostic-p14-locked-screen-crop.txt",
+        productionWorkspaceVendor:
+          "matrix/diagnostic-p14-locked-screen-crop.txt",
         lifecycleRequestAndRefusal: unitPath,
         liveSentinelStop: "this manifest",
       },
@@ -844,7 +1303,10 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
     return { project, proof, stack };
   } catch (error) {
     await stopStack(stack).catch(() => undefined);
-    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    stamp(
+      lines,
+      `FAIL: ${error instanceof Error ? error.message : String(error)}`,
+    );
     writeMatrix(`diagnostic-a4-quit-${suffix}.txt`, lines);
     throw error;
   }
@@ -873,14 +1335,26 @@ for (const row of [close]) {
   assertPlainProject(row.project);
   verifyPlainProjectMutation(row.project);
   stamp(nonHiveLines, `GREEN plain git project=${row.project}`);
-  stamp(nonHiveLines, `Workspace session=${row.proof.locator.sessionId} hostKind=${row.proof.locator.hostKind}`);
-  stamp(nonHiveLines, "no project package.json, Bun lockfile, .hive directory, or Hive source layout");
+  stamp(
+    nonHiveLines,
+    `Workspace session=${row.proof.locator.sessionId} hostKind=${row.proof.locator.hostKind}`,
+  );
+  stamp(
+    nonHiveLines,
+    "no project package.json, Bun lockfile, .hive directory, or Hive source layout",
+  );
 }
-stamp(nonHiveLines, "MUTATION VERIFIED: planted package.json breaks the plain-project check; removal restores it");
+stamp(
+  nonHiveLines,
+  "MUTATION VERIFIED: planted package.json breaks the plain-project check; removal restores it",
+);
 stamp(nonHiveLines, "RESULT: A4 non-Hive project GREEN");
 writeMatrix("a4-non-hive-project.txt", nonHiveLines);
 writeManifest("a4-non-hive-project.json", {
-  cell: "a4-non-hive-project", ok: true, head, startedAt,
+  cell: "a4-non-hive-project",
+  ok: true,
+  head,
+  startedAt,
   projects: [close.project],
   sessions: [close.proof.locator],
   forbiddenProjectEntries: ["package.json", "bun.lock", "bun.lockb", ".hive"],

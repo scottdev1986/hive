@@ -3,19 +3,19 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
-  emptyRoutingPolicy,
-  modelPolicyState,
-  ROUTING_CATEGORIES,
-  RoutingPolicyMutationSchema,
-  RoutingPolicySchema,
-  SelectionPolicySchema,
   type CapabilityProvider,
   type ChainEntry,
+  emptyRoutingPolicy,
   type ModelEnablementDecision,
+  modelPolicyState,
+  ROUTING_CATEGORIES,
   type RoutingCategory,
   type RoutingPolicy,
   type RoutingPolicyMutation,
+  RoutingPolicyMutationSchema,
+  RoutingPolicySchema,
   type SelectionPolicy,
+  SelectionPolicySchema,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 
@@ -97,9 +97,9 @@ export class RoutingPolicyStore {
    * unparseable JSON is left alone for the corrupt-row path to surface.
    */
   private migrateStoredStripProfilingCategory(now: Date = new Date()): void {
-    const row = this.db.database.query(
-      "SELECT document FROM routing_policy WHERE id = 1",
-    ).get() as { document: string } | null;
+    const row = this.db.database
+      .query("SELECT document FROM routing_policy WHERE id = 1")
+      .get() as { document: string } | null;
     if (row === null) return;
     let decoded: unknown;
     try {
@@ -107,7 +107,11 @@ export class RoutingPolicyStore {
     } catch {
       return;
     }
-    if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    if (
+      typeof decoded !== "object" ||
+      decoded === null ||
+      Array.isArray(decoded)
+    ) {
       return;
     }
     const doc = { ...(decoded as Record<string, unknown>) };
@@ -117,9 +121,12 @@ export class RoutingPolicyStore {
       typeof doc.chains === "object" &&
       doc.chains !== null &&
       !Array.isArray(doc.chains) &&
-      Object.prototype.hasOwnProperty.call(doc.chains, "profiling")
+      Object.hasOwn(doc.chains, "profiling")
     ) {
-      const { profiling: _removed, ...chains } = doc.chains as Record<string, unknown>;
+      const { profiling: _removed, ...chains } = doc.chains as Record<
+        string,
+        unknown
+      >;
       doc.chains = chains;
       changed = true;
     }
@@ -134,7 +141,7 @@ export class RoutingPolicyStore {
         typeof selection.categories === "object" &&
         selection.categories !== null &&
         !Array.isArray(selection.categories) &&
-        Object.prototype.hasOwnProperty.call(selection.categories, "profiling")
+        Object.hasOwn(selection.categories, "profiling")
       ) {
         const { profiling: _removed, ...categories } =
           selection.categories as Record<string, unknown>;
@@ -159,23 +166,29 @@ export class RoutingPolicyStore {
       : JSON.stringify(doc);
     const revision = parsed.success
       ? parsed.data.revision
-      : typeof doc.revision === "number" ? doc.revision : 0;
+      : typeof doc.revision === "number"
+        ? doc.revision
+        : 0;
     const updatedAt = parsed.success
       ? parsed.data.updatedAt
-      : typeof doc.updatedAt === "string" ? doc.updatedAt : now.toISOString();
+      : typeof doc.updatedAt === "string"
+        ? doc.updatedAt
+        : now.toISOString();
 
-    this.db.database.transaction(() => {
-      this.db.database.run(
-        "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
-        [revision, updatedAt, after],
-      );
-      this.db.database.run(
-        `INSERT INTO routing_policy_events
+    this.db.database
+      .transaction(() => {
+        this.db.database.run(
+          "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
+          [revision, updatedAt, after],
+        );
+        this.db.database.run(
+          `INSERT INTO routing_policy_events
            (at, actor, operation, revision, before, after)
          VALUES (?, 'hive', 'migrate-strip-profiling-category', ?, ?, ?)`,
-        [now.toISOString(), revision, row.document, after],
-      );
-    }).immediate();
+          [now.toISOString(), revision, row.document, after],
+        );
+      })
+      .immediate();
   }
 
   /**
@@ -186,9 +199,9 @@ export class RoutingPolicyStore {
    * non-provisional user policy become model consent. Nothing becomes AUTO.
    */
   private migrateStoredV1(now: Date = new Date()): void {
-    const row = this.db.database.query(
-      "SELECT document FROM routing_policy WHERE id = 1",
-    ).get() as { document: string } | null;
+    const row = this.db.database
+      .query("SELECT document FROM routing_policy WHERE id = 1")
+      .get() as { document: string } | null;
     if (row === null) return;
     let decoded: unknown;
     try {
@@ -196,42 +209,58 @@ export class RoutingPolicyStore {
     } catch {
       return;
     }
-    const header = z.object({ schemaVersion: z.literal(1) }).passthrough()
+    const header = z
+      .object({ schemaVersion: z.literal(1) })
+      .passthrough()
       .safeParse(decoded);
     if (!header.success) return;
-    const legacy = z.object({
-      schemaVersion: z.literal(1),
-      revision: z.number().int().nonnegative(),
-      updatedAt: z.string(),
-      provisional: z.boolean(),
-      providers: z.record(z.string(), z.unknown()),
-      models: z.array(z.unknown()),
-      chains: z.record(z.string(), z.array(z.unknown())),
-    }).passthrough().safeParse(decoded);
+    const legacy = z
+      .object({
+        schemaVersion: z.literal(1),
+        revision: z.number().int().nonnegative(),
+        updatedAt: z.string(),
+        provisional: z.boolean(),
+        providers: z.record(z.string(), z.unknown()),
+        models: z.array(z.unknown()),
+        chains: z.record(z.string(), z.array(z.unknown())),
+      })
+      .passthrough()
+      .safeParse(decoded);
     if (!legacy.success) return;
 
     const categories: Record<string, "choice"> = {};
     for (const [category, entries] of Object.entries(legacy.data.chains)) {
       if (entries.length > 0) categories[category] = "choice";
     }
-    const models: Record<string, unknown>[] = legacy.data.models.map((model) => ({
-      ...(model as object),
-      effort: (model as { effort?: unknown }).effort ?? { mode: "never-configured" },
-    }));
+    const models: Record<string, unknown>[] = legacy.data.models.map(
+      (model) => ({
+        ...(model as object),
+        effort: (model as { effort?: unknown }).effort ?? {
+          mode: "never-configured",
+        },
+      }),
+    );
     if (!legacy.data.provisional) {
       for (const entries of Object.values(legacy.data.chains)) {
         for (const entry of entries) {
-          const target = z.object({
-            provider: z.string(),
-            model: z.string(),
-          }).passthrough().safeParse(entry);
+          const target = z
+            .object({
+              provider: z.string(),
+              model: z.string(),
+            })
+            .passthrough()
+            .safeParse(entry);
           if (!target.success) continue;
           const index = models.findIndex((model) => {
-            const parsed = z.object({ provider: z.string(), model: z.string() })
-              .passthrough().safeParse(model);
-            return parsed.success &&
+            const parsed = z
+              .object({ provider: z.string(), model: z.string() })
+              .passthrough()
+              .safeParse(model);
+            return (
+              parsed.success &&
               parsed.data.provider === target.data.provider &&
-              parsed.data.model === target.data.model;
+              parsed.data.model === target.data.model
+            );
           });
           if (index >= 0) {
             models[index] = { ...(models[index] as object), state: "enabled" };
@@ -255,18 +284,20 @@ export class RoutingPolicyStore {
     });
     if (!next.success) return;
     const after = canonicalRoutingPolicyJson(next.data);
-    this.db.database.transaction(() => {
-      this.db.database.run(
-        "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
-        [next.data.revision, next.data.updatedAt, after],
-      );
-      this.db.database.run(
-        `INSERT INTO routing_policy_events
+    this.db.database
+      .transaction(() => {
+        this.db.database.run(
+          "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
+          [next.data.revision, next.data.updatedAt, after],
+        );
+        this.db.database.run(
+          `INSERT INTO routing_policy_events
            (at, actor, operation, revision, before, after)
          VALUES (?, 'hive', 'migrate-v1-explicit-intent', ?, ?, ?)`,
-        [now.toISOString(), next.data.revision, row.document, after],
-      );
-    }).immediate();
+          [now.toISOString(), next.data.revision, row.document, after],
+        );
+      })
+      .immediate();
   }
 
   /** The whole policy. No row → the empty revision-0 document (nothing
@@ -349,9 +380,11 @@ export class RoutingPolicyStore {
   /** Whether any policy has ever been written. Callers use this to decide
    * whether first-boot seeding (and its billing probes) are worth running. */
   isEmpty(): boolean {
-    return this.db.database.query(
-      "SELECT id FROM routing_policy WHERE id = 1",
-    ).get() === null;
+    return (
+      this.db.database
+        .query("SELECT id FROM routing_policy WHERE id = 1")
+        .get() === null
+    );
   }
 
   /**
@@ -403,7 +436,8 @@ export class RoutingPolicyStore {
     return this.db.database.transaction(() => {
       const current = this.isEmpty() ? null : this.read(now);
       if (
-        source.revision === 0 || source.provisional ||
+        source.revision === 0 ||
+        source.provisional ||
         (current !== null && !current.provisional)
       ) {
         return {
@@ -478,8 +512,11 @@ export class RoutingPolicyStore {
 }
 
 function sameSelection(left: SelectionPolicy, right: SelectionPolicy): boolean {
-  return left.global === right.global && ROUTING_CATEGORIES.every((category) =>
-    left.categories[category] === right.categories[category]
+  return (
+    left.global === right.global &&
+    ROUTING_CATEGORIES.every(
+      (category) => left.categories[category] === right.categories[category],
+    )
   );
 }
 
@@ -489,14 +526,16 @@ export function readRoutingPolicyDatabase(
   db: HiveDatabase,
   now: Date = new Date(),
 ): RoutingPolicy {
-  const table = db.database.query(`
+  const table = db.database
+    .query(`
     SELECT 1 AS present FROM sqlite_master
     WHERE type = 'table' AND name = 'routing_policy'
-  `).get();
+  `)
+    .get();
   if (table === null) return emptyRoutingPolicy(now.toISOString());
-  const row = db.database.query(
-    "SELECT document FROM routing_policy WHERE id = 1",
-  ).get() as { document: string } | null;
+  const row = db.database
+    .query("SELECT document FROM routing_policy WHERE id = 1")
+    .get() as { document: string } | null;
   if (row === null) return emptyRoutingPolicy(now.toISOString());
   let decoded: unknown;
   try {
@@ -530,17 +569,21 @@ function applyMutation(
     case "set-model": {
       const rest = withoutModelRow(policy, mutation.provider, mutation.model);
       const existing = modelRow(policy, mutation.provider, mutation.model);
-      if (mutation.state === "unset") return existing === undefined
-        ? { ...policy, models: rest }
-        : { ...policy, models: [...rest, { ...existing, state: undefined }] };
+      if (mutation.state === "unset")
+        return existing === undefined
+          ? { ...policy, models: rest }
+          : { ...policy, models: [...rest, { ...existing, state: undefined }] };
       return {
         ...policy,
-        models: [...rest, {
-          provider: mutation.provider,
-          model: mutation.model,
-          state: mutation.state,
-          effort: existing?.effort ?? { mode: "never-configured" },
-        }],
+        models: [
+          ...rest,
+          {
+            provider: mutation.provider,
+            model: mutation.model,
+            state: mutation.state,
+            effort: existing?.effort ?? { mode: "never-configured" },
+          },
+        ],
       };
     }
     case "set-effort": {
@@ -548,19 +591,28 @@ function applyMutation(
       const existing = modelRow(policy, mutation.provider, mutation.model);
       if (mutation.effort === "unset") {
         if (existing === undefined) return { ...policy, models: rest };
-        return { ...policy, models: [...rest, {
-          ...existing,
-          effort: { mode: "never-configured" },
-        }] };
+        return {
+          ...policy,
+          models: [
+            ...rest,
+            {
+              ...existing,
+              effort: { mode: "never-configured" },
+            },
+          ],
+        };
       }
       return {
         ...policy,
-        models: [...rest, {
-          provider: mutation.provider,
-          model: mutation.model,
-          ...(existing?.state === undefined ? {} : { state: existing.state }),
-          effort: mutation.effort,
-        }],
+        models: [
+          ...rest,
+          {
+            provider: mutation.provider,
+            model: mutation.model,
+            ...(existing?.state === undefined ? {} : { state: existing.state }),
+            effort: mutation.effort,
+          },
+        ],
       };
     }
     case "set-chain": {
@@ -572,11 +624,12 @@ function applyMutation(
       // provider master switch remains the launch authority.
       let models = [...policy.models];
       for (const entry of mutation.entries) {
-        const existing = models.find((row) =>
-          row.provider === entry.provider && row.model === entry.model
+        const existing = models.find(
+          (row) => row.provider === entry.provider && row.model === entry.model,
         );
-        models = models.filter((row) =>
-          !(row.provider === entry.provider && row.model === entry.model)
+        models = models.filter(
+          (row) =>
+            !(row.provider === entry.provider && row.model === entry.model),
         );
         models.push({
           provider: entry.provider,
@@ -600,10 +653,12 @@ function applyMutation(
     }
     case "set-selection": {
       if (mutation.category === undefined) {
-        return mutation.mode === "unset" ? policy : {
-          ...policy,
-          selection: { ...policy.selection, global: mutation.mode },
-        };
+        return mutation.mode === "unset"
+          ? policy
+          : {
+              ...policy,
+              selection: { ...policy.selection, global: mutation.mode },
+            };
       }
       const categories = { ...policy.selection.categories };
       if (mutation.mode === "unset") delete categories[mutation.category];
@@ -625,8 +680,8 @@ const withoutModelRow = (
   provider: CapabilityProvider,
   model: string,
 ) =>
-  policy.models.filter((row) =>
-    !(row.provider === provider && row.model === model)
+  policy.models.filter(
+    (row) => !(row.provider === provider && row.model === model),
   );
 
 /** All vendors, led by the named one — a deliberate provisional ORDER over
@@ -653,11 +708,15 @@ function provisionalBaselineChains(
   const chainOf = (providers: CapabilityProvider[]): ChainEntry[] =>
     providers.flatMap((provider) => {
       const model = vendorDefaults[provider];
-      return model === undefined ? [] : [{
-        provider,
-        model,
-        effort: { mode: "provider-controlled" as const },
-      }];
+      return model === undefined
+        ? []
+        : [
+            {
+              provider,
+              model,
+              effort: { mode: "provider-controlled" as const },
+            },
+          ];
     });
   const claudeLed = chainOf(leadWith("claude"));
   const codexLed = chainOf(leadWith("codex"));
@@ -691,15 +750,18 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     const state = policy.providers[provider];
     if (state !== undefined) providers[provider] = state;
   }
-  const models = [...policy.models].sort((left, right) =>
-    left.provider.localeCompare(right.provider) ||
-    left.model.localeCompare(right.model)
-  ).map((row) => ({
-    provider: row.provider,
-    model: row.model,
-    ...(row.state === undefined ? {} : { state: row.state }),
-    effort: row.effort,
-  }));
+  const models = [...policy.models]
+    .sort(
+      (left, right) =>
+        left.provider.localeCompare(right.provider) ||
+        left.model.localeCompare(right.model),
+    )
+    .map((row) => ({
+      provider: row.provider,
+      model: row.model,
+      ...(row.state === undefined ? {} : { state: row.state }),
+      effort: row.effort,
+    }));
   const chains: Record<string, ChainEntry[]> = {};
   for (const category of ROUTING_CATEGORIES) {
     const chain = policy.chains[category];
@@ -710,20 +772,25 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     const mode = policy.selection.categories[category];
     if (mode !== undefined) selectionCategories[category] = mode;
   }
-  return JSON.stringify(
-    {
-      schemaVersion: policy.schemaVersion,
-      revision: policy.revision,
-      updatedAt: policy.updatedAt,
-      provisional: policy.provisional,
-      selection: { global: policy.selection.global, categories: selectionCategories },
-      providers,
-      models,
-      chains,
-    },
-    null,
-    2,
-  ) + "\n";
+  return (
+    JSON.stringify(
+      {
+        schemaVersion: policy.schemaVersion,
+        revision: policy.revision,
+        updatedAt: policy.updatedAt,
+        provisional: policy.provisional,
+        selection: {
+          global: policy.selection.global,
+          categories: selectionCategories,
+        },
+        providers,
+        models,
+        chains,
+      },
+      null,
+      2,
+    ) + "\n"
+  );
 }
 
 /**
@@ -755,7 +822,8 @@ export function policyModelEnablement(
     if (state === "enabled") return true;
     if (state === "disabled") return false;
     return {
-      refusal: `${model} cannot launch because provider ${provider} is not enabled ` +
+      refusal:
+        `${model} cannot launch because provider ${provider} is not enabled ` +
         "in the Model Control Center",
     };
   };

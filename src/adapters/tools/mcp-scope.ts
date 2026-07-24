@@ -8,9 +8,7 @@ import { join } from "node:path";
  * reads memory. Scoping never removes it. */
 export const HIVE_MCP_SERVER = "hive";
 
-export const HIVE_MCP_SERVERS: readonly string[] = [
-  HIVE_MCP_SERVER,
-];
+export const HIVE_MCP_SERVERS: readonly string[] = [HIVE_MCP_SERVER];
 
 // Codex `-c` cannot quote a dotted path segment. Leave unaddressable server
 // names attached rather than generating an invalid transport entry.
@@ -20,7 +18,10 @@ export function isCodexAddressableServerName(name: string): boolean {
   return CODEX_ADDRESSABLE_NAME.test(name);
 }
 
-export function codexHome(env: Record<string, string | undefined> = Bun.env, home = homedir()): string {
+export function codexHome(
+  env: Record<string, string | undefined> = Bun.env,
+  home = homedir(),
+): string {
   return env.CODEX_HOME ?? join(home, ".codex");
 }
 
@@ -71,7 +72,9 @@ export async function listInheritedCodexMcpServers(
   home = codexHome(),
 ): Promise<string[]> {
   try {
-    return parseCodexMcpServerNames(await readFile(join(home, "config.toml"), "utf8"));
+    return parseCodexMcpServerNames(
+      await readFile(join(home, "config.toml"), "utf8"),
+    );
   } catch {
     return [];
   }

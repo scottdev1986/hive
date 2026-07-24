@@ -2,10 +2,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_QUOTA_CONFIG,
-  HiveConfigSchema,
-  QuotaConfigSchema,
   type HiveConfig,
+  HiveConfigSchema,
   type QuotaConfig,
+  QuotaConfigSchema,
 } from "../schemas";
 
 const errorMessage = (error: unknown): string =>

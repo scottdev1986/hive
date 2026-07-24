@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
-  VersioningContractError,
   highestPatch,
   nextVersion,
   parseReleaseTag,
   planRelease,
+  VersioningContractError,
 } from "../../src/release/plan";
 
 describe("release tags", () => {
@@ -30,7 +30,9 @@ describe("release tags", () => {
   });
 
   test("a version tag outside the patch series is a contract violation", () => {
-    expect(() => nextVersion(["v0.0.1", "v0.1.0"])).toThrow(VersioningContractError);
+    expect(() => nextVersion(["v0.0.1", "v0.1.0"])).toThrow(
+      VersioningContractError,
+    );
     expect(() => nextVersion(["v1.0.0"])).toThrow(VersioningContractError);
   });
 
@@ -50,7 +52,10 @@ describe("one push, one bump", () => {
   });
 
   test("bumps the patch by exactly one", () => {
-    const plan = planRelease({ tags: ["v0.0.1", "v0.0.2", "v0.0.3"], headTags: [] });
+    const plan = planRelease({
+      tags: ["v0.0.1", "v0.0.2", "v0.0.3"],
+      headTags: [],
+    });
     expect(plan.action).toEqual("release");
     expect(plan.version).toEqual("0.0.4");
   });
@@ -95,12 +100,16 @@ describe("one push, one bump", () => {
   });
 
   test("a tip carrying several release tags reports the newest", () => {
-    const plan = planRelease({ tags: ["v0.0.1", "v0.0.2"], headTags: ["v0.0.1", "v0.0.2"] });
+    const plan = planRelease({
+      tags: ["v0.0.1", "v0.0.2"],
+      headTags: ["v0.0.1", "v0.0.2"],
+    });
     expect(plan).toMatchObject({ action: "skip", version: "0.0.2" });
   });
 
   test("gaps in the series still bump from the highest", () => {
-    expect(planRelease({ tags: ["v0.0.1", "v0.0.5"], headTags: [] }).version)
-      .toEqual("0.0.6");
+    expect(
+      planRelease({ tags: ["v0.0.1", "v0.0.5"], headTags: [] }).version,
+    ).toEqual("0.0.6");
   });
 });

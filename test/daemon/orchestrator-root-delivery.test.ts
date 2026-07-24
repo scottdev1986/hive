@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  SessiondOrchestratorRootDelivery,
-} from "../../src/daemon/orchestrator-root-delivery";
+import { SessiondOrchestratorRootDelivery } from "../../src/daemon/orchestrator-root-delivery";
 import type { OrchestratorSessiondSnapshot } from "../../src/daemon/orchestrator-sessiond";
 import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-contract";
 
@@ -47,13 +45,18 @@ describe("SessiondOrchestratorRootDelivery", () => {
     });
 
     expect(delivery.isLive()).toBe(true);
-    expect(await delivery.deliverMessage("agent report", { message_id: "message-1" }))
-      .toBe(true);
-    expect(calls).toEqual([{
-      locator: sessiondRoot.locator,
-      content: "agent report",
-      options: { messageId: "message-1" },
-    }]);
+    expect(
+      await delivery.deliverMessage("agent report", {
+        message_id: "message-1",
+      }),
+    ).toBe(true);
+    expect(calls).toEqual([
+      {
+        locator: sessiondRoot.locator,
+        content: "agent report",
+        options: { messageId: "message-1" },
+      },
+    ]);
   });
 
   test("keeps delivery unconfirmed when the host declines input", async () => {
@@ -66,17 +69,21 @@ describe("SessiondOrchestratorRootDelivery", () => {
         },
       },
     });
-    await expect(delivery.deliverMessage(
-      "agent report",
-      { message_id: "message-1" },
-    )).resolves.toBe(false);
+    await expect(
+      delivery.deliverMessage("agent report", { message_id: "message-1" }),
+    ).resolves.toBe(false);
   });
 
   test("is not live before the root host is running", () => {
     const delivery = new SessiondOrchestratorRootDelivery({
       current: () => ({ ...sessiondRoot, state: "awaiting-visibility" }),
       ready: () => true,
-      input: { injectRoot: async () => ({ outcome: "injected", receipt: inputReceipt }) },
+      input: {
+        injectRoot: async () => ({
+          outcome: "injected",
+          receipt: inputReceipt,
+        }),
+      },
     });
     expect(delivery.isLive()).toBe(false);
   });
@@ -92,10 +99,11 @@ describe("SessiondOrchestratorRootDelivery", () => {
       },
     });
     expect(delivery.isLive()).toBe(false);
-    await expect(delivery.deliverMessage(
-      "queued startup alert",
-      { message_id: "message-1" },
-    )).resolves.toBe(false);
+    await expect(
+      delivery.deliverMessage("queued startup alert", {
+        message_id: "message-1",
+      }),
+    ).resolves.toBe(false);
   });
 
   test("does not turn a queued Hive message into a shell command after the TUI exits", async () => {
@@ -109,9 +117,8 @@ describe("SessiondOrchestratorRootDelivery", () => {
         },
       },
     });
-    await expect(delivery.deliverMessage(
-      "agent report",
-      { message_id: "message-1" },
-    )).resolves.toBe(false);
+    await expect(
+      delivery.deliverMessage("agent report", { message_id: "message-1" }),
+    ).resolves.toBe(false);
   });
 });

@@ -3,13 +3,12 @@ import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-
-import { parseDaemonHandshake } from "./handshake";
 import { getHiveHome } from "./db";
+import { parseDaemonHandshake } from "./handshake";
 import { hiveInstanceSuffix } from "./instance-identity";
 import {
-  daemonInstanceLiveness,
   type DaemonInstanceLiveness,
+  daemonInstanceLiveness,
 } from "./lifecycle";
 
 const INSTANCE_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -89,7 +88,10 @@ export interface InstanceMutationBlocker {
   readonly liveAgents: readonly string[];
 }
 
-async function inspectInstance(name: string, home: string): Promise<HiveInstance> {
+async function inspectInstance(
+  name: string,
+  home: string,
+): Promise<HiveInstance> {
   const port = readNumber(join(home, "daemon.port"));
   const pid = readNumber(join(home, "daemon.pid"));
   const instanceId = hiveInstanceSuffix(home);
@@ -111,18 +113,24 @@ async function inspectInstance(name: string, home: string): Promise<HiveInstance
 }
 
 export async function listInstances(): Promise<HiveInstance[]> {
-  const named = await readdir(instancesRoot(), { withFileTypes: true })
-    .catch((error: NodeJS.ErrnoException) => {
+  const named = await readdir(instancesRoot(), { withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return [];
       throw error;
-    });
+    },
+  );
   const candidates = [
     { name: "default", home: defaultHiveHome() },
     ...named
       .filter((entry) => entry.isDirectory())
-      .map((entry) => ({ name: entry.name, home: join(instancesRoot(), entry.name) })),
+      .map((entry) => ({
+        name: entry.name,
+        home: join(instancesRoot(), entry.name),
+      })),
   ];
-  return Promise.all(candidates.map(({ name, home }) => inspectInstance(name, home)));
+  return Promise.all(
+    candidates.map(({ name, home }) => inspectInstance(name, home)),
+  );
 }
 
 /**
@@ -162,6 +170,8 @@ export async function printInstances(): Promise<void> {
     const state = instance.running
       ? `running pid=${instance.pid ?? "?"} port=${instance.port}`
       : "stopped";
-    console.log(`${instance.name}\t${instance.instanceId}\t${state}\t${instance.home}`);
+    console.log(
+      `${instance.name}\t${instance.instanceId}\t${state}\t${instance.home}`,
+    );
   }
 }

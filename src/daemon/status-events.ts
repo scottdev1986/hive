@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import {
-  WorkspaceEventV2Schema,
-  WorkspaceSnapshotV2Schema,
   type WorkspaceEventV2,
+  WorkspaceEventV2Schema,
   type WorkspaceSnapshotV2,
+  WorkspaceSnapshotV2Schema,
 } from "../schemas/status-envelope";
 import type { SessionEvent } from "./session-host/contract";
 
@@ -29,16 +29,15 @@ export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
   return `{${entries.join(",")}}`;
 }
 
-export const statusEntityKey = (
-  entity: WorkspaceEventV2["entity"],
-): string => entity.kind === "agent"
-  ? `agent:${entity.id}`
-  : `${entity.kind}:${entity.id}:${entity.generation ?? "-"}`;
+export const statusEntityKey = (entity: WorkspaceEventV2["entity"]): string =>
+  entity.kind === "agent"
+    ? `agent:${entity.id}`
+    : `${entity.kind}:${entity.id}:${entity.generation ?? "-"}`;
 
 export function reduceStatusEvent(
   state: StatusReducerProjection,
@@ -57,21 +56,24 @@ export function reduceStatusEvent(
 
   const seen = { ...state.seen, [event.eventId]: encoded };
   const key = statusEntityKey(event.entity);
-  const existing = state.entities[key] as { entityRevision?: string } | undefined;
-  const entities = existing !== undefined &&
-      BigInt(event.entityRevision) < BigInt(existing.entityRevision ?? "0")
-    ? state.entities
-    : {
-      ...state.entities,
-      [key]: {
-        entityRevision: event.entityRevision,
-        eventId: event.eventId,
-        kind: event.kind,
-        occurredAt: event.occurredAt,
-        source: event.source,
-        data: event.data,
-      },
-    };
+  const existing = state.entities[key] as
+    | { entityRevision?: string }
+    | undefined;
+  const entities =
+    existing !== undefined &&
+    BigInt(event.entityRevision) < BigInt(existing.entityRevision ?? "0")
+      ? state.entities
+      : {
+          ...state.entities,
+          [key]: {
+            entityRevision: event.entityRevision,
+            eventId: event.eventId,
+            kind: event.kind,
+            occurredAt: event.occurredAt,
+            source: event.source,
+            data: event.data,
+          },
+        };
   return { ...state, highWaterSeq: event.seq, entities, seen };
 }
 
@@ -88,17 +90,23 @@ export function verifyWorkspaceSnapshot(
 ): WorkspaceSnapshotV2 {
   const parsed = WorkspaceSnapshotV2Schema.safeParse(value);
   if (!parsed.success) {
-    throw new InvalidWorkspaceSnapshotError("Workspace snapshot schema is invalid");
+    throw new InvalidWorkspaceSnapshotError(
+      "Workspace snapshot schema is invalid",
+    );
   }
   const snapshot = parsed.data;
   const digest = createHash("sha256")
     .update(canonicalJson(snapshot.entities), "utf8")
     .digest("hex");
   if (digest !== snapshot.contentSha256) {
-    throw new InvalidWorkspaceSnapshotError("Workspace snapshot digest mismatch");
+    throw new InvalidWorkspaceSnapshotError(
+      "Workspace snapshot digest mismatch",
+    );
   }
   if (BigInt(snapshot.seq) < BigInt(lastAppliedSeq)) {
-    throw new InvalidWorkspaceSnapshotError("Workspace snapshot high-water regressed");
+    throw new InvalidWorkspaceSnapshotError(
+      "Workspace snapshot high-water regressed",
+    );
   }
   return snapshot;
 }
@@ -108,10 +116,12 @@ export function reconcileStatusSnapshot(
   value: unknown,
 ): StatusReducerProjection {
   const snapshot = verifyWorkspaceSnapshot(value, state.highWaterSeq);
-  const entities = Object.fromEntries(snapshot.entities.map((entity) => [
-    statusEntityKey(entity),
-    { ...entity.projection, entityRevision: entity.entityRevision },
-  ]));
+  const entities = Object.fromEntries(
+    snapshot.entities.map((entity) => [
+      statusEntityKey(entity),
+      { ...entity.projection, entityRevision: entity.entityRevision },
+    ]),
+  );
   return {
     highWaterSeq: snapshot.seq,
     paused: false,
@@ -161,7 +171,9 @@ export class ResumableStatusSubscription {
     const aborted = () => signal?.aborted === true;
     while (!aborted()) {
       let resubscribe = false;
-      for await (const raw of this.source.subscribe(this.projection.highWaterSeq)) {
+      for await (const raw of this.source.subscribe(
+        this.projection.highWaterSeq,
+      )) {
         if (aborted()) return;
         const event = WorkspaceEventV2Schema.parse(raw);
         const reduced = reduceStatusEvent(this.projection, event);
@@ -192,9 +204,13 @@ export type WorkspaceStatusSourceEvent = Omit<
   "schemaVersion" | "eventId" | "seq" | "entityRevision"
 >;
 
-export class FakeSessionStatusSourceAdapter implements SessionStatusSourceAdapter {
+export class FakeSessionStatusSourceAdapter
+  implements SessionStatusSourceAdapter
+{
   constructor(
-    private readonly mapping: (event: SessionEvent) => WorkspaceStatusSourceEvent | null,
+    private readonly mapping: (
+      event: SessionEvent,
+    ) => WorkspaceStatusSourceEvent | null,
   ) {}
 
   adapt(event: SessionEvent): WorkspaceStatusSourceEvent | null {

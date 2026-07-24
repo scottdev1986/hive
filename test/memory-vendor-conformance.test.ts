@@ -45,7 +45,9 @@ const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -126,7 +128,10 @@ const VENDORS: readonly VendorRow[] = [
         withCapabilityToken: true,
       }),
     inspectConfig: async (worktree, argv) => {
-      const toml = await readFile(join(worktree, ".codex", "config.toml"), "utf8");
+      const toml = await readFile(
+        join(worktree, ".codex", "config.toml"),
+        "utf8",
+      );
       expect(toml).toContain("[mcp_servers.hive]");
       expect(toml).toContain(`url = "${HIVE_URL}"`);
       // Codex's channel: bearer_token_env_var names an env var the launch
@@ -157,7 +162,10 @@ const VENDORS: readonly VendorRow[] = [
         readOnly: false,
       }),
     inspectConfig: async (worktree) => {
-      const toml = await readFile(join(worktree, ".grok", "config.toml"), "utf8");
+      const toml = await readFile(
+        join(worktree, ".grok", "config.toml"),
+        "utf8",
+      );
       expect(toml).toContain("[mcp_servers.hive]");
       expect(toml).toContain(`url = "${HIVE_URL}"`);
       // Grok's channel is a static Authorization header in its config.toml —
@@ -226,14 +234,17 @@ describe("vendor memory conformance (HM-4 static matrix)", () => {
 const live = process.env.HIVE_LIVE_MEMORY_CONFORMANCE === "1";
 const liveSuite = live ? describe : describe.skip;
 
-liveSuite("vendor memory conformance, live (HIVE_LIVE_MEMORY_CONFORMANCE=1)", () => {
-  for (const row of VENDORS) {
-    test(`${row.vendor} CLI answers --version (live proof precondition)`, () => {
-      const result = Bun.spawnSync([row.vendor, "--version"], {
-        stdout: "pipe",
-        stderr: "pipe",
+liveSuite(
+  "vendor memory conformance, live (HIVE_LIVE_MEMORY_CONFORMANCE=1)",
+  () => {
+    for (const row of VENDORS) {
+      test(`${row.vendor} CLI answers --version (live proof precondition)`, () => {
+        const result = Bun.spawnSync([row.vendor, "--version"], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        expect(result.exitCode).toBe(0);
       });
-      expect(result.exitCode).toBe(0);
-    });
-  }
-});
+    }
+  },
+);

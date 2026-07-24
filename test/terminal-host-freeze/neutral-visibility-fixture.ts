@@ -55,7 +55,9 @@ function leaseKey(session: SessionRef): string {
 }
 
 function sameProcess(left: ProcessIdentity, right: ProcessIdentity): boolean {
-  return left.processId === right.processId && left.startToken === right.startToken;
+  return (
+    left.processId === right.processId && left.startToken === right.startToken
+  );
 }
 
 function parsePositiveRevision(value: Sequence): bigint | null {
@@ -80,16 +82,20 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     this.fault = fault;
   }
 
-  publishSnapshot(request: Readonly<{
-    source: VisibilitySourceIdentity;
-    inventoryRevision: Sequence;
-    representedSessionKeys: readonly string[];
-    completeness?: Completeness;
-  }>): void {
+  publishSnapshot(
+    request: Readonly<{
+      source: VisibilitySourceIdentity;
+      inventoryRevision: Sequence;
+      representedSessionKeys: readonly string[];
+      completeness?: Completeness;
+    }>,
+  ): void {
     const revision = parsePositiveRevision(request.inventoryRevision);
-    if (revision === null) throw new Error("fixture snapshots require a positive revision");
+    if (revision === null)
+      throw new Error("fixture snapshots require a positive revision");
     const prior = this.snapshots.get(request.source.sessionId);
-    if (prior && revision < prior.revision) throw new Error("fixture snapshots cannot move backwards");
+    if (prior && revision < prior.revision)
+      throw new Error("fixture snapshots cannot move backwards");
     this.snapshots.set(request.source.sessionId, {
       source: request.source,
       revision,
@@ -106,7 +112,9 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     snapshot.live = live;
   }
 
-  async create(request: VisibilityCreateRequest): Promise<VisibilityCreateResult> {
+  async create(
+    request: VisibilityCreateRequest,
+  ): Promise<VisibilityCreateResult> {
     const idempotency = `${request.terminal.key}\0${request.terminal.idempotencyKey}`;
     const prior = this.createResults.get(idempotency);
     if (prior) {
@@ -133,13 +141,17 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
       return result;
     }
 
-    if (this.owners.has(request.terminal.key) &&
-        this.fault !== "allow-duplicate-owner") {
-      const result = this.createFailure(this.rejected(
-        "duplicate-session-owner",
-        validation.snapshot.revisionText,
-        "session key already has a leased or unreconciled generation",
-      ));
+    if (
+      this.owners.has(request.terminal.key) &&
+      this.fault !== "allow-duplicate-owner"
+    ) {
+      const result = this.createFailure(
+        this.rejected(
+          "duplicate-session-owner",
+          validation.snapshot.revisionText,
+          "session key already has a leased or unreconciled generation",
+        ),
+      );
       this.createResults.set(idempotency, result);
       return result;
     }
@@ -149,52 +161,79 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     this.owners.set(request.terminal.key, request.visibility.source.sessionId);
     this.leases.set(leaseKey(created.session), lease);
     this.leaseStates.set(leaseKey(created.session), lease);
-    const result: VisibilityCreateResult = { state: "created", result: created, lease };
+    const result: VisibilityCreateResult = {
+      state: "created",
+      result: created,
+      lease,
+    };
     this.createResults.set(idempotency, result);
     return result;
   }
 
-  async renewVisibility(request: VisibilityRenewalRequest): Promise<VisibilityRenewalResult> {
+  async renewVisibility(
+    request: VisibilityRenewalRequest,
+  ): Promise<VisibilityRenewalResult> {
     let lease = this.leases.get(leaseKey(request.session));
     if (!lease && this.fault === "ignore-session-generation") {
-      lease = [...this.leases.values()].find((candidate) => candidate.session.key === request.session.key);
+      lease = [...this.leases.values()].find(
+        (candidate) => candidate.session.key === request.session.key,
+      );
     }
     if (!lease) {
-      const hasOtherGeneration = [...this.leases.values()]
-        .some((candidate) => candidate.session.key === request.session.key);
-      return this.renewalFailure(this.rejected(
-        hasOtherGeneration ? "session-generation-mismatch" : "lease-expired",
-        null,
-        hasOtherGeneration ? "visibility lease names another generation" : "visibility lease is absent",
-      ));
+      const hasOtherGeneration = [...this.leases.values()].some(
+        (candidate) => candidate.session.key === request.session.key,
+      );
+      return this.renewalFailure(
+        this.rejected(
+          hasOtherGeneration ? "session-generation-mismatch" : "lease-expired",
+          null,
+          hasOtherGeneration
+            ? "visibility lease names another generation"
+            : "visibility lease is absent",
+        ),
+      );
     }
     if (this.nowMilliseconds >= Date.parse(lease.expiresAt)) {
       await this.expireLease(lease);
-      return this.renewalFailure(this.rejected(
-        "lease-expired",
-        lease.acceptedRevision,
-        "visibility lease expired before renewal",
-      ));
+      return this.renewalFailure(
+        this.rejected(
+          "lease-expired",
+          lease.acceptedRevision,
+          "visibility lease expired before renewal",
+        ),
+      );
     }
-    if (request.visibility.source.sessionId !== lease.source.sessionId ||
-        !sameProcess(request.visibility.source.process, lease.source.process)) {
-      return this.renewalFailure(this.rejected(
-        "source-identity-mismatch",
-        lease.acceptedRevision,
-        "renewal source does not match the lease source",
-      ));
+    if (
+      request.visibility.source.sessionId !== lease.source.sessionId ||
+      !sameProcess(request.visibility.source.process, lease.source.process)
+    ) {
+      return this.renewalFailure(
+        this.rejected(
+          "source-identity-mismatch",
+          lease.acceptedRevision,
+          "renewal source does not match the lease source",
+        ),
+      );
     }
 
-    const validation = this.validate(lease.session.key, request.visibility, "renew");
+    const validation = this.validate(
+      lease.session.key,
+      request.visibility,
+      "renew",
+    );
     if (validation.state !== "valid") return this.renewalFailure(validation);
-    const accepted = parsePositiveRevision(request.visibility.inventoryRevision);
+    const accepted = parsePositiveRevision(
+      request.visibility.inventoryRevision,
+    );
     const prior = parsePositiveRevision(lease.acceptedRevision);
     if (accepted === null || prior === null || accepted < prior) {
-      return this.renewalFailure(this.rejected(
-        "stale-revision",
-        lease.acceptedRevision,
-        "renewal revision predates the active lease",
-      ));
+      return this.renewalFailure(
+        this.rejected(
+          "stale-revision",
+          lease.acceptedRevision,
+          "renewal revision predates the active lease",
+        ),
+      );
     }
 
     const renewed = this.issueLease(lease.session, request.visibility);
@@ -210,7 +249,8 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     this.nowMilliseconds += milliseconds;
     if (this.fault === "never-expire") return;
     for (const lease of [...this.leases.values()]) {
-      if (this.nowMilliseconds >= Date.parse(lease.expiresAt)) await this.expireLease(lease);
+      if (this.nowMilliseconds >= Date.parse(lease.expiresAt))
+        await this.expireLease(lease);
     }
   }
 
@@ -247,15 +287,27 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
       );
     }
     if (!snapshot) {
-      return this.rejected("source-not-live", null, "visibility source is not authenticated");
+      return this.rejected(
+        "source-not-live",
+        null,
+        "visibility source is not authenticated",
+      );
     }
 
-    const exactProcess = sameProcess(snapshot.source.process, request.source.process);
-    if ((!exactProcess || !snapshot.live) && this.fault !== "ignore-source-identity") {
+    const exactProcess = sameProcess(
+      snapshot.source.process,
+      request.source.process,
+    );
+    if (
+      (!exactProcess || !snapshot.live) &&
+      this.fault !== "ignore-source-identity"
+    ) {
       return this.rejected(
         exactProcess ? "source-not-live" : "source-identity-mismatch",
         snapshot.revisionText,
-        exactProcess ? "visibility source is no longer live" : "PID start token does not match",
+        exactProcess
+          ? "visibility source is no longer live"
+          : "PID start token does not match",
       );
     }
     if (snapshot.completeness !== "complete") {
@@ -273,7 +325,8 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
       );
     }
 
-    const bypassRevision = this.fault === "accept-stale-revision" ||
+    const bypassRevision =
+      this.fault === "accept-stale-revision" ||
       (acceptsInvalid && requestedRevision === null);
     if (!bypassRevision && requestedRevision !== snapshot.revision) {
       return this.rejected(
@@ -284,8 +337,10 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
         "request does not name the current inventory revision",
       );
     }
-    if (!snapshot.representedSessionKeys.has(sessionKey) &&
-        !(phase === "renew" && this.fault === "renew-absent-session")) {
+    if (
+      !snapshot.representedSessionKeys.has(sessionKey) &&
+      !(phase === "renew" && this.fault === "renew-absent-session")
+    ) {
       return this.rejected(
         "session-not-represented",
         snapshot.revisionText,
@@ -295,14 +350,19 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     return { state: "valid", snapshot };
   }
 
-  private issueLease(session: SessionRef, request: VisibilityRequest): ActiveVisibilityLease {
+  private issueLease(
+    session: SessionRef,
+    request: VisibilityRequest,
+  ): ActiveVisibilityLease {
     return {
       session,
       source: request.source,
       acceptedRevision: request.inventoryRevision,
       state: "active",
       issuedAt: new Date(this.nowMilliseconds).toISOString(),
-      expiresAt: new Date(this.nowMilliseconds + VISIBILITY_LEASE_MILLISECONDS).toISOString(),
+      expiresAt: new Date(
+        this.nowMilliseconds + VISIBILITY_LEASE_MILLISECONDS,
+      ).toISOString(),
     };
   }
 
@@ -344,12 +404,16 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
       expiredAt: new Date(this.nowMilliseconds).toISOString(),
       teardown: result,
     });
-    const verifiedAbsent = result.state === "terminated" &&
+    const verifiedAbsent =
+      result.state === "terminated" &&
       result.completeness === "complete" &&
       result.survivors.length === 0 &&
       result.reap.reaped &&
       result.reap.completeness === "complete";
-    if (verifiedAbsent && this.owners.get(lease.session.key) === lease.source.sessionId) {
+    if (
+      verifiedAbsent &&
+      this.owners.get(lease.session.key) === lease.source.sessionId
+    ) {
       this.owners.delete(lease.session.key);
     }
   }
@@ -371,7 +435,13 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     currentRevision: Sequence | null,
     diagnostic: string,
   ): VisibilityRejected {
-    return { state: "rejected", reason, completeness: "complete", currentRevision, diagnostic };
+    return {
+      state: "rejected",
+      reason,
+      completeness: "complete",
+      currentRevision,
+      diagnostic,
+    };
   }
 
   private unknown(

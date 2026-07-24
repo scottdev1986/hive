@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import { OUTSIDE_REPO_TMPDIR } from "../../../test/outside-repo-tmpdir";
@@ -15,7 +21,12 @@ const GIT_ENV = {
 };
 
 export function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", env: GIT_ENV, stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return execFileSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: GIT_ENV,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 export function tempRoot(prefix = "hive-identity-"): string {
@@ -66,7 +77,16 @@ export function buildGitTopology(root: string): GitTopology {
   git(upstream, "init", "-q", "-b", "main");
   commitFile(upstream, "sub.txt");
 
-  git(main, "-c", "protocol.file.allow=always", "submodule", "add", "-q", upstream, "sub");
+  git(
+    main,
+    "-c",
+    "protocol.file.allow=always",
+    "submodule",
+    "add",
+    "-q",
+    upstream,
+    "sub",
+  );
   git(main, "commit", "-qm", "add submodule");
   const submodule = join(main, "sub");
 
@@ -80,7 +100,16 @@ export function buildGitTopology(root: string): GitTopology {
   mkdirSync(bare);
   git(bare, "init", "-q", "--bare");
 
-  return { root, main, nestedPath, innerRepo, submodule, linkedWorktree, clone, bare };
+  return {
+    root,
+    main,
+    nestedPath,
+    innerRepo,
+    submodule,
+    linkedWorktree,
+    clone,
+    bare,
+  };
 }
 
 export interface DiskImage {
@@ -98,22 +127,47 @@ export class DiskImageUnavailable extends Error {}
  * DiskImageUnavailable where that is not possible, so callers can report `skipped`
  * rather than silently testing one volume twice.
  */
-export function attachDiskImage(caseSensitive: boolean, root: string): DiskImage {
+export function attachDiskImage(
+  caseSensitive: boolean,
+  root: string,
+): DiskImage {
   const fs = caseSensitive ? "Case-sensitive APFS" : "APFS";
   const image = join(root, caseSensitive ? "cs.dmg" : "ci.dmg");
   const mountPoint = join(root, caseSensitive ? "mnt-cs" : "mnt-ci");
   mkdirSync(mountPoint, { recursive: true });
   try {
-    execFileSync("hdiutil", ["create", "-size", "40m", "-fs", fs, "-volname", caseSensitive ? "HiveCS" : "HiveCI", "-quiet", image], { stdio: "ignore" });
-    execFileSync("hdiutil", ["attach", image, "-nobrowse", "-quiet", "-mountpoint", mountPoint], { stdio: "ignore" });
+    execFileSync(
+      "hdiutil",
+      [
+        "create",
+        "-size",
+        "40m",
+        "-fs",
+        fs,
+        "-volname",
+        caseSensitive ? "HiveCS" : "HiveCI",
+        "-quiet",
+        image,
+      ],
+      { stdio: "ignore" },
+    );
+    execFileSync(
+      "hdiutil",
+      ["attach", image, "-nobrowse", "-quiet", "-mountpoint", mountPoint],
+      { stdio: "ignore" },
+    );
   } catch (error) {
-    throw new DiskImageUnavailable(`cannot attach ${fs} image: ${String(error)}`);
+    throw new DiskImageUnavailable(
+      `cannot attach ${fs} image: ${String(error)}`,
+    );
   }
   return {
     mountPoint: realpathSync.native(mountPoint),
     detach() {
       try {
-        execFileSync("hdiutil", ["detach", mountPoint, "-quiet", "-force"], { stdio: "ignore" });
+        execFileSync("hdiutil", ["detach", mountPoint, "-quiet", "-force"], {
+          stdio: "ignore",
+        });
       } catch {
         /* the harness must not fail on cleanup */
       }

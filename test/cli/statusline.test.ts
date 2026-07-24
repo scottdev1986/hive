@@ -101,13 +101,17 @@ describe("the one parse", () => {
   // 1M where the plan upgrades it) and this is the only place Hive is ever told.
   test("takes the real window and Claude Code s own percentage", () => {
     expect(
-      parseStatuslineReport("zoe", {
-        context_window: {
-          context_window_size: 1_000_000,
-          used_percentage: 22,
-          total_input_tokens: 223_652,
+      parseStatuslineReport(
+        "zoe",
+        {
+          context_window: {
+            context_window_size: 1_000_000,
+            used_percentage: 22,
+            total_input_tokens: 223_652,
+          },
         },
-      }, observedAt),
+        observedAt,
+      ),
     ).toEqual({
       agent: "zoe",
       contextWindow: 1_000_000,
@@ -123,9 +127,13 @@ describe("the one parse", () => {
   // sessions, silently, with no error anyone would ever see. A payload carrying
   // independent facts must never be discarded wholesale because one is missing.
   test("reports the window even when the payload carries no rate limits", () => {
-    const report = parseStatuslineReport("lena", {
-      context_window: { context_window_size: 1_000_000, used_percentage: 27 },
-    }, observedAt);
+    const report = parseStatuslineReport(
+      "lena",
+      {
+        context_window: { context_window_size: 1_000_000, used_percentage: 27 },
+      },
+      observedAt,
+    );
 
     expect(report).not.toEqual(null);
     expect(report?.contextWindow).toEqual(1_000_000);
@@ -156,14 +164,12 @@ describe("the one parse", () => {
   // plausible 200_000 is the bug: it reported live agents at ~22% of a 1M
   // window as 100% full, and every decision downstream was made against that.
   test("never defaults a window it was not given", () => {
-    for (
-      const bad of [
-        { context_window: {} },
-        { context_window: { context_window_size: 0 } },
-        { context_window: { context_window_size: -1 } },
-        { context_window: { context_window_size: "1000000" } },
-      ]
-    ) {
+    for (const bad of [
+      { context_window: {} },
+      { context_window: { context_window_size: 0 } },
+      { context_window: { context_window_size: -1 } },
+      { context_window: { context_window_size: "1000000" } },
+    ]) {
       const report = parseStatuslineReport("zoe", bad, observedAt);
       expect(report?.contextWindow).toBeUndefined();
       expect(report?.contextUsedPct).toBeUndefined();
@@ -171,16 +177,22 @@ describe("the one parse", () => {
   });
 
   test("keeps the window when the payload carries no percentage", () => {
-    const report = parseStatuslineReport("zoe", {
-      context_window: { context_window_size: 200_000 },
-    }, observedAt);
+    const report = parseStatuslineReport(
+      "zoe",
+      {
+        context_window: { context_window_size: 200_000 },
+      },
+      observedAt,
+    );
     expect(report?.contextWindow).toEqual(200_000);
     expect(report?.contextUsedPct).toBeUndefined();
   });
 
   // Null only when the payload said nothing usable at all.
   test("reports nothing when it measured nothing", () => {
-    expect(parseStatuslineReport("zoe", { model: {} }, observedAt)).toEqual(null);
+    expect(parseStatuslineReport("zoe", { model: {} }, observedAt)).toEqual(
+      null,
+    );
     expect(parseStatuslineReport("zoe", {}, observedAt)).toEqual(null);
     expect(parseStatuslineReport("zoe", null, observedAt)).toEqual(null);
   });
@@ -197,9 +209,14 @@ describe("a swallowed failure still leaves a trace", () => {
     const previous = process.env.HIVE_HOME;
     process.env.HIVE_HOME = home;
     try {
-      const line = await runStatusline("maya", 41_000, JSON.stringify(payload), () => {
-        throw new Error("daemon exploded");
-      });
+      const line = await runStatusline(
+        "maya",
+        41_000,
+        JSON.stringify(payload),
+        () => {
+          throw new Error("daemon exploded");
+        },
+      );
 
       // The agent's terminal sees a clean status line, never the exception.
       expect(line).toBe("🐝 maya · 5h 24% · 7d 41%");

@@ -1,8 +1,8 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { shellQuote } from "./session-host/shell-session";
 import { getHiveHome } from "./db";
+import { shellQuote } from "./session-host/shell-session";
 
 /**
  * Hand the agent its brief through a file, not the provider command line.
@@ -90,9 +90,11 @@ export function wrapCodexWithInstructionProfile(
     `${session}.codex.config.toml`,
   );
   const destination = codexInstructionProfilePath(session);
-  return `install -m 600 ${shellQuote(source)} ${shellQuote(destination)} && (` +
+  return (
+    `install -m 600 ${shellQuote(source)} ${shellQuote(destination)} && (` +
     `trap ${shellQuote(`rm -f ${shellQuote(destination)}`)} EXIT INT TERM; ` +
-    `${command})`;
+    `${command})`
+  );
 }
 
 /**

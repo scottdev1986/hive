@@ -8,7 +8,15 @@
 // file — nothing at this layer can, and the blueprint says so. What it does is
 // guarantee that a process which merely *descends* from a credential holder
 // inherits nothing usable.
-import { closeSync, constants, mkdirSync, openSync, readSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  mkdirSync,
+  openSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { getHiveHome } from "./db";
 
@@ -20,8 +28,8 @@ const O_CLOEXEC =
   (process.platform === "darwin"
     ? 0x1000000
     : process.platform === "linux"
-    ? 0o2000000
-    : 0);
+      ? 0o2000000
+      : 0);
 
 /** The human's `hive` CLI. Not an agent; it has no row in the agents table. */
 export const OPERATOR_SUBJECT = "operator";

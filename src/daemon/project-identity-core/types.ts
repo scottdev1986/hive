@@ -104,7 +104,12 @@ export type SetupReason =
 
 /** The resolver never mutates on ambiguity; it returns a state a human must resolve. */
 export type Resolution =
-  | { status: "RESOLVED"; key: ProjectKey; hiveUuid: string; evidence: FsEvidence }
+  | {
+      status: "RESOLVED";
+      key: ProjectKey;
+      hiveUuid: string;
+      evidence: FsEvidence;
+    }
   | {
       status: "NEEDS_REBIND";
       key: ProjectKey;
@@ -130,4 +135,9 @@ export type Resolution =
       ancestorHiveUuid: string;
       detail: string;
     }
-  | { status: "REJECTED"; reason: RejectionReason; path: string; detail: string };
+  | {
+      status: "REJECTED";
+      reason: RejectionReason;
+      path: string;
+      detail: string;
+    };

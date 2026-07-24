@@ -9,18 +9,20 @@ export function sameSessionLocator(
   left: SessionLocator,
   right: SessionLocator,
 ): boolean {
-  const sameSubject = left.subject.kind === right.subject.kind &&
-    (left.subject.kind === "root" || (
-      right.subject.kind === "agent" &&
-      left.subject.agentId === right.subject.agentId
-    ));
-  return left.schemaVersion === right.schemaVersion &&
+  const sameSubject =
+    left.subject.kind === right.subject.kind &&
+    (left.subject.kind === "root" ||
+      (right.subject.kind === "agent" &&
+        left.subject.agentId === right.subject.agentId));
+  return (
+    left.schemaVersion === right.schemaVersion &&
     left.instanceId === right.instanceId &&
     sameSubject &&
     left.generation === right.generation &&
     left.sessionId === right.sessionId &&
     left.hostKind === right.hostKind &&
-    left.engineBuildId === right.engineBuildId;
+    left.engineBuildId === right.engineBuildId
+  );
 }
 
 export function sessionInstanceId(hiveHome: string): string {

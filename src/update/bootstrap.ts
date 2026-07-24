@@ -30,8 +30,11 @@ export function repairIdentityFromStagedVersionProbe(
 
   const realpath = deps.realpath ?? realpathSync.native;
   try {
-    if (realpath(executable) === realpath(cliPath(currentLink(root)))) return false;
-    return (deps.repair ?? repairLegacyMountEvidence)(deps.cwd ?? process.cwd());
+    if (realpath(executable) === realpath(cliPath(currentLink(root))))
+      return false;
+    return (deps.repair ?? repairLegacyMountEvidence)(
+      deps.cwd ?? process.cwd(),
+    );
   } catch {
     // Version reporting remains a pure liveness proof when no safe repair can
     // be made. The active updater will surface its own identity error next.

@@ -20,7 +20,9 @@ const HOSTILE_GIT_ENV = [
   "GIT_NAMESPACE",
 ] as const;
 
-export function sanitizedGitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function sanitizedGitEnv(
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base };
   for (const key of HOSTILE_GIT_ENV) delete env[key];
   return env;
@@ -75,13 +77,23 @@ function git(cwd: string, args: string[]): string | null {
  *    repository family whenever it is invoked below the top level.
  */
 export function probeGit(cwd: string): GitProbe {
-  const flags = git(cwd, ["rev-parse", "--is-bare-repository", "--is-inside-git-dir"]);
+  const flags = git(cwd, [
+    "rev-parse",
+    "--is-bare-repository",
+    "--is-inside-git-dir",
+  ]);
   if (flags === null) return NOT_A_REPOSITORY;
 
-  const [bare, insideGitDir] = flags.split("\n").map((line) => line.trim() === "true");
+  const [bare, insideGitDir] = flags
+    .split("\n")
+    .map((line) => line.trim() === "true");
 
   if (bare === true) {
-    const gitDir = git(cwd, ["rev-parse", "--path-format=absolute", "--git-dir"]);
+    const gitDir = git(cwd, [
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-dir",
+    ]);
     return { ...NOT_A_REPOSITORY, isRepository: true, isBare: true, gitDir };
   }
   if (insideGitDir === true) {
@@ -97,11 +109,16 @@ export function probeGit(cwd: string): GitProbe {
   ]);
   if (paths === null) return NOT_A_REPOSITORY;
 
-  const [topLevel, gitDir, gitCommonDir] = paths.split("\n").map((line) => line.trim());
+  const [topLevel, gitDir, gitCommonDir] = paths
+    .split("\n")
+    .map((line) => line.trim());
   if (!topLevel || !gitDir || !gitCommonDir) return NOT_A_REPOSITORY;
 
   // Empty output means "not a submodule". Older Git exits non-zero instead; both map to null.
-  const superproject = git(cwd, ["rev-parse", "--show-superproject-working-tree"]);
+  const superproject = git(cwd, [
+    "rev-parse",
+    "--show-superproject-working-tree",
+  ]);
 
   return {
     isRepository: true,

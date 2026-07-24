@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
-  mintSessionLocator,
-  mintSessionRequestId,
-} from "../../src/daemon/session-host/locators";
-import {
   configuredOrchestratorHost,
   mintRootSessiondLocator,
   RootSessiondLocatorSchema,
   rootSessionIdForLaunchRequest,
 } from "../../src/daemon/orchestrator-host";
+import {
+  mintSessionLocator,
+  mintSessionRequestId,
+} from "../../src/daemon/session-host/locators";
 import type { HiveTerminalBinding } from "../../src/daemon/session-host/terminal-host-binding";
 
 describe("orchestrator host selection", () => {
@@ -40,8 +40,9 @@ describe("root sessiond locator", () => {
       hostKind: "sessiond",
       engineBuildId: "engine-a",
     });
-    expect(() => RootSessiondLocatorSchema.parse({ ...first, hostKind: "tmux" }))
-      .toThrow();
+    expect(() =>
+      RootSessiondLocatorSchema.parse({ ...first, hostKind: "tmux" }),
+    ).toThrow();
     const binding: HiveTerminalBinding = {
       locator: first,
       visibility: {
@@ -51,12 +52,14 @@ describe("root sessiond locator", () => {
         openTerminalRevision: "1",
       },
     };
-    expect(mintRootSessiondLocator({
-      requestId,
-      instanceId: "instance-a",
-      engineBuildId: "engine-b",
-      bindings: [binding],
-    })).toEqual(first);
+    expect(
+      mintRootSessiondLocator({
+        requestId,
+        instanceId: "instance-a",
+        engineBuildId: "engine-b",
+        bindings: [binding],
+      }),
+    ).toEqual(first);
     const second = mintRootSessiondLocator({
       requestId: mintSessionRequestId(1_750_000_000_001),
       instanceId: "instance-a",
@@ -83,12 +86,14 @@ describe("root sessiond locator", () => {
         openTerminalRevision: "1",
       },
     };
-    expect(mintRootSessiondLocator({
-      requestId: mintSessionRequestId(1_750_000_000_002),
-      instanceId: agent.instanceId,
-      engineBuildId: "engine-a",
-      bindings: [binding],
-    }).generation).toBe(1);
+    expect(
+      mintRootSessiondLocator({
+        requestId: mintSessionRequestId(1_750_000_000_002),
+        instanceId: agent.instanceId,
+        engineBuildId: "engine-a",
+        bindings: [binding],
+      }).generation,
+    ).toBe(1);
   });
 
   test("never reuses or counts a binding from another Hive instance", () => {
@@ -109,12 +114,14 @@ describe("root sessiond locator", () => {
       },
     };
 
-    expect(mintRootSessiondLocator({
-      requestId,
-      instanceId: "instance-local",
-      engineBuildId: "engine-b",
-      bindings: [binding],
-    })).toMatchObject({
+    expect(
+      mintRootSessiondLocator({
+        requestId,
+        instanceId: "instance-local",
+        engineBuildId: "engine-b",
+        bindings: [binding],
+      }),
+    ).toMatchObject({
       instanceId: "instance-local",
       generation: 1,
       engineBuildId: "engine-b",

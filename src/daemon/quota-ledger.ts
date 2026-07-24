@@ -5,23 +5,23 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
-  CapabilityProviderSchema,
-  QuotaMeterStateSchema,
-  QuotaObservationSchema,
-  splitVariant,
   type CapabilityProvider,
+  CapabilityProviderSchema,
   type ModelVendorVerdict,
-  RoutingCategorySchema,
+  QuotaMeterStateSchema,
   type QuotaObservation,
+  QuotaObservationSchema,
   type QuotaScope,
   type RoutingCategory,
+  RoutingCategorySchema,
+  splitVariant,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
-import {
-  daemonInstanceLiveness,
-  type DaemonInstanceLiveness,
-} from "./lifecycle";
 import { hiveInstanceSuffix, resolveHiveHome } from "./instance-identity";
+import {
+  type DaemonInstanceLiveness,
+  daemonInstanceLiveness,
+} from "./lifecycle";
 
 type LedgerDatabase = Pick<HiveDatabase, "database">;
 
@@ -39,7 +39,9 @@ export class QuotaDatabase implements LedgerDatabase {
     this.database.exec("PRAGMA busy_timeout = 5000");
     this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec("PRAGMA foreign_keys = ON");
-    this.database.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    this.database.exec(
+      "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    );
   }
 
   close(): void {
@@ -70,73 +72,96 @@ export function migrateDefaultQuotaLedger(
   legacyPath = join(homedir(), ".hive", "hive.db"),
 ): void {
   if (
-    target.database.query("SELECT 1 FROM meta WHERE key = ?")
+    target.database
+      .query("SELECT 1 FROM meta WHERE key = ?")
       .get(QUOTA_MIGRATION_META_KEY) !== null
-  ) return;
+  )
+    return;
   if (!existsSync(legacyPath) || legacyPath === target.path) {
-    target.database.query("INSERT INTO meta (key, value) VALUES (?, ?)")
+    target.database
+      .query("INSERT INTO meta (key, value) VALUES (?, ?)")
       .run(QUOTA_MIGRATION_META_KEY, "no legacy database");
     return;
   }
 
   target.database.query("ATTACH DATABASE ? AS legacy").run(legacyPath);
   try {
-    target.database.transaction(() => {
-      if (
-        target.database.query("SELECT 1 FROM meta WHERE key = ?")
-          .get(QUOTA_MIGRATION_META_KEY) !== null
-      ) return;
-      const sourceHas = (table: string): boolean =>
-        target.database.query(
-          "SELECT 1 FROM legacy.sqlite_master WHERE type = 'table' AND name = ?",
-        ).get(table) !== null;
-      const commonColumns = (table: string): string[] => {
-        const source = new Set(
-          (target.database.query(`PRAGMA legacy.table_info(${quoted(table)})`).all() as
-            Array<{ name: string }>).map((column) => column.name),
-        );
-        return (target.database.query(`PRAGMA main.table_info(${quoted(table)})`).all() as
-          Array<{ name: string }>).map((column) => column.name)
-          .filter((column) => source.has(column));
-      };
-      const copy = (table: string): void => {
-        if (!sourceHas(table)) return;
-        const columns = commonColumns(table);
-        if (columns.length === 0) return;
-        const list = columns.map(quoted).join(", ");
-        target.database.exec(
-          `INSERT OR IGNORE INTO ${quoted(table)} (${list}) ` +
-            `SELECT ${list} FROM legacy.${quoted(table)}`,
-        );
-      };
+    target.database
+      .transaction(() => {
+        if (
+          target.database
+            .query("SELECT 1 FROM meta WHERE key = ?")
+            .get(QUOTA_MIGRATION_META_KEY) !== null
+        )
+          return;
+        const sourceHas = (table: string): boolean =>
+          target.database
+            .query(
+              "SELECT 1 FROM legacy.sqlite_master WHERE type = 'table' AND name = ?",
+            )
+            .get(table) !== null;
+        const commonColumns = (table: string): string[] => {
+          const source = new Set(
+            (
+              target.database
+                .query(`PRAGMA legacy.table_info(${quoted(table)})`)
+                .all() as Array<{ name: string }>
+            ).map((column) => column.name),
+          );
+          return (
+            target.database
+              .query(`PRAGMA main.table_info(${quoted(table)})`)
+              .all() as Array<{ name: string }>
+          )
+            .map((column) => column.name)
+            .filter((column) => source.has(column));
+        };
+        const copy = (table: string): void => {
+          if (!sourceHas(table)) return;
+          const columns = commonColumns(table);
+          if (columns.length === 0) return;
+          const list = columns.map(quoted).join(", ");
+          target.database.exec(
+            `INSERT OR IGNORE INTO ${quoted(table)} (${list}) ` +
+              `SELECT ${list} FROM legacy.${quoted(table)}`,
+          );
+        };
 
-      if (sourceHas("quota_usage")) {
-        const columns = commonColumns("quota_usage");
-        const list = columns.map(quoted).join(", ");
-        const rows = target.database.query(
-          "SELECT id, seq FROM legacy.quota_usage ORDER BY seq",
-        ).all() as Array<{ id: string; seq: number }>;
-        for (const row of rows) {
-          target.database.query(
-            "UPDATE quota_usage_sequence SET next = ? WHERE id = 0",
-          ).run(row.seq);
-          target.database.query(
-            `INSERT OR IGNORE INTO quota_usage (${list}) ` +
-              `SELECT ${list} FROM legacy.quota_usage WHERE id = ?`,
-          ).run(row.id);
+        if (sourceHas("quota_usage")) {
+          const columns = commonColumns("quota_usage");
+          const list = columns.map(quoted).join(", ");
+          const rows = target.database
+            .query("SELECT id, seq FROM legacy.quota_usage ORDER BY seq")
+            .all() as Array<{ id: string; seq: number }>;
+          for (const row of rows) {
+            target.database
+              .query("UPDATE quota_usage_sequence SET next = ? WHERE id = 0")
+              .run(row.seq);
+            target.database
+              .query(
+                `INSERT OR IGNORE INTO quota_usage (${list}) ` +
+                  `SELECT ${list} FROM legacy.quota_usage WHERE id = ?`,
+              )
+              .run(row.id);
+          }
         }
-      }
-      copy("quota_reservations");
-      target.database.query(
-        "UPDATE quota_reservations SET instanceId = ? WHERE instanceId = ''",
-      ).run(hiveInstanceSuffix(join(homedir(), ".hive")));
-      target.database.query(
-        "UPDATE quota_reservations SET instanceHome = ? WHERE instanceHome = ''",
-      ).run(resolveHiveHome(join(homedir(), ".hive")));
-      for (const table of SHARED_QUOTA_TABLES) copy(table);
-      target.database.query("INSERT INTO meta (key, value) VALUES (?, ?)")
-        .run(QUOTA_MIGRATION_META_KEY, legacyPath);
-    }).immediate();
+        copy("quota_reservations");
+        target.database
+          .query(
+            "UPDATE quota_reservations SET instanceId = ? WHERE instanceId = ''",
+          )
+          .run(hiveInstanceSuffix(join(homedir(), ".hive")));
+        target.database
+          .query(
+            "UPDATE quota_reservations SET instanceHome = ? WHERE instanceHome = ''",
+          )
+          .run(resolveHiveHome(join(homedir(), ".hive")));
+        for (const table of SHARED_QUOTA_TABLES) copy(table);
+        target.database
+          .query("INSERT INTO meta (key, value) VALUES (?, ?)")
+          .run(QUOTA_MIGRATION_META_KEY, legacyPath);
+      })
+      .immediate();
   } finally {
     target.database.exec("DETACH DATABASE legacy");
   }
@@ -355,15 +380,15 @@ export function mergeObservationWindows(
   const fiveLeads = newer(five.fiveHourObservedAt, week.weeklyObservedAt);
   const lead = fiveLeads
     ? {
-      observedAt: five.fiveHourObservedAt,
-      source: five.fiveHourSource ?? five.source,
-      confidence: five.fiveHourConfidence ?? five.confidence,
-    }
+        observedAt: five.fiveHourObservedAt,
+        source: five.fiveHourSource ?? five.source,
+        confidence: five.fiveHourConfidence ?? five.confidence,
+      }
     : {
-      observedAt: week.weeklyObservedAt,
-      source: week.weeklySource ?? week.source,
-      confidence: week.weeklyConfidence ?? week.confidence,
-    };
+        observedAt: week.weeklyObservedAt,
+        source: week.weeklySource ?? week.source,
+        confidence: week.weeklyConfidence ?? week.confidence,
+      };
   return {
     ...incoming,
     fiveHourUsed: five.fiveHourUsed,
@@ -392,9 +417,10 @@ export class QuotaLedger {
       instanceId: string,
     ) => Promise<DaemonInstanceLiveness> = daemonInstanceLiveness,
   ) {
-    const integrityInstalled = this.db.database.query(
-      "SELECT value FROM meta WHERE key = ?",
-    ).get(QUOTA_LEDGER_INTEGRITY_META_KEY) !== null;
+    const integrityInstalled =
+      this.db.database
+        .query("SELECT value FROM meta WHERE key = ?")
+        .get(QUOTA_LEDGER_INTEGRITY_META_KEY) !== null;
     this.db.database.exec(`
       CREATE TABLE IF NOT EXISTS quota_usage (
         id TEXT PRIMARY KEY,
@@ -516,16 +542,14 @@ export class QuotaLedger {
         PRIMARY KEY(provider, model, effort)
       );
     `);
-    const poolColumns = z.array(z.object({ name: z.string() })).parse(
-      this.db.database.query("PRAGMA table_info(quota_pools)").all(),
-    );
+    const poolColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.db.database.query("PRAGMA table_info(quota_pools)").all());
     const poolColumnNames = new Set(poolColumns.map((column) => column.name));
-    for (
-      const [column, duration] of [
-        ["fiveHourMeterState", "fiveHourWindowMinutes"],
-        ["weeklyMeterState", "weeklyWindowMinutes"],
-      ] as const
-    ) {
+    for (const [column, duration] of [
+      ["fiveHourMeterState", "fiveHourWindowMinutes"],
+      ["weeklyMeterState", "weeklyWindowMinutes"],
+    ] as const) {
       if (poolColumnNames.has(column)) continue;
       this.db.database.exec(
         `ALTER TABLE quota_pools ADD COLUMN ${column} TEXT NOT NULL DEFAULT 'unknown'`,
@@ -536,35 +560,37 @@ export class QuotaLedger {
         `UPDATE quota_pools SET ${column} = 'metered' WHERE ${duration} IS NOT NULL`,
       );
     }
-    const observationColumns = z.array(z.object({ name: z.string() })).parse(
-      this.db.database.query("PRAGMA table_info(quota_observations)").all(),
-    );
+    const observationColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(
+        this.db.database.query("PRAGMA table_info(quota_observations)").all(),
+      );
     const observationColumnNames = new Set(
       observationColumns.map((column) => column.name),
     );
-    for (
-      const [column, type] of [
-        ["fiveHourObservedAt", "TEXT"],
-        ["fiveHourSource", "TEXT"],
-        ["fiveHourConfidence", "TEXT"],
-        ["weeklyObservedAt", "TEXT"],
-        ["weeklySource", "TEXT"],
-        ["weeklyConfidence", "TEXT"],
-        // Which spend each window's reading already accounts for. Hive's own
-        // bookkeeping, not the provider's fact, which is why it lives here and
-        // not on `QuotaObservation`.
-        ["fiveHourUsageSeq", "INTEGER"],
-        ["weeklyUsageSeq", "INTEGER"],
-      ] as const
-    ) {
+    for (const [column, type] of [
+      ["fiveHourObservedAt", "TEXT"],
+      ["fiveHourSource", "TEXT"],
+      ["fiveHourConfidence", "TEXT"],
+      ["weeklyObservedAt", "TEXT"],
+      ["weeklySource", "TEXT"],
+      ["weeklyConfidence", "TEXT"],
+      // Which spend each window's reading already accounts for. Hive's own
+      // bookkeeping, not the provider's fact, which is why it lives here and
+      // not on `QuotaObservation`.
+      ["fiveHourUsageSeq", "INTEGER"],
+      ["weeklyUsageSeq", "INTEGER"],
+    ] as const) {
       if (observationColumnNames.has(column)) continue;
       this.db.database.exec(
         `ALTER TABLE quota_observations ADD COLUMN ${column} ${type}`,
       );
     }
-    const reservationColumns = z.array(z.object({ name: z.string() })).parse(
-      this.db.database.query("PRAGMA table_info(quota_reservations)").all(),
-    );
+    const reservationColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(
+        this.db.database.query("PRAGMA table_info(quota_reservations)").all(),
+      );
     const reservationColumnNames = new Set(
       reservationColumns.map((column) => column.name),
     );
@@ -572,17 +598,21 @@ export class QuotaLedger {
       this.db.database.exec(
         "ALTER TABLE quota_reservations ADD COLUMN instanceId TEXT NOT NULL DEFAULT ''",
       );
-      this.db.database.query(
-        "UPDATE quota_reservations SET instanceId = ? WHERE instanceId = ''",
-      ).run(this.instanceId);
+      this.db.database
+        .query(
+          "UPDATE quota_reservations SET instanceId = ? WHERE instanceId = ''",
+        )
+        .run(this.instanceId);
     }
     if (!reservationColumnNames.has("instanceHome")) {
       this.db.database.exec(
         "ALTER TABLE quota_reservations ADD COLUMN instanceHome TEXT NOT NULL DEFAULT ''",
       );
-      this.db.database.query(
-        "UPDATE quota_reservations SET instanceHome = ? WHERE instanceHome = ''",
-      ).run(this.instanceHome);
+      this.db.database
+        .query(
+          "UPDATE quota_reservations SET instanceHome = ? WHERE instanceHome = ''",
+        )
+        .run(this.instanceHome);
     }
     if (!reservationColumnNames.has("purpose")) {
       this.db.database.exec(
@@ -604,9 +634,11 @@ export class QuotaLedger {
         "ALTER TABLE quota_reservations ADD COLUMN effort TEXT",
       );
     }
-    const healthColumns = z.array(z.object({ name: z.string() })).parse(
-      this.db.database.query("PRAGMA table_info(quota_route_health)").all(),
-    );
+    const healthColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(
+        this.db.database.query("PRAGMA table_info(quota_route_health)").all(),
+      );
     if (!healthColumns.some((column) => column.name === "effort")) {
       this.db.database.exec(`
         ALTER TABLE quota_route_health RENAME TO quota_route_health_legacy;
@@ -646,9 +678,9 @@ export class QuotaLedger {
     this.db.database.exec(
       "CREATE INDEX IF NOT EXISTS quota_reservations_group ON quota_reservations(groupId)",
     );
-    const usageColumns = z.array(z.object({ name: z.string() })).parse(
-      this.db.database.query("PRAGMA table_info(quota_usage)").all(),
-    );
+    const usageColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.db.database.query("PRAGMA table_info(quota_usage)").all());
     if (!usageColumns.some((column) => column.name === "weeklyUnits")) {
       this.db.database.exec(
         "ALTER TABLE quota_usage ADD COLUMN weeklyUnits REAL",
@@ -681,9 +713,11 @@ export class QuotaLedger {
             (SELECT COUNT(*) FROM quota_reservations),
             (SELECT next FROM quota_usage_sequence WHERE id = 0)
         `);
-        this.db.database.query(
-          "INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'installed')",
-        ).run(QUOTA_LEDGER_INTEGRITY_META_KEY);
+        this.db.database
+          .query(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES (?, 'installed')",
+          )
+          .run(QUOTA_LEDGER_INTEGRITY_META_KEY);
       }
       // These triggers are part of the migration boundary, not merely the new
       // writer. A daemon from before the integrity checkpoint can keep serving
@@ -731,24 +765,32 @@ export class QuotaLedger {
 
   private requireIntegrity(): void {
     const expected = LedgerIntegritySchema.safeParse(
-      this.db.database.query(`
+      this.db.database
+        .query(`
         SELECT usageRows, reservationRows, nextUsageSeq
         FROM quota_ledger_integrity WHERE id = 0
-      `).get(),
+      `)
+        .get(),
     );
     if (!expected.success) {
-      throw new QuotaLedgerUnknownError("its integrity checkpoint is missing or unreadable");
+      throw new QuotaLedgerUnknownError(
+        "its integrity checkpoint is missing or unreadable",
+      );
     }
     const actual = LedgerIntegritySchema.safeParse(
-      this.db.database.query(`
+      this.db.database
+        .query(`
         SELECT
           (SELECT COUNT(*) FROM quota_usage) AS usageRows,
           (SELECT COUNT(*) FROM quota_reservations) AS reservationRows,
           (SELECT next FROM quota_usage_sequence WHERE id = 0) AS nextUsageSeq
-      `).get(),
+      `)
+        .get(),
     );
     if (!actual.success) {
-      throw new QuotaLedgerUnknownError("its spend sequence is missing or unreadable");
+      throw new QuotaLedgerUnknownError(
+        "its spend sequence is missing or unreadable",
+      );
     }
     if (
       expected.data.usageRows !== actual.data.usageRows ||
@@ -771,16 +813,20 @@ export class QuotaLedger {
    * and any reservation-count disagreement still refuses startup.
    */
   private repairIntactUsageGrowth(): void {
-    const state = z.object({
-      expectedUsageRows: z.number().int().nonnegative(),
-      expectedReservationRows: z.number().int().nonnegative(),
-      expectedNextUsageSeq: z.number().int().nonnegative(),
-      actualUsageRows: z.number().int().nonnegative(),
-      actualReservationRows: z.number().int().nonnegative(),
-      actualNextUsageSeq: z.number().int().nonnegative(),
-      prefixUsageRows: z.number().int().nonnegative(),
-      appendedUsageRows: z.number().int().nonnegative(),
-    }).safeParse(this.db.database.query(`
+    const state = z
+      .object({
+        expectedUsageRows: z.number().int().nonnegative(),
+        expectedReservationRows: z.number().int().nonnegative(),
+        expectedNextUsageSeq: z.number().int().nonnegative(),
+        actualUsageRows: z.number().int().nonnegative(),
+        actualReservationRows: z.number().int().nonnegative(),
+        actualNextUsageSeq: z.number().int().nonnegative(),
+        prefixUsageRows: z.number().int().nonnegative(),
+        appendedUsageRows: z.number().int().nonnegative(),
+      })
+      .safeParse(
+        this.db.database
+          .query(`
       SELECT
         integrity.usageRows AS expectedUsageRows,
         integrity.reservationRows AS expectedReservationRows,
@@ -795,7 +841,9 @@ export class QuotaLedger {
       FROM quota_ledger_integrity AS integrity
       JOIN quota_usage_sequence AS sequence ON sequence.id = 0
       WHERE integrity.id = 0
-    `).get());
+    `)
+          .get(),
+      );
     if (!state.success) return;
 
     const value = state.data;
@@ -803,26 +851,31 @@ export class QuotaLedger {
       value.actualReservationRows !== value.expectedReservationRows ||
       value.actualUsageRows <= value.expectedUsageRows ||
       value.actualNextUsageSeq <= value.expectedNextUsageSeq
-    ) return;
+    )
+      return;
     const appendedRows = value.actualUsageRows - value.expectedUsageRows;
-    const appendedSequences = value.actualNextUsageSeq - value.expectedNextUsageSeq;
+    const appendedSequences =
+      value.actualNextUsageSeq - value.expectedNextUsageSeq;
     if (
       value.prefixUsageRows !== value.expectedUsageRows ||
       value.appendedUsageRows !== appendedRows ||
       appendedRows !== appendedSequences
-    ) return;
+    )
+      return;
 
-    this.db.database.query(`
+    this.db.database
+      .query(`
       UPDATE quota_ledger_integrity
       SET usageRows = ?, nextUsageSeq = ?
       WHERE id = 0 AND usageRows = ? AND reservationRows = ? AND nextUsageSeq = ?
-    `).run(
-      value.actualUsageRows,
-      value.actualNextUsageSeq,
-      value.expectedUsageRows,
-      value.expectedReservationRows,
-      value.expectedNextUsageSeq,
-    );
+    `)
+      .run(
+        value.actualUsageRows,
+        value.actualNextUsageSeq,
+        value.expectedUsageRows,
+        value.expectedReservationRows,
+        value.expectedNextUsageSeq,
+      );
   }
 
   /**
@@ -832,43 +885,57 @@ export class QuotaLedger {
    * were written with; new ones get the ordering the timestamp could not give.
    */
   private backfillObservationWatermarks(): void {
-    const stale = z.array(z.object({
-      provider: CapabilityProviderSchema,
-      account: z.string(),
-      pool: z.string(),
-      fiveHourObservedAt: z.string().nullable(),
-      weeklyObservedAt: z.string().nullable(),
-    })).parse(this.db.database.query(`
+    const stale = z
+      .array(
+        z.object({
+          provider: CapabilityProviderSchema,
+          account: z.string(),
+          pool: z.string(),
+          fiveHourObservedAt: z.string().nullable(),
+          weeklyObservedAt: z.string().nullable(),
+        }),
+      )
+      .parse(
+        this.db.database
+          .query(`
       SELECT
         provider, account, pool,
         COALESCE(fiveHourObservedAt, observedAt) AS fiveHourObservedAt,
         COALESCE(weeklyObservedAt, observedAt) AS weeklyObservedAt
       FROM quota_observations
       WHERE fiveHourUsageSeq IS NULL OR weeklyUsageSeq IS NULL
-    `).all());
+    `)
+          .all(),
+      );
     for (const row of stale) {
-      this.db.database.query(`
+      this.db.database
+        .query(`
         UPDATE quota_observations
         SET fiveHourUsageSeq = COALESCE(fiveHourUsageSeq, ?),
             weeklyUsageSeq = COALESCE(weeklyUsageSeq, ?)
         WHERE provider = ? AND account = ? AND pool = ?
-      `).run(
-        this.usageWatermark(row, row.fiveHourObservedAt),
-        this.usageWatermark(row, row.weeklyObservedAt),
-        row.provider,
-        row.account,
-        row.pool,
-      );
+      `)
+        .run(
+          this.usageWatermark(row, row.fiveHourObservedAt),
+          this.usageWatermark(row, row.weeklyObservedAt),
+          row.provider,
+          row.account,
+          row.pool,
+        );
     }
   }
 
   /** The next number in the ledger's commit order. Never rewound, never reused. */
   private nextUsageSeq(): number {
-    return z.object({ next: z.number() }).parse(
-      this.db.database.query(
-        "UPDATE quota_usage_sequence SET next = next + 1 WHERE id = 0 RETURNING next",
-      ).get(),
-    ).next;
+    return z
+      .object({ next: z.number() })
+      .parse(
+        this.db.database
+          .query(
+            "UPDATE quota_usage_sequence SET next = next + 1 WHERE id = 0 RETURNING next",
+          )
+          .get(),
+      ).next;
   }
 
   /**
@@ -888,39 +955,48 @@ export class QuotaLedger {
    * quota the user does not have, admits the spawn past a real limit, and nothing
    * downstream ever corrects it. Hive pays the cheap error.
    */
-  private usageWatermark(scope: QuotaScope, observedAt: string | null): number | null {
+  private usageWatermark(
+    scope: QuotaScope,
+    observedAt: string | null,
+  ): number | null {
     if (observedAt === null) return null;
     return z.object({ watermark: z.number() }).parse(
-      this.db.database.query(`
+      this.db.database
+        .query(`
         SELECT COALESCE(MAX(seq), 0) AS watermark FROM quota_usage
         WHERE provider = ? AND account = ? AND pool = ?
           AND seq < COALESCE((
             SELECT MIN(seq) FROM quota_usage
             WHERE provider = ? AND account = ? AND pool = ? AND occurredAt >= ?
           ), 9223372036854775807)
-      `).get(
-        scope.provider,
-        scope.account,
-        scope.pool,
-        scope.provider,
-        scope.account,
-        scope.pool,
-        observedAt,
-      ),
+      `)
+        .get(
+          scope.provider,
+          scope.account,
+          scope.pool,
+          scope.provider,
+          scope.account,
+          scope.pool,
+          observedAt,
+        ),
     ).watermark;
   }
 
   /** Each window's stored boundary, or null for a window nobody ever measured. */
   private watermarks(scope: QuotaScope): ObservationWatermarks {
-    const row = this.db.database.query(`
+    const row = this.db.database
+      .query(`
       SELECT fiveHourUsageSeq, weeklyUsageSeq FROM quota_observations
       WHERE provider = ? AND account = ? AND pool = ?
-    `).get(scope.provider, scope.account, scope.pool);
+    `)
+      .get(scope.provider, scope.account, scope.pool);
     if (row === null) return { fiveHour: null, weekly: null };
-    const parsed = z.object({
-      fiveHourUsageSeq: z.number().nullable(),
-      weeklyUsageSeq: z.number().nullable(),
-    }).parse(row);
+    const parsed = z
+      .object({
+        fiveHourUsageSeq: z.number().nullable(),
+        weeklyUsageSeq: z.number().nullable(),
+      })
+      .parse(row);
     return {
       fiveHour: parsed.fiveHourUsageSeq,
       weekly: parsed.weeklyUsageSeq,
@@ -947,12 +1023,16 @@ export class QuotaLedger {
     // written before that distinction existed carry only `units` and fall back
     // to it, which is precisely their old behaviour.
     const watermarks = this.watermarks(scope);
-    const row = z.object({
-      fiveHour: z.number(),
-      weekly: z.number(),
-      afterFiveHourObservation: z.number(),
-      afterWeeklyObservation: z.number(),
-    }).parse(this.db.database.query(`
+    const row = z
+      .object({
+        fiveHour: z.number(),
+        weekly: z.number(),
+        afterFiveHourObservation: z.number(),
+        afterWeeklyObservation: z.number(),
+      })
+      .parse(
+        this.db.database
+          .query(`
       SELECT
         COALESCE(SUM(CASE WHEN occurredAt >= ? THEN units ELSE 0 END), 0) AS fiveHour,
         COALESCE(SUM(CASE WHEN occurredAt >= ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS weekly,
@@ -960,29 +1040,35 @@ export class QuotaLedger {
         COALESCE(SUM(CASE WHEN ? IS NOT NULL AND seq > ? THEN COALESCE(weeklyUnits, units) ELSE 0 END), 0) AS afterWeeklyObservation
       FROM quota_usage
       WHERE provider = ? AND account = ? AND pool = ?
-    `).get(
-      fiveHourStart,
-      weeklyStart,
-      watermarks.fiveHour,
-      watermarks.fiveHour,
-      watermarks.weekly,
-      watermarks.weekly,
-      scope.provider,
-      scope.account,
-      scope.pool,
-    ));
-    const reservation = z.object({
-      reserved: z.number(),
-      reservedWeekly: z.number(),
-    }).parse(
-      this.db.database.query(`
+    `)
+          .get(
+            fiveHourStart,
+            weeklyStart,
+            watermarks.fiveHour,
+            watermarks.fiveHour,
+            watermarks.weekly,
+            watermarks.weekly,
+            scope.provider,
+            scope.account,
+            scope.pool,
+          ),
+      );
+    const reservation = z
+      .object({
+        reserved: z.number(),
+        reservedWeekly: z.number(),
+      })
+      .parse(
+        this.db.database
+          .query(`
         SELECT
           COALESCE(SUM(estimatedUnits), 0) AS reserved,
           COALESCE(SUM(COALESCE(estimatedWeeklyUnits, estimatedUnits)), 0) AS reservedWeekly
         FROM quota_reservations
         WHERE provider = ? AND account = ? AND pool = ? AND status = 'active'
-      `).get(scope.provider, scope.account, scope.pool),
-    );
+      `)
+          .get(scope.provider, scope.account, scope.pool),
+      );
     return {
       ...row,
       reserved: reservation.reserved,
@@ -992,28 +1078,37 @@ export class QuotaLedger {
 
   earliestUsageAt(scope: QuotaScope, since: string): string | null {
     const row = z.object({ occurredAt: z.string().nullable() }).parse(
-      this.db.database.query(`
+      this.db.database
+        .query(`
         SELECT MIN(occurredAt) AS occurredAt FROM quota_usage
         WHERE provider = ? AND account = ? AND pool = ? AND occurredAt >= ?
-      `).get(scope.provider, scope.account, scope.pool, since),
+      `)
+        .get(scope.provider, scope.account, scope.pool, since),
     );
     return row.occurredAt;
   }
 
   unconfiguredScopes(): UnconfiguredQuotaScope[] {
-    return this.db.database.query(`
+    return this.db.database
+      .query(`
       SELECT provider, account, pool, model FROM quota_reservations
       WHERE pool LIKE 'unconfigured:%'
       UNION
       SELECT provider, account, pool, model FROM quota_usage
       WHERE pool LIKE 'unconfigured:%'
       ORDER BY provider, account, pool, model
-    `).all().map((row) => z.object({
-      provider: CapabilityProviderSchema,
-      account: z.string(),
-      pool: z.string(),
-      model: z.string(),
-    }).parse(row));
+    `)
+      .all()
+      .map((row) =>
+        z
+          .object({
+            provider: CapabilityProviderSchema,
+            account: z.string(),
+            pool: z.string(),
+            model: z.string(),
+          })
+          .parse(row),
+      );
   }
 
   /**
@@ -1029,12 +1124,20 @@ export class QuotaLedger {
       input.weeklyStart,
     );
     const weeklyEstimate = input.estimatedWeeklyUnits ?? input.estimatedUnits;
-    const fiveHourCommitted = totals.fiveHour + totals.reserved +
-      input.supplementalFiveHourUsed + input.estimatedUnits;
-    const weeklyCommitted = totals.weekly + totals.reservedWeekly +
-      input.supplementalWeeklyUsed + weeklyEstimate;
-    return fiveHourCommitted <= input.fiveHourAllowance - input.fiveHourFloor &&
-      weeklyCommitted <= input.weeklyAllowance - input.weeklyFloor;
+    const fiveHourCommitted =
+      totals.fiveHour +
+      totals.reserved +
+      input.supplementalFiveHourUsed +
+      input.estimatedUnits;
+    const weeklyCommitted =
+      totals.weekly +
+      totals.reservedWeekly +
+      input.supplementalWeeklyUsed +
+      weeklyEstimate;
+    return (
+      fiveHourCommitted <= input.fiveHourAllowance - input.fiveHourFloor &&
+      weeklyCommitted <= input.weeklyAllowance - input.weeklyFloor
+    );
   }
 
   /**
@@ -1096,10 +1199,13 @@ export class QuotaLedger {
     const wanted = splitVariant(model.trim()).base.toLowerCase();
     const claims = [
       ...new Set(
-        rows.filter((row) =>
-          row.modelId.trim().toLowerCase() === wanted ||
-          row.displayName.trim().toLowerCase() === wanted
-        ).map((row) => row.provider),
+        rows
+          .filter(
+            (row) =>
+              row.modelId.trim().toLowerCase() === wanted ||
+              row.displayName.trim().toLowerCase() === wanted,
+          )
+          .map((row) => row.provider),
       ),
     ];
     if (claims.length === 1) return { state: "claimed", provider: claims[0]! };
@@ -1121,32 +1227,34 @@ export class QuotaLedger {
   private insert(input: ReserveQuotaInput, groupId: string): void {
     this.requireIntegrity();
     this.requireCoherent(input.provider, input.model);
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO quota_reservations (
         id, groupId, instanceId, instanceHome, agentName, provider, account, pool, model, effort, category,
         estimatedUnits, estimatedWeeklyUnits, status, createdAt, expiresAt,
         startedAt, reconciledAt, actualUnits, source, purpose,
         controlMessageId
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL, NULL, NULL, NULL, ?, ?)
-    `).run(
-      input.id,
-      groupId,
-      this.instanceId,
-      this.instanceHome,
-      input.agentName,
-      input.provider,
-      input.account,
-      input.pool,
-      input.model,
-      input.effort ?? null,
-      input.category,
-      input.estimatedUnits,
-      input.estimatedWeeklyUnits ?? null,
-      input.now,
-      input.expiresAt,
-      input.purpose ?? "agent",
-      input.controlMessageId ?? null,
-    );
+    `)
+      .run(
+        input.id,
+        groupId,
+        this.instanceId,
+        this.instanceHome,
+        input.agentName,
+        input.provider,
+        input.account,
+        input.pool,
+        input.model,
+        input.effort ?? null,
+        input.category,
+        input.estimatedUnits,
+        input.estimatedWeeklyUnits ?? null,
+        input.now,
+        input.expiresAt,
+        input.purpose ?? "agent",
+        input.controlMessageId ?? null,
+      );
   }
 
   tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
@@ -1164,10 +1272,11 @@ export class QuotaLedger {
    * whose weekly pool was already at 99%. The tightest pool governs, and the
    * caller is told which one refused so it can say so out loud.
    */
-  tryReserveGroup(inputs: ReserveQuotaInput[]):
+  tryReserveGroup(
+    inputs: ReserveQuotaInput[],
+  ):
     | { ok: true; reservations: QuotaReservation[] }
-    | { ok: false; blockedBy: ReserveQuotaInput }
-  {
+    | { ok: false; blockedBy: ReserveQuotaInput } {
     if (inputs.length === 0) {
       throw new Error("a reservation must name at least one pool");
     }
@@ -1202,45 +1311,64 @@ export class QuotaLedger {
    * enter this comparison, so unlike windows are never compared and a
    * not-metered provider needs no fabricated headroom score.
    */
-  tryReserveFairGroups(candidates: Array<{
-    provider: CapabilityProvider;
-    inputs: ReserveQuotaInput[];
-  }>):
+  tryReserveFairGroups(
+    candidates: Array<{
+      provider: CapabilityProvider;
+      inputs: ReserveQuotaInput[];
+    }>,
+  ):
     | { ok: true; candidateIndex: number; reservations: QuotaReservation[] }
-    | { ok: false; blocked: Array<{ candidateIndex: number; blockedBy: ReserveQuotaInput }> }
-  {
-    if (candidates.length === 0) throw new Error("fair dispatch requires a candidate");
+    | {
+        ok: false;
+        blocked: Array<{
+          candidateIndex: number;
+          blockedBy: ReserveQuotaInput;
+        }>;
+      } {
+    if (candidates.length === 0)
+      throw new Error("fair dispatch requires a candidate");
     return this.immediate(() => {
       const active = candidates.map((candidate, candidateIndex) => ({
         ...candidate,
         candidateIndex,
       }));
-      const blocked: Array<{ candidateIndex: number; blockedBy: ReserveQuotaInput }> = [];
+      const blocked: Array<{
+        candidateIndex: number;
+        blockedBy: ReserveQuotaInput;
+      }> = [];
       while (active.length > 0) {
-        const providers = [...new Set(active.map((candidate) => candidate.provider))];
+        const providers = [
+          ...new Set(active.map((candidate) => candidate.provider)),
+        ];
         const deficit = new Map(providers.map((provider) => [provider, 0]));
-        const rows = (this.db.database.query(`
+        const rows = (
+          this.db.database
+            .query(`
           SELECT selectedProvider, eligibleProviders
           FROM quota_fair_dispatch ORDER BY id DESC LIMIT 1000
-        `).all() as Array<{ selectedProvider: string; eligibleProviders: string }>).reverse();
+        `)
+            .all() as Array<{
+            selectedProvider: string;
+            eligibleProviders: string;
+          }>
+        ).reverse();
         for (const row of rows) {
           let eligible: CapabilityProvider[];
           let selected: CapabilityProvider;
           try {
-            eligible = z.array(CapabilityProviderSchema).parse(
-              JSON.parse(row.eligibleProviders),
-            );
+            eligible = z
+              .array(CapabilityProviderSchema)
+              .parse(JSON.parse(row.eligibleProviders));
             selected = CapabilityProviderSchema.parse(row.selectedProvider);
           } catch {
-            throw new QuotaLedgerUnknownError("its fair-dispatch history is unreadable");
+            throw new QuotaLedgerUnknownError(
+              "its fair-dispatch history is unreadable",
+            );
           }
           const relevant = eligible.filter((provider) => deficit.has(provider));
           if (relevant.length === 0) continue;
           for (const provider of relevant) {
-            deficit.set(
-              provider,
-              deficit.get(provider)! + 1 / relevant.length,
-            );
+            deficit.set(provider, deficit.get(provider)! + 1 / relevant.length);
           }
           if (deficit.has(selected)) {
             deficit.set(selected, deficit.get(selected)! - 1);
@@ -1249,12 +1377,13 @@ export class QuotaLedger {
         for (const provider of providers) {
           deficit.set(provider, deficit.get(provider)! + 1 / providers.length);
         }
-        const providerOrder = [...providers].sort((left, right) =>
-          deficit.get(right)! - deficit.get(left)! ||
-          providers.indexOf(left) - providers.indexOf(right)
+        const providerOrder = [...providers].sort(
+          (left, right) =>
+            deficit.get(right)! - deficit.get(left)! ||
+            providers.indexOf(left) - providers.indexOf(right),
         );
         const chosen = providerOrder.flatMap((provider) =>
-          active.filter((candidate) => candidate.provider === provider)
+          active.filter((candidate) => candidate.provider === provider),
         )[0]!;
         const blockedInput = chosen.inputs.find((input) => !this.fits(input));
         if (blockedInput !== undefined) {
@@ -1267,30 +1396,48 @@ export class QuotaLedger {
         }
         const primary = chosen.inputs[0]!;
         for (const input of chosen.inputs) this.insert(input, primary.id);
-        this.db.database.query(`
+        this.db.database
+          .query(`
           INSERT INTO quota_fair_dispatch
             (selectedAt, selectedProvider, eligibleProviders, reservationId)
           VALUES (?, ?, ?, ?)
-        `).run(primary.now, chosen.provider, JSON.stringify(providers), primary.id);
+        `)
+          .run(
+            primary.now,
+            chosen.provider,
+            JSON.stringify(providers),
+            primary.id,
+          );
         return {
           ok: true as const,
           candidateIndex: chosen.candidateIndex,
-          reservations: chosen.inputs.map((input) => this.getReservation(input.id)!),
+          reservations: chosen.inputs.map(
+            (input) => this.getReservation(input.id)!,
+          ),
         };
       }
       return { ok: false as const, blocked };
     });
   }
 
-  insertUnboundedReservation(input: Omit<ReserveQuotaInput,
-    | "fiveHourStart" | "weeklyStart"
-    | "supplementalFiveHourUsed" | "supplementalWeeklyUsed"
-    | "fiveHourAllowance" | "weeklyAllowance"
-    | "fiveHourFloor" | "weeklyFloor"
-  >): QuotaReservation {
+  insertUnboundedReservation(
+    input: Omit<
+      ReserveQuotaInput,
+      | "fiveHourStart"
+      | "weeklyStart"
+      | "supplementalFiveHourUsed"
+      | "supplementalWeeklyUsed"
+      | "fiveHourAllowance"
+      | "weeklyAllowance"
+      | "fiveHourFloor"
+      | "weeklyFloor"
+    >,
+  ): QuotaReservation {
     return this.immediate(() => {
       if (input.controlMessageId !== undefined) {
-        const existing = this.getActiveControlReservation(input.controlMessageId);
+        const existing = this.getActiveControlReservation(
+          input.controlMessageId,
+        );
         if (existing !== null) return existing;
       }
       this.insert(
@@ -1317,9 +1464,9 @@ export class QuotaLedger {
     entries: ModelCatalogRow[],
   ): void {
     this.immediate(() => {
-      this.db.database.query(
-        "DELETE FROM quota_model_catalog WHERE provider = ?",
-      ).run(provider);
+      this.db.database
+        .query("DELETE FROM quota_model_catalog WHERE provider = ?")
+        .run(provider);
       for (const entry of entries) {
         const value = ModelCatalogSchema.parse(entry);
         if (value.provider !== provider) {
@@ -1327,18 +1474,20 @@ export class QuotaLedger {
             `Cannot store ${value.provider} catalog row in ${provider} snapshot`,
           );
         }
-        this.db.database.query(`
+        this.db.database
+          .query(`
           INSERT INTO quota_model_catalog (
             provider, modelId, displayName, discoveredAt
           ) VALUES (?, ?, ?, ?)
           ON CONFLICT(provider, modelId, displayName) DO UPDATE SET
             discoveredAt = excluded.discoveredAt
-        `).run(
-          value.provider,
-          value.modelId,
-          value.displayName,
-          value.discoveredAt,
-        );
+        `)
+          .run(
+            value.provider,
+            value.modelId,
+            value.displayName,
+            value.discoveredAt,
+          );
       }
     });
   }
@@ -1351,7 +1500,8 @@ export class QuotaLedger {
     reason: string,
     at: string,
   ): void {
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO quota_route_health (
         provider, model, effort, consecutiveFailures, lastFailureAt, lastFailureReason,
         lastSuccessAt
@@ -1360,7 +1510,8 @@ export class QuotaLedger {
         consecutiveFailures = quota_route_health.consecutiveFailures + 1,
         lastFailureAt = excluded.lastFailureAt,
         lastFailureReason = excluded.lastFailureReason
-    `).run(provider, model, effort ?? "", at, reason);
+    `)
+      .run(provider, model, effort ?? "", at, reason);
   }
 
   /**
@@ -1374,7 +1525,8 @@ export class QuotaLedger {
     effort: string | null,
     at: string,
   ): void {
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO quota_route_health (
         provider, model, effort, consecutiveFailures, lastFailureAt, lastFailureReason,
         lastSuccessAt
@@ -1384,7 +1536,8 @@ export class QuotaLedger {
         lastFailureAt = NULL,
         lastFailureReason = NULL,
         lastSuccessAt = excluded.lastSuccessAt
-    `).run(provider, model, effort ?? "", at);
+    `)
+      .run(provider, model, effort ?? "", at);
   }
 
   routeHealth(
@@ -1392,16 +1545,21 @@ export class QuotaLedger {
     model: string,
     effort: string | null = null,
   ): RouteHealth | null {
-    const row = this.db.database.query(
-      "SELECT provider, model, NULLIF(effort, '') AS effort, consecutiveFailures, lastFailureAt, lastFailureReason, lastSuccessAt FROM quota_route_health WHERE provider = ? AND model = ? AND effort = ?",
-    ).get(provider, model, effort ?? "");
+    const row = this.db.database
+      .query(
+        "SELECT provider, model, NULLIF(effort, '') AS effort, consecutiveFailures, lastFailureAt, lastFailureReason, lastSuccessAt FROM quota_route_health WHERE provider = ? AND model = ? AND effort = ?",
+      )
+      .get(provider, model, effort ?? "");
     return row === null ? null : RouteHealthSchema.parse(row);
   }
 
   modelCatalog(): ModelCatalogRow[] {
-    return this.db.database.query(
-      "SELECT * FROM quota_model_catalog ORDER BY provider, modelId, displayName",
-    ).all().map((row) => ModelCatalogSchema.parse(row));
+    return this.db.database
+      .query(
+        "SELECT * FROM quota_model_catalog ORDER BY provider, modelId, displayName",
+      )
+      .all()
+      .map((row) => ModelCatalogSchema.parse(row));
   }
 
   /**
@@ -1429,7 +1587,8 @@ export class QuotaLedger {
    */
   upsertDiscoveredPool(pool: DiscoveredQuotaPool): DiscoveredQuotaPool {
     const value = DiscoveredPoolSchema.parse(pool);
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO quota_pools (
         provider, account, pool, models, label, fiveHourWindowMinutes,
         weeklyWindowMinutes, fiveHourMeterState, weeklyMeterState,
@@ -1452,56 +1611,67 @@ export class QuotaLedger {
         weeklyMeterState = excluded.weeklyMeterState,
         discoveredAt = excluded.discoveredAt,
         source = excluded.source
-    `).run(
-      value.provider,
-      value.account,
-      value.pool,
-      JSON.stringify(value.models),
-      value.label,
-      value.fiveHourWindowMinutes,
-      value.weeklyWindowMinutes,
-      value.fiveHourMeterState,
-      value.weeklyMeterState,
-      value.discoveredAt,
-      value.source,
-    );
+    `)
+      .run(
+        value.provider,
+        value.account,
+        value.pool,
+        JSON.stringify(value.models),
+        value.label,
+        value.fiveHourWindowMinutes,
+        value.weeklyWindowMinutes,
+        value.fiveHourMeterState,
+        value.weeklyMeterState,
+        value.discoveredAt,
+        value.source,
+      );
     return value;
   }
 
   discoveredPools(): DiscoveredQuotaPool[] {
-    return this.db.database.query(
-      "SELECT * FROM quota_pools ORDER BY provider, account, pool",
-    ).all().map((row) => {
-      const record = z.object({ models: z.string() }).passthrough().parse(row);
-      return DiscoveredPoolSchema.parse({
-        ...record,
-        models: z.array(z.string()).parse(JSON.parse(record.models)),
+    return this.db.database
+      .query("SELECT * FROM quota_pools ORDER BY provider, account, pool")
+      .all()
+      .map((row) => {
+        const record = z
+          .object({ models: z.string() })
+          .passthrough()
+          .parse(row);
+        return DiscoveredPoolSchema.parse({
+          ...record,
+          models: z.array(z.string()).parse(JSON.parse(record.models)),
+        });
       });
-    });
   }
 
   getReservation(id: string): QuotaReservation | null {
-    const row = this.db.database.query(
-      "SELECT * FROM quota_reservations WHERE id = ?",
-    ).get(id);
+    const row = this.db.database
+      .query("SELECT * FROM quota_reservations WHERE id = ?")
+      .get(id);
     return row === null ? null : ReservationSchema.parse(row);
   }
 
   getActiveReservationForAgent(agentName: string): QuotaReservation | null {
-    const row = this.db.database.query(`
+    const row = this.db.database
+      .query(`
       SELECT * FROM quota_reservations
       WHERE instanceId = ? AND agentName = ? AND status = 'active'
       ORDER BY createdAt DESC LIMIT 1
-    `).get(this.instanceId, agentName);
+    `)
+      .get(this.instanceId, agentName);
     return row === null ? null : ReservationSchema.parse(row);
   }
 
-  getActiveControlReservation(controlMessageId: string): QuotaReservation | null {
-    const row = this.db.database.query(`
+  getActiveControlReservation(
+    controlMessageId: string,
+  ): QuotaReservation | null {
+    const row = this.db.database
+      .query(`
       SELECT * FROM quota_reservations
       WHERE controlMessageId = ? AND status = 'active'
       ORDER BY createdAt DESC LIMIT 1
-    `).get(controlMessageId);
+    `)
+      .get(controlMessageId);
     return row === null ? null : ReservationSchema.parse(row);
   }
 
@@ -1512,22 +1682,27 @@ export class QuotaLedger {
    * from every spawn in between.
    */
   private group(id: string): QuotaReservation[] {
-    return this.db.database.query(`
+    return this.db.database
+      .query(`
       SELECT * FROM quota_reservations
       WHERE groupId = COALESCE(
         (SELECT groupId FROM quota_reservations WHERE id = ?), ?
       ) OR id = ?
       ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, pool
-    `).all(id, id, id, id).map((row) => ReservationSchema.parse(row));
+    `)
+      .all(id, id, id, id)
+      .map((row) => ReservationSchema.parse(row));
   }
 
   markStarted(id: string, startedAt: string): QuotaReservation | null {
-    this.db.database.query(`
+    this.db.database
+      .query(`
       UPDATE quota_reservations SET startedAt = COALESCE(startedAt, ?)
       WHERE groupId = COALESCE(
         (SELECT groupId FROM quota_reservations WHERE id = ?), ?
       ) AND status = 'active'
-    `).run(startedAt, id, id);
+    `)
+      .run(startedAt, id, id);
     return this.getReservation(id);
   }
 
@@ -1542,34 +1717,38 @@ export class QuotaLedger {
       this.requireIntegrity();
       for (const reservation of this.group(id)) {
         if (reservation.status !== "active") continue;
-        this.db.database.query(`
+        this.db.database
+          .query(`
           UPDATE quota_reservations
           SET status = 'reconciled', reconciledAt = ?, actualUnits = ?, source = ?
           WHERE id = ? AND status = 'active'
-        `).run(occurredAt, units, source, reservation.id);
+        `)
+          .run(occurredAt, units, source, reservation.id);
         // The spend lands in each pool the run drew from. Both are percent of
         // their own window, so the same figure is the honest debit for each.
         const seq = this.nextUsageSeq();
-        const inserted = this.db.database.query(`
+        const inserted = this.db.database
+          .query(`
           INSERT OR IGNORE INTO quota_usage (
             id, reservationId, provider, account, pool, model,
             units, weeklyUnits, occurredAt, source, confidence, seq
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           RETURNING id
-        `).get(
-          crypto.randomUUID(),
-          reservation.id,
-          reservation.provider,
-          reservation.account,
-          reservation.pool,
-          reservation.model,
-          units,
-          weeklyUnits,
-          occurredAt,
-          source,
-          source === "estimated" ? "estimated" : "authoritative",
-          seq,
-        );
+        `)
+          .get(
+            crypto.randomUUID(),
+            reservation.id,
+            reservation.provider,
+            reservation.account,
+            reservation.pool,
+            reservation.model,
+            units,
+            weeklyUnits,
+            occurredAt,
+            source,
+            source === "estimated" ? "estimated" : "authoritative",
+            seq,
+          );
         if (inserted === null) {
           throw new QuotaLedgerUnknownError(
             `the spend for reservation ${reservation.id} could not be recorded exactly once`,
@@ -1581,31 +1760,42 @@ export class QuotaLedger {
   }
 
   release(id: string, releasedAt: string): QuotaReservation | null {
-    this.db.database.query(`
+    this.db.database
+      .query(`
       UPDATE quota_reservations
       SET status = 'released', reconciledAt = ?, actualUnits = 0, source = 'released'
       WHERE groupId = COALESCE(
         (SELECT groupId FROM quota_reservations WHERE id = ?), ?
       ) AND status = 'active'
-    `).run(releasedAt, id, id);
+    `)
+      .run(releasedAt, id, id);
     return this.getReservation(id);
   }
 
   activeReservations(): QuotaReservation[] {
-    return this.db.database.query(
-      "SELECT * FROM quota_reservations WHERE instanceId = ? AND status = 'active' ORDER BY createdAt, id",
-    ).all(this.instanceId).map((row) => ReservationSchema.parse(row));
+    return this.db.database
+      .query(
+        "SELECT * FROM quota_reservations WHERE instanceId = ? AND status = 'active' ORDER BY createdAt, id",
+      )
+      .all(this.instanceId)
+      .map((row) => ReservationSchema.parse(row));
   }
 
   async expired(_now: string): Promise<QuotaReservation[]> {
-    const rows = this.db.database.query(`
+    const rows = this.db.database
+      .query(`
       SELECT * FROM quota_reservations
       WHERE status = 'active'
       ORDER BY expiresAt, id
-    `).all().map((row) => ReservationSchema.parse(row));
+    `)
+      .all()
+      .map((row) => ReservationSchema.parse(row));
     const reclaimable: QuotaReservation[] = [];
     for (const row of rows) {
-      const liveness = await this.instanceLiveness(row.instanceHome, row.instanceId);
+      const liveness = await this.instanceLiveness(
+        row.instanceHome,
+        row.instanceId,
+      );
       if (liveness === "dead") {
         reclaimable.push(row);
       }
@@ -1649,7 +1839,8 @@ export class QuotaLedger {
         }
         return priorSeq ?? this.usageWatermark(value, mergedAt);
       };
-      this.db.database.query(`
+      this.db.database
+        .query(`
         INSERT INTO quota_observations (
           provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
           fiveHourResetAt, weeklyResetAt, source, confidence,
@@ -1673,36 +1864,37 @@ export class QuotaLedger {
           weeklyConfidence = excluded.weeklyConfidence,
           fiveHourUsageSeq = excluded.fiveHourUsageSeq,
           weeklyUsageSeq = excluded.weeklyUsageSeq
-      `).run(
-        merged.provider,
-        merged.account,
-        merged.pool,
-        merged.fiveHourUsed,
-        merged.weeklyUsed,
-        merged.observedAt,
-        merged.fiveHourResetAt,
-        merged.weeklyResetAt,
-        merged.source,
-        merged.confidence,
-        merged.fiveHourObservedAt,
-        merged.fiveHourSource,
-        merged.fiveHourConfidence,
-        merged.weeklyObservedAt,
-        merged.weeklySource,
-        merged.weeklyConfidence,
-        pin(
-          value.fiveHourObservedAt,
-          prior?.fiveHourObservedAt ?? null,
-          stored.fiveHour,
+      `)
+        .run(
+          merged.provider,
+          merged.account,
+          merged.pool,
+          merged.fiveHourUsed,
+          merged.weeklyUsed,
+          merged.observedAt,
+          merged.fiveHourResetAt,
+          merged.weeklyResetAt,
+          merged.source,
+          merged.confidence,
           merged.fiveHourObservedAt,
-        ),
-        pin(
-          value.weeklyObservedAt,
-          prior?.weeklyObservedAt ?? null,
-          stored.weekly,
+          merged.fiveHourSource,
+          merged.fiveHourConfidence,
           merged.weeklyObservedAt,
-        ),
-      );
+          merged.weeklySource,
+          merged.weeklyConfidence,
+          pin(
+            value.fiveHourObservedAt,
+            prior?.fiveHourObservedAt ?? null,
+            stored.fiveHour,
+            merged.fiveHourObservedAt,
+          ),
+          pin(
+            value.weeklyObservedAt,
+            prior?.weeklyObservedAt ?? null,
+            stored.weekly,
+            merged.weeklyObservedAt,
+          ),
+        );
       return this.getObservation(merged)!;
     });
   }
@@ -1711,7 +1903,8 @@ export class QuotaLedger {
     // Named, not `*`: an observation is what the provider said, and the usage
     // watermarks alongside it are Hive's own bookkeeping. Selecting them here
     // would smuggle them into a fact that is supposed to be the provider's.
-    const row = this.db.database.query(`
+    const row = this.db.database
+      .query(`
       SELECT
         provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
         fiveHourResetAt, weeklyResetAt, source, confidence,
@@ -1719,7 +1912,8 @@ export class QuotaLedger {
         weeklyObservedAt, weeklySource, weeklyConfidence
       FROM quota_observations
       WHERE provider = ? AND account = ? AND pool = ?
-    `).get(scope.provider, scope.account, scope.pool);
+    `)
+      .get(scope.provider, scope.account, scope.pool);
     if (row === null) return null;
     try {
       const parsed = QuotaObservationSchema.parse(row);
@@ -1727,7 +1921,8 @@ export class QuotaLedger {
       // for both windows under a single row-level stamp. Absent that backfill
       // they would read as "never observed" and discard a true measurement.
       if (
-        parsed.fiveHourObservedAt === null && parsed.weeklyObservedAt === null
+        parsed.fiveHourObservedAt === null &&
+        parsed.weeklyObservedAt === null
       ) {
         return {
           ...parsed,
@@ -1753,16 +1948,19 @@ export class QuotaLedger {
     scope: QuotaScope,
     window: QuotaAlertState["window"],
   ): QuotaAlertState | null {
-    const row = this.db.database.query(`
+    const row = this.db.database
+      .query(`
       SELECT * FROM quota_alerts
       WHERE provider = ? AND account = ? AND pool = ? AND window = ?
-    `).get(scope.provider, scope.account, scope.pool, window);
+    `)
+      .get(scope.provider, scope.account, scope.pool, window);
     return row === null ? null : AlertStateSchema.parse(row);
   }
 
   setAlertState(state: QuotaAlertState): QuotaAlertState {
     const value = AlertStateSchema.parse(state);
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO quota_alerts (
         provider, account, pool, window, level, notifiedAt, boundaryAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1770,15 +1968,16 @@ export class QuotaLedger {
         level = excluded.level,
         notifiedAt = excluded.notifiedAt,
         boundaryAt = excluded.boundaryAt
-    `).run(
-      value.provider,
-      value.account,
-      value.pool,
-      value.window,
-      value.level,
-      value.notifiedAt,
-      value.boundaryAt,
-    );
+    `)
+      .run(
+        value.provider,
+        value.account,
+        value.pool,
+        value.window,
+        value.level,
+        value.notifiedAt,
+        value.boundaryAt,
+      );
     return value;
   }
 }

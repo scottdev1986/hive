@@ -92,13 +92,18 @@ export function liveSelfTestReport(
 ): MemorySelfTestReport {
   const effective = applyStrictMode(assertions, strict);
   return {
-    ok: effective.every((assertion) =>
-      assertion.passed || assertion.skipped === true
+    ok: effective.every(
+      (assertion) => assertion.passed || assertion.skipped === true,
     ),
-    lines: effective.map((assertion) =>
-      `[live] ${
-        assertion.skipped === true ? "SKIP" : assertion.passed ? "PASS" : "FAIL"
-      } ${assertion.name} — ` + assertion.detail
+    lines: effective.map(
+      (assertion) =>
+        `[live] ${
+          assertion.skipped === true
+            ? "SKIP"
+            : assertion.passed
+              ? "PASS"
+              : "FAIL"
+        } ${assertion.name} — ` + assertion.detail,
     ),
   };
 }
@@ -126,14 +131,19 @@ export async function runMemoryLiveSelfTest(
   // command uses. No daemon is an honest failure, never a green run.
   const port = readDaemonPort();
   if (port === null || port <= 0 || port > 65_535) {
-    return liveSelfTestReport([{
-      name: "daemon-discovery",
-      passed: false,
-      detail:
-        "no live daemon found (no daemon.port under HIVE_HOME) — start one " +
-        "with `hive claude` or `hive codex`; the fixture probe alone cannot " +
-        "see a degraded deployed daemon",
-    }], strict);
+    return liveSelfTestReport(
+      [
+        {
+          name: "daemon-discovery",
+          passed: false,
+          detail:
+            "no live daemon found (no daemon.port under HIVE_HOME) — start one " +
+            "with `hive claude` or `hive codex`; the fixture probe alone cannot " +
+            "see a degraded deployed daemon",
+        },
+      ],
+      strict,
+    );
   }
 
   let embeddings: MemoryEmbeddingsStatus | null = null;
@@ -148,23 +158,23 @@ export async function runMemoryLiveSelfTest(
   // 2. Reported-state assertion: the daemon's own embedding health section.
   const reportedState = disabled
     ? skipped(
-      "reported-state",
-      `(disabled in config) — ${status.detail ?? "the semantic leg is not wired on this daemon"}`,
-    )
+        "reported-state",
+        `(disabled in config) — ${status.detail ?? "the semantic leg is not wired on this daemon"}`,
+      )
     : await attempt("reported-state", async () => {
-      if (status.state !== "ready" && status.state !== "pending") {
-        throw new Error(
-          `memory.embeddings state is "${status.state}" — the deployed ` +
-            "daemon's semantic leg is degraded" +
-            (status.detail === undefined ? "" : ` (${status.detail})`),
+        if (status.state !== "ready" && status.state !== "pending") {
+          throw new Error(
+            `memory.embeddings state is "${status.state}" — the deployed ` +
+              "daemon's semantic leg is degraded" +
+              (status.detail === undefined ? "" : ` (${status.detail})`),
+          );
+        }
+        return (
+          `provider=${status.provider ?? "?"} model=${status.model ?? "?"} ` +
+          `state=${status.state} vectors.total=${status.vectors?.total ?? 0} ` +
+          `runtimeDir=${status.runtimeDir ?? "?"}`
         );
-      }
-      return (
-        `provider=${status.provider ?? "?"} model=${status.model ?? "?"} ` +
-        `state=${status.state} vectors.total=${status.vectors?.total ?? 0} ` +
-        `runtimeDir=${status.runtimeDir ?? "?"}`
-      );
-    });
+      });
 
   // 3. Write-projection assertions. Both canaries plant even when embeddings
   // are disabled (the FTS/read-back tiers still need them); only the
@@ -181,26 +191,29 @@ export async function runMemoryLiveSelfTest(
     status: "unverified",
     supersedes: [],
   };
-  const articleProjection = await attempt("write-article-projection", async () => {
-    const written = await writeMemory(port, articleInput);
-    articlePlanted = true;
-    const outcome = written.embedding;
-    if (disabled) {
-      throw new Skip(
-        `(disabled in config) — canary ${articleId} planted, projection outcome ${outcome ?? "absent"}`,
-      );
-    }
-    if (outcome === undefined) {
-      throw new Error("memory_write response carries no embedding field");
-    }
-    if (outcome.startsWith("unavailable:")) {
-      throw new Error(
-        `memory_write reports embedding: ${outcome} — the deployed daemon's ` +
-          `semantic leg is down (state: ${outcome.slice("unavailable:".length)})`,
-      );
-    }
-    return `memory_write reports embedding: ${outcome} for ${articleId}`;
-  });
+  const articleProjection = await attempt(
+    "write-article-projection",
+    async () => {
+      const written = await writeMemory(port, articleInput);
+      articlePlanted = true;
+      const outcome = written.embedding;
+      if (disabled) {
+        throw new Skip(
+          `(disabled in config) — canary ${articleId} planted, projection outcome ${outcome ?? "absent"}`,
+        );
+      }
+      if (outcome === undefined) {
+        throw new Error("memory_write response carries no embedding field");
+      }
+      if (outcome.startsWith("unavailable:")) {
+        throw new Error(
+          `memory_write reports embedding: ${outcome} — the deployed daemon's ` +
+            `semantic leg is down (state: ${outcome.slice("unavailable:".length)})`,
+        );
+      }
+      return `memory_write reports embedding: ${outcome} for ${articleId}`;
+    },
+  );
 
   let noteRecorded = false;
   let noteSurfaceAbsent = false;
@@ -250,45 +263,48 @@ export async function runMemoryLiveSelfTest(
   const semanticRecall = disabled
     ? skipped("semantic-recall", "(disabled in config)")
     : !articlePlanted
-    ? {
-      name: "semantic-recall",
-      passed: false,
-      detail: "the article canary was never planted (see write-article-projection)",
-    }
-    : await attempt("semantic-recall", async () => {
-      const deadline = Date.now() + settleBudgetMs;
-      let delay = initialPollMs;
-      let lastRowCount = 0;
-      for (;;) {
-        const envelope = await recallMemory(port, PARAPHRASE_QUERY);
-        if (envelope.semantic.startsWith("degraded:")) {
-          throw new Error(
-            `memory_recall envelope is semantic: ${envelope.semantic} — the ` +
-              "deployed daemon's semantic leg is down (state: " +
-              `${envelope.semantic.slice("degraded:".length)})`,
-          );
+      ? {
+          name: "semantic-recall",
+          passed: false,
+          detail:
+            "the article canary was never planted (see write-article-projection)",
         }
-        if (envelope.semantic !== "hybrid") {
-          throw new Error(
-            `memory_recall envelope reports unexpected semantic: ${envelope.semantic}`,
-          );
-        }
-        const rows = [...envelope.pitfalls, ...envelope.articles];
-        lastRowCount = rows.length;
-        if (rows.some((row) => row.scope === "repo" && row.id === articleId)) {
-          return `paraphrase recall ranks ${articleId} with semantic: hybrid`;
-        }
-        if (Date.now() >= deadline) {
-          throw new Error(
-            `paraphrase recall did not surface ${articleId} within ` +
-              `${Math.round(settleBudgetMs / 1000)}s (last bundle had ` +
-              `${lastRowCount} row(s)) — the queued projection never settled`,
-          );
-        }
-        await Bun.sleep(delay);
-        delay = Math.min(delay * 2, MAX_POLL_MS);
-      }
-    });
+      : await attempt("semantic-recall", async () => {
+          const deadline = Date.now() + settleBudgetMs;
+          let delay = initialPollMs;
+          let lastRowCount = 0;
+          for (;;) {
+            const envelope = await recallMemory(port, PARAPHRASE_QUERY);
+            if (envelope.semantic.startsWith("degraded:")) {
+              throw new Error(
+                `memory_recall envelope is semantic: ${envelope.semantic} — the ` +
+                  "deployed daemon's semantic leg is down (state: " +
+                  `${envelope.semantic.slice("degraded:".length)})`,
+              );
+            }
+            if (envelope.semantic !== "hybrid") {
+              throw new Error(
+                `memory_recall envelope reports unexpected semantic: ${envelope.semantic}`,
+              );
+            }
+            const rows = [...envelope.pitfalls, ...envelope.articles];
+            lastRowCount = rows.length;
+            if (
+              rows.some((row) => row.scope === "repo" && row.id === articleId)
+            ) {
+              return `paraphrase recall ranks ${articleId} with semantic: hybrid`;
+            }
+            if (Date.now() >= deadline) {
+              throw new Error(
+                `paraphrase recall did not surface ${articleId} within ` +
+                  `${Math.round(settleBudgetMs / 1000)}s (last bundle had ` +
+                  `${lastRowCount} row(s)) — the queued projection never settled`,
+              );
+            }
+            await Bun.sleep(delay);
+            delay = Math.min(delay * 2, MAX_POLL_MS);
+          }
+        });
 
   // 5. Live FTS recall + drill-down through the live path.
   const ftsRecall = await attempt("fts-recall", async () => {
@@ -315,7 +331,9 @@ export async function runMemoryLiveSelfTest(
     }
     const fact = await readMemory(port, "repo", articleId);
     if (fact.title !== articleTitle) {
-      throw new Error(`memory_read returned a mismatched title for ${articleId}`);
+      throw new Error(
+        `memory_read returned a mismatched title for ${articleId}`,
+      );
     }
     return `memory_read round-trips ${articleId} intact`;
   });
@@ -323,26 +341,26 @@ export async function runMemoryLiveSelfTest(
   const noteReadBack = noteSurfaceAbsent
     ? skipped("note-read-back", "episodic store is not open on this daemon")
     : await attempt("note-read-back", async () => {
-      if (!noteRecorded) {
-        throw new Error(
-          "the note canary was never recorded (see write-note-projection)",
+        if (!noteRecorded) {
+          throw new Error(
+            "the note canary was never recorded (see write-note-projection)",
+          );
+        }
+        const envelope = await queryMemory(port, {
+          class: "point-search",
+          query: nonce,
+        });
+        const found = envelope.results.some((row) =>
+          JSON.stringify(row).includes(nonce),
         );
-      }
-      const envelope = await queryMemory(port, {
-        class: "point-search",
-        query: nonce,
+        if (!found) {
+          throw new Error(
+            `memory_query point-search did not find the note canary by its ` +
+              `nonce (state: ${envelope.state}, rows: ${envelope.results.length})`,
+          );
+        }
+        return `memory_query point-search finds note canary ${noteId ?? "?"} by its nonce`;
       });
-      const found = envelope.results.some((row) =>
-        JSON.stringify(row).includes(nonce)
-      );
-      if (!found) {
-        throw new Error(
-          `memory_query point-search did not find the note canary by its ` +
-            `nonce (state: ${envelope.state}, rows: ${envelope.results.length})`,
-        );
-      }
-      return `memory_query point-search finds note canary ${noteId ?? "?"} by its nonce`;
-    });
 
   const digestRead = await attempt("digest-read", async () => {
     const envelope = await digestMemory(port, { digestId: 1 });
@@ -352,7 +370,9 @@ export async function runMemoryLiveSelfTest(
       );
     }
     if (envelope.state !== "ok" && envelope.state !== "empty") {
-      throw new Error(`memory_digest returned unexpected state "${envelope.state}"`);
+      throw new Error(
+        `memory_digest returned unexpected state "${envelope.state}"`,
+      );
     }
     // A fresh project honestly answers "empty"; a lived one answers "ok".
     // Both prove the digest surface responds through the live path.
@@ -375,18 +395,21 @@ export async function runMemoryLiveSelfTest(
     );
   });
 
-  return liveSelfTestReport([
-    discovery,
-    reportedState,
-    articleProjection,
-    noteProjection,
-    semanticRecall,
-    ftsRecall,
-    articleReadBack,
-    noteReadBack,
-    digestRead,
-    cleanup,
-  ], strict);
+  return liveSelfTestReport(
+    [
+      discovery,
+      reportedState,
+      articleProjection,
+      noteProjection,
+      semanticRecall,
+      ftsRecall,
+      articleReadBack,
+      noteReadBack,
+      digestRead,
+      cleanup,
+    ],
+    strict,
+  );
 }
 
 export async function memoryLiveSelfTestCli(
@@ -395,19 +418,19 @@ export async function memoryLiveSelfTestCli(
   const report = await runMemoryLiveSelfTest(options);
   for (const line of report.lines) console.log(line);
   const passed = report.lines.filter((line) =>
-    line.startsWith("[live] PASS ")
+    line.startsWith("[live] PASS "),
   ).length;
   const skippedCount = report.lines.filter((line) =>
-    line.startsWith("[live] SKIP ")
+    line.startsWith("[live] SKIP "),
   ).length;
   console.log(
     report.ok
       ? `memory self-test --live: all ${passed} live assertions passed` +
-        (skippedCount > 0
-          ? ` (${skippedCount} skipped — embeddings disabled in config)`
-          : "")
+          (skippedCount > 0
+            ? ` (${skippedCount} skipped — embeddings disabled in config)`
+            : "")
       : "memory self-test --live: FAILED — the deployed daemon's memory " +
-        "surface is degraded",
+          "surface is degraded",
   );
   return report.ok ? 0 : 1;
 }

@@ -1,14 +1,14 @@
 import { z } from "zod";
+import { ORCHESTRATOR_NAME } from "../../schemas";
 import {
+  type SessionLocator,
   SessionLocatorSchema,
+  type TerminalGeometry,
   TerminalGeometrySchema,
   TerminalHostProcessIdentitySchema,
-  type SessionLocator,
-  type TerminalGeometry,
 } from "../../schemas/session-protocol";
 import type { HiveTerminalPolicy } from "./hive-terminal-host";
 import type { VisibilitySourceIdentity } from "./terminal-host-visibility-contract";
-import { ORCHESTRATOR_NAME } from "../../schemas";
 
 const PositiveRevisionSchema = z.string().regex(/^[1-9][0-9]*$/);
 
@@ -24,37 +24,51 @@ export const WorkspaceTerminalStateSchema = z.enum([
   "exited",
   "failed",
 ]);
-export type WorkspaceTerminalState = z.infer<typeof WorkspaceTerminalStateSchema>;
+export type WorkspaceTerminalState = z.infer<
+  typeof WorkspaceTerminalStateSchema
+>;
 
-export const WorkspaceVisibleTerminalSchema = z.strictObject({
-  agentId: z.string().min(1),
-  agentName: z.string().min(1),
-  locator: SessionLocatorSchema.unwrap().extend({
-    hostKind: z.literal("sessiond"),
-  }).readonly(),
-  state: WorkspaceTerminalStateSchema,
-  geometry: TerminalGeometrySchema.nullable().optional(),
-}).readonly();
-export type WorkspaceVisibleTerminal = z.infer<typeof WorkspaceVisibleTerminalSchema>;
+export const WorkspaceVisibleTerminalSchema = z
+  .strictObject({
+    agentId: z.string().min(1),
+    agentName: z.string().min(1),
+    locator: SessionLocatorSchema.unwrap()
+      .extend({
+        hostKind: z.literal("sessiond"),
+      })
+      .readonly(),
+    state: WorkspaceTerminalStateSchema,
+    geometry: TerminalGeometrySchema.nullable().optional(),
+  })
+  .readonly();
+export type WorkspaceVisibleTerminal = z.infer<
+  typeof WorkspaceVisibleTerminalSchema
+>;
 
-export const WorkspaceVisibilitySnapshotSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  source: z.strictObject({
-    sessionId: z.string().min(1),
-    process: TerminalHostProcessIdentitySchema,
-  }).readonly(),
-  inventoryRevision: PositiveRevisionSchema,
-  terminals: z.array(WorkspaceVisibleTerminalSchema).readonly(),
-}).readonly();
+export const WorkspaceVisibilitySnapshotSchema = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    source: z
+      .strictObject({
+        sessionId: z.string().min(1),
+        process: TerminalHostProcessIdentitySchema,
+      })
+      .readonly(),
+    inventoryRevision: PositiveRevisionSchema,
+    terminals: z.array(WorkspaceVisibleTerminalSchema).readonly(),
+  })
+  .readonly();
 export type WorkspaceVisibilitySnapshot = z.infer<
   typeof WorkspaceVisibilitySnapshotSchema
 >;
 
-export const WorkspaceVisibilityInventoryInputSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  inventoryRevision: PositiveRevisionSchema,
-  terminals: z.array(WorkspaceVisibleTerminalSchema).readonly(),
-}).readonly();
+export const WorkspaceVisibilityInventoryInputSchema = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    inventoryRevision: PositiveRevisionSchema,
+    terminals: z.array(WorkspaceVisibleTerminalSchema).readonly(),
+  })
+  .readonly();
 export type WorkspaceVisibilityInventoryInput = z.infer<
   typeof WorkspaceVisibilityInventoryInputSchema
 >;
@@ -114,9 +128,11 @@ function sameSource(
   left: VisibilitySourceIdentity,
   right: VisibilitySourceIdentity,
 ): boolean {
-  return left.sessionId === right.sessionId &&
+  return (
+    left.sessionId === right.sessionId &&
     left.process.processId === right.process.processId &&
-    left.process.startToken === right.process.startToken;
+    left.process.startToken === right.process.startToken
+  );
 }
 
 /**
@@ -129,10 +145,15 @@ export class WorkspaceVisibilityAuthority {
 
   constructor(private readonly dependencies: WorkspaceVisibilityDependencies) {}
 
-  publish(snapshot: WorkspaceVisibilitySnapshot): WorkspaceVisibilityPublishResult {
+  publish(
+    snapshot: WorkspaceVisibilitySnapshot,
+  ): WorkspaceVisibilityPublishResult {
     const parsed = WorkspaceVisibilitySnapshotSchema.parse(snapshot);
     if (!this.sourceIsLive(parsed.source)) {
-      return this.rejected("source-not-live", "workspace process identity is not live");
+      return this.rejected(
+        "source-not-live",
+        "workspace process identity is not live",
+      );
     }
 
     const prior = this.current;
@@ -144,7 +165,9 @@ export class WorkspaceVisibilityAuthority {
             "another live Workspace source already owns the inventory",
           );
         }
-      } else if (BigInt(parsed.inventoryRevision) <= BigInt(prior.inventoryRevision)) {
+      } else if (
+        BigInt(parsed.inventoryRevision) <= BigInt(prior.inventoryRevision)
+      ) {
         return this.rejected(
           "stale-revision",
           "workspace inventory revision did not advance",
@@ -157,7 +180,11 @@ export class WorkspaceVisibilityAuthority {
     const names = new Set<string>();
     for (const terminal of parsed.terminals) {
       const key = locatorKey(terminal.locator);
-      if (locators.has(key) || agents.has(terminal.agentId) || names.has(terminal.agentName)) {
+      if (
+        locators.has(key) ||
+        agents.has(terminal.agentId) ||
+        names.has(terminal.agentName)
+      ) {
         return this.rejected(
           "duplicate-terminal",
           "workspace inventory contains duplicate terminal ownership",
@@ -221,7 +248,8 @@ export class WorkspaceVisibilityAuthority {
     const snapshot = this.current;
     if (snapshot === null || !this.sourceIsLive(snapshot.source)) return null;
     const matches = snapshot.terminals.filter(
-      (terminal) => terminal.agentId === candidate.agentId &&
+      (terminal) =>
+        terminal.agentId === candidate.agentId &&
         terminal.agentName === candidate.agentName,
     );
     if (matches.length !== 1) return null;
@@ -233,7 +261,8 @@ export class WorkspaceVisibilityAuthority {
         ? terminal.locator.subject.agentId !== candidate.agentId
         : candidate.agentId !== ROOT_VISIBILITY_ID ||
           candidate.agentName !== ORCHESTRATOR_NAME
-    ) return null;
+    )
+      return null;
 
     let engineBuildId: string;
     try {
@@ -270,15 +299,20 @@ export class WorkspaceVisibilityAuthority {
 
   private sourceIsLive(source: VisibilitySourceIdentity): boolean {
     try {
-      return this.dependencies.observeProcess(source.process.processId)?.startToken ===
-        source.process.startToken;
+      return (
+        this.dependencies.observeProcess(source.process.processId)
+          ?.startToken === source.process.startToken
+      );
     } catch {
       return false;
     }
   }
 
   private rejected(
-    reason: Extract<WorkspaceVisibilityPublishResult, { state: "rejected" }>["reason"],
+    reason: Extract<
+      WorkspaceVisibilityPublishResult,
+      { state: "rejected" }
+    >["reason"],
     diagnostic: string,
   ): WorkspaceVisibilityPublishResult {
     return {

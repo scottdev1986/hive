@@ -1,35 +1,42 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { QuotaConfigSchema, type QuotaLimit, type QuotaPoolStatus } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
+import {
+  type CodexRateLimitsResponse,
+  QuotaService,
+} from "../../src/daemon/quota";
 import { QuotaLedger } from "../../src/daemon/quota-ledger";
-import { QuotaService, type CodexRateLimitsResponse } from "../../src/daemon/quota";
-import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import {
   ClaudeQuotaProbe,
+  type ClaudeUsageResponse,
   CodexQuotaProbe,
-  GrokQuotaProbe,
   catalogFromClaudeModels,
   catalogFromGrokInitialize,
+  type GrokBillingResponse,
+  GrokQuotaProbe,
+  orderRateLimitWindows,
+  type QuotaProbe,
+  type QuotaProbeResult,
   readingsFromClaudeUsage,
   readingsFromCodexResponse,
   readingsFromGrokBilling,
-  orderRateLimitWindows,
-  type ClaudeUsageResponse,
-  type GrokBillingResponse,
-  type QuotaProbe,
-  type QuotaProbeResult,
 } from "../../src/daemon/quota-sources";
+import {
+  QuotaConfigSchema,
+  type QuotaLimit,
+  type QuotaPoolStatus,
+} from "../../src/schemas";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 const now = new Date("2026-07-10T12:00:00.000Z");
@@ -57,7 +64,11 @@ const codexResponse: CodexRateLimitsResponse = {
       limitId: "codex_spark",
       limitName: "GPT-5.3-Codex-Spark",
       primary: null,
-      secondary: { usedPercent: 12, windowDurationMins: 10_080, resetsAt: null },
+      secondary: {
+        usedPercent: 12,
+        windowDurationMins: 10_080,
+        resetsAt: null,
+      },
     },
   },
 };
@@ -66,10 +77,20 @@ const claudeUsage: ClaudeUsageResponse = {
   subscription_type: "max",
   rate_limits_available: true,
   rate_limits: {
-    five_hour: { utilization: 6, resets_at: "2026-07-10T19:00:00.000000+00:00" },
-    seven_day: { utilization: 42, resets_at: "2026-07-11T19:00:00.000000+00:00" },
+    five_hour: {
+      utilization: 6,
+      resets_at: "2026-07-10T19:00:00.000000+00:00",
+    },
+    seven_day: {
+      utilization: 42,
+      resets_at: "2026-07-11T19:00:00.000000+00:00",
+    },
     model_scoped: [
-      { display_name: "Fable", utilization: 71, resets_at: "2026-07-11T19:00:00Z" },
+      {
+        display_name: "Fable",
+        utilization: 71,
+        resets_at: "2026-07-11T19:00:00Z",
+      },
     ],
   },
 };
@@ -95,31 +116,32 @@ async function service(
   roots.push(root);
   const db = new HiveDatabase(join(root, "hive.db"));
   const ledger = new QuotaLedger(db);
-  ledger.replaceModelCatalog("claude", [
-    "claude-fable-5",
-    "claude-opus-4-8",
-  ].map((model) => ({
-    provider: "claude" as const,
-    modelId: model,
-    displayName: model,
-    discoveredAt: now.toISOString(),
-  })));
-  ledger.replaceModelCatalog("codex", [
-    "gpt-5-codex",
-    "gpt-5.3-codex",
-    "gpt-5.6-sol",
-  ].map((model) => ({
-    provider: "codex" as const,
-    modelId: model,
-    displayName: model,
-    discoveredAt: now.toISOString(),
-  })));
-  ledger.replaceModelCatalog("grok", [{
-    provider: "grok",
-    modelId: "grok-4.5",
-    displayName: "grok-4.5",
-    discoveredAt: now.toISOString(),
-  }]);
+  ledger.replaceModelCatalog(
+    "claude",
+    ["claude-fable-5", "claude-opus-4-8"].map((model) => ({
+      provider: "claude" as const,
+      modelId: model,
+      displayName: model,
+      discoveredAt: now.toISOString(),
+    })),
+  );
+  ledger.replaceModelCatalog(
+    "codex",
+    ["gpt-5-codex", "gpt-5.3-codex", "gpt-5.6-sol"].map((model) => ({
+      provider: "codex" as const,
+      modelId: model,
+      displayName: model,
+      discoveredAt: now.toISOString(),
+    })),
+  );
+  ledger.replaceModelCatalog("grok", [
+    {
+      provider: "grok",
+      modelId: "grok-4.5",
+      displayName: "grok-4.5",
+      discoveredAt: now.toISOString(),
+    },
+  ]);
   const quota = new QuotaService(
     ledger,
     QuotaConfigSchema.parse({ limits }),
@@ -152,9 +174,11 @@ test("a billing probe without a catalog preserves launch-catalog evidence", asyn
 });
 
 const pool = (quota: QuotaService, name: string, at = now): QuotaPoolStatus => {
-  const status = quota.statuses(at).find((candidate) =>
-    !("configured" in candidate) && candidate.pool === name
-  );
+  const status = quota
+    .statuses(at)
+    .find(
+      (candidate) => !("configured" in candidate) && candidate.pool === name,
+    );
   if (status === undefined || "configured" in status) {
     throw new Error(`expected a discovered pool named ${name}`);
   }
@@ -169,14 +193,21 @@ const pool = (quota: QuotaService, name: string, at = now): QuotaPoolStatus => {
 // probe: initialize → initialized → `_x.ai/billing` {}).
 describe("the real Grok payload, verbatim off the wire", () => {
   const raw = JSON.parse(
-    readFileSync(join(import.meta.dir, "fixtures/grok-billing-supergrok.json"), "utf8"),
+    readFileSync(
+      join(import.meta.dir, "fixtures/grok-billing-supergrok.json"),
+      "utf8",
+    ),
   ) as GrokBillingResponse;
 
   // Positive control: creditUsagePercent is the gauge the prior "unmeasurable"
   // finding missed. If this key is renamed, the assertion fails instead of
   // silently reporting null as "vendor is quiet".
   test("reads creditUsagePercent as the weekly used percent", () => {
-    const [routable] = readingsFromGrokBilling(raw, "default", now.toISOString());
+    const [routable] = readingsFromGrokBilling(
+      raw,
+      "default",
+      now.toISOString(),
+    );
     expect(raw.config?.creditUsagePercent).toBe(2.0);
     expect(routable?.weekly?.usedPct).toBe(2.0);
     expect(routable?.weekly?.resetsAt).toBe("2026-07-19T17:18:56.768Z");
@@ -187,7 +218,11 @@ describe("the real Grok payload, verbatim off the wire", () => {
   });
 
   test("reports five-hour as not-metered — the wire has no five-hour window", () => {
-    const [routable] = readingsFromGrokBilling(raw, "default", now.toISOString());
+    const [routable] = readingsFromGrokBilling(
+      raw,
+      "default",
+      now.toISOString(),
+    );
     expect(routable?.fiveHour).toBeNull();
     expect(routable?.fiveHourMeterState).toBe("not-metered");
   });
@@ -198,7 +233,11 @@ describe("the real Grok payload, verbatim off the wire", () => {
     expect(raw.config?.onDemandCap?.val).toBe(0);
     expect(raw.config?.onDemandUsed?.val).toBe(0);
     expect(raw.config?.prepaidBalance?.val).toBe(0);
-    const [routable] = readingsFromGrokBilling(raw, "default", now.toISOString());
+    const [routable] = readingsFromGrokBilling(
+      raw,
+      "default",
+      now.toISOString(),
+    );
     expect(routable?.weekly?.usedPct).toBe(2.0);
     expect(routable?.weekly?.usedPct).not.toBe(0);
   });
@@ -213,7 +252,11 @@ describe("the real Grok payload, verbatim off the wire", () => {
         credit_usage_percent: 2.0,
       },
     } as GrokBillingResponse;
-    const [routable] = readingsFromGrokBilling(broken, "default", now.toISOString());
+    const [routable] = readingsFromGrokBilling(
+      broken,
+      "default",
+      now.toISOString(),
+    );
     expect(routable?.weekly).toBeNull();
     expect(routable?.weeklyMeterState).toBe("unknown");
     expect(routable?.fiveHourMeterState).toBe("not-metered");
@@ -281,14 +324,21 @@ describe("the real Grok payload, verbatim off the wire", () => {
 // 0.144.1 on a `prolite` account, captured off the wire on 2026-07-13.
 describe("the real Codex payload, verbatim off the wire", () => {
   const raw = JSON.parse(
-    readFileSync(join(import.meta.dir, "fixtures/codex-rate-limits-prolite.json"), "utf8"),
+    readFileSync(
+      join(import.meta.dir, "fixtures/codex-rate-limits-prolite.json"),
+      "utf8",
+    ),
   ) as CodexRateLimitsResponse;
 
   // Reading the weekly at all is the positive control: it proves this parser can
   // see a value the vendor really sent. Without it, the null five-hour below
   // would be indistinguishable from a misspelled key reading back as absent.
   test("reads the weekly window the vendor actually sent", () => {
-    const [routable] = readingsFromCodexResponse(raw, "default", now.toISOString());
+    const [routable] = readingsFromCodexResponse(
+      raw,
+      "default",
+      now.toISOString(),
+    );
     expect(routable?.weekly?.usedPct).toBe(31);
     expect(routable?.weekly?.windowMinutes).toBe(10_080);
     expect(routable?.label).toBe("prolite");
@@ -299,13 +349,21 @@ describe("the real Codex payload, verbatim off the wire", () => {
   // Hive must not manufacture one. The UI's job is to not mount a meter for it
   // (MeterDerivation.usage), never to fill it with a guess.
   test("reports no five-hour window, because the payload has none", () => {
-    const [routable] = readingsFromCodexResponse(raw, "default", now.toISOString());
+    const [routable] = readingsFromCodexResponse(
+      raw,
+      "default",
+      now.toISOString(),
+    );
     expect(raw.rateLimits.secondary).toBeNull();
     expect(routable?.fiveHour).toBeNull();
   });
 
   test("keeps the reading authoritative — an absent window is not a failed probe", () => {
-    const [routable] = readingsFromCodexResponse(raw, "default", now.toISOString());
+    const [routable] = readingsFromCodexResponse(
+      raw,
+      "default",
+      now.toISOString(),
+    );
     expect(routable?.confidence).toBe("authoritative");
     expect(routable?.source).toBe("provider");
   });
@@ -389,7 +447,11 @@ describe("window ordering", () => {
   test("drops an undated window instead of misfiling the dated one beside it", () => {
     const windows = orderRateLimitWindows({
       primary: { usedPercent: 50, windowDurationMins: null, resetsAt: null },
-      secondary: { usedPercent: 20, windowDurationMins: 10_080, resetsAt: null },
+      secondary: {
+        usedPercent: 20,
+        windowDurationMins: 10_080,
+        resetsAt: null,
+      },
     });
     expect(windows.fiveHour).toBeNull();
     expect(windows.weekly?.usedPct).toBe(20);
@@ -398,8 +460,16 @@ describe("window ordering", () => {
 
   test("ignores a window whose used percentage is not a finite number", () => {
     const windows = orderRateLimitWindows({
-      primary: { usedPercent: Number.NaN, windowDurationMins: 300, resetsAt: null },
-      secondary: { usedPercent: -1, windowDurationMins: 10_080, resetsAt: null },
+      primary: {
+        usedPercent: Number.NaN,
+        windowDurationMins: 300,
+        resetsAt: null,
+      },
+      secondary: {
+        usedPercent: -1,
+        windowDurationMins: 10_080,
+        resetsAt: null,
+      },
     });
     expect(windows.fiveHour).toBeNull();
     expect(windows.weekly).toBeNull();
@@ -408,7 +478,11 @@ describe("window ordering", () => {
   test("rejects percentages outside the provider's 0-100 scale", () => {
     const windows = orderRateLimitWindows({
       primary: { usedPercent: 101, windowDurationMins: 300, resetsAt: null },
-      secondary: { usedPercent: 20, windowDurationMins: 10_080, resetsAt: null },
+      secondary: {
+        usedPercent: 20,
+        windowDurationMins: 10_080,
+        resetsAt: null,
+      },
     });
     expect(windows.fiveHour).toBeNull();
     expect(windows.weekly?.usedPct).toBe(20);
@@ -427,11 +501,13 @@ describe("window ordering", () => {
   });
 
   test("drops malformed Codex response shapes instead of throwing", () => {
-    expect(readingsFromCodexResponse(
-      { rateLimits: null } as unknown as CodexRateLimitsResponse,
-      "default",
-      now.toISOString(),
-    )).toEqual([]);
+    expect(
+      readingsFromCodexResponse(
+        { rateLimits: null } as unknown as CodexRateLimitsResponse,
+        "default",
+        now.toISOString(),
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -480,7 +556,9 @@ describe("startup quota discovery", () => {
         category: "complex_coding",
         selection: "strict",
         explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
+        candidates: await authorizeForQuotaTest([
+          { tool: "codex", model: "gpt-5.3-codex" },
+        ]),
       });
       expect(decision.tool).toBe("codex");
       expect(decision.reservation.pool).toBe("codex");
@@ -504,19 +582,27 @@ describe("startup quota discovery", () => {
       rateLimits: {
         limitId: "codex",
         primary: { usedPercent: 97, windowDurationMins: 300, resetsAt: null },
-        secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: null },
+        secondary: {
+          usedPercent: 40,
+          windowDurationMins: 10_080,
+          resetsAt: null,
+        },
       },
     };
     const codex = new StubProbe("codex", await codexPools(exhausted));
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      await expect(quota.routeAndReserve({
-        agentName: "sam",
-        category: "complex_coding",
-        selection: "strict",
-        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
-      })).rejects.toThrow(/Quota pressure/);
+      await expect(
+        quota.routeAndReserve({
+          agentName: "sam",
+          category: "complex_coding",
+          selection: "strict",
+          candidates: await authorizeForQuotaTest([
+            { tool: "codex", model: "gpt-5.3-codex" },
+          ]),
+        }),
+      ).rejects.toThrow(/Quota pressure/);
     } finally {
       db.close();
     }
@@ -553,15 +639,31 @@ describe("notification-driven quota updates", () => {
   test("a later notification advances the reading", async () => {
     const { quota, db } = await service();
     try {
-      await quota.observeCodexRateLimits("gpt-5.3-codex", codexResponse, now.toISOString());
+      await quota.observeCodexRateLimits(
+        "gpt-5.3-codex",
+        codexResponse,
+        now.toISOString(),
+      );
       const later = new Date(now.getTime() + 60_000).toISOString();
-      await quota.observeCodexRateLimits("gpt-5.3-codex", {
-        rateLimits: {
-          limitId: "codex",
-          primary: { usedPercent: 61, windowDurationMins: 300, resetsAt: null },
-          secondary: { usedPercent: 41, windowDurationMins: 10_080, resetsAt: null },
+      await quota.observeCodexRateLimits(
+        "gpt-5.3-codex",
+        {
+          rateLimits: {
+            limitId: "codex",
+            primary: {
+              usedPercent: 61,
+              windowDurationMins: 300,
+              resetsAt: null,
+            },
+            secondary: {
+              usedPercent: 41,
+              windowDurationMins: 10_080,
+              resetsAt: null,
+            },
+          },
         },
-      }, later);
+        later,
+      );
       const status = pool(quota, "codex", new Date(now.getTime() + 60_000));
       expect(status.fiveHour.used).toBe(61);
       expect(status.fiveHour.observedAt).toBe(later);
@@ -622,7 +724,9 @@ describe("per-window accounting", () => {
         category: "simple_coding",
         selection: "strict",
         explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
+        candidates: await authorizeForQuotaTest([
+          { tool: "codex", model: "gpt-5.3-codex" },
+        ]),
       });
       const spentAt = new Date(now.getTime() + 60_000);
       quota.markStarted(decision.reservation.id, spentAt.toISOString());
@@ -663,10 +767,17 @@ describe("per-window accounting", () => {
         category: "simple_coding",
         selection: "strict",
         explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
+        candidates: await authorizeForQuotaTest([
+          { tool: "codex", model: "gpt-5.3-codex" },
+        ]),
       });
       const at = new Date(now.getTime() + 60_000);
-      await quota.reconcile(decision.reservation.id, undefined, "estimated", at.toISOString());
+      await quota.reconcile(
+        decision.reservation.id,
+        undefined,
+        "estimated",
+        at.toISOString(),
+      );
 
       const totals = quota.ledger.usageTotals(
         { provider: "codex", account: "default", pool: "codex" },
@@ -690,11 +801,18 @@ describe("per-window accounting", () => {
         category: "simple_coding",
         selection: "strict",
         explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
+        candidates: await authorizeForQuotaTest([
+          { tool: "codex", model: "gpt-5.3-codex" },
+        ]),
       });
       const at = new Date(now.getTime() + 60_000);
       // The provider says the run really cost 2% of the five-hour window.
-      await quota.reconcile(decision.reservation.id, 2, "provider", at.toISOString());
+      await quota.reconcile(
+        decision.reservation.id,
+        2,
+        "provider",
+        at.toISOString(),
+      );
 
       const totals = quota.ledger.usageTotals(
         { provider: "codex", account: "default", pool: "codex" },
@@ -774,7 +892,9 @@ describe("staleness", () => {
       expect(codex.calls).toBe(1);
 
       const reports = await quota.refreshFromProviders(now);
-      expect(reports).toEqual([{ provider: "codex", status: "skipped", pools: 0 }]);
+      expect(reports).toEqual([
+        { provider: "codex", status: "skipped", pools: 0 },
+      ]);
       expect(codex.calls).toBe(1);
 
       // Startup always asks, however fresh the stored reading looks.
@@ -826,7 +946,9 @@ describe("staleness", () => {
       expect(quota.needsRefresh(now)).toBe(true);
       await quota.refreshFromProviders(now);
       expect(quota.needsRefresh(now)).toBe(false);
-      expect(quota.needsRefresh(new Date(now.getTime() + 16 * 60_000))).toBe(true);
+      expect(quota.needsRefresh(new Date(now.getTime() + 16 * 60_000))).toBe(
+        true,
+      );
     } finally {
       db.close();
     }
@@ -845,11 +967,16 @@ describe("provider unavailable", () => {
       quota.setAlertSink(async (body) => void alerts.push(body));
       const reports = await quota.refreshFromProviders(now);
       expect(reports[0]).toMatchObject({ status: "unavailable" });
-      expect(quota.probeError("claude")).toBe("codex app-server is not signed in");
-
-      const status = quota.statuses(now).find((candidate) =>
-        "configured" in candidate && candidate.provider === "claude"
+      expect(quota.probeError("claude")).toBe(
+        "codex app-server is not signed in",
       );
+
+      const status = quota
+        .statuses(now)
+        .find(
+          (candidate) =>
+            "configured" in candidate && candidate.provider === "claude",
+        );
       if (status === undefined || !("configured" in status)) {
         throw new Error("expected an unknown-limits status for claude");
       }
@@ -858,7 +985,9 @@ describe("provider unavailable", () => {
       expect(status.recordedIsLocalEstimate).toBe(true);
       expect(status.reason).not.toContain("quota.toml");
 
-      expect(alerts.some((alert) => alert.includes("could not read live quota"))).toBe(true);
+      expect(
+        alerts.some((alert) => alert.includes("could not read live quota")),
+      ).toBe(true);
       expect(alerts.every((alert) => !alert.includes("quota.toml"))).toBe(true);
     } finally {
       db.close();
@@ -874,7 +1003,9 @@ describe("provider unavailable", () => {
         agentName: "sam",
         category: "complex_coding",
         selection: "strict",
-        candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.3-codex" }]),
+        candidates: await authorizeForQuotaTest([
+          { tool: "codex", model: "gpt-5.3-codex" },
+        ]),
       });
       expect(decision.status).toMatchObject({
         configured: false,
@@ -956,7 +1087,8 @@ describe("claude usage probe", () => {
 
   test("a probe that throws degrades to unavailable, never to a number", async () => {
     const probe = new ClaudeQuotaProbe({
-      readUsage: () => Promise.reject(new Error("claude closed before answering")),
+      readUsage: () =>
+        Promise.reject(new Error("claude closed before answering")),
     });
     const result = await probe.read();
     expect(result).toEqual({
@@ -966,14 +1098,18 @@ describe("claude usage probe", () => {
   });
 
   test("ignores a window the provider declined to quantify", () => {
-    const pools = readingsFromClaudeUsage({
-      subscription_type: "pro",
-      rate_limits_available: true,
-      rate_limits: {
-        five_hour: { utilization: 10, resets_at: null },
-        seven_day: { utilization: null, resets_at: null },
+    const pools = readingsFromClaudeUsage(
+      {
+        subscription_type: "pro",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 10, resets_at: null },
+          seven_day: { utilization: null, resets_at: null },
+        },
       },
-    }, "default", now.toISOString());
+      "default",
+      now.toISOString(),
+    );
     expect(pools[0]?.fiveHour?.usedPct).toBe(10);
     expect(pools[0]?.weekly).toBeNull();
   });
@@ -992,45 +1128,64 @@ describe("claude usage probe", () => {
     try {
       await quota.refreshFromProviders(now, { force: true });
       const later = new Date(now.getTime() + 60_000);
-      pools = readingsFromClaudeUsage({
-        subscription_type: "max",
-        rate_limits_available: true,
-        rate_limits: {
-          five_hour: { utilization: null, resets_at: null },
-          seven_day: { utilization: 43, resets_at: null },
+      pools = readingsFromClaudeUsage(
+        {
+          subscription_type: "max",
+          rate_limits_available: true,
+          rate_limits: {
+            five_hour: { utilization: null, resets_at: null },
+            seven_day: { utilization: 43, resets_at: null },
+          },
         },
-      }, "default", later.toISOString());
+        "default",
+        later.toISOString(),
+      );
       await quota.refreshFromProviders(later, { force: true });
 
-      const limit = quota.resolvedLimits().find((candidate) =>
-        candidate.provider === "claude" && candidate.pool === "subscription"
-      );
+      const limit = quota
+        .resolvedLimits()
+        .find(
+          (candidate) =>
+            candidate.provider === "claude" &&
+            candidate.pool === "subscription",
+        );
       expect(limit?.fiveHourMeterState).toBe("unknown");
       expect(limit?.fiveHourWindowMinutes).toBe(300);
-      expect(pool(quota, "subscription", later).fiveHour.availability)
-        .not.toBe("not-metered");
+      expect(pool(quota, "subscription", later).fiveHour.availability).not.toBe(
+        "not-metered",
+      );
     } finally {
       db.close();
     }
   });
 
   test("drops malformed and out-of-range usage instead of inventing headroom", () => {
-    const partial = readingsFromClaudeUsage({
-      subscription_type: "max",
-      rate_limits_available: true,
-      rate_limits: {
-        five_hour: { utilization: 101, resets_at: null },
-        seven_day: { utilization: 20, resets_at: null },
+    const partial = readingsFromClaudeUsage(
+      {
+        subscription_type: "max",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 101, resets_at: null },
+          seven_day: { utilization: 20, resets_at: null },
+        },
       },
-    }, "default", now.toISOString());
+      "default",
+      now.toISOString(),
+    );
     expect(partial).toHaveLength(1);
     expect(partial[0]?.fiveHour).toBeNull();
     expect(partial[0]?.weekly?.usedPct).toBe(20);
-    expect(readingsFromClaudeUsage({
-      subscription_type: "max",
-      rate_limits_available: true,
-      rate_limits: { model_scoped: {} },
-    } as unknown as ClaudeUsageResponse, "default", now.toISOString())).toEqual([]);
+    expect(
+      readingsFromClaudeUsage(
+        {
+          subscription_type: "max",
+          rate_limits_available: true,
+          rate_limits: { model_scoped: {} },
+        } as unknown as ClaudeUsageResponse,
+        "default",
+        now.toISOString(),
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -1038,7 +1193,9 @@ async function codexPools(
   response: CodexRateLimitsResponse = codexResponse,
 ): Promise<QuotaProbeResult> {
   return new CodexQuotaProbe(
-    { readRateLimits: () => Promise.resolve({ limits: response, catalog: [] }) },
+    {
+      readRateLimits: () => Promise.resolve({ limits: response, catalog: [] }),
+    },
     () => now,
   ).read();
 }
@@ -1058,13 +1215,21 @@ describe("pools gate the models they actually meter", () => {
       resolvedModel: "claude-opus-4-8[1m]",
       displayName: "Default (recommended)",
     },
-    { value: "opus[1m]", resolvedModel: "claude-opus-4-8[1m]", displayName: "Opus" },
+    {
+      value: "opus[1m]",
+      resolvedModel: "claude-opus-4-8[1m]",
+      displayName: "Opus",
+    },
     {
       value: "claude-fable-5[1m]",
       resolvedModel: "claude-fable-5",
       displayName: "Fable",
     },
-    { value: "sonnet", resolvedModel: "claude-sonnet-5", displayName: "Sonnet" },
+    {
+      value: "sonnet",
+      resolvedModel: "claude-sonnet-5",
+      displayName: "Sonnet",
+    },
   ];
 
   const exhaustedFable: ClaudeUsageResponse = {
@@ -1075,7 +1240,11 @@ describe("pools gate the models they actually meter", () => {
       seven_day: { utilization: 61, resets_at: "2026-07-11T19:00:00Z" },
       // The provider names the model but gives no id: `scope.model.id` is null.
       model_scoped: [
-        { display_name: "Fable", utilization: 99, resets_at: "2026-07-11T19:00:00Z" },
+        {
+          display_name: "Fable",
+          utilization: 99,
+          resets_at: "2026-07-11T19:00:00Z",
+        },
       ],
     },
   };
@@ -1095,9 +1264,9 @@ describe("pools gate the models they actually meter", () => {
   test("binds a metered pool to its models through the provider's own catalog", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    const fable = quota.resolvedLimits().find((limit) =>
-      limit.pool === "weekly:Fable"
-    );
+    const fable = quota
+      .resolvedLimits()
+      .find((limit) => limit.pool === "weekly:Fable");
     // Discovered, not hardcoded: "Fable" is joined to the concrete id the CLI
     // says it resolves to, and every name that model answers to is bound with it
     // so a pin cannot dodge the meter.
@@ -1139,18 +1308,20 @@ describe("pools gate the models they actually meter", () => {
       }),
       new StubProbe("codex", {
         status: "ok",
-        pools: [{
-          provider: "codex",
-          account: "default",
-          pool: "codex",
-          label: null,
-          models: ["*"],
-          fiveHour: { usedPct: 50, windowMinutes: 300, resetsAt: null },
-          weekly: { usedPct: 50, windowMinutes: 10_080, resetsAt: null },
-          observedAt: now.toISOString(),
-          source: "provider",
-          confidence: "authoritative",
-        }],
+        pools: [
+          {
+            provider: "codex",
+            account: "default",
+            pool: "codex",
+            label: null,
+            models: ["*"],
+            fiveHour: { usedPct: 50, windowMinutes: 300, resetsAt: null },
+            weekly: { usedPct: 50, windowMinutes: 10_080, resetsAt: null },
+            observedAt: now.toISOString(),
+            source: "provider",
+            confidence: "authoritative",
+          },
+        ],
         catalog: [],
       }),
     ]);
@@ -1187,8 +1358,10 @@ describe("pools gate the models they actually meter", () => {
   test("every id form of a model is bound to the same meter", () => {
     const catalog = catalogFromClaudeModels(claudeModels);
     const namesOf = (modelId: string) =>
-      catalog.filter((entry) => entry.modelId === modelId)
-        .map((entry) => entry.displayName).sort();
+      catalog
+        .filter((entry) => entry.modelId === modelId)
+        .map((entry) => entry.displayName)
+        .sort();
     // The 1M context upgrade is a plan property, not a different model, and an
     // alias is not a different model either. A pool named "Opus" must gate the
     // run whichever of its four names the spawn was pinned with.
@@ -1206,7 +1379,9 @@ describe("pools gate the models they actually meter", () => {
       category: "complex_coding",
       selection: "strict",
       explicitTool: "claude",
-      candidates: await authorizeForQuotaTest([{ tool: "claude", model: "claude-fable-5" }]),
+      candidates: await authorizeForQuotaTest([
+        { tool: "claude", model: "claude-fable-5" },
+      ]),
     });
     // This is the whole point: the general pool has 39% of its week left, so the
     // old code admitted the spawn happily. The model's own pool has 1%.
@@ -1245,9 +1420,11 @@ describe("pools gate the models they actually meter", () => {
     // Claude, so Hive has genuinely never read a Codex number. That is the honest
     // kind of unknown — it names a provider it cannot see, instead of inventing a
     // pool for a model it can.)
-    const gaps = quota.statuses(now).filter((status) =>
-      "configured" in status && status.provider === "claude"
-    );
+    const gaps = quota
+      .statuses(now)
+      .filter(
+        (status) => "configured" in status && status.provider === "claude",
+      );
     expect(gaps).toEqual([]);
     const governing = quota.poolsGoverning(
       { tool: "claude", model: "claude-opus-4-8" },
@@ -1297,15 +1474,19 @@ describe("pools gate the models they actually meter", () => {
       category: "complex_coding",
       selection: "strict",
       explicitTool: "claude",
-      candidates: await authorizeForQuotaTest([{ tool: "claude", model: "claude-opus-4-8" }]),
+      candidates: await authorizeForQuotaTest([
+        { tool: "claude", model: "claude-opus-4-8" },
+      ]),
     });
     // A human switches the session to Fable. The agent is already running, so the
     // booking must follow it onto the Fable cap even though that cap is full —
     // refusing would not stop the burn, it would only hide it.
     await quota.reconcileAgentModel("drifter", "claude-fable-5");
-    const active = db.database.query(
-      "SELECT pool, model FROM quota_reservations WHERE agentName = ? AND status = 'active' ORDER BY pool",
-    ).all("drifter") as { pool: string; model: string }[];
+    const active = db.database
+      .query(
+        "SELECT pool, model FROM quota_reservations WHERE agentName = ? AND status = 'active' ORDER BY pool",
+      )
+      .all("drifter") as { pool: string; model: string }[];
     expect(active.map((row) => row.pool)).toEqual([
       "subscription",
       "weekly:Fable",
@@ -1395,13 +1576,17 @@ describe("a route that cannot start is not a route", () => {
       resetMinute: 0,
       observationMaxAgeMinutes: 360,
     };
-    const { quota } = await service([
-      new StubProbe("claude", {
-        status: "ok",
-        pools: [generalPool("claude", "subscription", 0, 0)],
-        catalog: [],
-      }),
-    ], [codexLimit], () => clock);
+    const { quota } = await service(
+      [
+        new StubProbe("claude", {
+          status: "ok",
+          pools: [generalPool("claude", "subscription", 0, 0)],
+          catalog: [],
+        }),
+      ],
+      [codexLimit],
+      () => clock,
+    );
     await quota.refreshFromProviders(now, { force: true });
     clock = new Date(now.getTime() + 31 * 60_000);
 
@@ -1445,7 +1630,11 @@ describe("a route that cannot start is not a route", () => {
 
   test("reservation and launch quarantine are keyed by tool, model, and effort", async () => {
     const { quota } = await healthy();
-    const xhigh = { tool: "codex" as const, model: "gpt-5.6-sol", effort: "xhigh" };
+    const xhigh = {
+      tool: "codex" as const,
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+    };
     const low = { tool: "codex" as const, model: "gpt-5.6-sol", effort: "low" };
     const failed = await quota.routeAndReserve({
       agentName: "xhigh-run",
@@ -1458,7 +1647,11 @@ describe("a route that cannot start is not a route", () => {
       model: "gpt-5.6-sol",
       effort: "xhigh",
     });
-    await quota.cancel(failed.reservation.id, now.toISOString(), "model refused launch");
+    await quota.cancel(
+      failed.reservation.id,
+      now.toISOString(),
+      "model refused launch",
+    );
 
     const next = await quota.routeAndReserve({
       agentName: "low-run",
@@ -1468,7 +1661,10 @@ describe("a route that cannot start is not a route", () => {
     });
     expect(next.effort).toBe("low");
     expect(next.reservation.effort).toBe("low");
-    expect(quota.ledger.routeHealth("codex", "gpt-5.6-sol", "xhigh")?.consecutiveFailures).toBe(1);
+    expect(
+      quota.ledger.routeHealth("codex", "gpt-5.6-sol", "xhigh")
+        ?.consecutiveFailures,
+    ).toBe(1);
     expect(quota.ledger.routeHealth("codex", "gpt-5.6-sol", "low")).toBeNull();
   });
 
@@ -1480,14 +1676,20 @@ describe("a route that cannot start is not a route", () => {
       selection: "spread",
       candidates: both,
     });
-    await quota.cancel(failed.reservation.id, now.toISOString(), "never started");
+    await quota.cancel(
+      failed.reservation.id,
+      now.toISOString(),
+      "never started",
+    );
     expect(
-      (await quota.routeAndReserve({
-        agentName: "b",
-        category: "complex_coding",
-        selection: "spread",
-        candidates: both,
-      })).tool,
+      (
+        await quota.routeAndReserve({
+          agentName: "b",
+          category: "complex_coding",
+          selection: "spread",
+          candidates: both,
+        })
+      ).tool,
     ).toBe("codex");
 
     // Someone fixes the underlying cause and a codex agent proves life. That is
@@ -1503,12 +1705,14 @@ describe("a route that cannot start is not a route", () => {
     quota.markStarted(pinned.reservation.id, now.toISOString());
 
     expect(
-      (await quota.routeAndReserve({
-        agentName: "d",
-        category: "complex_coding",
-        selection: "spread",
-        candidates: both,
-      })).tool,
+      (
+        await quota.routeAndReserve({
+          agentName: "d",
+          category: "complex_coding",
+          selection: "spread",
+          candidates: both,
+        })
+      ).tool,
     ).toBe("codex");
   });
 
@@ -1521,7 +1725,11 @@ describe("a route that cannot start is not a route", () => {
       explicitTool: "codex",
       candidates: await authorizeForQuotaTest([both[1]!]),
     });
-    await quota.cancel(failed.reservation.id, now.toISOString(), "never started");
+    await quota.cancel(
+      failed.reservation.id,
+      now.toISOString(),
+      "never started",
+    );
 
     // A human pinning the one model Hive is currently sulking about must still
     // get their agent. Refusing everything helps nobody; the cooldown is Hive's
@@ -1543,18 +1751,20 @@ describe("a refusal names the way out, and never takes it", () => {
     const { quota } = await service([
       new StubProbe("codex", {
         status: "ok",
-        pools: [{
-          provider: "codex",
-          account: "default",
-          pool: "codex",
-          label: "prolite",
-          models: ["*"],
-          fiveHour: { usedPct: 100, windowMinutes: 300, resetsAt: null },
-          weekly: { usedPct: 100, windowMinutes: 10_080, resetsAt: null },
-          observedAt: now.toISOString(),
-          source: "provider",
-          confidence: "authoritative",
-        }],
+        pools: [
+          {
+            provider: "codex",
+            account: "default",
+            pool: "codex",
+            label: "prolite",
+            models: ["*"],
+            fiveHour: { usedPct: 100, windowMinutes: 300, resetsAt: null },
+            weekly: { usedPct: 100, windowMinutes: 10_080, resetsAt: null },
+            observedAt: now.toISOString(),
+            source: "provider",
+            confidence: "authoritative",
+          },
+        ],
         catalog: [],
         // The account is holding four unspent "Full reset" grants, readable in
         // the same free call as the limits.
@@ -1568,7 +1778,9 @@ describe("a refusal names the way out, and never takes it", () => {
       category: "complex_coding",
       selection: "strict",
       explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([{ tool: "codex", model: "gpt-5.6-sol" }]),
+      candidates: await authorizeForQuotaTest([
+        { tool: "codex", model: "gpt-5.6-sol" },
+      ]),
     });
     // The human is told the door exists. Hive does not open it: burning a finite
     // credit to admit a spawn is the human's call, and an agent that can quietly
@@ -1584,36 +1796,40 @@ describe("a spend belongs to the vendor whose model produced it", () => {
   test("the ledger refuses to bill a Claude model to the Codex meter", async () => {
     const { db } = await service();
     const ledger = new QuotaLedger(db);
-    ledger.replaceModelCatalog("claude", [{
-      provider: "claude",
-      modelId: "claude-opus-4-8",
-      displayName: "Claude Opus 4.8",
-      discoveredAt: now.toISOString(),
-    }]);
+    ledger.replaceModelCatalog("claude", [
+      {
+        provider: "claude",
+        modelId: "claude-opus-4-8",
+        displayName: "Claude Opus 4.8",
+        discoveredAt: now.toISOString(),
+      },
+    ]);
     const reserve = () =>
-      ledger.tryReserveGroup([{
-        id: "r1",
-        agentName: "oscar",
-        provider: "codex",
-        account: "default",
-        pool: "codex",
-        // Exactly the row sitting in the live ledger: tier routing picked
-        // tool=codex while the caller had pinned a Claude model, and the ledger
-        // recorded the impossible pair without ever asking whether it could exist.
-        model: "claude-opus-4-8",
-        category: "simple_coding",
-        estimatedUnits: 4,
-        now: now.toISOString(),
-        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-        fiveHourStart: now.toISOString(),
-        weeklyStart: now.toISOString(),
-        supplementalFiveHourUsed: 0,
-        supplementalWeeklyUsed: 0,
-        fiveHourAllowance: 100,
-        weeklyAllowance: 100,
-        fiveHourFloor: 0,
-        weeklyFloor: 0,
-      }]);
+      ledger.tryReserveGroup([
+        {
+          id: "r1",
+          agentName: "oscar",
+          provider: "codex",
+          account: "default",
+          pool: "codex",
+          // Exactly the row sitting in the live ledger: tier routing picked
+          // tool=codex while the caller had pinned a Claude model, and the ledger
+          // recorded the impossible pair without ever asking whether it could exist.
+          model: "claude-opus-4-8",
+          category: "simple_coding",
+          estimatedUnits: 4,
+          now: now.toISOString(),
+          expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+          fiveHourStart: now.toISOString(),
+          weeklyStart: now.toISOString(),
+          supplementalFiveHourUsed: 0,
+          supplementalWeeklyUsed: 0,
+          fiveHourAllowance: 100,
+          weeklyAllowance: 100,
+          fiveHourFloor: 0,
+          weeklyFloor: 0,
+        },
+      ]);
     expect(reserve).toThrow(/Refusing to bill claude model/);
   });
 
@@ -1624,36 +1840,44 @@ describe("a spend belongs to the vendor whose model produced it", () => {
     const ledger = new QuotaLedger(db);
     let attempt = 0;
     const reserve = (model: string) =>
-      ledger.tryReserveGroup([{
-        id: `catalog-evidence-${attempt++}`,
-        agentName: "worker",
+      ledger.tryReserveGroup([
+        {
+          id: `catalog-evidence-${attempt++}`,
+          agentName: "worker",
+          provider: "codex",
+          account: "default",
+          pool: "codex",
+          model,
+          category: "simple_coding",
+          estimatedUnits: 4,
+          now: now.toISOString(),
+          expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+          fiveHourStart: now.toISOString(),
+          weeklyStart: now.toISOString(),
+          supplementalFiveHourUsed: 0,
+          supplementalWeeklyUsed: 0,
+          fiveHourAllowance: 100,
+          weeklyAllowance: 100,
+          fiveHourFloor: 0,
+          weeklyFloor: 0,
+        },
+      ]);
+
+    expect(() => reserve("default")).toThrow(
+      /positive vendor catalog evidence/,
+    );
+    expect(() => reserve("gpt-5-codex")).toThrow(
+      /positive vendor catalog evidence/,
+    );
+
+    ledger.replaceModelCatalog("codex", [
+      {
         provider: "codex",
-        account: "default",
-        pool: "codex",
-        model,
-        category: "simple_coding",
-        estimatedUnits: 4,
-        now: now.toISOString(),
-        expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-        fiveHourStart: now.toISOString(),
-        weeklyStart: now.toISOString(),
-        supplementalFiveHourUsed: 0,
-        supplementalWeeklyUsed: 0,
-        fiveHourAllowance: 100,
-        weeklyAllowance: 100,
-        fiveHourFloor: 0,
-        weeklyFloor: 0,
-      }]);
-
-    expect(() => reserve("default")).toThrow(/positive vendor catalog evidence/);
-    expect(() => reserve("gpt-5-codex")).toThrow(/positive vendor catalog evidence/);
-
-    ledger.replaceModelCatalog("codex", [{
-      provider: "codex",
-      modelId: "gpt-5-codex",
-      displayName: "GPT-5 Codex",
-      discoveredAt: now.toISOString(),
-    }]);
+        modelId: "gpt-5-codex",
+        displayName: "GPT-5 Codex",
+        discoveredAt: now.toISOString(),
+      },
+    ]);
     expect(reserve("gpt-5-codex").ok).toBe(true);
   });
 });

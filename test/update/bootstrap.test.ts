@@ -8,21 +8,21 @@ describe("legacy updater bootstrap", () => {
     const root = "/install";
     const executable = join(root, "versions", "0.0.28", "hive");
     let repaired = "";
-    expect(repairIdentityFromStagedVersionProbe(
-      [executable, "--version"],
-      {
+    expect(
+      repairIdentityFromStagedVersionProbe([executable, "--version"], {
         root,
         executablePath: executable,
         cwd: "/project",
-        realpath: (path) => path.includes("/current/")
-          ? join(root, "versions", "0.0.25", "hive")
-          : path,
+        realpath: (path) =>
+          path.includes("/current/")
+            ? join(root, "versions", "0.0.25", "hive")
+            : path,
         repair: (directory) => {
           repaired = directory;
           return true;
         },
-      },
-    )).toBe(true);
+      }),
+    ).toBe(true);
     expect(repaired).toBe("/project");
   });
 
@@ -39,8 +39,12 @@ describe("legacy updater bootstrap", () => {
         return true;
       },
     };
-    expect(repairIdentityFromStagedVersionProbe([executable, "--version"], deps)).toBe(false);
-    expect(repairIdentityFromStagedVersionProbe([executable, "update"], deps)).toBe(false);
+    expect(
+      repairIdentityFromStagedVersionProbe([executable, "--version"], deps),
+    ).toBe(false);
+    expect(
+      repairIdentityFromStagedVersionProbe([executable, "update"], deps),
+    ).toBe(false);
     expect(calls).toBe(0);
   });
 });

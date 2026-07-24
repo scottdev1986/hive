@@ -91,7 +91,9 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     const fixtureModes = [
       ...new Set([
         policy.selection.global as string,
-        ...Object.values(policy.selection.categories).map((mode) => mode as string),
+        ...Object.values(policy.selection.categories).map(
+          (mode) => mode as string,
+        ),
       ]),
     ].sort();
 

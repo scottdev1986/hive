@@ -69,18 +69,22 @@ describe("GraphifyService", () => {
     const root = await gitRepo();
     // No runtime is installed, so the queued rebuild stops immediately. What
     // is being counted is how many chain links a burst creates.
-    const service = new GraphifyService(root, async () => ({
-      exitCode: 0,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-    }), () => {});
+    const service = new GraphifyService(
+      root,
+      async () => ({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+      }),
+      () => {},
+    );
     service.scheduleRebuild();
     service.scheduleRebuild();
     service.scheduleRebuild();
     // Reaching into the private chain is deliberate: coalescing has no other
     // observable surface without a real server to restart.
-    const chain = (service as unknown as { rebuildQueued: boolean });
+    const chain = service as unknown as { rebuildQueued: boolean };
     expect(chain.rebuildQueued).toBe(true);
     await (service as unknown as { rebuildChain: Promise<void> }).rebuildChain;
     expect(chain.rebuildQueued).toBe(false);
@@ -100,12 +104,16 @@ describe("GraphifyService", () => {
     await installFakeMcp(true);
     await mkdir(join(root, "graphify-out"));
     await writeFile(join(root, "graphify-out", "graph.json"), "{}");
-    const service = new GraphifyService(root, async () => ({
-      exitCode: 0,
-      stdout: "",
-      stderr: "",
-      timedOut: false,
-    }), () => {});
+    const service = new GraphifyService(
+      root,
+      async () => ({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+      }),
+      () => {},
+    );
     const unrelated = Bun.spawn(["/bin/sleep", "30"], {
       stdin: "ignore",
       stdout: "ignore",
@@ -166,7 +174,9 @@ describe("GraphifyService", () => {
     await child.exited;
     await Bun.sleep(0);
     expect(service.serverUrl()).toBeNull();
-    expect(logged.some((line) => line.includes("agents spawn without graph tools"))).toBe(true);
+    expect(
+      logged.some((line) => line.includes("agents spawn without graph tools")),
+    ).toBe(true);
 
     await service.stop();
     await rm(root, { recursive: true, force: true });

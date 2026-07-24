@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
-import type { AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { projectHiveUuid } from "../../src/daemon/project-state";
 import { HiveDaemon } from "../../src/daemon/server";
+import type { AgentRecord } from "../../src/schemas";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -80,7 +79,11 @@ describe("EpisodicStore location and lifecycle", () => {
         source: "test",
         validAt: T0,
       });
-      storeA.appendEvent({ agent: "agent-a", type: "test", summary: "A event" });
+      storeA.appendEvent({
+        agent: "agent-a",
+        type: "test",
+        summary: "A event",
+      });
 
       expect(storeA.currentFacts()).toHaveLength(1);
       expect(storeA.eventsFor()).toHaveLength(1);
@@ -103,7 +106,9 @@ describe("EpisodicStore bi-temporal facts", () => {
       source: "test",
       validAt: T0,
     });
-    expect(store.currentFacts().map((current) => current.id)).toEqual([fact.id]);
+    expect(store.currentFacts().map((current) => current.id)).toEqual([
+      fact.id,
+    ]);
     expect(store.factsAsOf(T0)).toHaveLength(1);
 
     const invalidated = store.invalidateFact(fact.id, { at: T1 });
@@ -144,7 +149,9 @@ describe("EpisodicStore bi-temporal facts", () => {
     const before = store.factsAsOf(T0);
     expect(before.map((fact) => fact.id)).toEqual([old.id]);
     expect(before[0]!.invalidAt).toBe(T1);
-    expect(store.factsAsOf(T2).map((fact) => fact.id)).toEqual([replacement.id]);
+    expect(store.factsAsOf(T2).map((fact) => fact.id)).toEqual([
+      replacement.id,
+    ]);
   });
 
   test("invalidateFact links the superseding row back to the invalidated one", () => {
@@ -174,9 +181,24 @@ describe("EpisodicStore bi-temporal facts", () => {
 describe("EpisodicStore events", () => {
   test("eventsFor filters by agent and since, in append order", () => {
     const store = track(new EpisodicStore(":memory:"));
-    store.appendEvent({ ts: T0, agent: "agent-a", type: "one", summary: "first" });
-    store.appendEvent({ ts: T1, agent: "agent-b", type: "two", summary: "second" });
-    store.appendEvent({ ts: T2, agent: "agent-a", type: "three", summary: "third" });
+    store.appendEvent({
+      ts: T0,
+      agent: "agent-a",
+      type: "one",
+      summary: "first",
+    });
+    store.appendEvent({
+      ts: T1,
+      agent: "agent-b",
+      type: "two",
+      summary: "second",
+    });
+    store.appendEvent({
+      ts: T2,
+      agent: "agent-a",
+      type: "three",
+      summary: "third",
+    });
 
     expect(store.eventsFor().map((event) => event.summary)).toEqual([
       "first",
@@ -184,10 +206,9 @@ describe("EpisodicStore events", () => {
       "third",
     ]);
     expect(store.eventsFor({ agent: "agent-a" })).toHaveLength(2);
-    expect(store.eventsFor({ since: T1 }).map((event) => event.summary)).toEqual([
-      "second",
-      "third",
-    ]);
+    expect(
+      store.eventsFor({ since: T1 }).map((event) => event.summary),
+    ).toEqual(["second", "third"]);
     const withProvenance = store.appendEvent({
       agent: null,
       type: "audit",
@@ -226,7 +247,11 @@ const daemonHarness = (episodic: EpisodicStore) => {
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
-    spawner: { async spawn() { return agent("spawned"); } },
+    spawner: {
+      async spawn() {
+        return agent("spawned");
+      },
+    },
     repoRoot: "/tmp/hive-episodic-daemon-test",
     episodicStore: episodic,
   });
@@ -239,23 +264,27 @@ describe("daemon ingestion into the episodic store", () => {
     const { daemon } = daemonHarness(episodic);
     const assignment = daemon.status.currentAssignment("agent-maya");
     expect(assignment).not.toBeNull();
-    daemon.status.appendAgentReport({
-      subject: "maya",
-      agentId: "agent-maya",
-      incarnationGeneration: 1,
-      role: "writer",
-      capabilityEpoch: 0,
-      toolSessionId: null,
-    }, {
-      requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000e1",
-      assignmentId: assignment!.assignmentId,
-      assignmentGeneration: assignment!.assignmentGeneration,
-      phase: "implementing",
-      summary: "Halfway through WP1",
-      blocker: null,
-      evidenceRefs: [],
-      freshForSeconds: 120,
-    }, new Date(T1));
+    daemon.status.appendAgentReport(
+      {
+        subject: "maya",
+        agentId: "agent-maya",
+        incarnationGeneration: 1,
+        role: "writer",
+        capabilityEpoch: 0,
+        toolSessionId: null,
+      },
+      {
+        requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000e1",
+        assignmentId: assignment!.assignmentId,
+        assignmentGeneration: assignment!.assignmentGeneration,
+        phase: "implementing",
+        summary: "Halfway through WP1",
+        blocker: null,
+        evidenceRefs: [],
+        freshForSeconds: 120,
+      },
+      new Date(T1),
+    );
 
     const events = episodic.eventsFor({ agent: "agent-maya" });
     expect(events).toHaveLength(1);
@@ -309,8 +338,9 @@ describe("daemon ingestion into the episodic store", () => {
       // The primary record was written and published despite the failure.
       expect(event.kind).toBe("terminal.content-observed");
       expect(daemon.status.listEvents()).toHaveLength(1);
-      expect(errors.some((message) => message.includes("episodic ingest failed")))
-        .toBe(true);
+      expect(
+        errors.some((message) => message.includes("episodic ingest failed")),
+      ).toBe(true);
     } finally {
       spy.mockRestore();
     }

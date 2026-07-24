@@ -2,19 +2,20 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
-import type { AgentRecord } from "../../src/schemas";
-import type { SessionInspection } from "../../src/daemon/session-host/contract";
 import {
   createProductionTerminalComposition,
   exitAfterDaemonStartupFailure,
   startBrokerAndDiscoverEngineBuildId,
   stopSpawnSession,
 } from "../../src/cli/daemon";
+import type { SessionInspection } from "../../src/daemon/session-host/contract";
+import type { AgentRecord } from "../../src/schemas";
+import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 test("production terminal composition constructs sessiond only", () => {
   const constructed: string[] = [];
-  const terminalHost = {} as import("../../src/daemon/session-host/sessiond-host").SessiondHost;
+  const terminalHost =
+    {} as import("../../src/daemon/session-host/sessiond-host").SessiondHost;
   const composition = createProductionTerminalComposition(
     { repoRoot: "/repo" },
     (kind) => {
@@ -35,9 +36,13 @@ test("production terminal composition constructs sessiond only", () => {
 });
 
 test("engine discovery failure tears down a live daemon and exits 1", async () => {
-  const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-discovery-failure-"));
+  const fixture = mkdtempSync(
+    join(OUTSIDE_REPO_TMPDIR, "hive-discovery-failure-"),
+  );
   const marker = join(fixture, "teardown.json");
-  const daemonModule = pathToFileURL(join(import.meta.dir, "../../src/cli/daemon.ts")).href;
+  const daemonModule = pathToFileURL(
+    join(import.meta.dir, "../../src/cli/daemon.ts"),
+  ).href;
   const script = `
     import { writeFileSync } from "node:fs";
     import {
@@ -95,19 +100,21 @@ test("engine discovery failure tears down a live daemon and exits 1", async () =
 
 test("positive control: broker-start failures still take the fatal handler", async () => {
   let discoveryAttempted = false;
-  await expect(startBrokerAndDiscoverEngineBuildId({
-    startBroker: async () => {
-      throw new Error("planted broker start failure");
-    },
-    discoverEngineBuildId: async () => {
-      discoveryAttempted = true;
-      return "unreachable";
-    },
-    onFatalFailure: async (stage, error) => {
-      expect(stage).toBe("broker-start");
-      throw new Error(`handled: ${(error as Error).message}`);
-    },
-  })).rejects.toThrow("handled: planted broker start failure");
+  await expect(
+    startBrokerAndDiscoverEngineBuildId({
+      startBroker: async () => {
+        throw new Error("planted broker start failure");
+      },
+      discoverEngineBuildId: async () => {
+        discoveryAttempted = true;
+        return "unreachable";
+      },
+      onFatalFailure: async (stage, error) => {
+        expect(stage).toBe("broker-start");
+        throw new Error(`handled: ${(error as Error).message}`);
+      },
+    }),
+  ).rejects.toThrow("handled: planted broker start failure");
   expect(discoveryAttempted).toBe(false);
 });
 
@@ -143,24 +150,26 @@ test("spawn cleanup dispatches a sessiond row by its exact locator", async () =>
   const inspected: unknown[] = [];
   const terminated: unknown[] = [];
 
-  await expect(stopSpawnSession(record, {
-    terminalHost: {
-      inspect: async (candidate) => {
-        inspected.push(candidate);
-        return { hostPid: null } as SessionInspection;
+  await expect(
+    stopSpawnSession(record, {
+      terminalHost: {
+        inspect: async (candidate) => {
+          inspected.push(candidate);
+          return { hostPid: null } as SessionInspection;
+        },
+        terminate: async (candidate) => {
+          terminated.push(candidate);
+          return {
+            locator,
+            state: "terminated" as const,
+            exit: null,
+            survivors: [],
+            errors: [],
+          };
+        },
       },
-      terminate: async (candidate) => {
-        terminated.push(candidate);
-        return {
-          locator,
-          state: "terminated" as const,
-          exit: null,
-          survivors: [],
-          errors: [],
-        };
-      },
-    },
-  })).resolves.toEqual({ killed: [], survivors: [] });
+    }),
+  ).resolves.toEqual({ killed: [], survivors: [] });
   expect(inspected).toEqual([locator]);
   expect(terminated).toEqual([locator]);
 });

@@ -1,10 +1,10 @@
 import { z } from "zod";
 import {
   DecimalUint64Schema,
+  domainUuidV7Schema,
   PositiveGenerationSchema,
   Rfc3339UtcMillisecondsSchema,
   Sha256HexSchema,
-  domainUuidV7Schema,
 } from "./session-protocol";
 
 export const WORKSPACE_EVENT_SOURCE_KINDS = [
@@ -16,7 +16,11 @@ export const WORKSPACE_EVENT_SOURCE_KINDS = [
   "task",
   "operator",
 ] as const;
-export const WORKSPACE_EVENT_CONFIDENCE = ["authoritative", "high", "low"] as const;
+export const WORKSPACE_EVENT_CONFIDENCE = [
+  "authoritative",
+  "high",
+  "low",
+] as const;
 export const STATUS_PHASES = [
   "planning",
   "implementing",
@@ -96,24 +100,28 @@ export const WorkspaceSnapshotV2Schema = z.strictObject({
   schemaVersion: z.literal(2),
   instanceId: z.string().min(1),
   seq: DecimalUint64Schema,
-  entities: z.array(z.strictObject({
-    kind: z.string().min(1),
-    id: z.string().min(1),
-    generation: PositiveGenerationSchema.optional(),
-    entityRevision: DecimalUint64Schema,
-    projection: z.record(z.string(), z.unknown()),
-  })),
+  entities: z.array(
+    z.strictObject({
+      kind: z.string().min(1),
+      id: z.string().min(1),
+      generation: PositiveGenerationSchema.optional(),
+      entityRevision: DecimalUint64Schema,
+      projection: z.record(z.string(), z.unknown()),
+    }),
+  ),
   createdAt: Rfc3339UtcMillisecondsSchema,
   contentSha256: Sha256HexSchema,
 });
 export type WorkspaceSnapshotV2 = z.infer<typeof WorkspaceSnapshotV2Schema>;
 
-const PositiveDecimalUint64Schema = z.string()
+const PositiveDecimalUint64Schema = z
+  .string()
   .regex(/^(?:[1-9][0-9]{0,19})$/)
   .refine(
     (value) => BigInt(value) <= 18_446_744_073_709_551_615n,
     "must fit in an unsigned 64-bit integer",
-  ).meta({ format: "hive-uint64-decimal" });
+  )
+  .meta({ format: "hive-uint64-decimal" });
 
 // The minimal flat C0 record. The Queen's Hive extends this later; status must
 // not infer task, review, gate, or hierarchy state from it.
@@ -144,17 +152,25 @@ const StatusUpdateCommonShape = {
   assignmentGeneration: PositiveDecimalUint64Schema,
   progress: z.number().int().min(0).max(100).optional(),
   summary: z.string().min(1).max(STATUS_LIMITS.summaryCharactersMax),
-  evidenceRefs: z.array(
-    z.string().min(1).max(STATUS_LIMITS.evidenceRefCharactersMax),
-  ).max(STATUS_LIMITS.evidenceRefsMax),
-  nextCheckpoint: z.string().min(1).max(STATUS_LIMITS.nextCheckpointCharactersMax).optional(),
-  freshForSeconds: z.number().int()
+  evidenceRefs: z
+    .array(z.string().min(1).max(STATUS_LIMITS.evidenceRefCharactersMax))
+    .max(STATUS_LIMITS.evidenceRefsMax),
+  nextCheckpoint: z
+    .string()
+    .min(1)
+    .max(STATUS_LIMITS.nextCheckpointCharactersMax)
+    .optional(),
+  freshForSeconds: z
+    .number()
+    .int()
     .min(STATUS_LIMITS.reportFreshForSecondsMin)
     .max(STATUS_LIMITS.reportFreshForSecondsMax)
     .default(STATUS_LIMITS.reportFreshForSecondsDefault),
 } as const;
 
-const nonBlockedStatusSchema = (phase: Exclude<(typeof STATUS_PHASES)[number], "blocked">) =>
+const nonBlockedStatusSchema = (
+  phase: Exclude<(typeof STATUS_PHASES)[number], "blocked">,
+) =>
   z.strictObject({
     ...StatusUpdateCommonShape,
     phase: z.literal(phase),
@@ -195,17 +211,23 @@ export const HiveUpdateStatusAdvertisedSchema = z.strictObject({
     z.null(),
   ]),
 });
-export type HiveUpdateStatusAdvertisedInput = z.infer<typeof HiveUpdateStatusAdvertisedSchema>;
+export type HiveUpdateStatusAdvertisedInput = z.infer<
+  typeof HiveUpdateStatusAdvertisedSchema
+>;
 
 export const HiveTerminalObserveInputSchema = z.strictObject({
   sessionId: domainUuidV7Schema("ses"),
   generation: PositiveGenerationSchema,
   include: z.enum(["metadata", "visible-text"]),
-  maxRows: z.number().int()
+  maxRows: z
+    .number()
+    .int()
     .min(STATUS_LIMITS.terminalObservationRowsMin)
     .max(STATUS_LIMITS.terminalObservationRowsMax),
 });
-export type HiveTerminalObserveInput = z.infer<typeof HiveTerminalObserveInputSchema>;
+export type HiveTerminalObserveInput = z.infer<
+  typeof HiveTerminalObserveInputSchema
+>;
 
 export const STATUS_WIRE_SCHEMAS = {
   workspaceEventV2: WorkspaceEventV2Schema,

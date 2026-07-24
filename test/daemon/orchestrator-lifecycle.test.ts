@@ -1,14 +1,9 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  AgentMessageSchema,
-  ORCHESTRATOR_NAME,
-  type AgentRecord,
-} from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
 import {
   MessageDelivery,
@@ -16,23 +11,31 @@ import {
   type SessionSender,
 } from "../../src/daemon/delivery";
 import {
-  createOrchestratorEnvelope,
   compactActiveTeam,
+  createOrchestratorEnvelope,
   formatOrchestratorWake,
   ORCHESTRATOR_ENVELOPE_MAX_BYTES,
 } from "../../src/daemon/orchestrator-lifecycle";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
+import {
+  AgentMessageSchema,
+  type AgentRecord,
+  ORCHESTRATOR_NAME,
+} from "../../src/schemas";
 
 const home = mkdtempSync(join(tmpdir(), "hive-orchestrator-lifecycle-"));
 const timestamp = "2026-07-09T12:00:00.000Z";
 
 test("active status reports observed ownership overlap", () => {
   const agents = [agent(), agent({ id: "agent-noor", name: "noor" })];
-  const status = compactActiveTeam(agents, new Map([
-    ["maya", { instructions: [], files: ["src/shared.ts"] }],
-    ["noor", { instructions: [], files: ["src/shared.ts", "src/noor.ts"] }],
-  ]));
+  const status = compactActiveTeam(
+    agents,
+    new Map([
+      ["maya", { instructions: [], files: ["src/shared.ts"] }],
+      ["noor", { instructions: [], files: ["src/shared.ts", "src/noor.ts"] }],
+    ]),
+  );
   expect(status[0]?.overlaps).toEqual(["noor"]);
   expect(status[1]?.overlaps).toEqual(["maya"]);
 });
@@ -77,7 +80,9 @@ class RecordingRootProtocol implements RootProtocolDeliverer {
   readonly calls: Array<{ content: string; meta: Record<string, string> }> = [];
   live = true;
   confirmed = true;
-  isLive(): boolean { return this.live; }
+  isLive(): boolean {
+    return this.live;
+  }
   async deliverMessage(
     content: string,
     meta: Record<string, string>,
@@ -103,9 +108,11 @@ const unusedSpawner: Spawner = {
 };
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -147,10 +154,18 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "wake.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      root,
+    );
     try {
       const message = await delivery.send(
-        "maya", ORCHESTRATOR_NAME, "The implementation is ready for review.",
+        "maya",
+        ORCHESTRATOR_NAME,
+        "The implementation is ready for review.",
       );
 
       expect(message.deliveredAt).not.toEqual(null);
@@ -235,7 +250,13 @@ describe("event-driven orchestrator lifecycle", () => {
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
     root.live = false;
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      root,
+    );
     try {
       const queued = await delivery.send(
         "maya",
@@ -251,11 +272,19 @@ describe("event-driven orchestrator lifecycle", () => {
   });
 
   test("delivers a durable root report once its protocol becomes live", async () => {
-    const db = new HiveDatabase(join(home, "root-protocol-eventual-delivery.db"));
+    const db = new HiveDatabase(
+      join(home, "root-protocol-eventual-delivery.db"),
+    );
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
     root.live = false;
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      root,
+    );
     try {
       const queued = await delivery.send("maya", ORCHESTRATOR_NAME, "Ready.");
       expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
@@ -304,7 +333,13 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "ordering.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      root,
+    );
     try {
       const delivered = await Promise.all([
         delivery.send("maya", ORCHESTRATOR_NAME, "first"),
@@ -312,17 +347,15 @@ describe("event-driven orchestrator lifecycle", () => {
         delivery.send("nina", ORCHESTRATOR_NAME, "third"),
       ]);
 
-      expect(root.calls.map((call) =>
-        JSON.parse(call.content.slice(3)) as { body: string }
-      ).map((envelope) => envelope.body)).toEqual([
-        "first",
-        "second",
-        "third",
-      ]);
+      expect(
+        root.calls
+          .map((call) => JSON.parse(call.content.slice(3)) as { body: string })
+          .map((envelope) => envelope.body),
+      ).toEqual(["first", "second", "third"]);
       expect(new Set(delivered.map((message) => message.id)).size).toEqual(3);
-      expect(delivered.every((message) => message.deliveredAt !== null)).toEqual(
-        true,
-      );
+      expect(
+        delivered.every((message) => message.deliveredAt !== null),
+      ).toEqual(true);
       expect(await delivery.wakeOrchestrator()).toEqual([]);
       expect(sender.calls).toEqual([]);
       expect(root.calls).toHaveLength(3);
@@ -335,7 +368,13 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "bounded.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
-    const delivery = new MessageDelivery(db, sender, undefined, undefined, root);
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      root,
+    );
     const body = `${'"\\n'.repeat(20_000)}${"🚀".repeat(20_000)}`;
     try {
       const stored = await delivery.send("maya", ORCHESTRATOR_NAME, body);
@@ -390,8 +429,9 @@ describe("event-driven orchestrator lifecycle", () => {
     const envelope = createOrchestratorEnvelope(message);
 
     // Still bounded, still honest, still retrievable in full by id.
-    expect(new TextEncoder().encode(formatOrchestratorWake(envelope)).byteLength)
-      .toBeLessThanOrEqual(ORCHESTRATOR_ENVELOPE_MAX_BYTES);
+    expect(
+      new TextEncoder().encode(formatOrchestratorWake(envelope)).byteLength,
+    ).toBeLessThanOrEqual(ORCHESTRATOR_ENVELOPE_MAX_BYTES);
     expect(envelope.truncated).toEqual(true);
     expect(envelope.ref).toContain("hive_read_message");
 
@@ -429,16 +469,24 @@ describe("event-driven orchestrator lifecycle", () => {
       db,
       spawner: unusedSpawner,
     });
-    db.insertAgent(agent({
-      taskDescription: `Active ${"detail ".repeat(100)}`,
-    }));
-    db.insertAgent(agent({
-      id: "agent-sam",
-      name: "sam",
-      status: "dead",
-    }));
+    db.insertAgent(
+      agent({
+        taskDescription: `Active ${"detail ".repeat(100)}`,
+      }),
+    );
+    db.insertAgent(
+      agent({
+        id: "agent-sam",
+        name: "sam",
+        status: "dead",
+      }),
+    );
     const listSpy = spyOn(db, "listAgents");
-    const capability = daemon.issueCredential("test-orchestrator", "operator", 0);
+    const capability = daemon.issueCredential(
+      "test-orchestrator",
+      "operator",
+      0,
+    );
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
       {
@@ -458,37 +506,46 @@ describe("event-driven orchestrator lifecycle", () => {
         timestamp: "2026-07-09T12:00:10.000Z",
       });
       expect(listSpy).toHaveBeenCalledTimes(0);
-      db.insertMessage(AgentMessageSchema.parse({
-        id: "reassignment",
-        from: ORCHESTRATOR_NAME,
-        to: "maya",
-        body: "Stop the bridge work. Build the policy store only.",
-        createdAt: "2026-07-09T12:00:11.000Z",
-        deliveredAt: null,
-        priority: "normal",
-        intent: "instruction",
-        state: "queued",
-        sequence: 1,
-      }));
+      db.insertMessage(
+        AgentMessageSchema.parse({
+          id: "reassignment",
+          from: ORCHESTRATOR_NAME,
+          to: "maya",
+          body: "Stop the bridge work. Build the policy store only.",
+          createdAt: "2026-07-09T12:00:11.000Z",
+          deliveredAt: null,
+          priority: "normal",
+          intent: "instruction",
+          state: "queued",
+          sequence: 1,
+        }),
+      );
 
       await client.connect(transport);
-      const status = textValue(await client.callTool({
-        name: "hive_status",
-        arguments: { detail: "active" },
-      })) as Array<Record<string, unknown>>;
+      const status = textValue(
+        await client.callTool({
+          name: "hive_status",
+          arguments: { detail: "active" },
+        }),
+      ) as Array<Record<string, unknown>>;
       expect(listSpy).toHaveBeenCalledTimes(1);
       expect(status).toHaveLength(1);
       expect(status[0]?.name).toEqual("maya");
-      expect(status[0]?.task).toBeString();
+      const task = status[0]?.task;
+      expect(task).toBeString();
       expect(status[0]?.instructionCount).toEqual(1);
       expect(status[0]?.latestInstruction).toContain("policy store");
-      expect((status[0]?.task as string).length).toBeLessThanOrEqual(160);
+      expect(
+        typeof task === "string" ? task.length : Number.POSITIVE_INFINITY,
+      ).toBeLessThanOrEqual(160);
       expect(status[0]).not.toHaveProperty("taskDescription");
       expect(status[0]).not.toHaveProperty("worktreePath");
-      const projected = textValue(await client.callTool({
-        name: "hive_status",
-        arguments: { detail: "active", fields: ["name", "instructionCount"] },
-      }));
+      const projected = textValue(
+        await client.callTool({
+          name: "hive_status",
+          arguments: { detail: "active", fields: ["name", "instructionCount"] },
+        }),
+      );
       expect(projected).toEqual([{ name: "maya", instructionCount: 1 }]);
     } finally {
       listSpy.mockRestore();

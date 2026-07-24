@@ -1,18 +1,39 @@
-export { canonicalizeDirectory, evidenceMatches, evidenceOf, foldIdentityKey, isAtOrBeneath } from "./canonical";
-export { FoundationBookmarkProvider, NullBookmarkProvider } from "./bookmark";
 export type { BookmarkProvider, BookmarkResolution } from "./bookmark";
-export { isLinkedWorktree, probeGit, repoFamilyKeyOf, sanitizedGitEnv } from "./git";
+export { FoundationBookmarkProvider, NullBookmarkProvider } from "./bookmark";
+export {
+  canonicalizeDirectory,
+  evidenceMatches,
+  evidenceOf,
+  foldIdentityKey,
+  isAtOrBeneath,
+} from "./canonical";
 export type { GitProbe } from "./git";
+export {
+  isLinkedWorktree,
+  probeGit,
+  repoFamilyKeyOf,
+  sanitizedGitEnv,
+} from "./git";
+export type { ManagedWorktree, ManagedWorktreeLedger } from "./ledger";
 export {
   InMemoryManagedWorktreeLedger,
   LedgerCapability,
   UnauthenticatedLedgerAccess,
 } from "./ledger";
-export type { ManagedWorktree, ManagedWorktreeLedger } from "./ledger";
+export type {
+  ProjectRecord,
+  ProjectRegistrySnapshot,
+  ProjectState,
+  Tombstone,
+  TombstoneReason,
+} from "./registry";
 export { IdentityKeyOccupied, ProjectRegistry } from "./registry";
-export type { ProjectRecord, ProjectRegistrySnapshot, ProjectState, Tombstone, TombstoneReason } from "./registry";
-export { clearCreationLeases, resolveOrCreate, resolveProject } from "./resolver";
 export type { ResolveOptions } from "./resolver";
+export {
+  clearCreationLeases,
+  resolveOrCreate,
+  resolveProject,
+} from "./resolver";
 export type {
   FsEvidence,
   ProjectKey,
@@ -24,4 +45,8 @@ export type {
   SetupReason,
   VolumeBehavior,
 } from "./types";
-export { clearVolumeCache, describeVolume, setVolumeHelperPath } from "./volume";
+export {
+  clearVolumeCache,
+  describeVolume,
+  setVolumeHelperPath,
+} from "./volume";

@@ -1,11 +1,22 @@
+import {
+  type ChildProcessWithoutNullStreams,
+  spawn,
+  spawnSync,
+} from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BoundedWal, isoNow } from "./wal";
 import type { ChildIdentity, SemanticEvent, Vendor } from "./types";
+import { BoundedWal, isoNow } from "./wal";
 
 interface LiveEvidence {
   provider: Vendor;
@@ -49,7 +60,10 @@ function sanitizedIdentity(identity: ChildIdentity): ChildIdentity {
   const home = process.env.HOME;
   return {
     ...identity,
-    executable: home === undefined ? identity.executable : identity.executable.replace(home, "$HOME"),
+    executable:
+      home === undefined
+        ? identity.executable
+        : identity.executable.replace(home, "$HOME"),
   };
 }
 
@@ -66,7 +80,11 @@ function processExists(pid: number): boolean {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: () => string): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+  message: () => string,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new Error(message())), milliseconds);
@@ -78,14 +96,17 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message
   }
 }
 
-async function stopGroup(child: ChildProcessWithoutNullStreams): Promise<boolean> {
+async function stopGroup(
+  child: ChildProcessWithoutNullStreams,
+): Promise<boolean> {
   if (child.pid === undefined) return true;
   try {
     process.kill(-child.pid, "SIGTERM");
   } catch {
     // Already gone.
   }
-  for (let index = 0; index < 50 && processExists(child.pid); index += 1) await Bun.sleep(20);
+  for (let index = 0; index < 50 && processExists(child.pid); index += 1)
+    await Bun.sleep(20);
   if (processExists(child.pid)) {
     try {
       process.kill(-child.pid, "SIGKILL");
@@ -101,7 +122,10 @@ class LiveJournal {
   readonly wal: BoundedWal;
   private nextSequence = 1;
 
-  constructor(path: string, readonly commandId: string) {
+  constructor(
+    path: string,
+    readonly commandId: string,
+  ) {
     this.wal = new BoundedWal(path, 256 * 1024);
   }
 
@@ -113,12 +137,20 @@ class LiveJournal {
     this.wal.append({
       kind: "ACCEPTED",
       at: isoNow(),
-      command: { commandId: this.commandId, brokerGeneration: 1, sessionEpoch: 0 },
+      command: {
+        commandId: this.commandId,
+        brokerGeneration: 1,
+        sessionEpoch: 0,
+      },
     });
   }
 
   written(): void {
-    this.wal.append({ kind: "COMMAND_WRITTEN", at: isoNow(), commandId: this.commandId });
+    this.wal.append({
+      kind: "COMMAND_WRITTEN",
+      at: isoNow(),
+      commandId: this.commandId,
+    });
   }
 
   approval(approvalId: string): void {
@@ -130,7 +162,11 @@ class LiveJournal {
     });
   }
 
-  event(type: string, providerEventId: string, payload: Record<string, unknown> = {}): void {
+  event(
+    type: string,
+    providerEventId: string,
+    payload: Record<string, unknown> = {},
+  ): void {
     const event: SemanticEvent = {
       sequence: this.nextSequence++,
       providerEventId,
@@ -151,7 +187,12 @@ class LiveJournal {
   }
 }
 
-function identityFor(child: ChildProcessWithoutNullStreams, path: string, argv: string[], vendor: Vendor): ChildIdentity {
+function identityFor(
+  child: ChildProcessWithoutNullStreams,
+  path: string,
+  argv: string[],
+  vendor: Vendor,
+): ChildIdentity {
   if (child.pid === undefined) throw new Error(`${vendor} did not start`);
   return {
     pid: child.pid,
@@ -166,38 +207,57 @@ function identityFor(child: ChildProcessWithoutNullStreams, path: string, argv: 
 async function driveClaude(runDir: string): Promise<LiveEvidence> {
   const path = executable("claude");
   const versionResult = Bun.spawnSync([path, "--version"]);
-  const version = `${versionResult.stdout.toString()}${versionResult.stderr.toString()}`.trim();
+  const version =
+    `${versionResult.stdout.toString()}${versionResult.stderr.toString()}`.trim();
   const commandId = `live-claude-${randomUUID()}`;
   const journal = new LiveJournal(join(runDir, "claude.wal.jsonl"), commandId);
   const marker = join(tmpdir(), `${commandId}.txt`);
   const approvalRequestPath = join(runDir, "approval-request.json");
   const approvalDecisionPath = join(runDir, "approval-decision.json");
   const mcpConfigPath = join(runDir, "mcp.json");
-  writeFileSync(mcpConfigPath, `${JSON.stringify({
-    mcpServers: {
-      agenthost: {
-        command: process.execPath,
-        args: [permissionServerPath],
-        env: {
-          AGENTHOST_APPROVAL_REQUEST: approvalRequestPath,
-          AGENTHOST_APPROVAL_DECISION: approvalDecisionPath,
+  writeFileSync(
+    mcpConfigPath,
+    `${JSON.stringify(
+      {
+        mcpServers: {
+          agenthost: {
+            command: process.execPath,
+            args: [permissionServerPath],
+            env: {
+              AGENTHOST_APPROVAL_REQUEST: approvalRequestPath,
+              AGENTHOST_APPROVAL_DECISION: approvalDecisionPath,
+            },
+          },
         },
       },
-    },
-  }, null, 2)}\n`);
+      null,
+      2,
+    )}\n`,
+  );
   const argv = [
     "-p",
-    "--input-format", "stream-json",
-    "--output-format", "stream-json",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
     "--verbose",
-    "--model", "haiku",
-    "--permission-prompt-tool", "mcp__agenthost__permission_prompt",
-    "--permission-mode", "default",
-    "--settings", "{}",
-    "--mcp-config", mcpConfigPath,
+    "--model",
+    "haiku",
+    "--permission-prompt-tool",
+    "mcp__agenthost__permission_prompt",
+    "--permission-mode",
+    "default",
+    "--settings",
+    "{}",
+    "--mcp-config",
+    mcpConfigPath,
     "--strict-mcp-config",
   ];
-  const child = spawn(path, argv, { cwd: runDir, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(path, argv, {
+    cwd: runDir,
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const identity = identityFor(child, path, argv, "claude");
   journal.child(identity);
   let buffer = "";
@@ -210,9 +270,13 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
   let expectedFinalObserved = false;
   let eventIndex = 0;
   let resolveTerminal!: () => void;
-  const terminal = new Promise<void>((resolvePromise) => { resolveTerminal = resolvePromise; });
+  const terminal = new Promise<void>((resolvePromise) => {
+    resolveTerminal = resolvePromise;
+  });
   child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8_192); });
+  child.stderr.on("data", (chunk: string) => {
+    stderr = (stderr + chunk).slice(-8_192);
+  });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     buffer += chunk;
@@ -225,13 +289,24 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
       const message = JSON.parse(line) as Record<string, any>;
       eventIndex += 1;
       const type = String(message.type ?? "unknown");
-      if (typeof message.session_id === "string") vendorSessionId = message.session_id;
+      if (typeof message.session_id === "string")
+        vendorSessionId = message.session_id;
       if (type === "system" && typeof message.session_id === "string") {
         vendorSessionId = message.session_id;
       }
-      const content = Array.isArray(message.message?.content) ? message.message.content : [];
-      if (content.some((item: Record<string, unknown>) => item.type === "tool_use")) toolObserved = true;
-      if (type === "control_request" && message.request?.subtype === "can_use_tool") {
+      const content = Array.isArray(message.message?.content)
+        ? message.message.content
+        : [];
+      if (
+        content.some(
+          (item: Record<string, unknown>) => item.type === "tool_use",
+        )
+      )
+        toolObserved = true;
+      if (
+        type === "control_request" &&
+        message.request?.subtype === "can_use_tool"
+      ) {
         toolObserved = true;
         approvalObserved = true;
         const approvalId = String(message.request_id);
@@ -241,24 +316,33 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
         });
         journal.approval(approvalId);
         approvalDecisions += 1;
-        child.stdin.write(`${JSON.stringify({
-          type: "control_response",
-          request_id: message.request_id,
-          response: {
-            subtype: "success",
+        child.stdin.write(
+          `${JSON.stringify({
+            type: "control_response",
             request_id: message.request_id,
-            response: { behavior: "deny", message: "DENIED_BY_AGENTHOST_PROTOTYPE" },
-          },
-        })}\n`);
+            response: {
+              subtype: "success",
+              request_id: message.request_id,
+              response: {
+                behavior: "deny",
+                message: "DENIED_BY_AGENTHOST_PROTOTYPE",
+              },
+            },
+          })}\n`,
+        );
         continue;
       }
       if (type === "result") {
         terminalObserved = true;
-        expectedFinalObserved = String(message.result ?? "").includes("CLAUDE_CRASH_MATRIX_COMPLETE");
+        expectedFinalObserved = String(message.result ?? "").includes(
+          "CLAUDE_CRASH_MATRIX_COMPLETE",
+        );
       }
       journal.event(type, `claude:${eventIndex}`, {
         terminal: type === "result",
-        hasToolUse: content.some((item: Record<string, unknown>) => item.type === "tool_use"),
+        hasToolUse: content.some(
+          (item: Record<string, unknown>) => item.type === "tool_use",
+        ),
       });
       if (type === "result") resolveTerminal();
     }
@@ -272,15 +356,24 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
     },
   };
   await new Promise<void>((resolveWrite, rejectWrite) => {
-    child.stdin.write(`${JSON.stringify(prompt)}\n`, (error) => error ? rejectWrite(error) : resolveWrite());
+    child.stdin.write(`${JSON.stringify(prompt)}\n`, (error) =>
+      error ? rejectWrite(error) : resolveWrite(),
+    );
   });
   journal.written();
   const relayedApproval = (async () => {
-    for (let attempt = 0; attempt < 6_000 && !existsSync(approvalRequestPath); attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 6_000 && !existsSync(approvalRequestPath);
+      attempt += 1
+    ) {
       await Bun.sleep(10);
     }
-    if (!existsSync(approvalRequestPath)) throw new Error("Claude permission relay never requested approval");
-    const request = JSON.parse(readFileSync(approvalRequestPath, "utf8")) as { approvalId: string };
+    if (!existsSync(approvalRequestPath))
+      throw new Error("Claude permission relay never requested approval");
+    const request = JSON.parse(readFileSync(approvalRequestPath, "utf8")) as {
+      approvalId: string;
+    };
     approvalObserved = true;
     approvalDecisions += 1;
     journal.event("approval_requested", `claude:mcp:${request.approvalId}`, {
@@ -288,7 +381,11 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
       transport: "permission_mcp",
     });
     journal.approval(request.approvalId);
-    writeFileSync(approvalDecisionPath, `${JSON.stringify({ behavior: "deny" })}\n`, { mode: 0o600 });
+    writeFileSync(
+      approvalDecisionPath,
+      `${JSON.stringify({ behavior: "deny" })}\n`,
+      { mode: 0o600 },
+    );
   })();
   await withTimeout(
     Promise.all([terminal, relayedApproval]),
@@ -304,12 +401,17 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
     executableBindingHash: identity.executableBindingHash,
     childIdentity: sanitizedIdentity(identity),
     vendorSessionId: sanitizedSessionId(vendorSessionId),
-    acceptedBeforeWrite: journal.wal.all().findIndex((record) => record.kind === "ACCEPTED") <
-      journal.wal.all().findIndex((record) => record.kind === "COMMAND_WRITTEN"),
+    acceptedBeforeWrite:
+      journal.wal.all().findIndex((record) => record.kind === "ACCEPTED") <
+      journal.wal
+        .all()
+        .findIndex((record) => record.kind === "COMMAND_WRITTEN"),
     eventCount: events.length,
     eventTypes: [...new Set(events.map((event) => event.type))],
     itemTypes: [],
-    monotonicSequences: events.every((event, index) => event.sequence === index + 1),
+    monotonicSequences: events.every(
+      (event, index) => event.sequence === index + 1,
+    ),
     toolObserved,
     approvalObserved,
     approvalDecisions,
@@ -318,7 +420,8 @@ async function driveClaude(runDir: string): Promise<LiveEvidence> {
     highWaterMark,
     processGroupReaped,
     protocol: "claude stream-json with can_use_tool control requests",
-    caveat: "The permission control flag is absent from Claude Code 2.1.206 --help and remains version-gated.",
+    caveat:
+      "The permission control flag is absent from Claude Code 2.1.206 --help and remains version-gated.",
   };
 }
 
@@ -333,16 +436,28 @@ interface RpcMessage {
 async function driveCodex(runDir: string): Promise<LiveEvidence> {
   const path = executable("codex");
   const versionResult = Bun.spawnSync([path, "--version"]);
-  const version = `${versionResult.stdout.toString()}${versionResult.stderr.toString()}`.trim();
+  const version =
+    `${versionResult.stdout.toString()}${versionResult.stderr.toString()}`.trim();
   const commandId = `live-codex-${randomUUID()}`;
   const journal = new LiveJournal(join(runDir, "codex.wal.jsonl"), commandId);
-  const argv = ["app-server", "--stdio", "-c",
-    `projects.${JSON.stringify(runDir)}.trust_level=\"trusted\"`];
-  const child = spawn(path, argv, { cwd: runDir, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const argv = [
+    "app-server",
+    "--stdio",
+    "-c",
+    `projects.${JSON.stringify(runDir)}.trust_level="trusted"`,
+  ];
+  const child = spawn(path, argv, {
+    cwd: runDir,
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
   const identity = identityFor(child, path, argv, "codex");
   journal.child(identity);
   let requestId = 0;
-  const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  const pending = new Map<
+    number,
+    { resolve: (value: any) => void; reject: (error: Error) => void }
+  >();
   let buffer = "";
   let stderr = "";
   let eventIndex = 0;
@@ -354,15 +469,21 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
   let assistantText = "";
   const itemTypes = new Set<string>();
   let resolveTerminal!: () => void;
-  const terminal = new Promise<void>((resolvePromise) => { resolveTerminal = resolvePromise; });
-  const send = (message: RpcMessage) => child.stdin.write(`${JSON.stringify(message)}\n`);
-  const request = (method: string, params?: Record<string, any>) => new Promise<any>((resolveRequest, rejectRequest) => {
-    const id = requestId++;
-    pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-    send({ id, method, ...(params === undefined ? {} : { params }) });
+  const terminal = new Promise<void>((resolvePromise) => {
+    resolveTerminal = resolvePromise;
   });
+  const send = (message: RpcMessage) =>
+    child.stdin.write(`${JSON.stringify(message)}\n`);
+  const request = (method: string, params?: Record<string, any>) =>
+    new Promise<any>((resolveRequest, rejectRequest) => {
+      const id = requestId++;
+      pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
+      send({ id, method, ...(params === undefined ? {} : { params }) });
+    });
   child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-8_192); });
+  child.stderr.on("data", (chunk: string) => {
+    stderr = (stderr + chunk).slice(-8_192);
+  });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     buffer += chunk;
@@ -377,7 +498,10 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
         const waiter = pending.get(message.id);
         if (waiter !== undefined) {
           pending.delete(message.id);
-          if (message.error !== undefined) waiter.reject(new Error(message.error.message ?? "Codex RPC error"));
+          if (message.error !== undefined)
+            waiter.reject(
+              new Error(message.error.message ?? "Codex RPC error"),
+            );
           else waiter.resolve(message.result);
         }
         continue;
@@ -386,15 +510,24 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
       const method = String(message.method ?? "unknown");
       const item = message.params?.item ?? {};
       if (typeof item.type === "string") itemTypes.add(item.type);
-      if (method === "item/started" && ["commandExecution", "fileChange"].includes(item.type)) {
+      if (
+        method === "item/started" &&
+        ["commandExecution", "fileChange"].includes(item.type)
+      ) {
         toolObserved = true;
       }
-      if (method === "item/agentMessage/delta" && typeof message.params?.delta === "string") {
+      if (
+        method === "item/agentMessage/delta" &&
+        typeof message.params?.delta === "string"
+      ) {
         assistantText += message.params.delta;
       }
-      if (message.id !== undefined && (
-        method.includes("requestApproval") || method === "execCommandApproval" || method === "applyPatchApproval"
-      )) {
+      if (
+        message.id !== undefined &&
+        (method.includes("requestApproval") ||
+          method === "execCommandApproval" ||
+          method === "applyPatchApproval")
+      ) {
         approvalObserved = true;
         toolObserved = true;
         approvalDecisions += 1;
@@ -403,11 +536,13 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
           method,
         });
         journal.approval(String(message.id));
-        const result = method === "item/permissions/requestApproval"
-          ? { permissions: {}, scope: "turn" }
-          : method === "execCommandApproval" || method === "applyPatchApproval"
-            ? { decision: "denied" }
-            : { decision: "decline" };
+        const result =
+          method === "item/permissions/requestApproval"
+            ? { permissions: {}, scope: "turn" }
+            : method === "execCommandApproval" ||
+                method === "applyPatchApproval"
+              ? { decision: "denied" }
+              : { decision: "decline" };
         send({ id: message.id, result });
         continue;
       }
@@ -417,7 +552,9 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
       }
       if (method === "turn/completed") {
         terminalObserved = true;
-        expectedFinalObserved = assistantText.includes("CODEX_CRASH_MATRIX_COMPLETE");
+        expectedFinalObserved = assistantText.includes(
+          "CODEX_CRASH_MATRIX_COMPLETE",
+        );
       }
       journal.event(method, `codex:${eventIndex}`, {
         terminal: method === "turn/completed",
@@ -428,7 +565,11 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
   });
 
   await request("initialize", {
-    clientInfo: { name: "hive-agenthost-prototype", title: "Hive AgentHost Prototype", version: "0.1.0" },
+    clientInfo: {
+      name: "hive-agenthost-prototype",
+      title: "Hive AgentHost Prototype",
+      version: "0.1.0",
+    },
     capabilities: { experimentalApi: false },
   });
   send({ method: "initialized" });
@@ -442,13 +583,19 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
   journal.accepted();
   await request("turn/start", {
     threadId: vendorSessionId,
-    input: [{
-      type: "text",
-      text: `You must invoke the shell tool exactly once with this command: printf AGENTHOST > /etc/${commandId}.txt. Do not merely discuss or simulate it, and do not reply before receiving the real tool result. If permission is denied, do not retry or use another tool; reply exactly CODEX_CRASH_MATRIX_COMPLETE.`,
-    }],
+    input: [
+      {
+        type: "text",
+        text: `You must invoke the shell tool exactly once with this command: printf AGENTHOST > /etc/${commandId}.txt. Do not merely discuss or simulate it, and do not reply before receiving the real tool result. If permission is denied, do not retry or use another tool; reply exactly CODEX_CRASH_MATRIX_COMPLETE.`,
+      },
+    ],
   });
   journal.written();
-  await withTimeout(terminal, 120_000, () => `Codex live run timed out: ${stderr}`);
+  await withTimeout(
+    terminal,
+    120_000,
+    () => `Codex live run timed out: ${stderr}`,
+  );
   const highWaterMark = journal.acknowledge();
   const processGroupReaped = await stopGroup(child);
   const events = journal.wal.events();
@@ -458,12 +605,17 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
     executableBindingHash: identity.executableBindingHash,
     childIdentity: sanitizedIdentity(identity),
     vendorSessionId: sanitizedSessionId(vendorSessionId),
-    acceptedBeforeWrite: journal.wal.all().findIndex((record) => record.kind === "ACCEPTED") <
-      journal.wal.all().findIndex((record) => record.kind === "COMMAND_WRITTEN"),
+    acceptedBeforeWrite:
+      journal.wal.all().findIndex((record) => record.kind === "ACCEPTED") <
+      journal.wal
+        .all()
+        .findIndex((record) => record.kind === "COMMAND_WRITTEN"),
     eventCount: events.length,
     eventTypes: [...new Set(events.map((event) => event.type))],
     itemTypes: [...itemTypes],
-    monotonicSequences: events.every((event, index) => event.sequence === index + 1),
+    monotonicSequences: events.every(
+      (event, index) => event.sequence === index + 1,
+    ),
     toolObserved,
     approvalObserved,
     approvalDecisions,
@@ -472,32 +624,53 @@ async function driveCodex(runDir: string): Promise<LiveEvidence> {
     highWaterMark,
     processGroupReaped,
     protocol: "Codex app-server JSON-RPC",
-    caveat: "Codex app-server is experimental and exposes no numeric protocol version in initialize.",
+    caveat:
+      "Codex app-server is experimental and exposes no numeric protocol version in initialize.",
   };
 }
 
 mkdirSync(evidenceDir, { recursive: true });
 const runDir = mkdtempSync(join(tmpdir(), "hive-agenthost-live-"));
 try {
-  process.stdout.write("driving installed Claude Code through a denied tool task\n");
+  process.stdout.write(
+    "driving installed Claude Code through a denied tool task\n",
+  );
   mkdirSync(join(runDir, "claude"), { recursive: true });
   const claude = await driveClaude(join(runDir, "claude"));
   process.stdout.write("driving installed Codex through a denied tool task\n");
   mkdirSync(join(runDir, "codex"), { recursive: true });
   const codex = await driveCodex(join(runDir, "codex"));
   const providers = [claude, codex];
-  const invalid = providers.filter((provider) => !provider.acceptedBeforeWrite ||
-    !provider.monotonicSequences || !provider.toolObserved || !provider.approvalObserved ||
-    provider.approvalDecisions !== 1 || !provider.terminalObserved ||
-    !provider.expectedFinalObserved || !provider.processGroupReaped);
-  writeFileSync(join(evidenceDir, "live-providers.json"), `${JSON.stringify({
-    generatedAt: new Date().toISOString(),
-    providers,
-  }, null, 2)}\n`);
+  const invalid = providers.filter(
+    (provider) =>
+      !provider.acceptedBeforeWrite ||
+      !provider.monotonicSequences ||
+      !provider.toolObserved ||
+      !provider.approvalObserved ||
+      provider.approvalDecisions !== 1 ||
+      !provider.terminalObserved ||
+      !provider.expectedFinalObserved ||
+      !provider.processGroupReaped,
+  );
+  writeFileSync(
+    join(evidenceDir, "live-providers.json"),
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        providers,
+      },
+      null,
+      2,
+    )}\n`,
+  );
   if (invalid.length > 0) {
-    throw new Error(`live provider contract failed: ${invalid.map((provider) => provider.provider).join(", ")}`);
+    throw new Error(
+      `live provider contract failed: ${invalid.map((provider) => provider.provider).join(", ")}`,
+    );
   }
-  process.stdout.write("wrote green live provider evidence to evidence/live-providers.json\n");
+  process.stdout.write(
+    "wrote green live provider evidence to evidence/live-providers.json\n",
+  );
 } finally {
   rmSync(runDir, { recursive: true, force: true });
 }

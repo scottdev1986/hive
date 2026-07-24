@@ -1,25 +1,31 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DaemonHandshake } from "../../src/daemon/handshake";
+import { handshakeMismatch } from "../../src/daemon/handshake";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
   daemonInstanceLiveness,
   daemonSpawnArgv,
-  hiveCliSpawnArgv,
   getDaemonLockPath,
   getPidFilePath,
   getPortFilePath,
+  hiveCliSpawnArgv,
   isRunning,
   probeDaemonReuse,
   readConfiguredPort,
   releaseDaemonLock,
   writeLifecycleFiles,
 } from "../../src/daemon/lifecycle";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
-import type { DaemonHandshake } from "../../src/daemon/handshake";
-import { handshakeMismatch } from "../../src/daemon/handshake";
 
 const fixtureProcessIdentity = (pid: number) => ({
   startToken: `${pid}:0`,
@@ -41,21 +47,28 @@ const handshake: DaemonHandshake = {
 
 describe("respawning as the daemon", () => {
   test("names this exact CLI build before adding a subcommand", () => {
-    expect(hiveCliSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"))
-      .toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts"]);
-    expect(hiveCliSpawnArgv(true, "/tmp/hive/versions/0.0.0/hive"))
-      .toEqual(["/tmp/hive/versions/0.0.0/hive"]);
+    expect(
+      hiveCliSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"),
+    ).toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts"]);
+    expect(hiveCliSpawnArgv(true, "/tmp/hive/versions/0.0.0/hive")).toEqual([
+      "/tmp/hive/versions/0.0.0/hive",
+    ]);
   });
 
   test("a source checkout names the entry script, because bun is the executable", () => {
-    expect(daemonSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"))
-      .toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts", "daemon"]);
+    expect(
+      daemonSpawnArgv(false, "/usr/local/bin/bun", "/repo/src/cli.ts"),
+    ).toEqual(["/usr/local/bin/bun", "/repo/src/cli.ts", "daemon"]);
   });
 
   test("a release build spawns itself, never a path inside its own bundle", () => {
     // `import.meta.dir` in a compiled binary is Bun's virtual filesystem. Passing
     // it as argv makes the child try to run `/$bunfs/root/cli.ts` as a command.
-    const argv = daemonSpawnArgv(true, "/Users/s/.local/share/hive/current/hive", "/$bunfs/root/cli.ts");
+    const argv = daemonSpawnArgv(
+      true,
+      "/Users/s/.local/share/hive/current/hive",
+      "/$bunfs/root/cli.ts",
+    );
     expect(argv).toEqual(["/Users/s/.local/share/hive/current/hive", "daemon"]);
     expect(argv.join(" ")).not.toContain("bunfs");
   });
@@ -80,14 +93,16 @@ describe("daemon lifecycle", () => {
     try {
       await acquireDaemonLock(10101, () => true, fixtureProcessIdentity);
       expect(getDaemonLockPath()).toEqual(join(home, "daemon.lock"));
-      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toMatchObject({
+      expect(
+        JSON.parse(readFileSync(getDaemonLockPath(), "utf8")),
+      ).toMatchObject({
         pid: 10101,
         startToken: "10101:0",
         executablePath: "/fixture/hive",
       });
-      await expect(acquireDaemonLock(20202, () => true, fixtureProcessIdentity)).rejects.toThrow(
-        "already starting or running",
-      );
+      await expect(
+        acquireDaemonLock(20202, () => true, fixtureProcessIdentity),
+      ).rejects.toThrow("already starting or running");
       releaseDaemonLock(10101);
       await acquireDaemonLock(20202, () => true, fixtureProcessIdentity);
       releaseDaemonLock(20202);
@@ -104,9 +119,9 @@ describe("daemon lifecycle", () => {
     process.env.HIVE_HOME = home;
     try {
       writeFileSync(getDaemonLockPath(), "not-json\n");
-      await expect(acquireDaemonLock(20202, () => false, fixtureProcessIdentity)).rejects.toThrow(
-        "ownership is unknown",
-      );
+      await expect(
+        acquireDaemonLock(20202, () => false, fixtureProcessIdentity),
+      ).rejects.toThrow("ownership is unknown");
       expect(readFileSync(getDaemonLockPath(), "utf8")).toBe("not-json\n");
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -117,7 +132,9 @@ describe("daemon lifecycle", () => {
 
   test("preserves an unreachable lock whose recorded process is still live", async () => {
     const previousHome = process.env.HIVE_HOME;
-    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-unreachable-lock-"));
+    const home = mkdtempSync(
+      join(tmpdir(), "hive-lifecycle-unreachable-lock-"),
+    );
     process.env.HIVE_HOME = home;
     const lock = {
       pid: 10101,
@@ -126,10 +143,12 @@ describe("daemon lifecycle", () => {
     };
     try {
       writeFileSync(getDaemonLockPath(), `${JSON.stringify(lock)}\n`);
-      await expect(acquireDaemonLock(20202, () => true, fixtureProcessIdentity)).rejects.toThrow(
-        "ownership is unknown",
+      await expect(
+        acquireDaemonLock(20202, () => true, fixtureProcessIdentity),
+      ).rejects.toThrow("ownership is unknown");
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(
+        lock,
       );
-      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
     } finally {
       rmSync(home, { recursive: true, force: true });
       if (previousHome === undefined) delete process.env.HIVE_HOME;
@@ -139,19 +158,30 @@ describe("daemon lifecycle", () => {
 
   test("never probes a non-positive pid from an invalid daemon lock", async () => {
     const previousHome = process.env.HIVE_HOME;
-    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-invalid-lock-pid-"));
+    const home = mkdtempSync(
+      join(tmpdir(), "hive-lifecycle-invalid-lock-pid-"),
+    );
     process.env.HIVE_HOME = home;
     const probed: number[] = [];
     try {
-      writeFileSync(getDaemonLockPath(), `${JSON.stringify({
-        pid: -1,
-        instanceId: hiveInstanceSuffix(home),
-        startedAt: "2020-01-01T00:00:00.000Z",
-      })}\n`);
-      await expect(acquireDaemonLock(20202, (pid) => {
-        probed.push(pid);
-        return false;
-      }, fixtureProcessIdentity)).rejects.toThrow("ownership is unknown");
+      writeFileSync(
+        getDaemonLockPath(),
+        `${JSON.stringify({
+          pid: -1,
+          instanceId: hiveInstanceSuffix(home),
+          startedAt: "2020-01-01T00:00:00.000Z",
+        })}\n`,
+      );
+      await expect(
+        acquireDaemonLock(
+          20202,
+          (pid) => {
+            probed.push(pid);
+            return false;
+          },
+          fixtureProcessIdentity,
+        ),
+      ).rejects.toThrow("ownership is unknown");
       expect(probed).toEqual([]);
       expect(existsSync(getDaemonLockPath())).toBe(true);
     } finally {
@@ -163,12 +193,16 @@ describe("daemon lifecycle", () => {
 
   test("refuses to overwrite lifecycle files when pid ownership is unknown", () => {
     const previousHome = process.env.HIVE_HOME;
-    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-malformed-pid-write-"));
+    const home = mkdtempSync(
+      join(tmpdir(), "hive-lifecycle-malformed-pid-write-"),
+    );
     process.env.HIVE_HOME = home;
     try {
       writeFileSync(getPidFilePath(), "not-a-pid\n");
       writeFileSync(getPortFilePath(), "4317\n");
-      expect(() => writeLifecycleFiles(8123)).toThrow("pid ownership is unknown");
+      expect(() => writeLifecycleFiles(8123)).toThrow(
+        "pid ownership is unknown",
+      );
       expect(readFileSync(getPidFilePath(), "utf8")).toBe("not-a-pid\n");
       expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
     } finally {
@@ -180,7 +214,9 @@ describe("daemon lifecycle", () => {
 
   test("refuses lifecycle cleanup when pid ownership is unknown", async () => {
     const previousHome = process.env.HIVE_HOME;
-    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-malformed-pid-cleanup-"));
+    const home = mkdtempSync(
+      join(tmpdir(), "hive-lifecycle-malformed-pid-cleanup-"),
+    );
     process.env.HIVE_HOME = home;
     try {
       await acquireDaemonLock();
@@ -199,7 +235,9 @@ describe("daemon lifecycle", () => {
 
   test("refuses to overwrite lifecycle files owned by another daemon lock", () => {
     const previousHome = process.env.HIVE_HOME;
-    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-foreign-lock-write-"));
+    const home = mkdtempSync(
+      join(tmpdir(), "hive-lifecycle-foreign-lock-write-"),
+    );
     process.env.HIVE_HOME = home;
     const lock = {
       pid: 10101,
@@ -212,7 +250,9 @@ describe("daemon lifecycle", () => {
       expect(() => writeLifecycleFiles(8123)).toThrow("another daemon");
       expect(existsSync(getPidFilePath())).toBe(false);
       expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
-      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(
+        lock,
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
       if (previousHome === undefined) delete process.env.HIVE_HOME;
@@ -222,7 +262,9 @@ describe("daemon lifecycle", () => {
 
   test("a missing pid file does not authorize cleanup of another daemon lock", () => {
     const previousHome = process.env.HIVE_HOME;
-    const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-foreign-lock-cleanup-"));
+    const home = mkdtempSync(
+      join(tmpdir(), "hive-lifecycle-foreign-lock-cleanup-"),
+    );
     process.env.HIVE_HOME = home;
     const lock = {
       pid: process.pid,
@@ -235,7 +277,9 @@ describe("daemon lifecycle", () => {
       expect(() => cleanupLifecycleFiles()).toThrow("another daemon");
       expect(existsSync(getPidFilePath())).toBe(false);
       expect(readFileSync(getPortFilePath(), "utf8")).toBe("4317\n");
-      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(
+        lock,
+      );
     } finally {
       rmSync(home, { recursive: true, force: true });
       if (previousHome === undefined) delete process.env.HIVE_HOME;
@@ -269,19 +313,28 @@ describe("daemon lifecycle", () => {
   });
 
   test("instance identity is part of daemon reuse", () => {
-    expect(handshakeMismatch(handshake, { ...handshake, instanceId: "instance-b" }))
-      .toEqual("instance identity");
+    expect(
+      handshakeMismatch(handshake, { ...handshake, instanceId: "instance-b" }),
+    ).toEqual("instance identity");
   });
 
   test("a confirmed move retains its opaque handshake identity", () => {
     const moved = { ...handshake, identityKey: "project-b" };
     expect(handshakeMismatch(handshake, moved)).toEqual("project identity key");
-    expect(handshakeMismatch({ ...handshake, identityKey: "project-b" }, moved)).toBeNull();
+    expect(
+      handshakeMismatch({ ...handshake, identityKey: "project-b" }, moved),
+    ).toBeNull();
   });
 
   test("a recreated path cannot inherit the prior HiveUUID", () => {
-    const recreated = { ...handshake, hiveUuid: "hive-new", identityKey: "project-a" };
-    expect(handshakeMismatch(handshake, recreated)).toEqual("project identity (HiveUUID)");
+    const recreated = {
+      ...handshake,
+      hiveUuid: "hive-new",
+      identityKey: "project-a",
+    };
+    expect(handshakeMismatch(handshake, recreated)).toEqual(
+      "project identity (HiveUUID)",
+    );
   });
   test("accepts a healthy daemon even when its pidfile is missing", async () => {
     const previousHome = process.env.HIVE_HOME;
@@ -333,9 +386,13 @@ describe("daemon lifecycle", () => {
     process.env.HIVE_HOME = home;
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) => {
       const url = String(input);
-      return Promise.resolve(Response.json(url.endsWith("/health")
-        ? { ok: true }
-        : { ...handshake, hiveUuid: "hive-project-b" }));
+      return Promise.resolve(
+        Response.json(
+          url.endsWith("/health")
+            ? { ok: true }
+            : { ...handshake, hiveUuid: "hive-project-b" },
+        ),
+      );
     }) as typeof fetch);
     try {
       writeLifecycleFiles(4317);
@@ -357,10 +414,13 @@ describe("daemon lifecycle", () => {
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-build-"));
     process.env.HIVE_HOME = home;
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
-      Promise.resolve(Response.json(String(input).endsWith("/health")
-        ? { ok: true }
-        : { ...handshake, buildHash: "stale-build" }))
-    ) as typeof fetch);
+      Promise.resolve(
+        Response.json(
+          String(input).endsWith("/health")
+            ? { ok: true }
+            : { ...handshake, buildHash: "stale-build" },
+        ),
+      )) as typeof fetch);
     try {
       writeLifecycleFiles(4317);
       expect(await probeDaemonReuse(handshake)).toEqual({
@@ -381,10 +441,11 @@ describe("daemon lifecycle", () => {
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-reuse-"));
     process.env.HIVE_HOME = home;
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(((input) =>
-      Promise.resolve(Response.json(String(input).endsWith("/health")
-        ? { ok: true }
-        : handshake))
-    ) as typeof fetch);
+      Promise.resolve(
+        Response.json(
+          String(input).endsWith("/health") ? { ok: true } : handshake,
+        ),
+      )) as typeof fetch);
     try {
       writeLifecycleFiles(4317);
       expect(await probeDaemonReuse(handshake)).toEqual({

@@ -18,9 +18,12 @@ describe("who owns this install", () => {
   test("a source checkout is a source checkout wherever it sits", () => {
     // `bun run src/cli.ts` reports `process.execPath` as the bun binary, and a
     // dev build copied into the install root is still a dev build.
-    expect(detectInstallMethod(`${ROOT}/versions/0.0.7/hive`, ROOT, false))
-      .toEqual("source");
-    expect(detectInstallMethod("/usr/local/bin/bun", ROOT, false)).toEqual("source");
+    expect(
+      detectInstallMethod(`${ROOT}/versions/0.0.7/hive`, ROOT, false),
+    ).toEqual("source");
+    expect(detectInstallMethod("/usr/local/bin/bun", ROOT, false)).toEqual(
+      "source",
+    );
   });
 
   test("a path that merely starts with the versions prefix is not inside it", () => {

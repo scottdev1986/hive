@@ -17,16 +17,16 @@ import { readFile } from "node:fs/promises";
 import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
 import type { AgentRecord } from "../schemas";
 import {
+  type CommandOutput,
   descendantsOf,
   parseProcessTable,
   parseStateTable,
   runPs,
   runPsState,
-  type CommandOutput,
 } from "./resources";
 import {
-  requireSessiondAgentLocator,
   type HiveTerminalHostAdapter,
+  requireSessiondAgentLocator,
 } from "./session-host/hive-terminal-host";
 import { mintSessionRequestId } from "./session-host/locators";
 import { SessiondBrokerUnavailableError } from "./session-host/sessiond-host";
@@ -64,9 +64,7 @@ export interface VerifiedSessiondStopDependencies {
   selfPid?: number;
 }
 
-export type StopAgentSession = (
-  agent: AgentRecord,
-) => Promise<ReapOutcome>;
+export type StopAgentSession = (agent: AgentRecord) => Promise<ReapOutcome>;
 
 export const defaultReapDependencies = (): ReapDependencies => ({
   ps: runPs,
@@ -105,7 +103,9 @@ export async function captureProcessTree(
   const roots = [...new Set(rootPids)];
   for (const pid of roots) {
     if (!Number.isSafeInteger(pid) || pid <= 1 || pid === selfPid) {
-      throw new Error(`Refusing process-tree capture for invalid root pid ${pid}`);
+      throw new Error(
+        `Refusing process-tree capture for invalid root pid ${pid}`,
+      );
     }
   }
   const processes = parseProcessTable(await dependencies.ps());
@@ -220,10 +220,7 @@ export async function stopSessiondAgentSession(
           requestId: mintSessionRequestId(),
         },
       );
-      if (
-        result.state !== "terminated" ||
-        result.survivors.length !== 0
-      ) {
+      if (result.state !== "terminated" || result.survivors.length !== 0) {
         terminalError = new Error(
           `Sessiond termination was not positively verified for ${agent.name}: ${
             result.errors.map((error) => error.diagnosticId).join(", ") ||

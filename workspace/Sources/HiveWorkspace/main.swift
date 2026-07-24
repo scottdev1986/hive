@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 // Entry point. The CLI launches the app with
 //   --project <abs dir> --port <daemon port> --hive <abs hive binary>
@@ -6,6 +7,10 @@ import AppKit
 // `--smoke` runs the headless end-to-end checks (offscreen windows, real
 // terminals) and exits 0/1; `--feed <binary>` overrides the feed
 // subprocess for that harness.
+// A helper can exit between an isRunning check and a pipe write. Make that
+// ordinary race throw EPIPE instead of terminating the entire Workspace.
+signal(SIGPIPE, SIG_IGN)
+
 let config = LaunchConfig.parse(Array(CommandLine.arguments.dropFirst()))
 
 let app = NSApplication.shared

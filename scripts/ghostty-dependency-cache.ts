@@ -4,22 +4,36 @@ import { resolve } from "node:path";
 type Dependency = { name: string; url: string; hash: string };
 
 const [mode, zigArg, cacheArg, manifestArg] = process.argv.slice(2);
-if ((mode !== "fetch" && mode !== "verify") || !zigArg || !cacheArg || !manifestArg) {
-  console.error("usage: ghostty-dependency-cache.ts fetch|verify ZIG CACHE build.zig.zon.json");
+if (
+  (mode !== "fetch" && mode !== "verify") ||
+  !zigArg ||
+  !cacheArg ||
+  !manifestArg
+) {
+  console.error(
+    "usage: ghostty-dependency-cache.ts fetch|verify ZIG CACHE build.zig.zon.json",
+  );
   process.exit(2);
 }
 
 const zig = resolve(zigArg);
 const cache = resolve(cacheArg);
 const manifestPath = resolve(manifestArg);
-const manifest = (await Bun.file(manifestPath).json()) as Record<string, Dependency>;
-const dependencies = Object.entries(manifest).sort(([a], [b]) => a.localeCompare(b));
+const manifest = (await Bun.file(manifestPath).json()) as Record<
+  string,
+  Dependency
+>;
+const dependencies = Object.entries(manifest).sort(([a], [b]) =>
+  a.localeCompare(b),
+);
 
 for (const [expected, dependency] of dependencies) {
   const cached = resolve(cache, "p", expected);
   if (existsSync(cached)) continue;
   if (mode === "verify") {
-    console.error(`Ghostty dependency is absent from the offline cache: ${dependency.name} (${expected})`);
+    console.error(
+      `Ghostty dependency is absent from the offline cache: ${dependency.name} (${expected})`,
+    );
     process.exit(1);
   }
 
@@ -39,4 +53,6 @@ for (const [expected, dependency] of dependencies) {
   }
 }
 
-console.log(`Ghostty dependency cache ${mode === "fetch" ? "populated" : "verified"}: ${dependencies.length} packages`);
+console.log(
+  `Ghostty dependency cache ${mode === "fetch" ? "populated" : "verified"}: ${dependencies.length} packages`,
+);

@@ -24,7 +24,11 @@
 // rows against the hot-tier sweep.
 import { z } from "zod";
 import { estimateTokens } from "./episodic-projections";
-import type { EpisodicDigest, EpisodicEvent, EpisodicStore } from "./episodic-store";
+import type {
+  EpisodicDigest,
+  EpisodicEvent,
+  EpisodicStore,
+} from "./episodic-store";
 
 /** Same landing/completion classification as the what-landed query class. */
 const OUTCOME_PATTERN = /land|complete/i;
@@ -73,6 +77,7 @@ interface ExactValue {
   value: string;
   eventId: number;
 }
+
 export type { ExactValue };
 
 // Exact-value extraction (S3.7 DoD 3): SHAs, file paths, error strings,
@@ -83,18 +88,23 @@ export type { ExactValue };
 const SHA256_PATTERN = /\b[0-9a-f]{64}\b/g;
 const SHA_PATTERN = /\b[0-9a-f]{40}\b/g;
 const PATH_PATTERN = /\b(?:[\w@.~-]+\/)+[\w.@~-]+\b/g;
-const EXIT_CODE_PATTERN = /\bexit(?:ed)?(?:\s+with)?(?:\s+code)?[\s:=]\s*(\d{1,5})\b/gi;
+const EXIT_CODE_PATTERN =
+  /\bexit(?:ed)?(?:\s+with)?(?:\s+code)?[\s:=]\s*(\d{1,5})\b/gi;
 const ERROR_PATTERN = /\b(\w*(?:Error|Exception))\s*:?\s*([^\n;.]{0,100})/g;
 const COUNT_PATTERN = /\b(\d+)\s+(commits?|files?|tests?|events?)\b/g;
 
 // Exported for the WP5 pitfall harvester: a candidate's exact-values table is
 // extracted with the exact same patterns the digest side table uses, so a
 // pitfall and its session digest never disagree about what the values were.
-export function extractExactValues(event: EpisodicEvent, into: ExactValue[]): void {
+export function extractExactValues(
+  event: EpisodicEvent,
+  into: ExactValue[],
+): void {
   const text = `${event.summary} ${event.provenance}`;
   const push = (kind: ExactValue["kind"], value: string) => {
     const trimmed = value.trim();
-    if (trimmed.length > 0) into.push({ kind, value: trimmed, eventId: event.id });
+    if (trimmed.length > 0)
+      into.push({ kind, value: trimmed, eventId: event.id });
   };
   for (const match of text.matchAll(SHA256_PATTERN)) push("sha256", match[0]);
   for (const match of text.matchAll(SHA_PATTERN)) push("sha", match[0]);
@@ -116,8 +126,8 @@ export function extractExactValues(event: EpisodicEvent, into: ExactValue[]): vo
 function clipSummary(summary: string): string {
   const oneLine = summary.replace(/\s+/g, " ").trim();
   return oneLine.length <= SUMMARY_MAX
-      ? oneLine
-      : `${oneLine.slice(0, SUMMARY_MAX)}…`;
+    ? oneLine
+    : `${oneLine.slice(0, SUMMARY_MAX)}…`;
 }
 
 const eventLine = (event: EpisodicEvent): string =>
@@ -141,11 +151,9 @@ function renderDigest(input: {
   const first = events[0]!;
   const last = events[events.length - 1]!;
 
-  const outcomes = events.filter((event) =>
-    OUTCOME_PATTERN.test(event.type)
-  );
+  const outcomes = events.filter((event) => OUTCOME_PATTERN.test(event.type));
   const failures = events.filter((event) =>
-    FAILURE_PATTERN.test(`${event.type} ${event.summary}`)
+    FAILURE_PATTERN.test(`${event.type} ${event.summary}`),
   );
   // Open threads: the latest event of each type that is neither an outcome
   // nor a failure — where each still-running thread left off.
@@ -162,12 +170,14 @@ function renderDigest(input: {
   const exactValues: ExactValue[] = [];
   for (const event of events) extractExactValues(event, exactValues);
   const seen = new Set<string>();
-  const exactRows = exactValues.filter((row) => {
-    const key = `${row.kind}${row.value}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).slice(0, EXACT_VALUES_MAX);
+  const exactRows = exactValues
+    .filter((row) => {
+      const key = `${row.kind}${row.value}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, EXACT_VALUES_MAX);
 
   const lines: string[] = [
     `# Session digest — ${agent ?? "unknown agent"}${
@@ -175,9 +185,9 @@ function renderDigest(input: {
     }`,
     "",
     `> hint-not-authority: compiled deterministically from ${events.length} ` +
-    `typed episodic event(s) (${first.ts} → ${last.ts}). Every line carries ` +
-    "its [eN] event pointer — drill down with `memory_digest { eventId }` " +
-    "to the source rows before acting on any claim.",
+      `typed episodic event(s) (${first.ts} → ${last.ts}). Every line carries ` +
+      "its [eN] event pointer — drill down with `memory_digest { eventId }` " +
+      "to the source rows before acting on any claim.",
     "",
     "## Timeline",
   ];
@@ -197,16 +207,12 @@ function renderDigest(input: {
 
   lines.push("", "## Outcomes");
   lines.push(
-    ...(outcomes.length === 0
-      ? ["- none recorded"]
-      : outcomes.map(eventLine)),
+    ...(outcomes.length === 0 ? ["- none recorded"] : outcomes.map(eventLine)),
   );
 
   lines.push("", "## Failures");
   lines.push(
-    ...(failures.length === 0
-      ? ["- none recorded"]
-      : failures.map(eventLine)),
+    ...(failures.length === 0 ? ["- none recorded"] : failures.map(eventLine)),
   );
 
   lines.push("", "## Open threads");
@@ -268,11 +274,13 @@ export function compileDigest(
   });
 }
 
-const DigestProvenanceSchema = z.object({
-  eventIds: z.array(z.number().int().positive()),
-  sessionId: z.string().min(1).nullable(),
-  agent: z.string().min(1).nullable(),
-}).loose();
+const DigestProvenanceSchema = z
+  .object({
+    eventIds: z.array(z.number().int().positive()),
+    sessionId: z.string().min(1).nullable(),
+    agent: z.string().min(1).nullable(),
+  })
+  .loose();
 
 export interface DigestDriftReport {
   ok: boolean;
@@ -308,9 +316,9 @@ export function auditDigestDrift(
     const missing = provenance.eventIds.filter((id) => !present.has(id));
     return {
       ok: false,
-      detail: `digest ${digestId} references source event(s) no longer in the store: ${
-        missing.join(", ")
-      }`,
+      detail: `digest ${digestId} references source event(s) no longer in the store: ${missing.join(
+        ", ",
+      )}`,
     };
   }
   const recompiled = renderDigest({
@@ -367,8 +375,10 @@ export function runMemoryDigest(
   rawInput: MemoryDigestInput,
 ): MemoryDigestEnvelope {
   const input = MemoryDigestInputSchema.parse(rawInput);
-  const budget = Math.min(input.budget ?? MEMORY_DIGEST_DEFAULT_BUDGET,
-    MEMORY_DIGEST_DEFAULT_BUDGET);
+  const budget = Math.min(
+    input.budget ?? MEMORY_DIGEST_DEFAULT_BUDGET,
+    MEMORY_DIGEST_DEFAULT_BUDGET,
+  );
   if (deps.episodic === null) {
     return {
       state: "absent",
@@ -393,27 +403,30 @@ export function runMemoryDigest(
     });
   }
 
-  const events = input.eventId === undefined
-    ? []
-    : store.eventsByIds([input.eventId]);
+  const events =
+    input.eventId === undefined ? [] : store.eventsByIds([input.eventId]);
 
-  const digest = stored === null ? null : {
-    id: stored.id,
-    agent: stored.agent,
-    sessionId: stored.sessionId,
-    compiledAt: stored.compiledAt,
-    body: stored.body,
-    provenance: z.record(z.string(), z.unknown()).parse(
-      JSON.parse(stored.provenance),
-    ),
-  };
+  const digest =
+    stored === null
+      ? null
+      : {
+          id: stored.id,
+          agent: stored.agent,
+          sessionId: stored.sessionId,
+          compiledAt: stored.compiledAt,
+          body: stored.body,
+          provenance: z
+            .record(z.string(), z.unknown())
+            .parse(JSON.parse(stored.provenance)),
+        };
 
   if (digest === null && events.length === 0) {
-    const what = input.digestId !== undefined
-      ? `digest with id ${input.digestId}`
-      : input.agent !== undefined
-      ? `digest for agent ${input.agent}`
-      : `event with id ${input.eventId}`;
+    const what =
+      input.digestId !== undefined
+        ? `digest with id ${input.digestId}`
+        : input.agent !== undefined
+          ? `digest for agent ${input.agent}`
+          : `event with id ${input.eventId}`;
     return {
       state: "empty",
       detail: `no ${what} in this project's episodic store`,
@@ -431,10 +444,11 @@ export function runMemoryDigest(
     const bodyTokens = estimateTokens(digest.body);
     if (overhead + bodyTokens > budget) {
       const allowedChars = Math.max(0, (budget - overhead) * 4);
-      digest.body = digest.body.slice(
-        0,
-        Math.max(0, allowedChars - TRUNCATION_MARKER.length),
-      ) + TRUNCATION_MARKER;
+      digest.body =
+        digest.body.slice(
+          0,
+          Math.max(0, allowedChars - TRUNCATION_MARKER.length),
+        ) + TRUNCATION_MARKER;
       truncated = true;
     }
   }
@@ -447,10 +461,11 @@ export function runMemoryDigest(
       0,
       digest.body.length - TRUNCATION_MARKER.length,
     );
-    digest.body = content.slice(
-      0,
-      Math.max(0, content.length - (tokens - budget) * 4 - 8),
-    ) + TRUNCATION_MARKER;
+    digest.body =
+      content.slice(
+        0,
+        Math.max(0, content.length - (tokens - budget) * 4 - 8),
+      ) + TRUNCATION_MARKER;
     tokens = estimateTokens({ digest, events });
   }
   return {

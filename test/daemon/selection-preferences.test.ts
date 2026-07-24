@@ -7,7 +7,8 @@ import { SelectionPreferenceStore } from "../../src/daemon/selection-preferences
 const roots: string[] = [];
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
 });
 
 function store(): SelectionPreferenceStore {
@@ -20,7 +21,10 @@ describe("ordinary Workspace selection preference", () => {
   test("missing is unconfigured while corrupt data refuses loudly", () => {
     const preferences = store();
     expect(preferences.read()).toBeNull();
-    writeFileSync(preferences.path, '{"schemaVersion":1,"selection":{"global":"maybe"}}\n');
+    writeFileSync(
+      preferences.path,
+      '{"schemaVersion":1,"selection":{"global":"maybe"}}\n',
+    );
     expect(() => preferences.read()).toThrow();
   });
 
@@ -89,7 +93,9 @@ describe("ordinary Workspace selection preference", () => {
       global: "choice",
       categories: { debugging: "auto", planning: "auto" },
     });
-    expect(readdirSync(join(first.path, ".."))).toEqual(["routing-selection.json"]);
+    expect(readdirSync(join(first.path, ".."))).toEqual([
+      "routing-selection.json",
+    ]);
   });
 
   test("the last successfully committed mutation to one key wins", async () => {

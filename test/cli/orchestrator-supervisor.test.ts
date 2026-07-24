@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentRecord } from "../../src/schemas";
+import { OrchestratorLaunchFailedError } from "../../src/cli/orchestrator-sessiond";
 import {
   buildOrchestratorRecoveryBrief,
   superviseOrchestratorSession,
 } from "../../src/cli/orchestrator-supervisor";
-import { OrchestratorLaunchFailedError } from "../../src/cli/orchestrator-sessiond";
+import type { AgentRecord } from "../../src/schemas";
 
 function agent(
   name: string,
@@ -38,18 +38,22 @@ describe("orchestrator session supervisor", () => {
       launch: async (brief) => {
         launches.push(brief);
         if (launches.length === 1) {
-          throw new OrchestratorLaunchFailedError("sessiond broker unavailable");
+          throw new OrchestratorLaunchFailedError(
+            "sessiond broker unavailable",
+          );
         }
         return 0;
       },
-      fetchAgents: async () => launches.length === 1 ? [agent("maya")] : [],
+      fetchAgents: async () => (launches.length === 1 ? [agent("maya")] : []),
       sendRecoveryPing: async () => {},
       sleep: async () => {},
       now: (() => {
         let now = 0;
         return () => (now += 60_000);
       })(),
-      report: (message) => { reports.push(message); },
+      report: (message) => {
+        reports.push(message);
+      },
     });
 
     expect(result).toBe(0);
@@ -70,13 +74,17 @@ describe("orchestrator session supervisor", () => {
         return 17;
       },
       fetchAgents: async () => [agent("maya", "done")],
-      sendRecoveryPing: async (name) => { pings.push(name); },
+      sendRecoveryPing: async (name) => {
+        pings.push(name);
+      },
       sleep: async () => {},
       now: (() => {
         let now = 0;
         return () => (now += 60_000);
       })(),
-      report: (message) => { reports.push(message); },
+      report: (message) => {
+        reports.push(message);
+      },
     });
 
     expect(exitCode).toEqual(17);
@@ -96,10 +104,13 @@ describe("orchestrator session supervisor", () => {
         launches.push(brief);
         return exitCodes.shift()!;
       },
-      fetchAgents: async () => launches.length === 1
-        ? [agent("maya"), agent("noah", "idle"), agent("closed", "dead")]
-        : [],
-      sendRecoveryPing: async (name, body) => { pings.push({ name, body }); },
+      fetchAgents: async () =>
+        launches.length === 1
+          ? [agent("maya"), agent("noah", "idle"), agent("closed", "dead")]
+          : [],
+      sendRecoveryPing: async (name, body) => {
+        pings.push({ name, body });
+      },
       sleep: async () => {},
       now: (() => {
         let now = 0;
@@ -142,12 +153,16 @@ describe("orchestrator session supervisor", () => {
         return [];
       },
       sendRecoveryPing: async () => {},
-      sleep: async () => { events.push("sleep"); },
+      sleep: async () => {
+        events.push("sleep");
+      },
       now: (() => {
         let now = 0;
         return () => (now += 60_000);
       })(),
-      report: (message) => { events.push(`report:${message}`); },
+      report: (message) => {
+        events.push(`report:${message}`);
+      },
     });
 
     expect(exitCode).toEqual(4);
@@ -156,8 +171,9 @@ describe("orchestrator session supervisor", () => {
     expect(events).toContain("sleep");
     expect(events).toContain("read:2");
     expect(events.filter((event) => event === "launch:backup")).toEqual([]);
-    expect(events.some((event) => event.includes("cannot determine whether")))
-      .toEqual(true);
+    expect(
+      events.some((event) => event.includes("cannot determine whether")),
+    ).toEqual(true);
   });
 
   test("reports an unconfirmed ping in the backup brief without blocking recovery", async () => {
@@ -167,9 +183,8 @@ describe("orchestrator session supervisor", () => {
         launches.push(brief);
         return 0;
       },
-      fetchAgents: async () => launches.length === 1
-        ? [agent("maya"), agent("noah")]
-        : [],
+      fetchAgents: async () =>
+        launches.length === 1 ? [agent("maya"), agent("noah")] : [],
       sendRecoveryPing: async (name) => {
         if (name === "noah") throw new Error("delivery unavailable");
       },

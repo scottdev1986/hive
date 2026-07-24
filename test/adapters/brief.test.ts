@@ -81,13 +81,15 @@ describe("parseDocOutline", () => {
 
 describe("findTaskDocReferences", () => {
   test("binds a trailing section selector to the doc", () => {
-    expect(findTaskDocReferences("Rework SPEC.md §6 to add a tier", CONFIG))
-      .toEqual([{ path: "SPEC.md", sections: [6] }]);
+    expect(
+      findTaskDocReferences("Rework SPEC.md §6 to add a tier", CONFIG),
+    ).toEqual([{ path: "SPEC.md", sections: [6] }]);
   });
 
   test("binds a leading section selector to the doc", () => {
-    expect(findTaskDocReferences("Read section 7 of SPEC.md first", CONFIG))
-      .toEqual([{ path: "SPEC.md", sections: [7] }]);
+    expect(
+      findTaskDocReferences("Read section 7 of SPEC.md first", CONFIG),
+    ).toEqual([{ path: "SPEC.md", sections: [7] }]);
   });
 
   test("reads a bare primary-doc § reference with no .md", () => {
@@ -117,59 +119,70 @@ describe("findTaskDocReferences", () => {
 
   test("collects several sections and de-duplicates", () => {
     expect(
-      findTaskDocReferences("Update SPEC.md sections 6 and 7, then §6 again", CONFIG),
+      findTaskDocReferences(
+        "Update SPEC.md sections 6 and 7, then §6 again",
+        CONFIG,
+      ),
     ).toEqual([{ path: "SPEC.md", sections: [6, 7] }]);
   });
 
   test("reads a quoted heading selector", () => {
     expect(
-      findTaskDocReferences('Revise SPEC.md "Who picks the model" today', CONFIG),
+      findTaskDocReferences(
+        'Revise SPEC.md "Who picks the model" today',
+        CONFIG,
+      ),
     ).toEqual([{ path: "SPEC.md", sections: ["Who picks the model"] }]);
   });
 
   test("a doc named with no section still resolves, so it gets an outline", () => {
-    expect(findTaskDocReferences("Read SPEC.md before designing", CONFIG))
-      .toEqual([{ path: "SPEC.md", sections: [] }]);
+    expect(
+      findTaskDocReferences("Read SPEC.md before designing", CONFIG),
+    ).toEqual([{ path: "SPEC.md", sections: [] }]);
   });
 
   test("finds docs in briefable directories", () => {
     expect(
-      findTaskDocReferences(
-        "See docs/routing/rejected-approaches.md",
-        CONFIG,
-      ),
-    ).toEqual([
-      { path: "docs/routing/rejected-approaches.md", sections: [] },
-    ]);
+      findTaskDocReferences("See docs/routing/rejected-approaches.md", CONFIG),
+    ).toEqual([{ path: "docs/routing/rejected-approaches.md", sections: [] }]);
   });
 
   test("strips trailing punctuation from a path", () => {
-    expect(findTaskDocReferences("Read SPEC.md, then stop.", CONFIG)[0]!.path)
-      .toBe("SPEC.md");
+    expect(
+      findTaskDocReferences("Read SPEC.md, then stop.", CONFIG)[0]!.path,
+    ).toBe("SPEC.md");
   });
 
   test("ignores non-briefable paths", () => {
-    expect(findTaskDocReferences("Fix src/daemon/spawner-impl.ts", CONFIG))
-      .toEqual([]);
-    expect(findTaskDocReferences("Read node_modules/pkg/readme.md", CONFIG))
-      .toEqual([]);
+    expect(
+      findTaskDocReferences("Fix src/daemon/spawner-impl.ts", CONFIG),
+    ).toEqual([]);
+    expect(
+      findTaskDocReferences("Read node_modules/pkg/readme.md", CONFIG),
+    ).toEqual([]);
   });
 
   test("a task naming no doc gets no references", () => {
-    expect(findTaskDocReferences("Add a retry to the poller", CONFIG)).toEqual([]);
+    expect(findTaskDocReferences("Add a retry to the poller", CONFIG)).toEqual(
+      [],
+    );
   });
 });
 
 describe("resolveBriefablePath", () => {
   test("resolves an allowed doc inside the root", () => {
-    expect(resolveBriefablePath("/repo", "SPEC.md", CONFIG))
-      .toBe("/repo/SPEC.md");
-    expect(resolveBriefablePath("/repo", "docs/x.md", CONFIG))
-      .toBe("/repo/docs/x.md");
+    expect(resolveBriefablePath("/repo", "SPEC.md", CONFIG)).toBe(
+      "/repo/SPEC.md",
+    );
+    expect(resolveBriefablePath("/repo", "docs/x.md", CONFIG)).toBe(
+      "/repo/docs/x.md",
+    );
   });
 
   test("refuses traversal, absolute paths, and non-briefable files", () => {
-    expect(resolveBriefablePath("/repo", "../../etc/passwd.md", CONFIG)).toBeNull();
+    expect(
+      resolveBriefablePath("/repo", "../../etc/passwd.md", CONFIG),
+    ).toBeNull();
     expect(resolveBriefablePath("/repo", "/etc/passwd.md", CONFIG)).toBeNull();
     expect(resolveBriefablePath("/repo", "src/secret.md", CONFIG)).toBeNull();
   });
@@ -184,7 +197,9 @@ describe("selectSections", () => {
   });
 
   test("matches a string selector loosely against heading text", () => {
-    const picked = selectSections(parseDocOutline(SPEC), ["who picks the MODEL"]);
+    const picked = selectSections(parseDocOutline(SPEC), [
+      "who picks the MODEL",
+    ]);
     expect(picked).toHaveLength(1);
   });
 
@@ -223,7 +238,10 @@ describe("loadBriefConfig", () => {
 describe("buildScopedBrief", () => {
   test("a task naming no doc gets no brief at all", async () => {
     expect(
-      await buildScopedBrief("/repo", "Add a retry", { readDoc: readSpec, config: CONFIG }),
+      await buildScopedBrief("/repo", "Add a retry", {
+        readDoc: readSpec,
+        config: CONFIG,
+      }),
     ).toBe("");
   });
 
@@ -246,7 +264,9 @@ describe("buildScopedBrief", () => {
     });
     expect(brief).toContain("Outline of SPEC.md");
     // Depth is rendered as indentation under the `path:line` pointer.
-    expect(brief).toContain("SPEC.md:15    7. What happens when a context fills up");
+    expect(brief).toContain(
+      "SPEC.md:15    7. What happens when a context fills up",
+    );
     expect(brief).toContain("SPEC.md:19  Open questions");
   });
 
@@ -346,7 +366,10 @@ describe("buildScopedBrief", () => {
     // The other buildScopedBrief tests inject `config`, so this is the only one
     // that exercises the discovery wiring the brief is fed from in production.
     const root = new URL("../..", import.meta.url).pathname;
-    const brief = await buildScopedBrief(root, "Follow SPEC.md before you start");
+    const brief = await buildScopedBrief(
+      root,
+      "Follow SPEC.md before you start",
+    );
     expect(brief).toContain("SPEC.md");
     expect(brief).toContain("Do not read these files whole");
   });

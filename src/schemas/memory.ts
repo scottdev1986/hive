@@ -61,77 +61,84 @@ export const MemoryTopicSchema = z
   .string()
   .min(1)
   .max(60)
-  .regex(
-    /^[a-z0-9][a-z0-9-]*$/,
-    "topic must be lowercase kebab-case",
-  );
+  .regex(/^[a-z0-9][a-z0-9-]*$/, "topic must be lowercase kebab-case");
 
-export const MemoryFactSchema = z.strictObject({
-  id: z.string().min(1),
-  scope: MemoryScopeSchema,
-  topic: MemoryTopicSchema,
-  title: RequiredMemoryTextSchema,
-  body: MemoryTextSchema,
-  tags: z.array(MemoryTextSchema),
-  date: IsoDateSchema,
-  path: z.string().min(1),
-  source: MemorySourceSchema,
-  evidence: RequiredMemoryTextSchema,
-  status: MemoryVerificationStatusSchema,
-  kind: MemoryKindSchema.default("article"),
-  supersedes: z.array(z.string()),
-  raw: z.array(z.string()),
-  verified: IsoDateSchema.optional(),
-}).superRefine((input, context) => {
-  const verificationError = verificationDateError(input);
-  if (verificationError !== null) {
-    context.addIssue({
-      code: "custom",
-      path: ["verified"],
-      message: verificationError,
-    });
-  }
-  if (input.status === "conflicted" && !/conflict|disagree|contradict/i.test(input.body)) {
-    context.addIssue({
-      code: "custom",
-      path: ["body"],
-      message: "conflicted articles must annotate the disagreement",
-    });
-  }
-});
+export const MemoryFactSchema = z
+  .strictObject({
+    id: z.string().min(1),
+    scope: MemoryScopeSchema,
+    topic: MemoryTopicSchema,
+    title: RequiredMemoryTextSchema,
+    body: MemoryTextSchema,
+    tags: z.array(MemoryTextSchema),
+    date: IsoDateSchema,
+    path: z.string().min(1),
+    source: MemorySourceSchema,
+    evidence: RequiredMemoryTextSchema,
+    status: MemoryVerificationStatusSchema,
+    kind: MemoryKindSchema.default("article"),
+    supersedes: z.array(z.string()),
+    raw: z.array(z.string()),
+    verified: IsoDateSchema.optional(),
+  })
+  .superRefine((input, context) => {
+    const verificationError = verificationDateError(input);
+    if (verificationError !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["verified"],
+        message: verificationError,
+      });
+    }
+    if (
+      input.status === "conflicted" &&
+      !/conflict|disagree|contradict/i.test(input.body)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["body"],
+        message: "conflicted articles must annotate the disagreement",
+      });
+    }
+  });
 export type MemoryFact = z.infer<typeof MemoryFactSchema>;
 
-export const MemoryWriteInputSchema = z.strictObject({
-  scope: MemoryScopeSchema,
-  id: z.string().min(1).optional(),
-  topic: MemoryTopicSchema,
-  title: RequiredMemoryTextSchema,
-  body: RequiredMemoryTextSchema,
-  tags: z.array(MemoryTextSchema).optional(),
-  date: IsoDateSchema.optional(),
-  source: MemoryWriterSourceSchema,
-  evidence: RequiredMemoryTextSchema,
-  status: MemoryVerificationStatusSchema,
-  kind: MemoryKindSchema.default("article"),
-  supersedes: z.array(z.string()),
-  verified: IsoDateSchema.optional(),
-}).superRefine((input, context) => {
-  const verificationError = verificationDateError(input);
-  if (verificationError !== null) {
-    context.addIssue({
-      code: "custom",
-      path: ["verified"],
-      message: verificationError,
-    });
-  }
-  if (input.status === "conflicted" && !/conflict|disagree|contradict/i.test(input.body)) {
-    context.addIssue({
-      code: "custom",
-      path: ["body"],
-      message: "conflicted articles must annotate the disagreement",
-    });
-  }
-});
+export const MemoryWriteInputSchema = z
+  .strictObject({
+    scope: MemoryScopeSchema,
+    id: z.string().min(1).optional(),
+    topic: MemoryTopicSchema,
+    title: RequiredMemoryTextSchema,
+    body: RequiredMemoryTextSchema,
+    tags: z.array(MemoryTextSchema).optional(),
+    date: IsoDateSchema.optional(),
+    source: MemoryWriterSourceSchema,
+    evidence: RequiredMemoryTextSchema,
+    status: MemoryVerificationStatusSchema,
+    kind: MemoryKindSchema.default("article"),
+    supersedes: z.array(z.string()),
+    verified: IsoDateSchema.optional(),
+  })
+  .superRefine((input, context) => {
+    const verificationError = verificationDateError(input);
+    if (verificationError !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["verified"],
+        message: verificationError,
+      });
+    }
+    if (
+      input.status === "conflicted" &&
+      !/conflict|disagree|contradict/i.test(input.body)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["body"],
+        message: "conflicted articles must annotate the disagreement",
+      });
+    }
+  });
 export type MemoryWriteInput = z.input<typeof MemoryWriteInputSchema>;
 
 export const MemorySimilarCandidateSchema = z.strictObject({
@@ -139,33 +146,37 @@ export const MemorySimilarCandidateSchema = z.strictObject({
   id: z.string().min(1),
   title: z.string().min(1),
 });
-export type MemorySimilarCandidate = z.infer<typeof MemorySimilarCandidateSchema>;
+export type MemorySimilarCandidate = z.infer<
+  typeof MemorySimilarCandidateSchema
+>;
 
-export const MemoryWriteResultSchema = z.strictObject({
-  id: z.string().min(1),
-  scope: MemoryScopeSchema,
-  topic: MemoryTopicSchema,
-  title: z.string().min(1),
-  path: z.string().min(1),
-  rawPath: z.string().min(1),
-  source: MemorySourceSchema,
-  status: MemoryVerificationStatusSchema,
-  verified: IsoDateSchema.optional(),
-  similarCandidates: z.array(MemorySimilarCandidateSchema).optional(),
-  /** What happened to this write's vector projection (defect D2):
-   * "indexed" | "queued" | "unavailable:<state>". Optional so older daemons
-   * still parse. */
-  embedding: z.string().optional(),
-}).superRefine((input, context) => {
-  const verificationError = verificationDateError(input);
-  if (verificationError !== null) {
-    context.addIssue({
-      code: "custom",
-      path: ["verified"],
-      message: verificationError,
-    });
-  }
-});
+export const MemoryWriteResultSchema = z
+  .strictObject({
+    id: z.string().min(1),
+    scope: MemoryScopeSchema,
+    topic: MemoryTopicSchema,
+    title: z.string().min(1),
+    path: z.string().min(1),
+    rawPath: z.string().min(1),
+    source: MemorySourceSchema,
+    status: MemoryVerificationStatusSchema,
+    verified: IsoDateSchema.optional(),
+    similarCandidates: z.array(MemorySimilarCandidateSchema).optional(),
+    /** What happened to this write's vector projection (defect D2):
+     * "indexed" | "queued" | "unavailable:<state>". Optional so older daemons
+     * still parse. */
+    embedding: z.string().optional(),
+  })
+  .superRefine((input, context) => {
+    const verificationError = verificationDateError(input);
+    if (verificationError !== null) {
+      context.addIssue({
+        code: "custom",
+        path: ["verified"],
+        message: verificationError,
+      });
+    }
+  });
 export type MemoryWriteResult = z.infer<typeof MemoryWriteResultSchema>;
 
 export function compactMemoryWriteResult(

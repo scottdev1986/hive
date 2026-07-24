@@ -27,7 +27,8 @@ import {
 } from "../src/daemon/sessiond-broker";
 
 const repoRoot = resolve(import.meta.dir, "..");
-const installRoot = process.env.HIVE_INSTALL_ROOT ?? join(repoRoot, ".dev/root");
+const installRoot =
+  process.env.HIVE_INSTALL_ROOT ?? join(repoRoot, ".dev/root");
 const stagedHive = join(installRoot, "current", "hive");
 const stagedSessiond = join(installRoot, "current", "hive-sessiond");
 // Process tables show the realpath through versions/, not the `current` symlink.
@@ -42,8 +43,9 @@ if (!existsSync(stagedHive) || !existsSync(stagedSessiond)) {
   process.exit(2);
 }
 
-const home = process.env.HIVE_PROOF_HOME
-  ?? `/tmp/hsl-${Math.random().toString(16).slice(2, 6)}`;
+const home =
+  process.env.HIVE_PROOF_HOME ??
+  `/tmp/hsl-${Math.random().toString(16).slice(2, 6)}`;
 const port = Number(process.env.HIVE_PROOF_PORT ?? "0");
 mkdirSync(home, { recursive: true, mode: 0o700 });
 const transcript = join(home, "sessiond-lifecycle-proof.log");
@@ -97,7 +99,8 @@ async function sessiondPids(): Promise<number[]> {
     const ppid = Number(match[2]);
     const command = match[3] ?? "";
     if (ppid !== daemonPid) continue;
-    if (!command.includes("hive-sessiond") || !command.includes("serve")) continue;
+    if (!command.includes("hive-sessiond") || !command.includes("serve"))
+      continue;
     // Prefer the staged binary when the path is present; still accept a
     // realpath form under versions/.
     if (
@@ -144,7 +147,9 @@ try {
               if (still.length === 1 && still[0] === peer) {
                 const client2 = await connectUnixSocket(brokerSocket, 500);
                 try {
-                  if (readLocalPeerPid(socketFileDescriptor(client2)) === peer) {
+                  if (
+                    readLocalPeerPid(socketFileDescriptor(client2)) === peer
+                  ) {
                     pidsBefore = still;
                     fullyReady = true;
                     break;
@@ -225,20 +230,24 @@ try {
 
   writeFileSync(
     join(home, "PROOF.json"),
-    `${JSON.stringify({
-      ok: true,
-      home,
-      installRoot,
-      boundPort,
-      daemonPid: daemon.pid,
-      brokerPidsBefore: pidsBefore,
-      brokerPidAfterRestart: recoveredPid,
-      stagedHive,
-      stagedSessiond,
-      brokerSocket,
-      harnessSpawnedBroker: false,
-      recovered: true,
-    }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        ok: true,
+        home,
+        installRoot,
+        boundPort,
+        daemonPid: daemon.pid,
+        brokerPidsBefore: pidsBefore,
+        brokerPidAfterRestart: recoveredPid,
+        stagedHive,
+        stagedSessiond,
+        brokerSocket,
+        harnessSpawnedBroker: false,
+        recovered: true,
+      },
+      null,
+      2,
+    )}\n`,
   );
   log(`PROOF.json written at ${join(home, "PROOF.json")}`);
   log(`PASS: staged daemon owns sessiond broker with crash recovery`);

@@ -297,14 +297,18 @@ export class EpisodicStore {
         PRIMARY KEY (kind, scope, source_id)
       );
     `);
-    this.database.query(
-      "INSERT OR IGNORE INTO meta (key, value) VALUES ('schemaVersion', ?)",
-    ).run(SCHEMA_VERSION);
+    this.database
+      .query(
+        "INSERT OR IGNORE INTO meta (key, value) VALUES ('schemaVersion', ?)",
+      )
+      .run(SCHEMA_VERSION);
     // v1 → v2: the memory_embeddings table above (CREATE IF NOT EXISTS is the
     // whole migration — the table is a rebuildable projection, no data moves).
-    this.database.query(
-      "UPDATE meta SET value = ? WHERE key = 'schemaVersion' AND value != ?",
-    ).run(SCHEMA_VERSION, SCHEMA_VERSION);
+    this.database
+      .query(
+        "UPDATE meta SET value = ? WHERE key = 'schemaVersion' AND value != ?",
+      )
+      .run(SCHEMA_VERSION, SCHEMA_VERSION);
   }
 
   recordFact(rawInput: NewEpisodicFact): EpisodicFact {
@@ -328,10 +332,12 @@ export class EpisodicStore {
       if (input.supersedesId !== undefined) {
         // The contradiction: the superseded belief stops being current at the
         // instant its replacement becomes valid. The row itself stays.
-        this.database.query(`
+        this.database
+          .query(`
           UPDATE facts SET invalid_at = ?
           WHERE id = ? AND invalid_at IS NULL
-        `).run(fact.validAt, input.supersedesId);
+        `)
+          .run(fact.validAt, input.supersedesId);
       }
       this.insertFact(fact);
     })();
@@ -339,25 +345,27 @@ export class EpisodicStore {
   }
 
   private insertFact(fact: EpisodicFact): void {
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO facts (
         id, kind, topic, title, body, source, confidence,
         created_at, valid_at, invalid_at, expired_at, supersedes_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      fact.id,
-      fact.kind,
-      fact.topic,
-      fact.title,
-      fact.body,
-      fact.source,
-      fact.confidence,
-      fact.createdAt,
-      fact.validAt,
-      fact.invalidAt,
-      fact.expiredAt,
-      fact.supersedesId,
-    );
+    `)
+      .run(
+        fact.id,
+        fact.kind,
+        fact.topic,
+        fact.title,
+        fact.body,
+        fact.source,
+        fact.confidence,
+        fact.createdAt,
+        fact.validAt,
+        fact.invalidAt,
+        fact.expiredAt,
+        fact.supersedesId,
+      );
   }
 
   /** Stamp a currently-valid fact as no longer believed. When `supersededBy`
@@ -369,17 +377,23 @@ export class EpisodicStore {
   ): EpisodicFact | null {
     const at = options.at ?? new Date().toISOString();
     return this.database.transaction(() => {
-      const current = this.database.query(`
+      const current = this.database
+        .query(`
         SELECT * FROM facts WHERE id = ? AND invalid_at IS NULL
-      `).get(id);
+      `)
+        .get(id);
       if (current === null) return null;
-      this.database.query(`
+      this.database
+        .query(`
         UPDATE facts SET invalid_at = ? WHERE id = ? AND invalid_at IS NULL
-      `).run(at, id);
+      `)
+        .run(at, id);
       if (options.supersededBy !== undefined) {
-        this.database.query(`
+        this.database
+          .query(`
           UPDATE facts SET supersedes_id = ? WHERE id = ?
-        `).run(id, options.supersededBy);
+        `)
+          .run(id, options.supersededBy);
       }
       return parseFactRow(
         this.database.query("SELECT * FROM facts WHERE id = ?").get(id),
@@ -389,44 +403,58 @@ export class EpisodicStore {
 
   /** The beliefs held now: every fact never contradicted or expired. */
   currentFacts(): EpisodicFact[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM facts WHERE invalid_at IS NULL ORDER BY created_at, id
-    `).all().map(parseFactRow);
+    `)
+      .all()
+      .map(parseFactRow);
   }
 
   /** The beliefs held at `ts`: valid by then and not yet contradicted. */
   factsAsOf(ts: string): EpisodicFact[] {
     const at = IsoTimestampSchema.parse(ts);
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM facts
       WHERE valid_at <= ? AND (invalid_at IS NULL OR invalid_at > ?)
       ORDER BY valid_at, id
-    `).all(at, at).map(parseFactRow);
+    `)
+      .all(at, at)
+      .map(parseFactRow);
   }
 
   appendEvent(rawInput: NewEpisodicEvent): EpisodicEvent {
     const input = NewEpisodicEventSchema.parse(rawInput);
     const ts = input.ts ?? new Date().toISOString();
     const provenance = JSON.stringify(input.provenance);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO events (ts, agent, type, summary, provenance)
       VALUES (?, ?, ?, ?, ?)
-    `).run(ts, input.agent, input.type, input.summary, provenance);
-    const row = this.database.query(`
+    `)
+      .run(ts, input.agent, input.type, input.summary, provenance);
+    const row = this.database
+      .query(`
       SELECT * FROM events WHERE id = last_insert_rowid()
-    `).get();
+    `)
+      .get();
     return EpisodicEventSchema.parse(EventRowSchema.parse(row));
   }
 
   /** Row counts per table, for cheap staleness checks by derived readers
    * (the L1 search index rebuilds only when these move). */
   rowCounts(): { events: number; facts: number } {
-    const events = z.object({ count: z.number() }).parse(
-      this.database.query("SELECT COUNT(*) AS count FROM events").get(),
-    ).count;
-    const facts = z.object({ count: z.number() }).parse(
-      this.database.query("SELECT COUNT(*) AS count FROM facts").get(),
-    ).count;
+    const events = z
+      .object({ count: z.number() })
+      .parse(
+        this.database.query("SELECT COUNT(*) AS count FROM events").get(),
+      ).count;
+    const facts = z
+      .object({ count: z.number() })
+      .parse(
+        this.database.query("SELECT COUNT(*) AS count FROM facts").get(),
+      ).count;
     return { events, facts };
   }
 
@@ -442,18 +470,18 @@ export class EpisodicStore {
       params.push(IsoTimestampSchema.parse(filter.since));
     }
     const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
-    return this.database.query(
-      `SELECT * FROM events${where} ORDER BY id`,
-    ).all(...params).map((row) =>
-      EpisodicEventSchema.parse(EventRowSchema.parse(row))
-    );
+    return this.database
+      .query(`SELECT * FROM events${where} ORDER BY id`)
+      .all(...params)
+      .map((row) => EpisodicEventSchema.parse(EventRowSchema.parse(row)));
   }
 
   /** Raw provenance JSON of every digest row (HiveMemory HM-2 WP3): the
    * retention sweep parses these to learn which event rows are still a
    * digest's drill-down target and must survive the hot-tier cutoff. */
   digestProvenanceBlobs(): string[] {
-    return this.database.query("SELECT provenance FROM digests ORDER BY id")
+    return this.database
+      .query("SELECT provenance FROM digests ORDER BY id")
       .all()
       .map((row) => z.object({ provenance: z.string() }).parse(row).provenance);
   }
@@ -472,42 +500,55 @@ export class EpisodicStore {
     const compiledAt = input.compiledAt ?? new Date().toISOString();
     IsoTimestampSchema.parse(compiledAt);
     this.database.transaction(() => {
-      this.database.query(
-        "DELETE FROM digests WHERE agent IS ? AND session_id IS ?",
-      ).run(input.agent, input.sessionId);
-      this.database.query(`
+      this.database
+        .query("DELETE FROM digests WHERE agent IS ? AND session_id IS ?")
+        .run(input.agent, input.sessionId);
+      this.database
+        .query(`
         INSERT INTO digests (agent, session_id, compiled_at, body, provenance)
         VALUES (?, ?, ?, ?, ?)
-      `).run(
-        input.agent,
-        input.sessionId,
-        compiledAt,
-        input.body,
-        JSON.stringify(input.provenance),
-      );
+      `)
+        .run(
+          input.agent,
+          input.sessionId,
+          compiledAt,
+          input.body,
+          JSON.stringify(input.provenance),
+        );
     })();
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT * FROM digests WHERE id = last_insert_rowid()
-    `).get();
+    `)
+      .get();
     return parseDigestRow(row);
   }
 
   digestById(id: number): EpisodicDigest | null {
-    const row = this.database.query("SELECT * FROM digests WHERE id = ?")
+    const row = this.database
+      .query("SELECT * FROM digests WHERE id = ?")
       .get(id);
     return row === null ? null : parseDigestRow(row);
   }
 
   /** The newest digest for an agent, optionally pinned to one session. */
-  digestFor(filter: { agent: string; sessionId?: string }): EpisodicDigest | null {
-    const row = filter.sessionId === undefined
-      ? this.database.query(`
+  digestFor(filter: {
+    agent: string;
+    sessionId?: string;
+  }): EpisodicDigest | null {
+    const row =
+      filter.sessionId === undefined
+        ? this.database
+            .query(`
           SELECT * FROM digests WHERE agent = ? ORDER BY id DESC LIMIT 1
-        `).get(filter.agent)
-      : this.database.query(`
+        `)
+            .get(filter.agent)
+        : this.database
+            .query(`
           SELECT * FROM digests WHERE agent = ? AND session_id IS ?
           ORDER BY id DESC LIMIT 1
-        `).get(filter.agent, filter.sessionId);
+        `)
+            .get(filter.agent, filter.sessionId);
     return row === null ? null : parseDigestRow(row);
   }
 
@@ -516,11 +557,10 @@ export class EpisodicStore {
   eventsByIds(ids: readonly number[]): EpisodicEvent[] {
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => "?").join(", ");
-    const rows = this.database.query(
-      `SELECT * FROM events WHERE id IN (${placeholders})`,
-    ).all(...ids).map((row) =>
-      EpisodicEventSchema.parse(EventRowSchema.parse(row))
-    );
+    const rows = this.database
+      .query(`SELECT * FROM events WHERE id IN (${placeholders})`)
+      .all(...ids)
+      .map((row) => EpisodicEventSchema.parse(EventRowSchema.parse(row)));
     const byId = new Map(rows.map((event) => [event.id, event]));
     return ids.flatMap((id) => {
       const event = byId.get(id);
@@ -535,15 +575,16 @@ export class EpisodicStore {
    * is an invariant, so there is deliberately no parameter for them. */
   sweepEvents(cutoff: string, keepIds: ReadonlySet<number>): number {
     const at = IsoTimestampSchema.parse(cutoff);
-    const candidates = this.database.query(
-      "SELECT id FROM events WHERE ts < ?",
-    ).all(at).map((row) => z.object({ id: z.number() }).parse(row).id);
+    const candidates = this.database
+      .query("SELECT id FROM events WHERE ts < ?")
+      .all(at)
+      .map((row) => z.object({ id: z.number() }).parse(row).id);
     const deletable = candidates.filter((id) => !keepIds.has(id));
     if (deletable.length === 0) return 0;
     const placeholders = deletable.map(() => "?").join(", ");
-    this.database.query(
-      `DELETE FROM events WHERE id IN (${placeholders})`,
-    ).run(...deletable);
+    this.database
+      .query(`DELETE FROM events WHERE id IN (${placeholders})`)
+      .run(...deletable);
     return deletable.length;
   }
 
@@ -555,7 +596,8 @@ export class EpisodicStore {
    * future wake with the whole log.
    */
   memoryHighWater(agent: string): MemoryHighWater | null {
-    const row = this.database.query("SELECT value FROM meta WHERE key = ?")
+    const row = this.database
+      .query("SELECT value FROM meta WHERE key = ?")
       .get(`memoryHighWater:${agent}`);
     if (row === null) return null;
     try {
@@ -572,10 +614,12 @@ export class EpisodicStore {
    * skip the changes it carried. */
   advanceMemoryHighWater(agent: string, mark: MemoryHighWater): void {
     const value = JSON.stringify(MemoryHighWaterSchema.parse(mark));
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO meta (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(`memoryHighWater:${agent}`, value);
+    `)
+      .run(`memoryHighWater:${agent}`, value);
   }
 
   // -------------------------------------------------------------------------
@@ -594,7 +638,8 @@ export class EpisodicStore {
   }): void {
     const embeddedAt = input.embeddedAt ?? new Date().toISOString();
     IsoTimestampSchema.parse(embeddedAt);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO memory_embeddings (
         kind, scope, source_id, model, dimensions, vector, embedded_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -603,19 +648,20 @@ export class EpisodicStore {
         dimensions = excluded.dimensions,
         vector = excluded.vector,
         embedded_at = excluded.embedded_at
-    `).run(
-      input.kind,
-      input.scope,
-      input.sourceId,
-      input.model,
-      input.vector.length,
-      new Uint8Array(
-        input.vector.buffer,
-        input.vector.byteOffset,
-        input.vector.byteLength,
-      ),
-      embeddedAt,
-    );
+    `)
+      .run(
+        input.kind,
+        input.scope,
+        input.sourceId,
+        input.model,
+        input.vector.length,
+        new Uint8Array(
+          input.vector.buffer,
+          input.vector.byteOffset,
+          input.vector.byteLength,
+        ),
+        embeddedAt,
+      );
   }
 
   removeMemoryEmbedding(
@@ -623,33 +669,44 @@ export class EpisodicStore {
     scope: string,
     sourceId: string,
   ): void {
-    this.database.query(`
+    this.database
+      .query(`
       DELETE FROM memory_embeddings
       WHERE kind = ? AND scope = ? AND source_id = ?
-    `).run(kind, scope, sourceId);
+    `)
+      .run(kind, scope, sourceId);
   }
 
   /** Every stored vector, optionally one kind only — the brute-force search
    * corpus. Corpora are small (hundreds of articles, thousands of facts), so
    * a full scan is the design, not a stopgap. */
-  memoryEmbeddings(filter: { kind?: "article" | "fact" } = {}): MemoryEmbeddingRow[] {
-    const rows = filter.kind === undefined
-      ? this.database.query(
-        "SELECT * FROM memory_embeddings ORDER BY kind, scope, source_id",
-      ).all()
-      : this.database.query(
-        "SELECT * FROM memory_embeddings WHERE kind = ? " +
-          "ORDER BY kind, scope, source_id",
-      ).all(filter.kind);
+  memoryEmbeddings(
+    filter: { kind?: "article" | "fact" } = {},
+  ): MemoryEmbeddingRow[] {
+    const rows =
+      filter.kind === undefined
+        ? this.database
+            .query(
+              "SELECT * FROM memory_embeddings ORDER BY kind, scope, source_id",
+            )
+            .all()
+        : this.database
+            .query(
+              "SELECT * FROM memory_embeddings WHERE kind = ? " +
+                "ORDER BY kind, scope, source_id",
+            )
+            .all(filter.kind);
     return rows.map(parseEmbeddingRow);
   }
 
   /** Per-kind vector-row counts without deserializing the vectors — the
    * status surface's cheap projection-health read (defect D2). */
   memoryEmbeddingCounts(): { articles: number; facts: number } {
-    const rows = this.database.query(
-      "SELECT kind, COUNT(*) AS count FROM memory_embeddings GROUP BY kind",
-    ).all() as Array<{ kind: string; count: number }>;
+    const rows = this.database
+      .query(
+        "SELECT kind, COUNT(*) AS count FROM memory_embeddings GROUP BY kind",
+      )
+      .all() as Array<{ kind: string; count: number }>;
     return {
       articles: rows.find((row) => row.kind === "article")?.count ?? 0,
       facts: rows.find((row) => row.kind === "fact")?.count ?? 0,
@@ -667,7 +724,7 @@ export class EpisodicStore {
     const stale = this.memoryEmbeddings().filter((row) =>
       row.kind === "article"
         ? !keep.articles.has(`${row.scope}:${row.sourceId}`)
-        : !keep.facts.has(row.sourceId)
+        : !keep.facts.has(row.sourceId),
     );
     for (const row of stale) {
       this.removeMemoryEmbedding(row.kind, row.scope, row.sourceId);

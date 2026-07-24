@@ -1,16 +1,16 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage, AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { submitPaste } from "../../src/daemon/testing";
 import {
   type CriticalControlRuntime,
   MessageDelivery,
   type SessionSender,
 } from "../../src/daemon/delivery";
+import { submitPaste } from "../../src/daemon/testing";
+import type { AgentMessage, AgentRecord } from "../../src/schemas";
 
 const root = mkdtempSync(join(tmpdir(), "hive-controls-"));
 const timestamp = "2026-07-09T12:00:00.000Z";
@@ -66,19 +66,15 @@ describe("priority control messages", () => {
       db.insertAgent(agent("idle"));
       const normal = await delivery.send("sam", "maya", "ordinary");
       // A paste is not proof of application: the recipient's TUI queues the text
-    // and submits it at its next turn boundary. "injected" is what we can prove.
-    expect(normal).toMatchObject({ priority: "normal", state: "injected" });
+      // and submits it at its next turn boundary. "injected" is what we can prove.
+      expect(normal).toMatchObject({ priority: "normal", state: "injected" });
       expect(sender.calls[0]).toEqual([
         "maya",
         "📨 message from sam: ordinary",
       ]);
 
       db.upsertAgent({ ...agent("working"), lastEventAt: timestamp });
-      const queuedNormal = await delivery.send(
-        "sam",
-        "maya",
-        "ordinary later",
-      );
+      const queuedNormal = await delivery.send("sam", "maya", "ordinary later");
       const urgent = await delivery.send("orchestrator", "maya", "review now", {
         priority: "urgent",
         deadlineMs: 60_000,
@@ -90,7 +86,9 @@ describe("priority control messages", () => {
       await delivery.flushQueued("maya");
       expect(db.getMessage(urgent.id)).toMatchObject({ state: "injected" });
       expect(sender.calls[1]?.[1]).toContain("URGENT HIVE CONTROL");
-      expect(sender.calls[2]?.[1]).toEqual("📨 message from sam: ordinary later");
+      expect(sender.calls[2]?.[1]).toEqual(
+        "📨 message from sam: ordinary later",
+      );
       expect(db.getMessage(queuedNormal.id)?.state).toEqual("injected");
       const acknowledged = delivery.acknowledge(
         "maya",
@@ -143,10 +141,12 @@ describe("priority control messages", () => {
       expect(db.getApproval("stale-approval")).toMatchObject({
         status: "denied",
       });
-      expect(() => delivery.acknowledge("maya", control.id, 0, true))
-        .toThrow(/Stale capability epoch/);
-      expect(delivery.acknowledge("maya", control.id, 1, false).state)
-        .toEqual("applied");
+      expect(() => delivery.acknowledge("maya", control.id, 0, true)).toThrow(
+        /Stale capability epoch/,
+      );
+      expect(delivery.acknowledge("maya", control.id, 1, false).state).toEqual(
+        "applied",
+      );
     } finally {
       db.close();
     }
@@ -207,11 +207,7 @@ describe("priority control messages", () => {
 
     db = new HiveDatabase(path);
     const recoveredRuntime = new RecordingControlRuntime();
-    const recoveredDelivery = new MessageDelivery(
-      db,
-      sender,
-      recoveredRuntime,
-    );
+    const recoveredDelivery = new MessageDelivery(db, sender, recoveredRuntime);
     try {
       expect(await recoveredDelivery.recoverCriticalControls()).toEqual(1);
       expect(db.getMessage(first.id)?.state).toEqual("injected");
@@ -228,11 +224,16 @@ describe("priority control messages", () => {
       expect(await recoveredDelivery.alertExpiredControls(future)).toEqual(0);
       expect(db.getMessage(urgent.id)?.alertAt).not.toEqual(null);
       expect(sender.calls).toEqual([]);
-      expect(db.listMessages().some((message) =>
-        message.to === "queen" &&
-        message.body.includes("missed its acknowledgement deadline") &&
-        message.deliveredAt === null
-      )).toEqual(true);
+      expect(
+        db
+          .listMessages()
+          .some(
+            (message) =>
+              message.to === "queen" &&
+              message.body.includes("missed its acknowledgement deadline") &&
+              message.deliveredAt === null,
+          ),
+      ).toEqual(true);
     } finally {
       db.close();
     }

@@ -1,16 +1,16 @@
 import { readFile, realpath } from "node:fs/promises";
+import {
+  fetchMemoryEmbeddingsStatus,
+  type MemoryEmbeddingsStatus,
+  recallMemory,
+} from "../src/cli/mcp";
 import { sourceBuildHash } from "../src/daemon/handshake";
 import { readDaemonPort } from "../src/daemon/lifecycle";
 import {
-  fetchMemoryEmbeddingsStatus,
-  recallMemory,
-  type MemoryEmbeddingsStatus,
-} from "../src/cli/mcp";
-import {
   DAEMON_STARTUP_PREFIX,
+  type DaemonStartupAnnouncement,
   formatDaemonStartupAnnouncement,
   parseDaemonStartupAnnouncement,
-  type DaemonStartupAnnouncement,
 } from "../src/daemon/startup-announcement";
 
 export function assertBinaryFreshness(
@@ -53,17 +53,21 @@ export async function observeAnnouncement(
 ): Promise<DaemonStartupAnnouncement> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const contents = await readFile(logPath, "utf8").catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return "";
-      throw error;
-    });
-    const line = contents.split("\n").find((candidate) =>
-      candidate.startsWith(DAEMON_STARTUP_PREFIX)
+    const contents = await readFile(logPath, "utf8").catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return "";
+        throw error;
+      },
     );
+    const line = contents
+      .split("\n")
+      .find((candidate) => candidate.startsWith(DAEMON_STARTUP_PREFIX));
     if (line !== undefined) {
       const announcement = parseDaemonStartupAnnouncement(line);
       if (announcement === null) {
-        throw new Error(`make run: malformed daemon startup announcement in ${logPath}`);
+        throw new Error(
+          `make run: malformed daemon startup announcement in ${logPath}`,
+        );
       }
       return announcement;
     }
@@ -95,11 +99,17 @@ export async function verifyDevRun(
       `make run: daemon announced binary ${runningBinary}, expected staged binary ${stagedBinary}`,
     );
   }
-  assertBinaryFreshness(runningBinary, announcement.sourceHash, currentSourceHash);
-  console.log(formatDaemonStartupAnnouncement({
-    ...announcement,
-    binaryPath: runningBinary,
-  }));
+  assertBinaryFreshness(
+    runningBinary,
+    announcement.sourceHash,
+    currentSourceHash,
+  );
+  console.log(
+    formatDaemonStartupAnnouncement({
+      ...announcement,
+      binaryPath: runningBinary,
+    }),
+  );
   console.log(
     `make run: staged source ${currentSourceHash.slice(0, 8)} matches the running binary`,
   );
@@ -127,7 +137,7 @@ export async function verifyMemoryLeg(devHome: string): Promise<void> {
   const before = await fetchMemoryEmbeddingsStatus(port);
   if (before.state === "disabled") {
     throw new Error(
-      "make run: the dev daemon reports memory.embeddings state \"disabled\" — " +
+      'make run: the dev daemon reports memory.embeddings state "disabled" — ' +
         (before.detail ?? "the semantic leg is not wired") +
         "; refusing to run a dev daemon without the full memory system (defect D1)",
     );
@@ -147,26 +157,39 @@ export async function verifyMemoryLeg(devHome: string): Promise<void> {
 }
 
 function formatMemoryEmbeddingsStatus(status: MemoryEmbeddingsStatus): string {
-  const vectors = status.vectors === undefined
-    ? "vectors unknown"
-    : `vectors=${status.vectors.total} (${status.vectors.articles} articles, ${status.vectors.facts} facts)`;
-  return `state=${status.state} provider=${status.provider ?? "?"} ` +
-    `model=${status.model ?? "?"} ${vectors}`;
+  const vectors =
+    status.vectors === undefined
+      ? "vectors unknown"
+      : `vectors=${status.vectors.total} (${status.vectors.articles} articles, ${status.vectors.facts} facts)`;
+  return (
+    `state=${status.state} provider=${status.provider ?? "?"} ` +
+    `model=${status.model ?? "?"} ${vectors}`
+  );
 }
 
 if (import.meta.main) {
-  const [logPath, expectedBinary, repoRoot, daemonPidRaw, devHome] = process.argv.slice(2);
+  const [logPath, expectedBinary, repoRoot, daemonPidRaw, devHome] =
+    process.argv.slice(2);
   const daemonPid = Number(daemonPidRaw);
   if (
-    logPath === undefined || expectedBinary === undefined || repoRoot === undefined ||
-    !Number.isSafeInteger(daemonPid) || daemonPid <= 0
+    logPath === undefined ||
+    expectedBinary === undefined ||
+    repoRoot === undefined ||
+    !Number.isSafeInteger(daemonPid) ||
+    daemonPid <= 0
   ) {
     console.error(
       "usage: verify-dev-run <startup-log> <expected-binary> <repo-root> <daemon-pid> [dev-home]",
     );
     process.exitCode = 2;
   } else {
-    await verifyDevRun(logPath, expectedBinary, repoRoot, daemonPid, devHome).catch((error: unknown) => {
+    await verifyDevRun(
+      logPath,
+      expectedBinary,
+      repoRoot,
+      daemonPid,
+      devHome,
+    ).catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     });

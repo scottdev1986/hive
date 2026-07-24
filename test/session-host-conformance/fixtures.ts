@@ -1,21 +1,21 @@
 import { createHash } from "node:crypto";
 import {
-  FRAME_FLAGS,
-  FRAME_HEADER,
-  FRAME_TYPES,
-  RAW_BYTE_FRAME_TYPES,
-  SESSION_PROTOCOL_MINOR_RANGE,
-  SESSION_PROTOCOL_VERSION,
-  TERMINAL_LIMITS,
-  type FrameTypeName,
-} from "../../src/schemas/session-protocol";
-import type { WorkspaceEventV2 } from "../../src/schemas/status-envelope";
-import {
   canonicalJson,
   emptyStatusProjection,
   reduceStatusEvent,
   type StatusReducerProjection,
 } from "../../src/daemon/status-events";
+import {
+  FRAME_FLAGS,
+  FRAME_HEADER,
+  FRAME_TYPES,
+  type FrameTypeName,
+  RAW_BYTE_FRAME_TYPES,
+  SESSION_PROTOCOL_MINOR_RANGE,
+  SESSION_PROTOCOL_VERSION,
+  TERMINAL_LIMITS,
+} from "../../src/schemas/session-protocol";
+import type { WorkspaceEventV2 } from "../../src/schemas/status-envelope";
 
 export const FIXTURE_TIME = "2026-07-16T12:00:00.000Z";
 export const FIXTURE_IDS = {
@@ -213,16 +213,32 @@ const fixtureVisibilityRequest = {
   workspaceStartToken: "4000:123455",
   openTerminalRevision: "7",
 };
-const fixtureCreateBegin = { ...fixtureSessionSpec, visibility: fixtureVisibilityRequest };
+const fixtureCreateBegin = {
+  ...fixtureSessionSpec,
+  visibility: fixtureVisibilityRequest,
+};
 const fixtureVisibilityLease = {
   locator: fixtureLocator,
   state: "active",
   expiresAt: "2026-07-16T12:00:15.000Z",
   openTerminalRevision: "7",
 };
-const fixtureTerminationRequest = { mode: "graceful", reason: "terminal closed", requestId: FIXTURE_IDS.request };
-const fixtureTerminationResult = { locator: fixtureLocator, state: "terminated", exit: null, survivors: [], errors: [] };
-const fixtureTerminalHostSession = { key: fixtureLocator.sessionId, incarnation: "3" };
+const fixtureTerminationRequest = {
+  mode: "graceful",
+  reason: "terminal closed",
+  requestId: FIXTURE_IDS.request,
+};
+const fixtureTerminationResult = {
+  locator: fixtureLocator,
+  state: "terminated",
+  exit: null,
+  survivors: [],
+  errors: [],
+};
+const fixtureTerminalHostSession = {
+  key: fixtureLocator.sessionId,
+  incarnation: "3",
+};
 const fixtureTerminalHostCreateRequest = {
   key: fixtureTerminalHostSession.key,
   idempotencyKey: "create-fixture-key",
@@ -246,7 +262,12 @@ const fixtureTerminalHostCreateRequest = {
     stopByte: 19,
     hangupOnLastClose: true,
   },
-  initialWindow: { columns: 120, rows: 40, widthPixels: 1_200, heightPixels: 800 },
+  initialWindow: {
+    columns: 120,
+    rows: 40,
+    widthPixels: 1_200,
+    heightPixels: 800,
+  },
 };
 const fixtureTerminalHostCreateResult = {
   session: fixtureTerminalHostSession,
@@ -358,16 +379,30 @@ const fixtureTerminalHostAttachRequest = {
   session: fixtureTerminalHostSession,
   protocol: { major: 1, minMinor: 0, maxMinor: 0 },
   checkpointCapabilities: [
-    { contentType: "application/vnd.hive.terminal-checkpoint", schemaVersion: "1" },
+    {
+      contentType: "application/vnd.hive.terminal-checkpoint",
+      schemaVersion: "1",
+    },
   ],
-  cursor: { eventSequence: "12", outputOffset: "4096", checkpoint: "sha256:cafe" },
+  cursor: {
+    eventSequence: "12",
+    outputOffset: "4096",
+    checkpoint: "sha256:cafe",
+  },
 };
 const fixtureTerminalHostAttachResult = {
   state: "attached",
   session: fixtureTerminalHostSession,
   protocol: { major: 1, minor: 0 },
-  checkpoint: { contentType: "application/vnd.hive.terminal-checkpoint", schemaVersion: "1" },
-  resumeFrom: { eventSequence: "12", outputOffset: "4096", checkpoint: "sha256:cafe" },
+  checkpoint: {
+    contentType: "application/vnd.hive.terminal-checkpoint",
+    schemaVersion: "1",
+  },
+  resumeFrom: {
+    eventSequence: "12",
+    outputOffset: "4096",
+    checkpoint: "sha256:cafe",
+  },
 };
 const fixtureTerminalHostAttachGap = {
   state: "gap",
@@ -385,7 +420,10 @@ const fixtureTerminalHostSubscribeRequest = {
   session: fixtureTerminalHostSession,
   protocol: { major: 1, minMinor: 0, maxMinor: 0 },
   limits: fixtureTerminalHostSubscriptionLimits,
-  from: { position: "at", cursor: { eventSequence: "12", outputOffset: "4096" } },
+  from: {
+    position: "at",
+    cursor: { eventSequence: "12", outputOffset: "4096" },
+  },
 };
 const fixtureTerminalHostSubscribeResult = {
   state: "subscribed",
@@ -401,7 +439,10 @@ const fixtureTerminalHostSubscribeGap = {
   missing: { start: "12", endExclusive: "37" },
   freshInspection: "required",
 };
-const fixtureTerminalHostEventCursor = { eventSequence: "13", outputOffset: "4096" };
+const fixtureTerminalHostEventCursor = {
+  eventSequence: "13",
+  outputOffset: "4096",
+};
 /** One value per §11 fact, in the order the contract names them. */
 const fixtureTerminalHostSubscriptionEvents = [
   { fact: "lifecycle", lifecycle: "running" },
@@ -485,13 +526,21 @@ const fixtureTerminalHostTerminationResult = {
 
 const validCases: readonly WireCorpusCase[] = [
   { name: "session locator", schema: "sessionLocator", value: fixtureLocator },
-  { name: "terminal geometry", schema: "terminalGeometry", value: fixtureGeometry },
+  {
+    name: "terminal geometry",
+    schema: "terminalGeometry",
+    value: fixtureGeometry,
+  },
   {
     name: "session specification",
     schema: "sessionSpec",
     value: fixtureSessionSpec,
   },
-  { name: "session inspection", schema: "sessionInspection", value: fixtureInspection },
+  {
+    name: "session inspection",
+    schema: "sessionInspection",
+    value: fixtureInspection,
+  },
   {
     name: "create result",
     schema: "createResult",
@@ -540,7 +589,11 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "resize result",
     schema: "resizeResult",
-    value: { locator: fixtureLocator, geometry: fixtureGeometry, revision: "8" },
+    value: {
+      locator: fixtureLocator,
+      geometry: fixtureGeometry,
+      revision: "8",
+    },
   },
   {
     name: "automated input metadata",
@@ -632,7 +685,12 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "terminal observation request",
     schema: "hiveTerminalObserveInput",
-    value: { sessionId: FIXTURE_IDS.session, generation: 3, include: "visible-text", maxRows: 50 },
+    value: {
+      sessionId: FIXTURE_IDS.session,
+      generation: 3,
+      include: "visible-text",
+      maxRows: 50,
+    },
   },
   {
     name: "terminal delivery attempt",
@@ -661,14 +719,17 @@ const validCases: readonly WireCorpusCase[] = [
       schemaVersion: 2,
       instanceId: "hive-fixture",
       seq: "2",
-      entities: [{
-        kind: "agent",
-        id: "agent-fixture",
-        entityRevision: "2",
-        projection: { turnState: "working" },
-      }],
+      entities: [
+        {
+          kind: "agent",
+          id: "agent-fixture",
+          entityRevision: "2",
+          projection: { turnState: "working" },
+        },
+      ],
       createdAt: FIXTURE_TIME,
-      contentSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+      contentSha256:
+        "0000000000000000000000000000000000000000000000000000000000000000",
     },
   },
   {
@@ -739,35 +800,185 @@ const validCases: readonly WireCorpusCase[] = [
     },
   },
   { name: "HELLO viewer grant", schema: "helloPayload", value: fixtureHello },
-  { name: "HELLO daemon control identity", schema: "helloPayload", value: fixtureDaemonHello },
-  { name: "HELLO broker", schema: "helloPayload", value: { ...fixtureHelloCommon, clientRole: "broker" } },
-  { name: "HELLO host", schema: "helloPayload", value: { ...fixtureHelloCommon, clientRole: "host" } },
-  { name: "complete HostRecordV1", schema: "hostRecordV1", value: fixtureHostRecordV1 },
-  { name: "CREATE_BEGIN session spec and pending visibility", schema: "createBeginPayload", value: fixtureCreateBegin },
-  { name: "CREATE_COMMIT digest", schema: "createCommitPayload", value: { schemaVersion: 1, totalLength: 12, sha256: "a".repeat(64) } },
-  { name: "CREATED result", schema: "createdPayload", value: { schemaVersion: 1, ...fixtureCreateResult } },
-  { name: "LIST neutral inventory", schema: "listPayload", value: { schemaVersion: 1 } },
-  { name: "LISTED frozen inventory", schema: "listedPayload", value: { schemaVersion: 1, entries: [fixtureTerminalHostInspection] } },
-  { name: "INSPECT neutral session", schema: "inspectPayload", value: { schemaVersion: 1, session: fixtureTerminalHostSession } },
-  { name: "INSPECTED frozen evidence", schema: "inspectedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostInspection } },
-  { name: "TERMINATE frozen request", schema: "terminatePayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationRequest } },
-  { name: "TERMINATED frozen result", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationResult } },
-  { name: "VISIBILITY_RENEW exact generation", schema: "visibilityRenewPayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureVisibilityRequest } },
-  { name: "RENEWED lease", schema: "renewedPayload", value: { schemaVersion: 1, ...fixtureVisibilityLease } },
-  { name: "INPUT_ORPHAN_DISCARD resolves an orphaned exact generation", schema: "orphanDiscardPayload", value: { schemaVersion: 1, locator: fixtureLocator, mode: "orphaned" } },
-  { name: "INPUT_ORPHAN_DISCARD authorizes a held-claim preemption", schema: "orphanDiscardPayload", value: { schemaVersion: 1, locator: fixtureLocator, mode: "held" } },
-  { name: "ORPHAN_DISCARDED names the prior orphan owner and host age", schema: "orphanDiscardedPayload", value: { schemaVersion: 1, state: "discarded", priorOwnerViewerId: "viewer-a", priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001", orphanAgeMilliseconds: "120000", diagnostic: "orphaned human claim discarded" } },
-  { name: "ORPHAN_DISCARDED types a held human preemption", schema: "orphanDiscardedPayload", value: { schemaVersion: 1, state: "preempted", priorOwnerViewerId: "viewer-a", priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001", orphanAgeMilliseconds: null, diagnostic: "held human claim preempted for delivery" } },
-  { name: "ATTACH_REQUEST exact generation", schema: "attachRequestPayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureAttachRequest } },
-  { name: "ATTACH_GRANT exact host", schema: "attachGrantPayload", value: { schemaVersion: 1, ...fixtureAttachGrant } },
-  { name: "HOST_ATTACH replay cursor", schema: "hostAttachPayload", value: { schemaVersion: 1, locator: fixtureLocator, token: "opaque-token", geometry: fixtureGeometry, afterSeq: "4096" } },
+  {
+    name: "HELLO daemon control identity",
+    schema: "helloPayload",
+    value: fixtureDaemonHello,
+  },
+  {
+    name: "HELLO broker",
+    schema: "helloPayload",
+    value: { ...fixtureHelloCommon, clientRole: "broker" },
+  },
+  {
+    name: "HELLO host",
+    schema: "helloPayload",
+    value: { ...fixtureHelloCommon, clientRole: "host" },
+  },
+  {
+    name: "complete HostRecordV1",
+    schema: "hostRecordV1",
+    value: fixtureHostRecordV1,
+  },
+  {
+    name: "CREATE_BEGIN session spec and pending visibility",
+    schema: "createBeginPayload",
+    value: fixtureCreateBegin,
+  },
+  {
+    name: "CREATE_COMMIT digest",
+    schema: "createCommitPayload",
+    value: { schemaVersion: 1, totalLength: 12, sha256: "a".repeat(64) },
+  },
+  {
+    name: "CREATED result",
+    schema: "createdPayload",
+    value: { schemaVersion: 1, ...fixtureCreateResult },
+  },
+  {
+    name: "LIST neutral inventory",
+    schema: "listPayload",
+    value: { schemaVersion: 1 },
+  },
+  {
+    name: "LISTED frozen inventory",
+    schema: "listedPayload",
+    value: { schemaVersion: 1, entries: [fixtureTerminalHostInspection] },
+  },
+  {
+    name: "INSPECT neutral session",
+    schema: "inspectPayload",
+    value: { schemaVersion: 1, session: fixtureTerminalHostSession },
+  },
+  {
+    name: "INSPECTED frozen evidence",
+    schema: "inspectedPayload",
+    value: { schemaVersion: 1, ...fixtureTerminalHostInspection },
+  },
+  {
+    name: "TERMINATE frozen request",
+    schema: "terminatePayload",
+    value: { schemaVersion: 1, ...fixtureTerminalHostTerminationRequest },
+  },
+  {
+    name: "TERMINATED frozen result",
+    schema: "terminatedPayload",
+    value: { schemaVersion: 1, ...fixtureTerminalHostTerminationResult },
+  },
+  {
+    name: "VISIBILITY_RENEW exact generation",
+    schema: "visibilityRenewPayload",
+    value: {
+      schemaVersion: 1,
+      locator: fixtureLocator,
+      ...fixtureVisibilityRequest,
+    },
+  },
+  {
+    name: "RENEWED lease",
+    schema: "renewedPayload",
+    value: { schemaVersion: 1, ...fixtureVisibilityLease },
+  },
+  {
+    name: "INPUT_ORPHAN_DISCARD resolves an orphaned exact generation",
+    schema: "orphanDiscardPayload",
+    value: { schemaVersion: 1, locator: fixtureLocator, mode: "orphaned" },
+  },
+  {
+    name: "INPUT_ORPHAN_DISCARD authorizes a held-claim preemption",
+    schema: "orphanDiscardPayload",
+    value: { schemaVersion: 1, locator: fixtureLocator, mode: "held" },
+  },
+  {
+    name: "ORPHAN_DISCARDED names the prior orphan owner and host age",
+    schema: "orphanDiscardedPayload",
+    value: {
+      schemaVersion: 1,
+      state: "discarded",
+      priorOwnerViewerId: "viewer-a",
+      priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001",
+      orphanAgeMilliseconds: "120000",
+      diagnostic: "orphaned human claim discarded",
+    },
+  },
+  {
+    name: "ORPHAN_DISCARDED types a held human preemption",
+    schema: "orphanDiscardedPayload",
+    value: {
+      schemaVersion: 1,
+      state: "preempted",
+      priorOwnerViewerId: "viewer-a",
+      priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-000000000001",
+      orphanAgeMilliseconds: null,
+      diagnostic: "held human claim preempted for delivery",
+    },
+  },
+  {
+    name: "ATTACH_REQUEST exact generation",
+    schema: "attachRequestPayload",
+    value: {
+      schemaVersion: 1,
+      locator: fixtureLocator,
+      ...fixtureAttachRequest,
+    },
+  },
+  {
+    name: "ATTACH_GRANT exact host",
+    schema: "attachGrantPayload",
+    value: { schemaVersion: 1, ...fixtureAttachGrant },
+  },
+  {
+    name: "HOST_ATTACH replay cursor",
+    schema: "hostAttachPayload",
+    value: {
+      schemaVersion: 1,
+      locator: fixtureLocator,
+      token: "opaque-token",
+      geometry: fixtureGeometry,
+      afterSeq: "4096",
+    },
+  },
   { name: "WELCOME broker", schema: "welcomePayload", value: fixtureWelcome },
-  { name: "typed ERROR", schema: "errorPayload", value: { schemaVersion: 1, code: "UNAUTHENTICATED", message: "grant rejected", diagnosticId: null } },
-  { name: "typed generation-gone ERROR", schema: "errorPayload", value: { schemaVersion: 1, code: "GENERATION_GONE", message: "generation is gone", diagnosticId: null } },
-  { name: "PING monotonic nanos", schema: "pingPongPayload", value: { schemaVersion: 1, monoNanos: "123456789" } },
-  { name: "HOST_REGISTER readback", schema: "hostRegisterPayload", value: { schemaVersion: 1, record: fixtureHostRecord } },
-  { name: "HOST_REGISTER accepted", schema: "hostRegisterPayload", value: { schemaVersion: 1, accepted: true } },
-  { name: "HOST_ADOPT challenge", schema: "hostAdoptPayload", value: fixtureAdoptRequest },
+  {
+    name: "typed ERROR",
+    schema: "errorPayload",
+    value: {
+      schemaVersion: 1,
+      code: "UNAUTHENTICATED",
+      message: "grant rejected",
+      diagnosticId: null,
+    },
+  },
+  {
+    name: "typed generation-gone ERROR",
+    schema: "errorPayload",
+    value: {
+      schemaVersion: 1,
+      code: "GENERATION_GONE",
+      message: "generation is gone",
+      diagnosticId: null,
+    },
+  },
+  {
+    name: "PING monotonic nanos",
+    schema: "pingPongPayload",
+    value: { schemaVersion: 1, monoNanos: "123456789" },
+  },
+  {
+    name: "HOST_REGISTER readback",
+    schema: "hostRegisterPayload",
+    value: { schemaVersion: 1, record: fixtureHostRecord },
+  },
+  {
+    name: "HOST_REGISTER accepted",
+    schema: "hostRegisterPayload",
+    value: { schemaVersion: 1, accepted: true },
+  },
+  {
+    name: "HOST_ADOPT challenge",
+    schema: "hostAdoptPayload",
+    value: fixtureAdoptRequest,
+  },
   {
     name: "HOST_ADOPT readback",
     schema: "hostAdoptPayload",
@@ -786,8 +997,16 @@ const validCases: readonly WireCorpusCase[] = [
       visibility: fixtureInspection.visibility,
     },
   },
-  { name: "GRANT_REGISTER request", schema: "grantRegisterPayload", value: fixtureGrantRegistration },
-  { name: "GRANT_REGISTER accepted", schema: "grantRegisterPayload", value: { schemaVersion: 1, registered: true } },
+  {
+    name: "GRANT_REGISTER request",
+    schema: "grantRegisterPayload",
+    value: fixtureGrantRegistration,
+  },
+  {
+    name: "GRANT_REGISTER accepted",
+    schema: "grantRegisterPayload",
+    value: { schemaVersion: 1, registered: true },
+  },
   {
     name: "frozen neutral create request",
     schema: "terminalHostCreateRequest",
@@ -864,7 +1083,10 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "frozen neutral subscribe request may begin at the current end",
     schema: "terminalHostSubscribeRequest",
-    value: { ...fixtureTerminalHostSubscribeRequest, from: { position: "end" } },
+    value: {
+      ...fixtureTerminalHostSubscribeRequest,
+      from: { position: "end" },
+    },
   },
   {
     name: "frozen neutral subscribe result resumes at a host-reported cursor",
@@ -924,7 +1146,11 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "frozen neutral visibility renewal reports incomplete evidence as unknown",
     schema: "terminalHostVisibilityRenewalResult",
-    value: { state: "unknown", renewed: false, diagnostic: "inventory revision unavailable" },
+    value: {
+      state: "unknown",
+      renewed: false,
+      diagnostic: "inventory revision unavailable",
+    },
   },
   {
     name: "frozen neutral termination request",
@@ -951,7 +1177,10 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "CLAIM_RESULT frozen grant",
     schema: "claimResultPayload",
-    value: { schemaVersion: 1, result: { state: "granted", claim: fixtureTerminalHostClaim } },
+    value: {
+      schemaVersion: 1,
+      result: { state: "granted", claim: fixtureTerminalHostClaim },
+    },
   },
   {
     name: "INPUT_SUBMIT frozen byte operation",
@@ -979,12 +1208,20 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "APPLIED frozen input receipt",
     schema: "appliedPayload",
-    value: { schemaVersion: 1, resultKind: "input", receipt: fixtureTerminalHostReceipt },
+    value: {
+      schemaVersion: 1,
+      resultKind: "input",
+      receipt: fixtureTerminalHostReceipt,
+    },
   },
   {
     name: "APPLIED frozen resize receipt",
     schema: "appliedPayload",
-    value: { schemaVersion: 1, resultKind: "resize", result: fixtureTerminalHostResize },
+    value: {
+      schemaVersion: 1,
+      resultKind: "resize",
+      result: fixtureTerminalHostResize,
+    },
   },
   {
     name: "APPLIED frozen output acknowledgement",
@@ -994,32 +1231,148 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "session inspection preserves unknown input observation",
     schema: "sessionInspection",
-    value: { ...fixtureInspection, input: { ...fixtureInspection.input, state: "UNKNOWN" } },
+    value: {
+      ...fixtureInspection,
+      input: { ...fixtureInspection.input, state: "UNKNOWN" },
+    },
   },
 ];
 
 const invalidCases: readonly WireCorpusCase[] = [
-  { name: "locator rejects display-name fallback", schema: "sessionLocator", value: { ...fixtureLocator, sessionId: "codex" } },
-  { name: "geometry rejects zero", schema: "terminalGeometry", value: { ...fixtureGeometry, columns: 0 } },
-  { name: "geometry enforces active-cell cap", schema: "terminalGeometry", value: { ...fixtureGeometry, columns: 501, rows: 500 } },
-  { name: "spec rejects empty argv", schema: "sessionSpec", value: { ...(validCases[2]!.value as object), argv: [] } },
-  { name: "inspection rejects invented presence", schema: "sessionInspection", value: { ...fixtureInspection, presence: "absent" } },
-  { name: "inspection rejects invented input state", schema: "sessionInspection", value: { ...fixtureInspection, input: { ...fixtureInspection.input, state: "AUTOMATION_WRITING" } } },
-  { name: "create rejects false success", schema: "createResult", value: { locator: fixtureLocator, inspection: fixtureInspection, created: false } },
-  { name: "capture request enforces row cap", schema: "captureRequest", value: { include: "metadata", maxRows: 201 } },
-  { name: "capture rejects malformed digest", schema: "captureResult", value: { ...(validCases[6]!.value as object), sha256: "bad" } },
-  { name: "attach rejects unknown operation", schema: "attachRequest", value: { viewerId: "v", geometry: fixtureGeometry, operations: ["focus"] } },
-  { name: "grant requires endpoint", schema: "attachGrant", value: { ...(validCases[8]!.value as object), endpoint: "" } },
-  { name: "visibility rejects invalid pid", schema: "visibilityRequest", value: { ...(validCases[9]!.value as object), workspacePid: 0 } },
-  { name: "lease rejects inactive state", schema: "visibilityLease", value: { ...(validCases[10]!.value as object), state: "expired" } },
-  { name: "resize rejects negative revision", schema: "resizeResult", value: { locator: fixtureLocator, geometry: fixtureGeometry, revision: "-1" } },
-  { name: "resize rejects uint64 overflow", schema: "resizeResult", value: { locator: fixtureLocator, geometry: fixtureGeometry, revision: "18446744073709551616" } },
-  { name: "automation rejects unknown submit", schema: "automatedInputMetadata", value: { ...(validCases[12]!.value as object), submit: "enter" } },
-  { name: "receipt rejects false read evidence", schema: "inputReceipt", value: { ...(validCases[13]!.value as object), state: "read" } },
-  { name: "termination rejects detach", schema: "terminationRequest", value: { mode: "detach", reason: "close", requestId: FIXTURE_IDS.request } },
-  { name: "termination result rejects absent", schema: "terminationResult", value: { locator: fixtureLocator, state: "absent", exit: null, survivors: [], errors: [] } },
-  { name: "session event rejects wrong version", schema: "sessionEvent", value: { ...(validCases[16]!.value as object), schemaVersion: 2 } },
-  { name: "workspace event rejects screen source", schema: "workspaceEventV2", value: { ...(validCases[17]!.value as object), source: { kind: "terminal-screen", id: "screen", observedAt: FIXTURE_TIME, confidence: "low" } } },
+  {
+    name: "locator rejects display-name fallback",
+    schema: "sessionLocator",
+    value: { ...fixtureLocator, sessionId: "codex" },
+  },
+  {
+    name: "geometry rejects zero",
+    schema: "terminalGeometry",
+    value: { ...fixtureGeometry, columns: 0 },
+  },
+  {
+    name: "geometry enforces active-cell cap",
+    schema: "terminalGeometry",
+    value: { ...fixtureGeometry, columns: 501, rows: 500 },
+  },
+  {
+    name: "spec rejects empty argv",
+    schema: "sessionSpec",
+    value: { ...(validCases[2]!.value as object), argv: [] },
+  },
+  {
+    name: "inspection rejects invented presence",
+    schema: "sessionInspection",
+    value: { ...fixtureInspection, presence: "absent" },
+  },
+  {
+    name: "inspection rejects invented input state",
+    schema: "sessionInspection",
+    value: {
+      ...fixtureInspection,
+      input: { ...fixtureInspection.input, state: "AUTOMATION_WRITING" },
+    },
+  },
+  {
+    name: "create rejects false success",
+    schema: "createResult",
+    value: {
+      locator: fixtureLocator,
+      inspection: fixtureInspection,
+      created: false,
+    },
+  },
+  {
+    name: "capture request enforces row cap",
+    schema: "captureRequest",
+    value: { include: "metadata", maxRows: 201 },
+  },
+  {
+    name: "capture rejects malformed digest",
+    schema: "captureResult",
+    value: { ...(validCases[6]!.value as object), sha256: "bad" },
+  },
+  {
+    name: "attach rejects unknown operation",
+    schema: "attachRequest",
+    value: { viewerId: "v", geometry: fixtureGeometry, operations: ["focus"] },
+  },
+  {
+    name: "grant requires endpoint",
+    schema: "attachGrant",
+    value: { ...(validCases[8]!.value as object), endpoint: "" },
+  },
+  {
+    name: "visibility rejects invalid pid",
+    schema: "visibilityRequest",
+    value: { ...(validCases[9]!.value as object), workspacePid: 0 },
+  },
+  {
+    name: "lease rejects inactive state",
+    schema: "visibilityLease",
+    value: { ...(validCases[10]!.value as object), state: "expired" },
+  },
+  {
+    name: "resize rejects negative revision",
+    schema: "resizeResult",
+    value: {
+      locator: fixtureLocator,
+      geometry: fixtureGeometry,
+      revision: "-1",
+    },
+  },
+  {
+    name: "resize rejects uint64 overflow",
+    schema: "resizeResult",
+    value: {
+      locator: fixtureLocator,
+      geometry: fixtureGeometry,
+      revision: "18446744073709551616",
+    },
+  },
+  {
+    name: "automation rejects unknown submit",
+    schema: "automatedInputMetadata",
+    value: { ...(validCases[12]!.value as object), submit: "enter" },
+  },
+  {
+    name: "receipt rejects false read evidence",
+    schema: "inputReceipt",
+    value: { ...(validCases[13]!.value as object), state: "read" },
+  },
+  {
+    name: "termination rejects detach",
+    schema: "terminationRequest",
+    value: { mode: "detach", reason: "close", requestId: FIXTURE_IDS.request },
+  },
+  {
+    name: "termination result rejects absent",
+    schema: "terminationResult",
+    value: {
+      locator: fixtureLocator,
+      state: "absent",
+      exit: null,
+      survivors: [],
+      errors: [],
+    },
+  },
+  {
+    name: "session event rejects wrong version",
+    schema: "sessionEvent",
+    value: { ...(validCases[16]!.value as object), schemaVersion: 2 },
+  },
+  {
+    name: "workspace event rejects screen source",
+    schema: "workspaceEventV2",
+    value: {
+      ...(validCases[17]!.value as object),
+      source: {
+        kind: "terminal-screen",
+        id: "screen",
+        observedAt: FIXTURE_TIME,
+        confidence: "low",
+      },
+    },
+  },
   {
     name: "blocked status requires blocker",
     schema: "hiveUpdateStatusInput",
@@ -1034,51 +1387,280 @@ const invalidCases: readonly WireCorpusCase[] = [
       freshForSeconds: 120,
     },
   },
-  { name: "observation rejects scrollback-sized request", schema: "hiveTerminalObserveInput", value: { sessionId: FIXTURE_IDS.session, generation: 3, include: "visible-text", maxRows: 201 } },
-  { name: "terminal attempt rejects recipient acknowledgment", schema: "terminalDeliveryAttempt", value: { ...(validCases[20]!.value as object), evidence: "recipient-acknowledged" } },
-  { name: "terminal attempt requires one receipt form", schema: "terminalDeliveryAttempt", value: { ...(validCases[20]!.value as object), byteRange: null, nativeEndpointReceipt: null } },
-  { name: "snapshot rejects malformed digest", schema: "workspaceSnapshotV2", value: { ...(validCases[21]!.value as object), contentSha256: "bad" } },
-  { name: "assignment generation starts at one", schema: "flatAssignment", value: { ...(validCases[22]!.value as object), assignmentGeneration: "0" } },
-  { name: "operator scope requires subjects", schema: "hv1CapabilityRecord", value: { ...(validCases[23]!.value as object), subjects: undefined } },
-  { name: "status update requires stable request id", schema: "hiveUpdateStatusInput", value: { ...(validCases[18]!.value as object), requestId: undefined } },
-  { name: "HELLO rejects unknown field", schema: "helloPayload", value: { ...fixtureHello, authority: "claimed" } },
-  { name: "HELLO rejects daemon without control identity", schema: "helloPayload", value: { ...fixtureHelloCommon, clientRole: "daemon" } },
-  { name: "HELLO rejects daemon grant", schema: "helloPayload", value: { ...fixtureDaemonHello, grantToken: "forbidden" } },
-  { name: "HELLO rejects daemon block from viewer", schema: "helloPayload", value: { ...fixtureHello, daemonControl: fixtureDaemonControl } },
-  { name: "HELLO rejects reversed minor range", schema: "helloPayload", value: { ...fixtureHello, protocol: { major: 1, minMinor: 1, maxMinor: 0 } } },
-  { name: "HostRecordV1 rejects an absolute socket path", schema: "hostRecordV1", value: { ...fixtureHostRecordV1, socketRelativePath: "/tmp/host.sock" } },
-  { name: "CREATE_BEGIN rejects missing locator", schema: "createBeginPayload", value: { ...fixtureCreateBegin, locator: undefined } },
-  { name: "CREATE_BEGIN rejects missing visibility", schema: "createBeginPayload", value: fixtureSessionSpec },
-  { name: "CREATE_BEGIN rejects zero open-terminal revision", schema: "createBeginPayload", value: { ...fixtureCreateBegin, visibility: { ...fixtureVisibilityRequest, openTerminalRevision: "0" } } },
-  { name: "CREATE_COMMIT rejects oversized input", schema: "createCommitPayload", value: { schemaVersion: 1, totalLength: TERMINAL_LIMITS.automatedMessageBytes + 1, sha256: "a".repeat(64) } },
-  { name: "CREATED rejects missing inspection", schema: "createdPayload", value: { schemaVersion: 1, locator: fixtureLocator, created: true } },
-  { name: "LIST rejects Hive scope", schema: "listPayload", value: { schemaVersion: 1, instanceId: fixtureLocator.instanceId } },
-  { name: "LISTED rejects missing entries", schema: "listedPayload", value: { schemaVersion: 1 } },
-  { name: "INSPECT rejects missing session", schema: "inspectPayload", value: { schemaVersion: 1 } },
-  { name: "INSPECTED rejects unknown field", schema: "inspectedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostInspection, trusted: true } },
-  { name: "TERMINATE rejects missing target", schema: "terminatePayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationRequest, target: undefined } },
-  { name: "TERMINATED rejects missing reap", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationResult, reap: undefined } },
-  { name: "VISIBILITY_RENEW rejects missing locator", schema: "visibilityRenewPayload", value: { schemaVersion: 1, ...fixtureVisibilityRequest } },
-  { name: "RENEWED rejects missing locator", schema: "renewedPayload", value: { schemaVersion: 1, state: "active", expiresAt: fixtureVisibilityLease.expiresAt, openTerminalRevision: "7" } },
-  { name: "INPUT_ORPHAN_DISCARD rejects missing locator", schema: "orphanDiscardPayload", value: { schemaVersion: 1 } },
-  { name: "INPUT_ORPHAN_DISCARD rejects an untyped resolution mode", schema: "orphanDiscardPayload", value: { schemaVersion: 1, locator: fixtureLocator, mode: "live" } },
-  { name: "ORPHAN_DISCARDED rejects a missing typed state", schema: "orphanDiscardedPayload", value: { schemaVersion: 1, priorOwnerViewerId: null, priorClaimId: null, orphanAgeMilliseconds: null, diagnostic: "missing state" } },
-  { name: "ATTACH_REQUEST rejects missing locator", schema: "attachRequestPayload", value: { schemaVersion: 1, ...fixtureAttachRequest } },
-  { name: "ATTACH_GRANT rejects missing token", schema: "attachGrantPayload", value: { schemaVersion: 1, ...fixtureAttachGrant, token: undefined } },
-  { name: "HOST_ATTACH rejects numeric replay cursor", schema: "hostAttachPayload", value: { schemaVersion: 1, locator: fixtureLocator, token: "opaque-token", geometry: fixtureGeometry, afterSeq: 4096 } },
-  { name: "WELCOME rejects unknown field", schema: "welcomePayload", value: { ...fixtureWelcome, authority: true } },
-  { name: "ERROR rejects unknown field", schema: "errorPayload", value: { schemaVersion: 1, code: "INTERNAL", message: "failure", diagnosticId: null, retry: true } },
-  { name: "ERROR rejects an unknown typed code", schema: "errorPayload", value: { schemaVersion: 1, code: "GENERATION_ABSENT", message: "failure", diagnosticId: null } },
-  { name: "PING rejects unknown field", schema: "pingPongPayload", value: { schemaVersion: 1, monoNanos: "1", wallTime: FIXTURE_TIME } },
-  { name: "HOST_REGISTER rejects unknown field", schema: "hostRegisterPayload", value: { schemaVersion: 1, record: fixtureHostRecord, trusted: true } },
-  { name: "HOST_ADOPT rejects unknown field", schema: "hostAdoptPayload", value: { ...fixtureAdoptRequest, trusted: true } },
-  { name: "HOST_ADOPT rejects malformed secret", schema: "hostAdoptPayload", value: { ...fixtureAdoptRequest, adoptionSecretHex: "not-a-secret" } },
-  { name: "GRANT_REGISTER rejects unknown field", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, rawToken: "forbidden" } },
-  { name: "GRANT_REGISTER rejects untagged hash", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, grantTokenSha256: "b".repeat(64) } },
+  {
+    name: "observation rejects scrollback-sized request",
+    schema: "hiveTerminalObserveInput",
+    value: {
+      sessionId: FIXTURE_IDS.session,
+      generation: 3,
+      include: "visible-text",
+      maxRows: 201,
+    },
+  },
+  {
+    name: "terminal attempt rejects recipient acknowledgment",
+    schema: "terminalDeliveryAttempt",
+    value: {
+      ...(validCases[20]!.value as object),
+      evidence: "recipient-acknowledged",
+    },
+  },
+  {
+    name: "terminal attempt requires one receipt form",
+    schema: "terminalDeliveryAttempt",
+    value: {
+      ...(validCases[20]!.value as object),
+      byteRange: null,
+      nativeEndpointReceipt: null,
+    },
+  },
+  {
+    name: "snapshot rejects malformed digest",
+    schema: "workspaceSnapshotV2",
+    value: { ...(validCases[21]!.value as object), contentSha256: "bad" },
+  },
+  {
+    name: "assignment generation starts at one",
+    schema: "flatAssignment",
+    value: { ...(validCases[22]!.value as object), assignmentGeneration: "0" },
+  },
+  {
+    name: "operator scope requires subjects",
+    schema: "hv1CapabilityRecord",
+    value: { ...(validCases[23]!.value as object), subjects: undefined },
+  },
+  {
+    name: "status update requires stable request id",
+    schema: "hiveUpdateStatusInput",
+    value: { ...(validCases[18]!.value as object), requestId: undefined },
+  },
+  {
+    name: "HELLO rejects unknown field",
+    schema: "helloPayload",
+    value: { ...fixtureHello, authority: "claimed" },
+  },
+  {
+    name: "HELLO rejects daemon without control identity",
+    schema: "helloPayload",
+    value: { ...fixtureHelloCommon, clientRole: "daemon" },
+  },
+  {
+    name: "HELLO rejects daemon grant",
+    schema: "helloPayload",
+    value: { ...fixtureDaemonHello, grantToken: "forbidden" },
+  },
+  {
+    name: "HELLO rejects daemon block from viewer",
+    schema: "helloPayload",
+    value: { ...fixtureHello, daemonControl: fixtureDaemonControl },
+  },
+  {
+    name: "HELLO rejects reversed minor range",
+    schema: "helloPayload",
+    value: {
+      ...fixtureHello,
+      protocol: { major: 1, minMinor: 1, maxMinor: 0 },
+    },
+  },
+  {
+    name: "HostRecordV1 rejects an absolute socket path",
+    schema: "hostRecordV1",
+    value: { ...fixtureHostRecordV1, socketRelativePath: "/tmp/host.sock" },
+  },
+  {
+    name: "CREATE_BEGIN rejects missing locator",
+    schema: "createBeginPayload",
+    value: { ...fixtureCreateBegin, locator: undefined },
+  },
+  {
+    name: "CREATE_BEGIN rejects missing visibility",
+    schema: "createBeginPayload",
+    value: fixtureSessionSpec,
+  },
+  {
+    name: "CREATE_BEGIN rejects zero open-terminal revision",
+    schema: "createBeginPayload",
+    value: {
+      ...fixtureCreateBegin,
+      visibility: { ...fixtureVisibilityRequest, openTerminalRevision: "0" },
+    },
+  },
+  {
+    name: "CREATE_COMMIT rejects oversized input",
+    schema: "createCommitPayload",
+    value: {
+      schemaVersion: 1,
+      totalLength: TERMINAL_LIMITS.automatedMessageBytes + 1,
+      sha256: "a".repeat(64),
+    },
+  },
+  {
+    name: "CREATED rejects missing inspection",
+    schema: "createdPayload",
+    value: { schemaVersion: 1, locator: fixtureLocator, created: true },
+  },
+  {
+    name: "LIST rejects Hive scope",
+    schema: "listPayload",
+    value: { schemaVersion: 1, instanceId: fixtureLocator.instanceId },
+  },
+  {
+    name: "LISTED rejects missing entries",
+    schema: "listedPayload",
+    value: { schemaVersion: 1 },
+  },
+  {
+    name: "INSPECT rejects missing session",
+    schema: "inspectPayload",
+    value: { schemaVersion: 1 },
+  },
+  {
+    name: "INSPECTED rejects unknown field",
+    schema: "inspectedPayload",
+    value: {
+      schemaVersion: 1,
+      ...fixtureTerminalHostInspection,
+      trusted: true,
+    },
+  },
+  {
+    name: "TERMINATE rejects missing target",
+    schema: "terminatePayload",
+    value: {
+      schemaVersion: 1,
+      ...fixtureTerminalHostTerminationRequest,
+      target: undefined,
+    },
+  },
+  {
+    name: "TERMINATED rejects missing reap",
+    schema: "terminatedPayload",
+    value: {
+      schemaVersion: 1,
+      ...fixtureTerminalHostTerminationResult,
+      reap: undefined,
+    },
+  },
+  {
+    name: "VISIBILITY_RENEW rejects missing locator",
+    schema: "visibilityRenewPayload",
+    value: { schemaVersion: 1, ...fixtureVisibilityRequest },
+  },
+  {
+    name: "RENEWED rejects missing locator",
+    schema: "renewedPayload",
+    value: {
+      schemaVersion: 1,
+      state: "active",
+      expiresAt: fixtureVisibilityLease.expiresAt,
+      openTerminalRevision: "7",
+    },
+  },
+  {
+    name: "INPUT_ORPHAN_DISCARD rejects missing locator",
+    schema: "orphanDiscardPayload",
+    value: { schemaVersion: 1 },
+  },
+  {
+    name: "INPUT_ORPHAN_DISCARD rejects an untyped resolution mode",
+    schema: "orphanDiscardPayload",
+    value: { schemaVersion: 1, locator: fixtureLocator, mode: "live" },
+  },
+  {
+    name: "ORPHAN_DISCARDED rejects a missing typed state",
+    schema: "orphanDiscardedPayload",
+    value: {
+      schemaVersion: 1,
+      priorOwnerViewerId: null,
+      priorClaimId: null,
+      orphanAgeMilliseconds: null,
+      diagnostic: "missing state",
+    },
+  },
+  {
+    name: "ATTACH_REQUEST rejects missing locator",
+    schema: "attachRequestPayload",
+    value: { schemaVersion: 1, ...fixtureAttachRequest },
+  },
+  {
+    name: "ATTACH_GRANT rejects missing token",
+    schema: "attachGrantPayload",
+    value: { schemaVersion: 1, ...fixtureAttachGrant, token: undefined },
+  },
+  {
+    name: "HOST_ATTACH rejects numeric replay cursor",
+    schema: "hostAttachPayload",
+    value: {
+      schemaVersion: 1,
+      locator: fixtureLocator,
+      token: "opaque-token",
+      geometry: fixtureGeometry,
+      afterSeq: 4096,
+    },
+  },
+  {
+    name: "WELCOME rejects unknown field",
+    schema: "welcomePayload",
+    value: { ...fixtureWelcome, authority: true },
+  },
+  {
+    name: "ERROR rejects unknown field",
+    schema: "errorPayload",
+    value: {
+      schemaVersion: 1,
+      code: "INTERNAL",
+      message: "failure",
+      diagnosticId: null,
+      retry: true,
+    },
+  },
+  {
+    name: "ERROR rejects an unknown typed code",
+    schema: "errorPayload",
+    value: {
+      schemaVersion: 1,
+      code: "GENERATION_ABSENT",
+      message: "failure",
+      diagnosticId: null,
+    },
+  },
+  {
+    name: "PING rejects unknown field",
+    schema: "pingPongPayload",
+    value: { schemaVersion: 1, monoNanos: "1", wallTime: FIXTURE_TIME },
+  },
+  {
+    name: "HOST_REGISTER rejects unknown field",
+    schema: "hostRegisterPayload",
+    value: { schemaVersion: 1, record: fixtureHostRecord, trusted: true },
+  },
+  {
+    name: "HOST_ADOPT rejects unknown field",
+    schema: "hostAdoptPayload",
+    value: { ...fixtureAdoptRequest, trusted: true },
+  },
+  {
+    name: "HOST_ADOPT rejects malformed secret",
+    schema: "hostAdoptPayload",
+    value: { ...fixtureAdoptRequest, adoptionSecretHex: "not-a-secret" },
+  },
+  {
+    name: "GRANT_REGISTER rejects unknown field",
+    schema: "grantRegisterPayload",
+    value: { ...fixtureGrantRegistration, rawToken: "forbidden" },
+  },
+  {
+    name: "GRANT_REGISTER rejects untagged hash",
+    schema: "grantRegisterPayload",
+    value: { ...fixtureGrantRegistration, grantTokenSha256: "b".repeat(64) },
+  },
   {
     name: "frozen create request rejects Hive policy",
     schema: "terminalHostCreateRequest",
-    value: { ...fixtureTerminalHostCreateRequest, visibility: fixtureVisibilityRequest },
+    value: {
+      ...fixtureTerminalHostCreateRequest,
+      visibility: fixtureVisibilityRequest,
+    },
   },
   {
     name: "frozen create result rejects collapsed launch failure",
@@ -1108,7 +1690,10 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "frozen resize result cannot claim the foreground process observed it",
     schema: "terminalHostResizeResult",
-    value: { ...fixtureTerminalHostResize, foregroundProcessObservation: "observed" },
+    value: {
+      ...fixtureTerminalHostResize,
+      foregroundProcessObservation: "observed",
+    },
   },
   {
     name: "frozen stale resize cannot omit the revision that superseded it",
@@ -1118,7 +1703,10 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "frozen attach request rejects a reversed negotiation minor range",
     schema: "terminalHostAttachRequest",
-    value: { ...fixtureTerminalHostAttachRequest, protocol: { major: 1, minMinor: 1, maxMinor: 0 } },
+    value: {
+      ...fixtureTerminalHostAttachRequest,
+      protocol: { major: 1, minMinor: 1, maxMinor: 0 },
+    },
   },
   {
     name: "frozen attach result cannot claim it resumed inside a sequence",
@@ -1128,7 +1716,10 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "frozen subscribe request rejects a reversed negotiation minor range",
     schema: "terminalHostSubscribeRequest",
-    value: { ...fixtureTerminalHostSubscribeRequest, protocol: { major: 1, minMinor: 1, maxMinor: 0 } },
+    value: {
+      ...fixtureTerminalHostSubscribeRequest,
+      protocol: { major: 1, minMinor: 1, maxMinor: 0 },
+    },
   },
   {
     name: "frozen subscribe gap cannot drop its fresh-inspection requirement",
@@ -1140,7 +1731,10 @@ const invalidCases: readonly WireCorpusCase[] = [
     schema: "terminalHostSubscribeRequest",
     value: {
       ...fixtureTerminalHostSubscribeRequest,
-      limits: { ...fixtureTerminalHostSubscriptionLimits, retainedEventCount: 0 },
+      limits: {
+        ...fixtureTerminalHostSubscriptionLimits,
+        retainedEventCount: 0,
+      },
     },
   },
   {
@@ -1151,7 +1745,8 @@ const invalidCases: readonly WireCorpusCase[] = [
       limits: {
         ...fixtureTerminalHostSubscriptionLimits,
         unacknowledgedEventLowWater:
-          fixtureTerminalHostSubscriptionLimits.unacknowledgedEventHighWater + 1,
+          fixtureTerminalHostSubscriptionLimits.unacknowledgedEventHighWater +
+          1,
       },
     },
   },
@@ -1179,7 +1774,10 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "frozen event acknowledgement cannot release without naming its subscription",
     schema: "terminalHostEventAcknowledgementRequest",
-    value: { ...fixtureTerminalHostEventAcknowledgementRequest, subscriptionId: "" },
+    value: {
+      ...fixtureTerminalHostEventAcknowledgementRequest,
+      subscriptionId: "",
+    },
   },
   {
     name: "frozen event acknowledgement cannot report a nondecimal released position",
@@ -1194,7 +1792,10 @@ const invalidCases: readonly WireCorpusCase[] = [
     schema: "terminalHostVisibilityRenewalRequest",
     value: {
       ...fixtureTerminalHostVisibilityRenewalRequest,
-      visibility: { ...fixtureTerminalHostVisibilityRequest, inventoryRevision: "0" },
+      visibility: {
+        ...fixtureTerminalHostVisibilityRequest,
+        inventoryRevision: "0",
+      },
     },
   },
   {
@@ -1241,12 +1842,21 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "CLAIM_ACQUIRE rejects absent session fencing",
     schema: "claimAcquirePayload",
-    value: { schemaVersion: 1, writer: "viewer", kind: "human", leaseMilliseconds: 1, idempotencyKey: "claim" },
+    value: {
+      schemaVersion: 1,
+      writer: "viewer",
+      kind: "human",
+      leaseMilliseconds: 1,
+      idempotencyKey: "claim",
+    },
   },
   {
     name: "CLAIM_RESULT rejects invented ownership",
     schema: "claimResultPayload",
-    value: { schemaVersion: 1, result: { state: "denied", owner: null, diagnostic: "" } },
+    value: {
+      schemaVersion: 1,
+      result: { state: "denied", owner: null, diagnostic: "" },
+    },
   },
   {
     name: "INPUT_SUBMIT rejects malformed base64",
@@ -1263,7 +1873,12 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "RESIZE rejects absent idempotency key",
     schema: "resizePayload",
-    value: { schemaVersion: 1, session: fixtureTerminalHostSession, window: fixtureTerminalHostResize.readback, revision: "8" },
+    value: {
+      schemaVersion: 1,
+      session: fixtureTerminalHostSession,
+      window: fixtureTerminalHostResize.readback,
+      revision: "8",
+    },
   },
   {
     name: "APPLIED rejects ambiguous result branch",
@@ -1306,28 +1921,40 @@ export function encodeFrameHeader(fields: FrameHeaderFields): Uint8Array {
 }
 
 export function parseFrameHeader(bytes: Uint8Array): FrameHeaderFields | null {
-  if (bytes.byteLength !== FRAME_HEADER.bytes) throw new Error("MALFORMED_FRAME");
+  if (bytes.byteLength !== FRAME_HEADER.bytes)
+    throw new Error("MALFORMED_FRAME");
   for (const [index, expected] of FRAME_HEADER.magicBytes.entries()) {
     if (bytes[index] !== expected) throw new Error("MALFORMED_FRAME");
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (view.getUint8(FRAME_HEADER.offsets.major) !== SESSION_PROTOCOL_VERSION.major) {
+  if (
+    view.getUint8(FRAME_HEADER.offsets.major) !== SESSION_PROTOCOL_VERSION.major
+  ) {
     throw new Error("PROTOCOL_MISMATCH");
   }
   const minor = view.getUint8(FRAME_HEADER.offsets.minor);
-  if (minor < SESSION_PROTOCOL_MINOR_RANGE.min || minor > SESSION_PROTOCOL_MINOR_RANGE.max) {
+  if (
+    minor < SESSION_PROTOCOL_MINOR_RANGE.min ||
+    minor > SESSION_PROTOCOL_MINOR_RANGE.max
+  ) {
     throw new Error("PROTOCOL_MISMATCH");
   }
   const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
-  const entry = Object.entries(FRAME_TYPES).find(([, code]) => code === typeCode);
+  const entry = Object.entries(FRAME_TYPES).find(
+    ([, code]) => code === typeCode,
+  );
   const flags = view.getUint16(FRAME_HEADER.offsets.flags);
-  if ((flags & ~FRAME_FLAGS.allowedMask) !== 0 || view.getUint16(FRAME_HEADER.offsets.reserved) !== 0) {
+  if (
+    (flags & ~FRAME_FLAGS.allowedMask) !== 0 ||
+    view.getUint16(FRAME_HEADER.offsets.reserved) !== 0
+  ) {
     throw new Error("MALFORMED_FRAME");
   }
   const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
   if (!entry) {
     if ((typeCode & FRAME_HEADER.optionalTypeBit) !== 0) {
-      if (payloadLength > TERMINAL_LIMITS.controlJsonBytesPerFrame) throw new Error("FRAME_TOO_LARGE");
+      if (payloadLength > TERMINAL_LIMITS.controlJsonBytesPerFrame)
+        throw new Error("FRAME_TOO_LARGE");
       return null;
     }
     throw new Error("UNSUPPORTED_FRAME");
@@ -1349,7 +1976,11 @@ export function parseFrameHeader(bytes: Uint8Array): FrameHeaderFields | null {
 const toHex = (bytes: Uint8Array): string =>
   [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
-const mutateHeader = (source: Uint8Array, offset: number, value: number): Uint8Array => {
+const mutateHeader = (
+  source: Uint8Array,
+  offset: number,
+  value: number,
+): Uint8Array => {
   const copy = source.slice();
   copy[offset] = value;
   return copy;
@@ -1375,13 +2006,25 @@ export function buildWireCorpus() {
   new DataView(badReserved.buffer).setUint16(FRAME_HEADER.offsets.reserved, 1);
   const badFlags = helloBytes.slice();
   new DataView(badFlags.buffer).setUint16(FRAME_HEADER.offsets.flags, 0x10);
-  const oversized = encodeFrameHeader({ ...output, payloadLength: TERMINAL_LIMITS.streamChunkBytes + 1 });
+  const oversized = encodeFrameHeader({
+    ...output,
+    payloadLength: TERMINAL_LIMITS.streamChunkBytes + 1,
+  });
   const optionalUnknown = helloBytes.slice();
-  new DataView(optionalUnknown.buffer).setUint16(FRAME_HEADER.offsets.type, 0x8001);
+  new DataView(optionalUnknown.buffer).setUint16(
+    FRAME_HEADER.offsets.type,
+    0x8001,
+  );
   const unsolicitedOptionalUnknown = optionalUnknown.slice();
-  new DataView(unsolicitedOptionalUnknown.buffer).setBigUint64(FRAME_HEADER.offsets.requestId, 0n);
+  new DataView(unsolicitedOptionalUnknown.buffer).setBigUint64(
+    FRAME_HEADER.offsets.requestId,
+    0n,
+  );
   const mandatoryUnknown = helloBytes.slice();
-  new DataView(mandatoryUnknown.buffer).setUint16(FRAME_HEADER.offsets.type, 0x7000);
+  new DataView(mandatoryUnknown.buffer).setUint16(
+    FRAME_HEADER.offsets.type,
+    0x7000,
+  );
   return {
     schemaVersion: 1,
     valid: validCases,
@@ -1389,20 +2032,61 @@ export function buildWireCorpus() {
     frameHeaders: {
       valid: [
         { name: "hello", fields: hello, hex: toHex(helloBytes) },
-        { name: "maximum output chunk", fields: output, hex: toHex(encodeFrameHeader(output)) },
+        {
+          name: "maximum output chunk",
+          fields: output,
+          hex: toHex(encodeFrameHeader(output)),
+        },
       ],
       ignored: [
         { name: "unknown optional frame", hex: toHex(optionalUnknown) },
-        { name: "unsolicited unknown optional frame", hex: toHex(unsolicitedOptionalUnknown) },
+        {
+          name: "unsolicited unknown optional frame",
+          hex: toHex(unsolicitedOptionalUnknown),
+        },
       ],
       invalid: [
-        { name: "bad magic", error: "MALFORMED_FRAME", hex: toHex(mutateHeader(helloBytes, 0, 0)) },
-        { name: "major mismatch", error: "PROTOCOL_MISMATCH", hex: toHex(mutateHeader(helloBytes, FRAME_HEADER.offsets.major, 2)) },
-        { name: "minor mismatch", error: "PROTOCOL_MISMATCH", hex: toHex(mutateHeader(helloBytes, FRAME_HEADER.offsets.minor, SESSION_PROTOCOL_MINOR_RANGE.max + 1)) },
-        { name: "reserved bits", error: "MALFORMED_FRAME", hex: toHex(badReserved) },
-        { name: "unknown flags", error: "MALFORMED_FRAME", hex: toHex(badFlags) },
-        { name: "oversized raw chunk", error: "FRAME_TOO_LARGE", hex: toHex(oversized) },
-        { name: "unknown mandatory frame", error: "UNSUPPORTED_FRAME", hex: toHex(mandatoryUnknown) },
+        {
+          name: "bad magic",
+          error: "MALFORMED_FRAME",
+          hex: toHex(mutateHeader(helloBytes, 0, 0)),
+        },
+        {
+          name: "major mismatch",
+          error: "PROTOCOL_MISMATCH",
+          hex: toHex(mutateHeader(helloBytes, FRAME_HEADER.offsets.major, 2)),
+        },
+        {
+          name: "minor mismatch",
+          error: "PROTOCOL_MISMATCH",
+          hex: toHex(
+            mutateHeader(
+              helloBytes,
+              FRAME_HEADER.offsets.minor,
+              SESSION_PROTOCOL_MINOR_RANGE.max + 1,
+            ),
+          ),
+        },
+        {
+          name: "reserved bits",
+          error: "MALFORMED_FRAME",
+          hex: toHex(badReserved),
+        },
+        {
+          name: "unknown flags",
+          error: "MALFORMED_FRAME",
+          hex: toHex(badFlags),
+        },
+        {
+          name: "oversized raw chunk",
+          error: "FRAME_TOO_LARGE",
+          hex: toHex(oversized),
+        },
+        {
+          name: "unknown mandatory frame",
+          error: "UNSUPPORTED_FRAME",
+          hex: toHex(mandatoryUnknown),
+        },
       ],
     },
   } as const;
@@ -1422,7 +2106,12 @@ const baseReducerEvents: readonly WorkspaceEventV2[] = [
     entityRevision: "1",
     occurredAt: FIXTURE_TIME,
     kind: "agent.status-reported",
-    source: { kind: "agent-report", id: "agent-fixture:3", observedAt: FIXTURE_TIME, confidence: "authoritative" },
+    source: {
+      kind: "agent-report",
+      id: "agent-fixture:3",
+      observedAt: FIXTURE_TIME,
+      confidence: "authoritative",
+    },
     data: { phase: "planning", summary: "Reading contracts" },
   },
   {
@@ -1433,7 +2122,12 @@ const baseReducerEvents: readonly WorkspaceEventV2[] = [
     entityRevision: "2",
     occurredAt: "2026-07-16T12:00:01.000Z",
     kind: "agent.status-reported",
-    source: { kind: "agent-report", id: "agent-fixture:3", observedAt: "2026-07-16T12:00:01.000Z", confidence: "authoritative" },
+    source: {
+      kind: "agent-report",
+      id: "agent-fixture:3",
+      observedAt: "2026-07-16T12:00:01.000Z",
+      confidence: "authoritative",
+    },
     data: { phase: "testing", summary: "Checking parity" },
   },
   {
@@ -1444,7 +2138,12 @@ const baseReducerEvents: readonly WorkspaceEventV2[] = [
     entityRevision: "1",
     occurredAt: "2026-07-16T12:00:02.000Z",
     kind: "session.health",
-    source: { kind: "sessiond", id: FIXTURE_IDS.session, observedAt: "2026-07-16T12:00:02.000Z", confidence: "authoritative" },
+    source: {
+      kind: "sessiond",
+      id: FIXTURE_IDS.session,
+      observedAt: "2026-07-16T12:00:02.000Z",
+      confidence: "authoritative",
+    },
     data: { presence: "present", outputSeq: "4096" },
   },
 ];
@@ -1586,7 +2285,11 @@ export function buildReducerCorpus() {
       eventId: `evt_018f1e90-7b5a-7cc0-8${scenarioIndex.toString(16).padStart(3, "0")}-${(sequenceIndex + 20).toString().padStart(12, "0")}`,
       seq: String(sequenceIndex + 1),
     })) as WorkspaceEventV2[];
-    return { name: `permutation-${order.join("")}`, events, prefixes: prefixesFor(events) };
+    return {
+      name: `permutation-${order.join("")}`,
+      events,
+      prefixes: prefixesFor(events),
+    };
   });
   const duplicateEvents = [baseReducerEvents[0]!, baseReducerEvents[0]!];
   const lowerRevision = [
@@ -1598,16 +2301,20 @@ export function buildReducerCorpus() {
     { ...baseReducerEvents[0]!, data: { phase: "complete" } },
   ];
   const gap = [{ ...baseReducerEvents[0]!, seq: "2" }];
-  const caseOrdering = [{
-    ...baseReducerEvents[0]!,
-    eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000009",
-    data: { B: "upper", a: "lower" },
-  }];
-  const numericOrdering = [{
-    ...baseReducerEvents[0]!,
-    eventId: "evt_018f1e90-7b5a-7cc0-8000-00000000000a",
-    data: { a10: "ten", a9: "nine" },
-  }];
+  const caseOrdering = [
+    {
+      ...baseReducerEvents[0]!,
+      eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000009",
+      data: { B: "upper", a: "lower" },
+    },
+  ];
+  const numericOrdering = [
+    {
+      ...baseReducerEvents[0]!,
+      eventId: "evt_018f1e90-7b5a-7cc0-8000-00000000000a",
+      data: { a10: "ten", a9: "nine" },
+    },
+  ];
   const edgeScenarios = [
     {
       name: "identical-duplicate",
@@ -1617,7 +2324,10 @@ export function buildReducerCorpus() {
     {
       name: "lower-entity-revision",
       events: lowerRevision,
-      prefixes: [HAND_AUTHORED_LOWER_FIRST_PREFIX, HAND_AUTHORED_LOWER_SECOND_PREFIX],
+      prefixes: [
+        HAND_AUTHORED_LOWER_FIRST_PREFIX,
+        HAND_AUTHORED_LOWER_SECOND_PREFIX,
+      ],
     },
     {
       name: "conflicting-duplicate",
@@ -1643,21 +2353,25 @@ export function buildReducerCorpus() {
   const canonicalization = [
     {
       name: "code-unit-case-ordering",
-      entities: [{
-        kind: "agent",
-        id: "agent-case-order",
-        entityRevision: "1",
-        projection: { B: "upper", a: "lower" },
-      }],
+      entities: [
+        {
+          kind: "agent",
+          id: "agent-case-order",
+          entityRevision: "1",
+          projection: { B: "upper", a: "lower" },
+        },
+      ],
     },
     {
       name: "code-unit-numeric-ordering",
-      entities: [{
-        kind: "agent",
-        id: "agent-numeric-order",
-        entityRevision: "1",
-        projection: { a10: "ten", a9: "nine" },
-      }],
+      entities: [
+        {
+          kind: "agent",
+          id: "agent-numeric-order",
+          entityRevision: "1",
+          projection: { a10: "ten", a9: "nine" },
+        },
+      ],
     },
   ].map((fixture) => {
     const canonical = canonicalJson(fixture.entities);

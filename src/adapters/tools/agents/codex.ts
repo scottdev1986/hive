@@ -11,10 +11,10 @@ import { shellJoin } from "../../../daemon/session-host/shell-session";
 import {
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
+  type CodexSpawnOptions,
   resolveWorkingCodexExecutable,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
-  type CodexSpawnOptions,
 } from "../codex";
 import type { AgentAdapter } from "./agent-adapter";
 
@@ -38,8 +38,8 @@ export const codexAgentAdapter: AgentAdapter = {
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
     });
-    const withInstructions = context.instructionPath !== undefined &&
-      context.sessionId !== undefined;
+    const withInstructions =
+      context.instructionPath !== undefined && context.sessionId !== undefined;
     const options: CodexSpawnOptions = {
       daemonPort: context.daemonPort,
       effort: context.effort ?? "medium",
@@ -60,9 +60,10 @@ export const codexAgentAdapter: AgentAdapter = {
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
     };
-    const argv = context.resumeSessionId === undefined
-      ? buildCodexSpawnCommand(options)
-      : buildCodexResumeCommand(options, context.resumeSessionId);
+    const argv =
+      context.resumeSessionId === undefined
+        ? buildCodexSpawnCommand(options)
+        : buildCodexResumeCommand(options, context.resumeSessionId);
     let command = shellJoin(
       context.kickoff === undefined ? argv : [...argv, context.kickoff],
     );

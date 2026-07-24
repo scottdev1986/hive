@@ -36,7 +36,10 @@ export function orchestratorDocGuidance(docs: OrchestratorDocs): string {
     "This repo's documents (discovered in the tree) — cite these by name and section:",
   ];
   if (docs.primary !== null) {
-    const bare = (docs.primary.split("/").pop() ?? docs.primary).replace(/\.md$/i, "");
+    const bare = (docs.primary.split("/").pop() ?? docs.primary).replace(
+      /\.md$/i,
+      "",
+    );
     lines.push(
       `- ${docs.primary} is the primary design doc; a bare "${bare} §6" resolves to it.`,
     );
@@ -45,6 +48,7 @@ export function orchestratorDocGuidance(docs: OrchestratorDocs): string {
   const shown = others.slice(0, MAX_LISTED_DOCS);
   for (const doc of shown) lines.push(`- ${doc}`);
   const omitted = others.length - shown.length;
-  if (omitted > 0) lines.push(`- (${omitted} more briefable doc${omitted === 1 ? "" : "s"})`);
+  if (omitted > 0)
+    lines.push(`- (${omitted} more briefable doc${omitted === 1 ? "" : "s"})`);
   return lines.join("\n");
 }

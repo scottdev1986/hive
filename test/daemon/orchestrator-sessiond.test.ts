@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import type { SessionInspection } from "../../src/daemon/session-host/contract";
-import type {
-  HiveTerminalBinding,
-  TerminalHostBindingStore,
-} from "../../src/daemon/session-host/terminal-host-binding";
-import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import {
   OrchestratorSessiondController,
   type OrchestratorSessiondDependencies,
   type OrchestratorSessiondLaunch,
 } from "../../src/daemon/orchestrator-sessiond";
+import type { SessionInspection } from "../../src/daemon/session-host/contract";
+import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import { TERMINAL_SHELL } from "../../src/daemon/session-host/shell-session";
+import type {
+  HiveTerminalBinding,
+  TerminalHostBindingStore,
+} from "../../src/daemon/session-host/terminal-host-binding";
 
 class MemoryBindings implements TerminalHostBindingStore {
   values: HiveTerminalBinding[] = [];
@@ -22,11 +22,12 @@ class MemoryBindings implements TerminalHostBindingStore {
   releaseUncreatedTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
   ): boolean {
-    const index = this.values.findIndex((binding) =>
-      binding.locator.instanceId === locator.instanceId &&
-      binding.locator.sessionId === locator.sessionId &&
-      binding.locator.generation === locator.generation &&
-      binding.createEvidence === undefined
+    const index = this.values.findIndex(
+      (binding) =>
+        binding.locator.instanceId === locator.instanceId &&
+        binding.locator.sessionId === locator.sessionId &&
+        binding.locator.generation === locator.generation &&
+        binding.createEvidence === undefined,
     );
     if (index < 0) return false;
     this.values.splice(index, 1);
@@ -36,8 +37,8 @@ class MemoryBindings implements TerminalHostBindingStore {
     locator: HiveTerminalBinding["locator"],
     evidence: NonNullable<HiveTerminalBinding["createEvidence"]>,
   ): HiveTerminalBinding {
-    const index = this.values.findIndex((binding) =>
-      binding.locator.sessionId === locator.sessionId
+    const index = this.values.findIndex(
+      (binding) => binding.locator.sessionId === locator.sessionId,
     );
     const value = { ...this.values[index]!, createEvidence: evidence };
     this.values[index] = value;
@@ -52,14 +53,19 @@ class MemoryBindings implements TerminalHostBindingStore {
   getTerminalHostBindingByLocator(
     locator: HiveTerminalBinding["locator"],
   ): HiveTerminalBinding | null {
-    return this.values.find((binding) =>
-      binding.locator.instanceId === locator.instanceId &&
-      binding.locator.sessionId === locator.sessionId &&
-      binding.locator.generation === locator.generation
-    ) ?? null;
+    return (
+      this.values.find(
+        (binding) =>
+          binding.locator.instanceId === locator.instanceId &&
+          binding.locator.sessionId === locator.sessionId &&
+          binding.locator.generation === locator.generation,
+      ) ?? null
+    );
   }
   listTerminalHostBindings(instanceId: string): readonly HiveTerminalBinding[] {
-    return this.values.filter((binding) => binding.locator.instanceId === instanceId);
+    return this.values.filter(
+      (binding) => binding.locator.instanceId === instanceId,
+    );
   }
 }
 
@@ -122,9 +128,10 @@ function inspection(
       openTerminalRevision: "1",
       expiresAt: "2026-07-22T12:00:00.000Z",
     },
-    exit: presence === "present"
-      ? null
-      : { code: null, signal: 15, observedAt: "2026-07-22T12:00:01.000Z" },
+    exit:
+      presence === "present"
+        ? null
+        : { code: null, signal: 15, observedAt: "2026-07-22T12:00:01.000Z" },
     survivors: [],
     evidenceAt: "2026-07-22T12:00:01.000Z",
     diagnosticIds: [],
@@ -167,8 +174,12 @@ describe("OrchestratorSessiondController", () => {
           bindings.bindTerminalHostSession(policy);
           throw new Error("native host registration failed");
         },
-        renewVisibility: async () => { throw new Error("not reached"); },
-        inspect: async () => { throw new Error("not reached"); },
+        renewVisibility: async () => {
+          throw new Error("not reached");
+        },
+        inspect: async () => {
+          throw new Error("not reached");
+        },
       },
       sleep: async () => {},
     });
@@ -189,9 +200,10 @@ describe("OrchestratorSessiondController", () => {
       bindings,
       instanceId: "instance-a",
       visibility: {
-        prepareAgentCreation: async () => ++admissionAttempts < 2
-          ? null
-          : { engineBuildId: "engine-a", visibility, geometry },
+        prepareAgentCreation: async () =>
+          ++admissionAttempts < 2
+            ? null
+            : { engineBuildId: "engine-a", visibility, geometry },
       },
       terminalHost: {
         create: async (spec, input, policy) => {
@@ -212,11 +224,16 @@ describe("OrchestratorSessiondController", () => {
           creates += 1;
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
-          return { locator: spec.locator, inspection: inspection(policy.locator, "present"), created: true };
+          return {
+            locator: spec.locator,
+            inspection: inspection(policy.locator, "present"),
+            created: true,
+          };
         },
         renewVisibility: async (value) => {
-          expect(bindings.getTerminalHostBindingByLocator(value)?.createEvidence)
-            .toBeDefined();
+          expect(
+            bindings.getTerminalHostBindingByLocator(value)?.createEvidence,
+          ).toBeDefined();
           renewals += 1;
           return {
             locator: value,
@@ -239,7 +256,10 @@ describe("OrchestratorSessiondController", () => {
     expect(creates).toBe(1);
     expect(renewals).toBe(1);
     expect(bindings.values[0]?.locator).toEqual(ready.locator);
-    expect(controller.snapshot()).toMatchObject({ state: "exited", exitCode: 1 });
+    expect(controller.snapshot()).toMatchObject({
+      state: "exited",
+      exitCode: 1,
+    });
     await controller.start(launch);
     expect(creates).toBe(1);
   });
@@ -260,7 +280,11 @@ describe("OrchestratorSessiondController", () => {
         create: async (spec, _input, policy) => {
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
-          return { locator: spec.locator, inspection: inspection(policy.locator, "present"), created: true };
+          return {
+            locator: spec.locator,
+            inspection: inspection(policy.locator, "present"),
+            created: true,
+          };
         },
         renewVisibility: async (value) => ({
           locator: value,
@@ -276,7 +300,8 @@ describe("OrchestratorSessiondController", () => {
     await settle();
     expect(controller.snapshot()).toMatchObject({
       state: "exited",
-      diagnostic: "sessiond visibility expired; supervisor will relaunch if agents remain",
+      diagnostic:
+        "sessiond visibility expired; supervisor will relaunch if agents remain",
     });
   });
 
@@ -288,9 +313,15 @@ describe("OrchestratorSessiondController", () => {
         prepareAgentCreation: async () => null,
       },
       terminalHost: {
-        create: async () => { throw new Error("not reached"); },
-        renewVisibility: async () => { throw new Error("not reached"); },
-        inspect: async () => { throw new Error("not reached"); },
+        create: async () => {
+          throw new Error("not reached");
+        },
+        renewVisibility: async () => {
+          throw new Error("not reached");
+        },
+        inspect: async () => {
+          throw new Error("not reached");
+        },
       },
       sleep: async () => await new Promise<void>(() => {}),
     });
@@ -342,7 +373,8 @@ describe("OrchestratorSessiondController", () => {
     await settle();
     expect(monitoring.snapshot()).toMatchObject({
       state: "failed",
-      diagnostic: "queen sessiond controller canceled: test shutdown during monitor",
+      diagnostic:
+        "queen sessiond controller canceled: test shutdown during monitor",
     });
   });
 
@@ -352,7 +384,9 @@ describe("OrchestratorSessiondController", () => {
     const terminalHost: OrchestratorSessiondDependencies["terminalHost"] = {
       create: async (spec) => {
         creates += 1;
-        throw new Error(`unexpected second create for ${spec.locator.sessionId}`);
+        throw new Error(
+          `unexpected second create for ${spec.locator.sessionId}`,
+        );
       },
       renewVisibility: async (value: HiveTerminalBinding["locator"]) => ({
         locator: value,
@@ -363,31 +397,33 @@ describe("OrchestratorSessiondController", () => {
       inspect: async (value: HiveTerminalBinding["locator"]) =>
         inspection(value, "exited"),
     };
-    const firstLocator = (await new OrchestratorSessiondController({
-      bindings,
-      instanceId: "instance-a",
-      visibility: {
-        prepareAgentCreation: async () => ({
-          engineBuildId: "engine-a",
-          visibility,
-          geometry,
-        }),
-      },
-      terminalHost: {
-        ...terminalHost,
-        create: async (spec, _input, policy) => {
-          creates += 1;
-          bindings.bindTerminalHostSession(policy);
-          completeBinding(bindings, policy.locator);
-          return {
-            locator: spec.locator,
-            inspection: inspection(policy.locator, "present"),
-            created: true,
-          };
+    const firstLocator = (
+      await new OrchestratorSessiondController({
+        bindings,
+        instanceId: "instance-a",
+        visibility: {
+          prepareAgentCreation: async () => ({
+            engineBuildId: "engine-a",
+            visibility,
+            geometry,
+          }),
         },
-      },
-      sleep: async () => {},
-    }).start(launch)).locator;
+        terminalHost: {
+          ...terminalHost,
+          create: async (spec, _input, policy) => {
+            creates += 1;
+            bindings.bindTerminalHostSession(policy);
+            completeBinding(bindings, policy.locator);
+            return {
+              locator: spec.locator,
+              inspection: inspection(policy.locator, "present"),
+              created: true,
+            };
+          },
+        },
+        sleep: async () => {},
+      }).start(launch)
+    ).locator;
     await settle();
 
     const restarted = new OrchestratorSessiondController({

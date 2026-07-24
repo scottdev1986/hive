@@ -2,19 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
-  TERMINAL_HOST_CONTRACT_VERSION,
   type CreateRequest,
   type SessionRef,
+  TERMINAL_HOST_CONTRACT_VERSION,
   type TerminalEvent,
   type WindowSize,
 } from "../../src/daemon/session-host/terminal-host-contract";
 import {
+  fixtureLimits,
+  fixtureSubscriptionLimits,
   NEUTRAL_FIXTURE_VERSION,
   NeutralTerminalHostFixture,
   StaleIncarnationError,
   SubscriptionGapError,
-  fixtureLimits,
-  fixtureSubscriptionLimits,
 } from "./neutral-fixture";
 
 const encoder = new TextEncoder();
@@ -64,13 +64,17 @@ async function drain(
   subscriptionId: string,
 ): Promise<readonly TerminalEvent[]> {
   const delivered: TerminalEvent[] = [];
-  for await (const event of host.events({ session, subscriptionId })) delivered.push(event);
+  for await (const event of host.events({ session, subscriptionId }))
+    delivered.push(event);
   return delivered;
 }
 
 const sequenceOf = (event: TerminalEvent): string => event.eventSequence;
 
-async function createRunning(host: NeutralTerminalHostFixture, spec: CreateRequest): Promise<SessionRef> {
+async function createRunning(
+  host: NeutralTerminalHostFixture,
+  spec: CreateRequest,
+): Promise<SessionRef> {
   const created = await host.create(spec);
   expect(created.outcome.state).toBe("running");
   return created.session;
@@ -113,38 +117,74 @@ async function assertA(host: NeutralTerminalHostFixture): Promise<void> {
   expect(evidence.childSessionId).toBe(first.outcome.child.processId);
   expect(evidence.childProcessGroupId).toBe(evidence.foregroundProcessGroupId);
   expect(evidence.terminalIdentity.length).toBeGreaterThan(0);
-  await expect(host.inspect({ ...first.session, incarnation: "stale-incarnation" }))
-    .rejects.toBeInstanceOf(StaleIncarnationError);
+  await expect(
+    host.inspect({ ...first.session, incarnation: "stale-incarnation" }),
+  ).rejects.toBeInstanceOf(StaleIncarnationError);
 }
 
 async function assertB(host: NeutralTerminalHostFixture): Promise<void> {
   const cases = [
-    [request("b-command", { executable: "missing:command" }), "command", "ENOENT"],
-    [request("b-cwd", { workingDirectory: "invalid:directory" }), "working-directory", "ENOENT"],
-    [request("b-env", { completeEnvironment: [{ name: "HUGE", value: "x".repeat(5000) }] }), "environment", "E2BIG"],
-    [request("b-handle", {
-      descriptorMap: [{
-        handle: { token: "unmappable", sourceDisposition: "retain" },
-        targetDescriptor: 7,
-      }],
-    }), "descriptor-transfer", "EBADF"],
+    [
+      request("b-command", { executable: "missing:command" }),
+      "command",
+      "ENOENT",
+    ],
+    [
+      request("b-cwd", { workingDirectory: "invalid:directory" }),
+      "working-directory",
+      "ENOENT",
+    ],
+    [
+      request("b-env", {
+        completeEnvironment: [{ name: "HUGE", value: "x".repeat(5000) }],
+      }),
+      "environment",
+      "E2BIG",
+    ],
+    [
+      request("b-handle", {
+        descriptorMap: [
+          {
+            handle: { token: "unmappable", sourceDisposition: "retain" },
+            targetDescriptor: 7,
+          },
+        ],
+      }),
+      "descriptor-transfer",
+      "EBADF",
+    ],
   ] as const;
   for (const [spec, layer, osCode] of cases) {
     const result = await host.create(spec);
-    expect(result.outcome).toMatchObject({ state: "exec-failed", layer, osCode });
+    expect(result.outcome).toMatchObject({
+      state: "exec-failed",
+      layer,
+      osCode,
+    });
   }
   expect(await host.list()).toHaveLength(0);
   const generic = await host.create(request("b-generic"));
-  expect(generic.outcome).toMatchObject({ state: "running", execProof: "replacement-observed" });
+  expect(generic.outcome).toMatchObject({
+    state: "running",
+    execProof: "replacement-observed",
+  });
 }
 
 async function assertC(host: NeutralTerminalHostFixture): Promise<void> {
-  const session = await createRunning(host, request("freeze-c", {
-    descriptorMap: [{
-      handle: { token: "report-channel", sourceDisposition: "close-after-transfer" },
-      targetDescriptor: 7,
-    }],
-  }));
+  const session = await createRunning(
+    host,
+    request("freeze-c", {
+      descriptorMap: [
+        {
+          handle: {
+            token: "report-channel",
+            sourceDisposition: "close-after-transfer",
+          },
+          targetDescriptor: 7,
+        },
+      ],
+    }),
+  );
   expect(host.survivingDescriptors(session)).toEqual([0, 1, 2, 7]);
   expect(host.sourceHandleWasClosed(session, "report-channel")).toBe(true);
 }
@@ -199,7 +239,7 @@ async function assertD(host: NeutralTerminalHostFixture): Promise<void> {
 function patternChecksum(byteLength: number): number {
   const cycles = Math.floor(byteLength / 251);
   const remainder = byteLength % 251;
-  return (cycles * 31_375 + remainder * (remainder - 1) / 2) >>> 0;
+  return (cycles * 31_375 + (remainder * (remainder - 1)) / 2) >>> 0;
 }
 
 async function assertE(host: NeutralTerminalHostFixture): Promise<void> {
@@ -210,8 +250,12 @@ async function assertE(host: NeutralTerminalHostFixture): Promise<void> {
   const result = host.producePattern(session, bytes);
   expect(result.producedBytes).toBe(bytes);
   expect(result.checksum).toBe(patternChecksum(bytes));
-  expect(result.retainedBytes).toBeLessThanOrEqual(fixtureLimits.outputRetentionBytes);
-  expect(result.maxBufferedBytes).toBeLessThanOrEqual(fixtureLimits.outputRetentionBytes);
+  expect(result.retainedBytes).toBeLessThanOrEqual(
+    fixtureLimits.outputRetentionBytes,
+  );
+  expect(result.maxBufferedBytes).toBeLessThanOrEqual(
+    fixtureLimits.outputRetentionBytes,
+  );
   expect(result.gapCount).toBe(1);
   expect(result.flowTransitions).toBe(2);
   const capabilities = {
@@ -221,11 +265,16 @@ async function assertE(host: NeutralTerminalHostFixture): Promise<void> {
   };
   const disconnected = await host.attach({
     session,
-    cursor: { afterEventSequence: "0", afterOutputOffset: "0", checkpoint: null },
+    cursor: {
+      afterEventSequence: "0",
+      afterOutputOffset: "0",
+      checkpoint: null,
+    },
     capabilities,
   });
   expect(disconnected.state).toBe("gap");
-  if (disconnected.state !== "gap") throw new Error("retention gap not reported");
+  if (disconnected.state !== "gap")
+    throw new Error("retention gap not reported");
   const resumed = await host.attach({
     session,
     cursor: {
@@ -243,11 +292,16 @@ async function assertE(host: NeutralTerminalHostFixture): Promise<void> {
     throughEventSequence: resumed.cursor.afterEventSequence,
     throughOutputOffset: resumed.cursor.afterOutputOffset,
   });
-  expect(acknowledgement.availableCreditBytes).toBe(fixtureLimits.outputHighWaterBytes);
+  expect(acknowledgement.availableCreditBytes).toBe(
+    fixtureLimits.outputHighWaterBytes,
+  );
 }
 
 async function assertF(host: NeutralTerminalHostFixture): Promise<void> {
-  for (const [key, signal] of [["freeze-f-normal", null], ["freeze-f-signal", 15]] as const) {
+  for (const [key, signal] of [
+    ["freeze-f-normal", null],
+    ["freeze-f-signal", 15],
+  ] as const) {
     const session = await createRunning(host, request(key));
     const tail = encoder.encode(`tail:${key}`);
     const events = host.completeWithTail(session, tail, signal);
@@ -264,15 +318,24 @@ async function assertF(host: NeutralTerminalHostFixture): Promise<void> {
     const reaped = events[3];
     expect(reaped?.kind).toBe("process-reaped");
     if (reaped?.kind !== "process-reaped") throw new Error("reap missing");
-    expect(reaped.reap).toMatchObject({ authority: "direct-parent", reaped: true });
+    expect(reaped.reap).toMatchObject({
+      authority: "direct-parent",
+      reaped: true,
+    });
   }
 }
 
 async function assertG(host: NeutralTerminalHostFixture): Promise<void> {
   const session = await createRunning(host, request("freeze-g"));
   const adopted = host.restartBroker(session);
-  expect(adopted).toMatchObject({ lifecycle: "running", completeness: "complete" });
-  expect(adopted.reap).toMatchObject({ authority: "direct-parent", reaped: false });
+  expect(adopted).toMatchObject({
+    lifecycle: "running",
+    completeness: "complete",
+  });
+  expect(adopted.reap).toMatchObject({
+    authority: "direct-parent",
+    reaped: false,
+  });
   const lost = host.loseParentAuthority(session);
   expect(lost.lifecycle).toBe("lost");
   expect(lost.exit).toBeNull();
@@ -315,7 +378,9 @@ async function assertH(host: NeutralTerminalHostFixture): Promise<void> {
   expect(attached.state).toBe("attached");
   if (attached.state !== "attached") throw new Error("attach failed");
   expect(attached.cursor.afterOutputOffset).toBe(String(cursorOffset));
-  expect(host.replayFromOutput(session, Number(attached.cursor.afterOutputOffset))).toEqual(chunks[2]);
+  expect(
+    host.replayFromOutput(session, Number(attached.cursor.afterOutputOffset)),
+  ).toEqual(chunks[2]);
 }
 
 async function assertI(host: NeutralTerminalHostFixture): Promise<void> {
@@ -334,7 +399,10 @@ async function assertI(host: NeutralTerminalHostFixture): Promise<void> {
     claimToken: humanToken,
     transactionId: "i-transaction",
     idempotencyKey: "i-idempotency",
-    operation: { kind: "bytes", bytes: encoder.encode("atomic-human-write") } as const,
+    operation: {
+      kind: "bytes",
+      bytes: encoder.encode("atomic-human-write"),
+    } as const,
   };
   const first = await host.submitInput(input);
   const retry = await host.submitInput(input);
@@ -353,10 +421,12 @@ async function assertJ(host: NeutralTerminalHostFixture): Promise<void> {
     idempotencyKey: "terminate-j",
   });
   expect(result.state).toBe("survivors");
-  expect(result.survivors).toEqual([{
-    process: survivor,
-    reason: "created a new session outside containment",
-  }]);
+  expect(result.survivors).toEqual([
+    {
+      process: survivor,
+      reason: "created a new session outside containment",
+    },
+  ]);
 }
 
 /** §11 row U. A subscription is a resumable cursor: it negotiates, resumes at a
@@ -366,7 +436,8 @@ async function assertJ(host: NeutralTerminalHostFixture): Promise<void> {
  * through the incarnation's final, separately ordered facts. */
 async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   const session = await createRunning(host, request("freeze-u"));
-  const { retainedEventCount, unacknowledgedEventHighWater } = fixtureSubscriptionLimits;
+  const { retainedEventCount, unacknowledgedEventHighWater } =
+    fixtureSubscriptionLimits;
   // Tracked so the PAIRED half of every cursor can be checked against the real
   // byte total rather than against whatever the host happens to report.
   let producedBytes = 0;
@@ -382,7 +453,8 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
       limits: fixtureSubscriptionLimits,
       from: { position: "end" },
     });
-    if (result.state !== "subscribed") throw new Error(`expected subscribed, got ${result.state}`);
+    if (result.state !== "subscribed")
+      throw new Error(`expected subscribed, got ${result.state}`);
     return result;
   };
 
@@ -396,7 +468,10 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     session: unproduced,
     capabilities: { protocolVersions: ["1.0.0"] },
     limits: fixtureSubscriptionLimits,
-    from: { position: "at", cursor: { eventSequence: "9999", outputOffset: "0" } },
+    from: {
+      position: "at",
+      cursor: { eventSequence: "9999", outputOffset: "0" },
+    },
   });
   expect(future.state).toBe("unknown");
   host.appendOutput(unproduced, encoder.encode("survives"));
@@ -410,7 +485,10 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   if (afterFuture.state !== "subscribed") {
     throw new Error(`refused position fabricated a ${afterFuture.state}`);
   }
-  expect(afterFuture.resumeFrom).toEqual({ eventSequence: "2", outputOffset: "8" });
+  expect(afterFuture.resumeFrom).toEqual({
+    eventSequence: "2",
+    outputOffset: "8",
+  });
 
   const reader = await host.subscribe({
     session,
@@ -418,7 +496,8 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     limits: fixtureSubscriptionLimits,
     from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
   });
-  if (reader.state !== "subscribed") throw new Error(`expected subscribed, got ${reader.state}`);
+  if (reader.state !== "subscribed")
+    throw new Error(`expected subscribed, got ${reader.state}`);
   // The host reports the limits it will honour rather than echoing the offer.
   expect(reader.limits).toEqual(fixtureSubscriptionLimits);
   expect(reader.resumeFrom.eventSequence).toBe("1");
@@ -427,10 +506,14 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   // drain sees only what arrived after the previous one.
   produce("alpha");
   produce("beta");
-  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["1", "2"]);
+  expect(
+    (await drain(host, session, reader.subscriptionId)).map(sequenceOf),
+  ).toEqual(["1", "2"]);
   expect(await drain(host, session, reader.subscriptionId)).toEqual([]);
   produce("gamma");
-  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["3"]);
+  expect(
+    (await drain(host, session, reader.subscriptionId)).map(sequenceOf),
+  ).toEqual(["3"]);
   await host.acknowledgeEvents({
     session,
     subscriptionId: reader.subscriptionId,
@@ -443,12 +526,17 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   produce("delta-1");
   produce("delta-2");
   const interrupted: string[] = [];
-  for await (const event of host.events({ session, subscriptionId: reader.subscriptionId })) {
+  for await (const event of host.events({
+    session,
+    subscriptionId: reader.subscriptionId,
+  })) {
     interrupted.push(event.eventSequence);
     break;
   }
   expect(interrupted).toEqual(["4"]);
-  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["5"]);
+  expect(
+    (await drain(host, session, reader.subscriptionId)).map(sequenceOf),
+  ).toEqual(["5"]);
 
   // Independent subscribers: a second subscription starting at the current end
   // sees only what follows it, and draining either never moves the other.
@@ -458,22 +546,31 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     limits: fixtureSubscriptionLimits,
     from: { position: "end" },
   });
-  if (tail.state !== "subscribed") throw new Error(`expected subscribed, got ${tail.state}`);
+  if (tail.state !== "subscribed")
+    throw new Error(`expected subscribed, got ${tail.state}`);
   expect(tail.resumeFrom.eventSequence).toBe("6");
   expect(tail.subscriptionId).not.toBe(reader.subscriptionId);
   produce("epsilon");
-  expect((await drain(host, session, tail.subscriptionId)).map(sequenceOf)).toEqual(["6"]);
-  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["6"]);
+  expect(
+    (await drain(host, session, tail.subscriptionId)).map(sequenceOf),
+  ).toEqual(["6"]);
+  expect(
+    (await drain(host, session, reader.subscriptionId)).map(sequenceOf),
+  ).toEqual(["6"]);
 
   // Delivery is bounded by negotiated credit, observed as behavior: once this
   // subscription holds high-water events delivered and unacknowledged, its own
   // drain yields nothing even though events are waiting...
   produce("zeta");
-  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["7"]);
+  expect(
+    (await drain(host, session, reader.subscriptionId)).map(sequenceOf),
+  ).toEqual(["7"]);
   produce("eta");
   expect(await drain(host, session, reader.subscriptionId)).toEqual([]);
   // ...and the session is not stalled by it: the other subscriber still moves.
-  expect((await drain(host, session, tail.subscriptionId)).map(sequenceOf)).toEqual(["7", "8"]);
+  expect(
+    (await drain(host, session, tail.subscriptionId)).map(sequenceOf),
+  ).toEqual(["7", "8"]);
 
   // Acknowledgement RELEASES: it restores this subscription's credit, frees
   // retained storage, and lets delivery resume.
@@ -487,12 +584,16 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   expect(released.through.eventSequence).toBe("7");
   expect(released.availableEventCredit).toBe(unacknowledgedEventHighWater);
   expect(host.retainedEvents(session)).toBeLessThan(retainedBeforeAck);
-  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["8"]);
+  expect(
+    (await drain(host, session, reader.subscriptionId)).map(sequenceOf),
+  ).toEqual(["8"]);
 
   // Eviction removed real events, and the cursor is a PAIR: the output offset
   // beside a position must still name the true byte total.
   const pairedAfterEviction = await subscribeAtEnd();
-  expect(pairedAfterEviction.resumeFrom.outputOffset).toBe(String(producedBytes));
+  expect(pairedAfterEviction.resumeFrom.outputOffset).toBe(
+    String(producedBytes),
+  );
 
   // The discriminating case is a position whose output base was CARRIED BY the
   // evicted events themselves: resuming at the oldest retained event, where no
@@ -506,7 +607,8 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     limits: fixtureSubscriptionLimits,
     from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
   });
-  if (pairedReader.state !== "subscribed") throw new Error("paired reader not subscribed");
+  if (pairedReader.state !== "subscribed")
+    throw new Error("paired reader not subscribed");
   host.appendOutput(paired, encoder.encode("abc"));
   host.appendOutput(paired, encoder.encode("defgh"));
   await drain(host, paired, pairedReader.subscriptionId);
@@ -522,7 +624,8 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     limits: fixtureSubscriptionLimits,
     from: { position: "at", cursor: { eventSequence: "2", outputOffset: "3" } },
   });
-  if (resumed.state !== "subscribed") throw new Error(`expected subscribed, got ${resumed.state}`);
+  if (resumed.state !== "subscribed")
+    throw new Error(`expected subscribed, got ${resumed.state}`);
   expect(resumed.resumeFrom).toEqual({ eventSequence: "2", outputOffset: "3" });
 
   // An acknowledgement can never reach past what was delivered: a subscription
@@ -548,7 +651,8 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     limits: fixtureSubscriptionLimits,
     from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
   });
-  if (stale.state !== "gap") throw new Error(`expected gap, got ${stale.state}`);
+  if (stale.state !== "gap")
+    throw new Error(`expected gap, got ${stale.state}`);
   expect(stale.missing.start).toBe("1");
   expect(Number(stale.missing.endExclusive)).toBeGreaterThan(1);
   expect(stale.freshInspection).toBe("required");
@@ -556,8 +660,9 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   // The subscriber that was evicted past loses its position as a typed failure
   // naming the missing range — never as a silent jump forward, and never by
   // fabricating an event.
-  await expect(drain(host, session, reader.subscriptionId)).rejects
-    .toBeInstanceOf(SubscriptionGapError);
+  await expect(
+    drain(host, session, reader.subscriptionId),
+  ).rejects.toBeInstanceOf(SubscriptionGapError);
 
   // Final events: an in-retention subscription receives the incarnation's
   // closing facts, separately ordered, with the authoritative reap last.
@@ -567,16 +672,24 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     limits: fixtureSubscriptionLimits,
     from: { position: "end" },
   });
-  if (survivor.state !== "subscribed") throw new Error(`expected subscribed, got ${survivor.state}`);
+  if (survivor.state !== "subscribed")
+    throw new Error(`expected subscribed, got ${survivor.state}`);
   host.completeWithTail(session, encoder.encode("tail"), null);
   const final = await drain(host, session, survivor.subscriptionId);
-  expect(final.map((event) => event.kind))
-    .toEqual(["output", "process-exited", "output-closed", "process-reaped"]);
+  expect(final.map((event) => event.kind)).toEqual([
+    "output",
+    "process-exited",
+    "output-closed",
+    "process-reaped",
+  ]);
   expect(await drain(host, session, survivor.subscriptionId)).toEqual([]);
 }
 
 async function assertK(host: NeutralTerminalHostFixture): Promise<void> {
-  const canonical = await createRunning(host, request("freeze-k-canonical", {}, "canonical"));
+  const canonical = await createRunning(
+    host,
+    request("freeze-k-canonical", {}, "canonical"),
+  );
   const canonicalClaim = await claim(host, canonical, "canonical-human");
   await host.submitInput({
     session: canonical,
@@ -585,7 +698,10 @@ async function assertK(host: NeutralTerminalHostFixture): Promise<void> {
     idempotencyKey: "k-canonical-eof",
     operation: { kind: "canonical-end-of-file" },
   });
-  const literal = await createRunning(host, request("freeze-k-literal", {}, "literal"));
+  const literal = await createRunning(
+    host,
+    request("freeze-k-literal", {}, "literal"),
+  );
   const literalClaim = await claim(host, literal, "literal-human");
   await host.submitInput({
     session: literal,
@@ -613,14 +729,29 @@ describe("terminal-host v1 shape freeze", () => {
   });
 
   test("the target vocabulary contains no product policy or syscall knobs", async () => {
-    const source = await readFile(resolve(
-      import.meta.dir,
-      "../../src/daemon/session-host/terminal-host-contract.ts",
-    ), "utf8");
+    const source = await readFile(
+      resolve(
+        import.meta.dir,
+        "../../src/daemon/session-host/terminal-host-contract.ts",
+      ),
+      "utf8",
+    );
     for (const forbidden of [
-      "Hive", "provider", "worktree", "launchGrant", "Workspace", "tmux", "sessiond",
-      "forkpty", "openpty", "setsid", "TIOCSCTTY", "TIOCSWINSZ", "TIOCGWINSZ",
-    ]) expect(source).not.toContain(forbidden);
+      "Hive",
+      "provider",
+      "worktree",
+      "launchGrant",
+      "Workspace",
+      "tmux",
+      "sessiond",
+      "forkpty",
+      "openpty",
+      "setsid",
+      "TIOCSCTTY",
+      "TIOCSWINSZ",
+      "TIOCGWINSZ",
+    ])
+      expect(source).not.toContain(forbidden);
   });
 });
 
@@ -643,7 +774,9 @@ describe("neutral fixture freeze A–K and U with mutation controls", () => {
   for (const [id, assertion] of cases) {
     test(`${id}: semantic passes and its deliberate violation goes red`, async () => {
       await assertion(new NeutralTerminalHostFixture());
-      await expect(assertion(new NeutralTerminalHostFixture(id))).rejects.toBeDefined();
+      await expect(
+        assertion(new NeutralTerminalHostFixture(id)),
+      ).rejects.toBeDefined();
     });
   }
 });

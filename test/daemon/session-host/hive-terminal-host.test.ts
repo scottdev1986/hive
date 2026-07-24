@@ -1,18 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type {
-  SessionInspection,
-  SessionRef,
-  TerminationResult,
-} from "../../../src/daemon/session-host/terminal-host-contract";
-import type {
   CreateResult,
   SessionSpec,
 } from "../../../src/daemon/session-host/contract";
-import type {
-  HiveTerminalBinding,
-  TerminalHostBindingStore,
-} from "../../../src/daemon/session-host/terminal-host-binding";
 import {
   HiveTerminalHostAdapter,
   requireSessiondRootLocator,
@@ -20,6 +11,15 @@ import {
   TerminalHostBindingMismatchError,
   TerminalHostBindingNotFoundError,
 } from "../../../src/daemon/session-host/hive-terminal-host";
+import type {
+  HiveTerminalBinding,
+  TerminalHostBindingStore,
+} from "../../../src/daemon/session-host/terminal-host-binding";
+import type {
+  SessionInspection,
+  SessionRef,
+  TerminationResult,
+} from "../../../src/daemon/session-host/terminal-host-contract";
 
 const session: SessionRef = {
   key: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
@@ -73,7 +73,11 @@ const createResult: CreateResult = {
     complete: true,
     hostPid: 3_900,
     hostStartToken: "3900:123400",
-    providerRoot: { pid: 4_000, startToken: "4000:123400", processGroupId: 4_000 },
+    providerRoot: {
+      pid: 4_000,
+      startToken: "4000:123400",
+      processGroupId: 4_000,
+    },
     expectedExecutable: sessionSpec.expectedExecutable,
     executableVerified: true,
     outputSeq: "0",
@@ -170,12 +174,13 @@ class MemoryBindings implements TerminalHostBindingStore {
   releaseUncreatedTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
   ): boolean {
-    const index = this.values.findIndex((binding) =>
-      binding.locator.instanceId === locator.instanceId &&
-      binding.locator.sessionId === locator.sessionId &&
-      binding.locator.generation === locator.generation &&
-      binding.createEvidence === undefined &&
-      binding.terminationAudit === undefined
+    const index = this.values.findIndex(
+      (binding) =>
+        binding.locator.instanceId === locator.instanceId &&
+        binding.locator.sessionId === locator.sessionId &&
+        binding.locator.generation === locator.generation &&
+        binding.createEvidence === undefined &&
+        binding.terminationAudit === undefined,
     );
     if (index < 0) return false;
     this.values.splice(index, 1);
@@ -186,8 +191,8 @@ class MemoryBindings implements TerminalHostBindingStore {
     locator: HiveTerminalBinding["locator"],
     createEvidence: NonNullable<HiveTerminalBinding["createEvidence"]>,
   ): HiveTerminalBinding {
-    const index = this.values.findIndex((binding) =>
-      binding.locator.sessionId === locator.sessionId
+    const index = this.values.findIndex(
+      (binding) => binding.locator.sessionId === locator.sessionId,
     );
     if (index < 0) throw new Error("missing binding");
     const completed = { ...this.values[index]!, createEvidence };
@@ -198,10 +203,12 @@ class MemoryBindings implements TerminalHostBindingStore {
   renewTerminalHostVisibility(
     locator: HiveTerminalBinding["locator"],
     visibility: HiveTerminalBinding["visibility"],
-    lease: Parameters<TerminalHostBindingStore["renewTerminalHostVisibility"]>[2],
+    lease: Parameters<
+      TerminalHostBindingStore["renewTerminalHostVisibility"]
+    >[2],
   ): HiveTerminalBinding {
-    const index = this.values.findIndex((binding) =>
-      binding.locator.sessionId === locator.sessionId
+    const index = this.values.findIndex(
+      (binding) => binding.locator.sessionId === locator.sessionId,
     );
     if (index < 0 || this.values[index]!.createEvidence === undefined) {
       throw new Error("missing completed binding");
@@ -227,8 +234,8 @@ class MemoryBindings implements TerminalHostBindingStore {
     locator: HiveTerminalBinding["locator"],
     terminationAudit: NonNullable<HiveTerminalBinding["terminationAudit"]>,
   ): HiveTerminalBinding {
-    const index = this.values.findIndex((binding) =>
-      binding.locator.sessionId === locator.sessionId
+    const index = this.values.findIndex(
+      (binding) => binding.locator.sessionId === locator.sessionId,
     );
     if (index < 0) throw new Error("missing binding");
     const recorded = { ...this.values[index]!, terminationAudit };
@@ -239,14 +246,20 @@ class MemoryBindings implements TerminalHostBindingStore {
   getTerminalHostBindingByLocator(
     value: HiveTerminalBinding["locator"],
   ): HiveTerminalBinding | null {
-    return this.values.find((binding) =>
-      binding.locator.instanceId === value.instanceId &&
-      binding.locator.sessionId === value.sessionId &&
-      binding.locator.generation === value.generation) ?? null;
+    return (
+      this.values.find(
+        (binding) =>
+          binding.locator.instanceId === value.instanceId &&
+          binding.locator.sessionId === value.sessionId &&
+          binding.locator.generation === value.generation,
+      ) ?? null
+    );
   }
 
   listTerminalHostBindings(instanceId: string): readonly HiveTerminalBinding[] {
-    return this.values.filter((binding) => binding.locator.instanceId === instanceId);
+    return this.values.filter(
+      (binding) => binding.locator.instanceId === instanceId,
+    );
   }
 }
 
@@ -263,11 +276,16 @@ describe("HiveTerminalHostAdapter", () => {
 
   test("projects bound neutral lifecycle evidence into the product contract", async () => {
     const bindings = new MemoryBindings();
-    const unbound = { ...inspection, session: { key: "other", incarnation: "1" } };
+    const unbound = {
+      ...inspection,
+      session: { key: "other", incarnation: "1" },
+    };
     const terminateRequests: unknown[] = [];
     const directRequests: unknown[] = [];
     const host = {
-      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+      issueAttach: async () => {
+        throw new Error("issueAttach not under test");
+      },
 
       renewVisibility,
       create: async (spec: SessionSpec, input: Uint8Array) => {
@@ -310,12 +328,9 @@ describe("HiveTerminalHostAdapter", () => {
       { now: () => new Date("2026-07-18T01:00:00.000Z") },
     );
 
-    await expect(adapter.create(
-      sessionSpec,
-      new Uint8Array(),
-      { locator, visibility },
-    ))
-      .resolves.toEqual(createResult);
+    await expect(
+      adapter.create(sessionSpec, new Uint8Array(), { locator, visibility }),
+    ).resolves.toEqual(createResult);
     const createEvidence = {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
@@ -358,7 +373,9 @@ describe("HiveTerminalHostAdapter", () => {
       projectedInspection,
     ]);
     await expect(adapter.list("other-hive")).resolves.toEqual([]);
-    await expect(adapter.inspect(locator)).resolves.toEqual(projectedInspection);
+    await expect(adapter.inspect(locator)).resolves.toEqual(
+      projectedInspection,
+    );
     await adapter.claimInput(locator, {
       writer: "writer-fixture",
       kind: "automation",
@@ -399,31 +416,35 @@ describe("HiveTerminalHostAdapter", () => {
       },
     ]);
     const requestId = "req_018f1e90-7b5a-7cc0-8000-000000000103";
-    await expect(adapter.terminate(locator, {
-      mode: "immediate",
-      reason: "stop fixture",
-      requestId,
-    })).resolves.toEqual({
+    await expect(
+      adapter.terminate(locator, {
+        mode: "immediate",
+        reason: "stop fixture",
+        requestId,
+      }),
+    ).resolves.toEqual({
       locator,
       state: "terminated",
       exit: null,
       survivors: [],
       errors: [],
     });
-    expect(terminateRequests).toEqual([{
-      session,
-      mode: "immediate",
-      target: "process-tree",
-      deadline: "2026-07-18T01:00:10.000Z",
-      idempotencyKey: createHash("sha256")
-        .update("hive-sessiond-terminate-v1\0")
-        .update(requestId)
-        .update("\0")
-        .update(session.key)
-        .update("\0")
-        .update(session.incarnation)
-        .digest("hex"),
-    }]);
+    expect(terminateRequests).toEqual([
+      {
+        session,
+        mode: "immediate",
+        target: "process-tree",
+        deadline: "2026-07-18T01:00:10.000Z",
+        idempotencyKey: createHash("sha256")
+          .update("hive-sessiond-terminate-v1\0")
+          .update(requestId)
+          .update("\0")
+          .update(session.key)
+          .update("\0")
+          .update(session.incarnation)
+          .digest("hex"),
+      },
+    ]);
     expect(bindings.values[0]?.terminationAudit).toEqual({
       reason: "stop fixture",
       requestId,
@@ -443,11 +464,16 @@ describe("HiveTerminalHostAdapter", () => {
     });
     const inspectedSessions: SessionRef[] = [];
     const host = {
-      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+      issueAttach: async () => {
+        throw new Error("issueAttach not under test");
+      },
 
       renewVisibility,
       create: async () => createResult,
-      claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
+      claimInput: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -458,26 +484,37 @@ describe("HiveTerminalHostAdapter", () => {
         completeness: "unknown" as const,
         diagnostic: "fixture",
       }),
-      resize: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
-      list: async () => [{
-        ...inspection,
-        checkpoints: { retained: 1, newest: null },
-        diagnostics: ["checkpoint-body-omitted-from-bounded-list"],
-      }],
+      resize: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      list: async () => [
+        {
+          ...inspection,
+          checkpoints: { retained: 1, newest: null },
+          diagnostics: ["checkpoint-body-omitted-from-bounded-list"],
+        },
+      ],
       inspect: async (requested: SessionRef) => {
         inspectedSessions.push(requested);
         return inspection;
       },
       terminate: async () => termination,
     };
-    const adapter = new HiveTerminalHostAdapter(host, bindings, locator.instanceId);
+    const adapter = new HiveTerminalHostAdapter(
+      host,
+      bindings,
+      locator.instanceId,
+    );
 
     const listed = await adapter.list(locator.instanceId);
     expect(inspectedSessions).toEqual([session]);
-    expect(listed[0]).toEqual(expect.objectContaining({
-      checkpointSeq: "2",
-      checkpointAvailable: true,
-    }));
+    expect(listed[0]).toEqual(
+      expect.objectContaining({
+        checkpointSeq: "2",
+        checkpointAvailable: true,
+      }),
+    );
     expect(listed[0]?.diagnosticIds).not.toContain(
       "checkpoint-body-omitted-from-bounded-list",
     );
@@ -506,11 +543,16 @@ describe("HiveTerminalHostAdapter", () => {
       },
     };
     const host = {
-      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+      issueAttach: async () => {
+        throw new Error("issueAttach not under test");
+      },
 
       renewVisibility,
       create: async () => createResult,
-      claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
+      claimInput: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -521,13 +563,20 @@ describe("HiveTerminalHostAdapter", () => {
         completeness: "unknown" as const,
         diagnostic: "fixture",
       }),
-      resize: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
+      resize: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
       list: async () => [stale],
       inspect: async () => stale,
       terminate: async () => ({
         ...termination,
         state: "unknown" as const,
-        reap: { ...termination.reap, reaped: false, completeness: "partial" as const },
+        reap: {
+          ...termination.reap,
+          reaped: false,
+          completeness: "partial" as const,
+        },
         completeness: "partial" as const,
         diagnostics: ["native-termination-partial"],
       }),
@@ -545,12 +594,16 @@ describe("HiveTerminalHostAdapter", () => {
     expect(inspected.diagnosticIds).toContain(
       "SESSIOND_PIXEL_GEOMETRY_DERIVED_NO_VIEWER",
     );
-    expect(inspected.diagnosticIds).toContain("SESSIOND_EXECUTABLE_EVIDENCE_STALE");
-    await expect(adapter.terminate(locator, {
-      mode: "immediate",
-      reason: "stop stale fixture",
-      requestId: "req_018f1e90-7b5a-7cc0-8000-000000000105",
-    })).resolves.toEqual({
+    expect(inspected.diagnosticIds).toContain(
+      "SESSIOND_EXECUTABLE_EVIDENCE_STALE",
+    );
+    await expect(
+      adapter.terminate(locator, {
+        mode: "immediate",
+        reason: "stop stale fixture",
+        requestId: "req_018f1e90-7b5a-7cc0-8000-000000000105",
+      }),
+    ).resolves.toEqual({
       locator,
       state: "unknown",
       exit: null,
@@ -573,14 +626,22 @@ describe("HiveTerminalHostAdapter", () => {
   test("fails closed for missing, foreign, or mismatched bindings", async () => {
     const bindings = new MemoryBindings();
     const host = {
-      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+      issueAttach: async () => {
+        throw new Error("issueAttach not under test");
+      },
 
       renewVisibility,
       create: async () => ({
         ...createResult,
-        locator: { ...locator, sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000199" },
+        locator: {
+          ...locator,
+          sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000199",
+        },
       }),
-      claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
+      claimInput: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
       submitInput: async () => ({
         transactionId: "transaction-fixture",
         stage: "unknown" as const,
@@ -591,7 +652,10 @@ describe("HiveTerminalHostAdapter", () => {
         completeness: "unknown" as const,
         diagnostic: "fixture",
       }),
-      resize: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
+      resize: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
       list: async () => [inspection],
       inspect: async () => ({
         ...inspection,
@@ -599,25 +663,33 @@ describe("HiveTerminalHostAdapter", () => {
       }),
       terminate: async () => termination,
     };
-    const adapter = new HiveTerminalHostAdapter(host, bindings, locator.instanceId);
+    const adapter = new HiveTerminalHostAdapter(
+      host,
+      bindings,
+      locator.instanceId,
+    );
 
-    await expect(adapter.create(
-      sessionSpec,
-      new Uint8Array(),
-      { locator, visibility },
-    ))
-      .rejects.toBeInstanceOf(TerminalHostBindingMismatchError);
+    await expect(
+      adapter.create(sessionSpec, new Uint8Array(), { locator, visibility }),
+    ).rejects.toBeInstanceOf(TerminalHostBindingMismatchError);
     bindings.values.length = 0;
-    await expect(adapter.inspect(locator))
-      .rejects.toBeInstanceOf(TerminalHostBindingNotFoundError);
+    await expect(adapter.inspect(locator)).rejects.toBeInstanceOf(
+      TerminalHostBindingNotFoundError,
+    );
     bindings.bindTerminalHostSession({ locator, visibility });
-    await expect(adapter.inspect(locator))
-      .rejects.toBeInstanceOf(TerminalHostBindingMismatchError);
-    await expect(adapter.terminate({ ...locator, instanceId: "other-hive" }, {
-      mode: "immediate",
-      reason: "stop fixture",
-      requestId: "req_018f1e90-7b5a-7cc0-8000-000000000104",
-    })).rejects.toBeInstanceOf(TerminalHostBindingNotFoundError);
+    await expect(adapter.inspect(locator)).rejects.toBeInstanceOf(
+      TerminalHostBindingMismatchError,
+    );
+    await expect(
+      adapter.terminate(
+        { ...locator, instanceId: "other-hive" },
+        {
+          mode: "immediate",
+          reason: "stop fixture",
+          requestId: "req_018f1e90-7b5a-7cc0-8000-000000000104",
+        },
+      ),
+    ).rejects.toBeInstanceOf(TerminalHostBindingNotFoundError);
 
     const incompleteHost = { ...host, inspect: async () => inspection };
     const incompleteBindings = new MemoryBindings();
@@ -627,8 +699,9 @@ describe("HiveTerminalHostAdapter", () => {
       incompleteBindings,
       locator.instanceId,
     );
-    await expect(incomplete.inspect(locator))
-      .rejects.toBeInstanceOf(TerminalHostBindingIncompleteError);
+    await expect(incomplete.inspect(locator)).rejects.toBeInstanceOf(
+      TerminalHostBindingIncompleteError,
+    );
   });
 });
 
@@ -636,10 +709,11 @@ describe("requireSessiondRootLocator", () => {
   test("accepts only a sessiond root subject", () => {
     const root = { ...locator, subject: { kind: "root" as const } };
     expect(requireSessiondRootLocator(root)).toEqual(root);
-    expect(() => requireSessiondRootLocator(locator)).toThrow("Queen has a mismatched");
+    expect(() => requireSessiondRootLocator(locator)).toThrow(
+      "Queen has a mismatched",
+    );
     expect(() =>
-      requireSessiondRootLocator({ ...root, hostKind: "invalid" } as never)
-    )
-      .toThrow("Queen has a mismatched");
+      requireSessiondRootLocator({ ...root, hostKind: "invalid" } as never),
+    ).toThrow("Queen has a mismatched");
   });
 });

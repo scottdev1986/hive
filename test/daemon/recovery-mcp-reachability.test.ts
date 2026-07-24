@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import { CrashRecovery } from "../../src/daemon/recovery";
+import type { AgentRecord } from "../../src/schemas";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 /**
@@ -50,7 +50,11 @@ function agent(): AgentRecord {
     // A known session id skips discovery, so the sweep exercises the resume
     // path itself — which is where the reachability refusal lives.
     toolSessionId: "session-1",
-    executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "medium" },
+    executionIdentity: {
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      effort: "medium",
+    },
     sessionLocator: {
       schemaVersion: 1,
       instanceId: "test-instance",

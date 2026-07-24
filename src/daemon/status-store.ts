@@ -1,23 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
-  FlatAssignmentSchema,
-  HiveUpdateStatusInputSchema,
-  WorkspaceEventV2Schema,
-  WorkspaceSnapshotV2Schema,
   type FlatAssignment,
+  FlatAssignmentSchema,
   type HiveUpdateStatusAdvertisedInput,
+  HiveUpdateStatusInputSchema,
   type WorkspaceEventV2,
+  WorkspaceEventV2Schema,
   type WorkspaceSnapshotV2,
+  WorkspaceSnapshotV2Schema,
 } from "../schemas/status-envelope";
 import type { Role } from "./capabilities";
 import type { HiveDatabase } from "./db";
+import type { WorkspaceStatusSourceEvent } from "./status-events";
 import {
   canonicalJson,
   statusEntityKey,
   type WorkspaceStatusEventSource,
 } from "./status-events";
-import type { WorkspaceStatusSourceEvent } from "./status-events";
 import { fuseAgentStatus } from "./status-fusion";
 
 const RequestRowSchema = z.object({ digest: z.string(), result: z.string() });
@@ -35,7 +35,9 @@ export class StatusRequestConflictError extends Error {
   readonly code = "STATUS_REQUEST_CONFLICT";
 
   constructor(requestId: string) {
-    super(`STATUS_REQUEST_CONFLICT: request ${requestId} was retried with different content`);
+    super(
+      `STATUS_REQUEST_CONFLICT: request ${requestId} was retried with different content`,
+    );
     this.name = "StatusRequestConflictError";
   }
 }
@@ -44,7 +46,9 @@ export class StatusAssignmentMismatchError extends Error {
   readonly code = "STATUS_ASSIGNMENT_MISMATCH";
 
   constructor() {
-    super("STATUS_ASSIGNMENT_MISMATCH: status report does not match the caller's open Assignment");
+    super(
+      "STATUS_ASSIGNMENT_MISMATCH: status report does not match the caller's open Assignment",
+    );
     this.name = "StatusAssignmentMismatchError";
   }
 }
@@ -109,12 +113,14 @@ export class StatusStore implements WorkspaceStatusEventSource {
     return this.db.transaction(() => {
       const open = this.currentAssignment(agentId);
       if (open !== null) return open;
-      const prior = this.db.database.query(`
+      const prior = this.db.database
+        .query(`
         SELECT assignmentGeneration FROM status_assignments
         WHERE agentId = ?
         ORDER BY length(assignmentGeneration) DESC, assignmentGeneration DESC
         LIMIT 1
-      `).get(agentId) as { assignmentGeneration: string } | null;
+      `)
+        .get(agentId) as { assignmentGeneration: string } | null;
       const assignment = FlatAssignmentSchema.parse({
         assignmentId: uuidV7("asg"),
         agentId,
@@ -123,18 +129,20 @@ export class StatusStore implements WorkspaceStatusEventSource {
         openedAt,
         closedAt: null,
       });
-      this.db.database.query(`
+      this.db.database
+        .query(`
         INSERT INTO status_assignments (
           assignmentId, agentId, assignmentGeneration, state, openedAt, closedAt
         ) VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        assignment.assignmentId,
-        assignment.agentId,
-        assignment.assignmentGeneration,
-        assignment.state,
-        assignment.openedAt,
-        assignment.closedAt,
-      );
+      `)
+        .run(
+          assignment.assignmentId,
+          assignment.agentId,
+          assignment.assignmentGeneration,
+          assignment.state,
+          assignment.openedAt,
+          assignment.closedAt,
+        );
       return assignment;
     });
   }
@@ -143,26 +151,32 @@ export class StatusStore implements WorkspaceStatusEventSource {
     return this.db.transaction(() => {
       const open = this.currentAssignment(agentId);
       if (open === null) return null;
-      this.db.database.query(`
+      this.db.database
+        .query(`
         UPDATE status_assignments SET state = 'closed', closedAt = ?
         WHERE assignmentId = ? AND state = 'open'
-      `).run(closedAt, open.assignmentId);
+      `)
+        .run(closedAt, open.assignmentId);
       return FlatAssignmentSchema.parse({ ...open, state: "closed", closedAt });
     });
   }
 
   currentAssignment(agentId: string): FlatAssignment | null {
-    const row = this.db.database.query(`
+    const row = this.db.database
+      .query(`
       SELECT assignmentId, agentId, assignmentGeneration, state, openedAt, closedAt
       FROM status_assignments WHERE agentId = ? AND state = 'open'
-    `).get(agentId);
+    `)
+      .get(agentId);
     return row === null ? null : FlatAssignmentSchema.parse(row);
   }
 
   hasAssignmentHistory(agentId: string): boolean {
-    return this.db.database.query(
-      "SELECT 1 FROM status_assignments WHERE agentId = ? LIMIT 1",
-    ).get(agentId) !== null;
+    return (
+      this.db.database
+        .query("SELECT 1 FROM status_assignments WHERE agentId = ? LIMIT 1")
+        .get(agentId) !== null
+    );
   }
 
   appendAgentReport(
@@ -180,14 +194,19 @@ export class StatusStore implements WorkspaceStatusEventSource {
     now: Date,
   ): StatusReportResult {
     const input = HiveUpdateStatusInputSchema.parse(rawInput);
-    const digest = createHash("sha256").update(canonicalJson(input)).digest("hex");
+    const digest = createHash("sha256")
+      .update(canonicalJson(input))
+      .digest("hex");
     const result = this.db.transaction(() => {
-      const priorValue = this.db.database.query(`
+      const priorValue = this.db.database
+        .query(`
         SELECT digest, result FROM status_requests WHERE caller = ? AND requestId = ?
-      `).get(actor.subject, input.requestId);
+      `)
+        .get(actor.subject, input.requestId);
       if (priorValue !== null) {
         const prior = RequestRowSchema.parse(priorValue);
-        if (prior.digest !== digest) throw new StatusRequestConflictError(input.requestId);
+        if (prior.digest !== digest)
+          throw new StatusRequestConflictError(input.requestId);
         return JSON.parse(prior.result) as StatusReportResult;
       }
 
@@ -197,9 +216,11 @@ export class StatusStore implements WorkspaceStatusEventSource {
       // assignmentGeneration is the prompt literal validated against this row.
       // Exact matching stops a stale predecessor reporting for its successor.
       if (
-        assignment === null || assignment.assignmentId !== input.assignmentId ||
+        assignment === null ||
+        assignment.assignmentId !== input.assignmentId ||
         assignment.assignmentGeneration !== input.assignmentGeneration
-      ) throw new StatusAssignmentMismatchError();
+      )
+        throw new StatusAssignmentMismatchError();
 
       const observedAt = now.toISOString();
       const expiresAt = new Date(
@@ -259,10 +280,12 @@ export class StatusStore implements WorkspaceStatusEventSource {
         expiresAt,
         currentConflicts,
       };
-      this.db.database.query(`
+      this.db.database
+        .query(`
         INSERT INTO status_requests (caller, requestId, digest, result)
         VALUES (?, ?, ?, ?)
-      `).run(actor.subject, input.requestId, digest, JSON.stringify(value));
+      `)
+        .run(actor.subject, input.requestId, digest, JSON.stringify(value));
       return value;
     });
     const appended = this.eventById(result.eventId);
@@ -271,41 +294,47 @@ export class StatusStore implements WorkspaceStatusEventSource {
   }
 
   appendSourceEvent(event: WorkspaceStatusSourceEvent): WorkspaceEventV2 {
-    const appended = this.db.transaction(() => this.appendEventInTransaction(event));
+    const appended = this.db.transaction(() =>
+      this.appendEventInTransaction(event),
+    );
     this.publish(appended);
     return appended;
   }
 
-  appendObservationAudit(input: Readonly<{
-    reader: string;
-    readerRole: Role;
-    subjectAgentId: string;
-    subjectGeneration: number;
-    rowCount: number;
-    reason: string;
-    observedAt: string;
-  }>): WorkspaceEventV2 {
-    const event = this.db.transaction(() => this.appendEventInTransaction({
-      entity: {
-        kind: "agent",
-        id: input.subjectAgentId,
-      },
-      occurredAt: input.observedAt,
-      kind: "terminal.content-observed",
-      source: {
-        kind: input.readerRole === "operator" ? "operator" : "agent-report",
-        id: input.reader,
-        observedAt: input.observedAt,
-        confidence: "authoritative",
-      },
-      data: {
-        reader: input.reader,
-        subject: input.subjectAgentId,
-        sessionGeneration: input.subjectGeneration,
-        rowCount: input.rowCount,
-        reason: input.reason,
-      },
-    }));
+  appendObservationAudit(
+    input: Readonly<{
+      reader: string;
+      readerRole: Role;
+      subjectAgentId: string;
+      subjectGeneration: number;
+      rowCount: number;
+      reason: string;
+      observedAt: string;
+    }>,
+  ): WorkspaceEventV2 {
+    const event = this.db.transaction(() =>
+      this.appendEventInTransaction({
+        entity: {
+          kind: "agent",
+          id: input.subjectAgentId,
+        },
+        occurredAt: input.observedAt,
+        kind: "terminal.content-observed",
+        source: {
+          kind: input.readerRole === "operator" ? "operator" : "agent-report",
+          id: input.reader,
+          observedAt: input.observedAt,
+          confidence: "authoritative",
+        },
+        data: {
+          reader: input.reader,
+          subject: input.subjectAgentId,
+          sessionGeneration: input.subjectGeneration,
+          rowCount: input.rowCount,
+          reason: input.reason,
+        },
+      }),
+    );
     this.publish(event);
     return event;
   }
@@ -320,19 +349,23 @@ export class StatusStore implements WorkspaceStatusEventSource {
   }
 
   listEvents(afterSeq = "0"): WorkspaceEventV2[] {
-    const rows = this.db.database.query(`
+    const rows = this.db.database
+      .query(`
       SELECT payload FROM status_workspace_events
       WHERE length(seq) > length(?) OR (length(seq) = length(?) AND seq > ?)
       ORDER BY length(seq), seq
-    `).all(afterSeq, afterSeq, afterSeq);
-    return rows.map((row) => WorkspaceEventV2Schema.parse(
-      JSON.parse(EventRowSchema.parse(row).payload),
-    ));
+    `)
+      .all(afterSeq, afterSeq, afterSeq);
+    return rows.map((row) =>
+      WorkspaceEventV2Schema.parse(
+        JSON.parse(EventRowSchema.parse(row).payload),
+      ),
+    );
   }
 
   listEventsForAgent(agentId: string): WorkspaceEventV2[] {
-    return this.listEvents().filter((event) =>
-      event.entity.id === agentId || event.data.agentId === agentId
+    return this.listEvents().filter(
+      (event) => event.entity.id === agentId || event.data.agentId === agentId,
     );
   }
 
@@ -373,27 +406,39 @@ export class StatusStore implements WorkspaceStatusEventSource {
     const events = this.listEvents();
     const agents = new Set<string>();
     for (const event of events) {
-      const agentId = event.entity.kind === "agent"
-        ? event.entity.id
-        : typeof event.data.agentId === "string" ? event.data.agentId : null;
+      const agentId =
+        event.entity.kind === "agent"
+          ? event.entity.id
+          : typeof event.data.agentId === "string"
+            ? event.data.agentId
+            : null;
       if (agentId !== null) agents.add(agentId);
     }
     const createdAt = new Date().toISOString();
     const entities = [...agents].map((agentId) => {
-      const incarnationGeneration = [...events].reverse().map((event) => {
-        const binding = event.data.binding;
-        if (
-          event.entity.kind === "agent" && event.entity.id === agentId &&
-          typeof binding === "object" && binding !== null &&
-          "incarnationGeneration" in binding &&
-          typeof binding.incarnationGeneration === "number"
-        ) return binding.incarnationGeneration;
-        if (
-          event.entity.kind === "session" && event.data.agentId === agentId &&
-          event.entity.generation !== undefined
-        ) return event.entity.generation;
-        return null;
-      }).find((generation) => generation !== null) ?? null;
+      const incarnationGeneration =
+        [...events]
+          .reverse()
+          .map((event) => {
+            const binding = event.data.binding;
+            if (
+              event.entity.kind === "agent" &&
+              event.entity.id === agentId &&
+              typeof binding === "object" &&
+              binding !== null &&
+              "incarnationGeneration" in binding &&
+              typeof binding.incarnationGeneration === "number"
+            )
+              return binding.incarnationGeneration;
+            if (
+              event.entity.kind === "session" &&
+              event.data.agentId === agentId &&
+              event.entity.generation !== undefined
+            )
+              return event.entity.generation;
+            return null;
+          })
+          .find((generation) => generation !== null) ?? null;
       const projection = fuseAgentStatus(
         events,
         { agentId, incarnationGeneration },
@@ -403,7 +448,10 @@ export class StatusStore implements WorkspaceStatusEventSource {
         kind: "agent",
         id: agentId,
         entityRevision: projection.revision,
-        projection: JSON.parse(JSON.stringify(projection)) as Record<string, unknown>,
+        projection: JSON.parse(JSON.stringify(projection)) as Record<
+          string,
+          unknown
+        >,
       };
     });
     const value = {
@@ -420,7 +468,10 @@ export class StatusStore implements WorkspaceStatusEventSource {
   }
 
   private appendEventInTransaction(
-    event: Omit<WorkspaceEventV2, "schemaVersion" | "eventId" | "seq" | "entityRevision">,
+    event: Omit<
+      WorkspaceEventV2,
+      "schemaVersion" | "eventId" | "seq" | "entityRevision"
+    >,
   ): WorkspaceEventV2 {
     const seq = this.nextCounter("instance-seq");
     const key = statusEntityKey(event.entity);
@@ -432,33 +483,45 @@ export class StatusStore implements WorkspaceStatusEventSource {
       seq,
       entityRevision,
     });
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO status_workspace_events (
         eventId, seq, entityKey, entityRevision, payload
       ) VALUES (?, ?, ?, ?, ?)
-    `).run(value.eventId, value.seq, key, value.entityRevision, canonicalJson(value));
+    `)
+      .run(
+        value.eventId,
+        value.seq,
+        key,
+        value.entityRevision,
+        canonicalJson(value),
+      );
     return value;
   }
 
   private nextCounter(key: string): string {
-    const row = this.db.database.query(
-      "SELECT value FROM status_counters WHERE key = ?",
-    ).get(key) as { value: string } | null;
+    const row = this.db.database
+      .query("SELECT value FROM status_counters WHERE key = ?")
+      .get(key) as { value: string } | null;
     const value = nextDecimal(row?.value ?? null);
-    this.db.database.query(`
+    this.db.database
+      .query(`
       INSERT INTO status_counters (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(key, value);
+    `)
+      .run(key, value);
     return value;
   }
 
   private eventById(eventId: string): WorkspaceEventV2 | null {
-    const row = this.db.database.query(
-      "SELECT payload FROM status_workspace_events WHERE eventId = ?",
-    ).get(eventId);
+    const row = this.db.database
+      .query("SELECT payload FROM status_workspace_events WHERE eventId = ?")
+      .get(eventId);
     return row === null
       ? null
-      : WorkspaceEventV2Schema.parse(JSON.parse(EventRowSchema.parse(row).payload));
+      : WorkspaceEventV2Schema.parse(
+          JSON.parse(EventRowSchema.parse(row).payload),
+        );
   }
 
   private publish(event: WorkspaceEventV2): void {

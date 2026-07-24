@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { statSync } from "node:fs";
+import { type Stats, statSync } from "node:fs";
 
 import type { Provenance, VolumeBehavior } from "./types";
 
@@ -23,10 +23,18 @@ function foundationVolInfo(
 ): { caseSensitive: boolean; isLocal: boolean } | null {
   if (helperPath === undefined || helperPath === null) return null;
   try {
-    const out = execFileSync(helperPath, ["volinfo", path], { encoding: "utf8" });
-    const parsed = JSON.parse(out) as { caseSensitive?: boolean; isLocal?: boolean };
+    const out = execFileSync(helperPath, ["volinfo", path], {
+      encoding: "utf8",
+    });
+    const parsed = JSON.parse(out) as {
+      caseSensitive?: boolean;
+      isLocal?: boolean;
+    };
     if (typeof parsed.caseSensitive !== "boolean") return null;
-    return { caseSensitive: parsed.caseSensitive, isLocal: parsed.isLocal ?? false };
+    return {
+      caseSensitive: parsed.caseSensitive,
+      isLocal: parsed.isLocal ?? false,
+    };
   } catch {
     return null;
   }
@@ -36,7 +44,11 @@ function foundationVolInfo(
  * Rebuild `path` with the component at `index` replaced. Components are split
  * from an absolute realpath, so index 0 is the first name below `/`.
  */
-function withComponent(path: string, index: number, replacement: string): string {
+function withComponent(
+  path: string,
+  index: number,
+  replacement: string,
+): string {
   const parts = path.split("/").filter((p) => p.length > 0);
   parts[index] = replacement;
   return "/" + parts.join("/");
@@ -54,7 +66,7 @@ function probeInsensitivity(
   path: string,
   flip: (component: string) => string | null,
 ): boolean | null {
-  let self;
+  let self: Stats;
   try {
     self = statSync(path);
   } catch {
@@ -68,7 +80,7 @@ function probeInsensitivity(
     const flipped = flip(component);
     if (flipped === null || flipped === component) continue;
     const variant = withComponent(path, i, flipped);
-    let other;
+    let other: Stats;
     try {
       other = statSync(variant);
     } catch {
@@ -127,8 +139,10 @@ export function describeVolume(canonicalPath: string): VolumeBehavior {
   }
 
   const normInsensitive = probeInsensitivity(canonicalPath, flipNormalization);
-  const normalizationSensitive = normInsensitive === null ? true : !normInsensitive;
-  const normalizationProvenance: Provenance = normInsensitive === null ? "assumed" : "probed";
+  const normalizationSensitive =
+    normInsensitive === null ? true : !normInsensitive;
+  const normalizationProvenance: Provenance =
+    normInsensitive === null ? "assumed" : "probed";
 
   const behavior: VolumeBehavior = {
     dev,

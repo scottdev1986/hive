@@ -1,5 +1,5 @@
-import { describeAgentName } from "../schemas";
 import type { AgentRecord, QuotaStatus, QuotaWindowStatus } from "../schemas";
+import { describeAgentName } from "../schemas";
 
 const TASK_WIDTH = 48;
 const FAILURE_WIDTH = 40;
@@ -41,18 +41,17 @@ export function formatStatusTable(agents: AgentRecord[]): string {
     "FAILURE",
   ];
   const widths = headers.map((header, index) =>
-    Math.max(
-      header.length,
-      ...rows.map((row) => row[index]?.length ?? 0),
-    )
+    Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)),
   );
   return [headers, ...rows]
     .map((row) =>
-      row.map((cell, index) =>
-        index === row.length - 1
-          ? cell
-          : cell.padEnd(widths[index] ?? cell.length)
-      ).join("  ")
+      row
+        .map((cell, index) =>
+          index === row.length - 1
+            ? cell
+            : cell.padEnd(widths[index] ?? cell.length),
+        )
+        .join("  "),
     )
     .join("\n");
 }
@@ -67,15 +66,19 @@ function formatQuotaWindow(label: string, window: QuotaWindowStatus): string {
     return `  ${label}: not metered [${window.confidence} from ${window.source}]`;
   }
   const unit = window.unit === "percent" ? "%" : "";
-  const reserved = window.reserved === null
-    ? "reservation unknown"
-    : `${window.reserved.toFixed(1)}${unit} reserved (est)`;
+  const reserved =
+    window.reserved === null
+      ? "reservation unknown"
+      : `${window.reserved.toFixed(1)}${unit} reserved (est)`;
   const reset = window.resetsAt ?? "unknown";
-  const capacity = window.remaining === null || window.allowance === null
-    ? "unknown remaining"
-    : `${window.remaining.toFixed(1)}${unit} of ${window.allowance.toFixed(1)}${unit} remaining`;
-  return `  ${label}: ${capacity}, ${reserved}, reset ${reset} ` +
-    `[${window.confidence} from ${window.source}]`;
+  const capacity =
+    window.remaining === null || window.allowance === null
+      ? "unknown remaining"
+      : `${window.remaining.toFixed(1)}${unit} of ${window.allowance.toFixed(1)}${unit} remaining`;
+  return (
+    `  ${label}: ${capacity}, ${reserved}, reset ${reset} ` +
+    `[${window.confidence} from ${window.source}]`
+  );
 }
 
 export function formatQuotaStatus(statuses: QuotaStatus[]): string {

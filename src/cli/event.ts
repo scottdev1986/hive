@@ -1,7 +1,4 @@
-import {
-  HookEventSchema,
-  type HookEvent,
-} from "../schemas";
+import { type HookEvent, HookEventSchema } from "../schemas";
 import { agentFetch } from "./credential";
 
 export interface HookEventOptions {
@@ -99,15 +96,18 @@ function approvalDescription(parsed: object): string | undefined {
   if (!("tool_name" in parsed) || typeof parsed.tool_name !== "string") {
     return undefined;
   }
-  const input = "tool_input" in parsed && typeof parsed.tool_input === "object" &&
-      parsed.tool_input !== null
-    ? parsed.tool_input as Record<string, unknown>
-    : {};
-  const detail = typeof input.command === "string"
-    ? input.command
-    : typeof input.description === "string"
-    ? input.description
-    : null;
+  const input =
+    "tool_input" in parsed &&
+    typeof parsed.tool_input === "object" &&
+    parsed.tool_input !== null
+      ? (parsed.tool_input as Record<string, unknown>)
+      : {};
+  const detail =
+    typeof input.command === "string"
+      ? input.command
+      : typeof input.description === "string"
+        ? input.description
+        : null;
   return detail === null ? parsed.tool_name : `${parsed.tool_name}: ${detail}`;
 }
 
@@ -117,7 +117,8 @@ export function parseHookStdin(text: string): CapturedHookStdin {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) return captured;
     if (
-      "session_id" in parsed && typeof parsed.session_id === "string" &&
+      "session_id" in parsed &&
+      typeof parsed.session_id === "string" &&
       parsed.session_id.length > 0
     ) {
       captured.toolSessionId = parsed.session_id;

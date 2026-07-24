@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverBriefableDocs, rankPrimaryDoc } from "../../src/adapters/briefing-docs";
+import {
+  discoverBriefableDocs,
+  rankPrimaryDoc,
+} from "../../src/adapters/briefing-docs";
 
 // --- synthetic repo helpers -------------------------------------------------
 
@@ -25,7 +28,11 @@ function git(root: string, args: string[]): void {
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
 }
 
-async function write(root: string, relativePath: string, body: string): Promise<void> {
+async function write(
+  root: string,
+  relativePath: string,
+  body: string,
+): Promise<void> {
   const full = join(root, relativePath);
   await mkdir(join(full, ".."), { recursive: true });
   await writeFile(full, body);
@@ -40,33 +47,50 @@ function commitAll(root: string, message: string): void {
 
 describe("rankPrimaryDoc", () => {
   test("picks the most inbound-linked doc as primary", () => {
-    const primary = rankPrimaryDoc(["SPEC.md", "NOTES.md"], [
-      { path: "README.md", text: "see [the spec](SPEC.md) and [again](./SPEC.md)" },
-      { path: "NOTES.md", text: "one ref to [SPEC](../SPEC.md#routing)" },
-    ]);
+    const primary = rankPrimaryDoc(
+      ["SPEC.md", "NOTES.md"],
+      [
+        {
+          path: "README.md",
+          text: "see [the spec](SPEC.md) and [again](./SPEC.md)",
+        },
+        { path: "NOTES.md", text: "one ref to [SPEC](../SPEC.md#routing)" },
+      ],
+    );
     expect(primary).toBe("SPEC.md");
   });
 
   test("reference-style links and anchors are citations too", () => {
-    expect(rankPrimaryDoc(["NOTES.md", "TODO.md"], [
-      { path: "TODO.md", text: "the plan is in [notes][n]\n\n[n]: NOTES.md#plan" },
-    ])).toBe("NOTES.md");
+    expect(
+      rankPrimaryDoc(
+        ["NOTES.md", "TODO.md"],
+        [
+          {
+            path: "TODO.md",
+            text: "the plan is in [notes][n]\n\n[n]: NOTES.md#plan",
+          },
+        ],
+      ),
+    ).toBe("NOTES.md");
   });
 
   test("a doc that merely TALKS ABOUT another doc does not vote for it", () => {
-    const primary = rankPrimaryDoc(["SPEC.md", "CLAUDE.md"], [
-      { path: "SPEC.md", text: "the design" },
-      { path: "README.md", text: "the design lives in [the spec](SPEC.md)" },
-      {
-        path: "docs/grok-contract.md",
-        text: [
-          "Grok ingests the repository's CLAUDE.md even with compat off.",
-          "CLAUDE.md was written for another vendor's agents.",
-          "Follow CLAUDE.md's engineering conventions, but your brief wins.",
-          "The repository's CLAUDE.md is not addressed to you.",
-        ].join("\n"),
-      },
-    ]);
+    const primary = rankPrimaryDoc(
+      ["SPEC.md", "CLAUDE.md"],
+      [
+        { path: "SPEC.md", text: "the design" },
+        { path: "README.md", text: "the design lives in [the spec](SPEC.md)" },
+        {
+          path: "docs/grok-contract.md",
+          text: [
+            "Grok ingests the repository's CLAUDE.md even with compat off.",
+            "CLAUDE.md was written for another vendor's agents.",
+            "Follow CLAUDE.md's engineering conventions, but your brief wins.",
+            "The repository's CLAUDE.md is not addressed to you.",
+          ].join("\n"),
+        },
+      ],
+    );
     // CLAUDE.md is named four times and linked zero times. It is not the primary.
     expect(primary).toBe("SPEC.md");
   });
@@ -75,22 +99,33 @@ describe("rankPrimaryDoc", () => {
     // The effect, stated as starkly as it can be: one link beats a hundred
     // mentions, because a mention is not evidence of anything.
     const shouting = Array.from({ length: 100 }, () => "NOTES.md").join(" ");
-    expect(rankPrimaryDoc(["GUIDE.md", "NOTES.md"], [
-      { path: "chatter.md", text: shouting },
-      { path: "index.md", text: "start at [the guide](GUIDE.md)" },
-    ])).toBe("GUIDE.md");
+    expect(
+      rankPrimaryDoc(
+        ["GUIDE.md", "NOTES.md"],
+        [
+          { path: "chatter.md", text: shouting },
+          { path: "index.md", text: "start at [the guide](GUIDE.md)" },
+        ],
+      ),
+    ).toBe("GUIDE.md");
   });
 
   test("a repo whose docs cite nothing and carry no design role has no primary", () => {
-    expect(rankPrimaryDoc(["notes.md", "todo.md"], [
-      { path: "notes.md", text: "grocery list" },
-      { path: "todo.md", text: "call the bank" },
-    ])).toBeNull();
+    expect(
+      rankPrimaryDoc(
+        ["notes.md", "todo.md"],
+        [
+          { path: "notes.md", text: "grocery list" },
+          { path: "todo.md", text: "call the bank" },
+        ],
+      ),
+    ).toBeNull();
   });
 
   test("a design-role name is primary even before anything cites it", () => {
-    expect(rankPrimaryDoc(["DESIGN.md"], [{ path: "DESIGN.md", text: "" }]))
-      .toBe("DESIGN.md");
+    expect(
+      rankPrimaryDoc(["DESIGN.md"], [{ path: "DESIGN.md", text: "" }]),
+    ).toBe("DESIGN.md");
   });
 });
 
@@ -115,8 +150,12 @@ describe("a doc is briefable because it is there, not because git tracks it", ()
 
       // Positive control: prove the fixture really is untracked, or the rest of
       // this test asserts nothing. An empty `ls-files` here is the whole point.
-      const tracked = Bun.spawnSync(["git", "-C", root, "ls-files"])
-        .stdout.toString();
+      const tracked = Bun.spawnSync([
+        "git",
+        "-C",
+        root,
+        "ls-files",
+      ]).stdout.toString();
       expect(tracked).not.toContain("docs/");
       expect(tracked).not.toContain("research/");
 

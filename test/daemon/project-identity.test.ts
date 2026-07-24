@@ -10,8 +10,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
+import {
+  repairLegacyMountEvidence,
+  resolveHandshakeProject,
+} from "../../src/daemon/project-identity";
 
 import {
   evidenceMatches,
@@ -20,7 +22,7 @@ import {
   ProjectRegistry,
   resolveOrCreate,
 } from "../../src/daemon/project-identity-core";
-import { repairLegacyMountEvidence, resolveHandshakeProject } from "../../src/daemon/project-identity";
+import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const originalHiveHome = process.env.HIVE_HOME;
 const root = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-project-identity-"));
@@ -39,17 +41,25 @@ afterAll(() => {
 describe("durable project identity", () => {
   test("a changed mount device number does not require project setup", () => {
     const registry = new ProjectRegistry();
-    const created = resolveOrCreate(project, {
-      registry,
-      ledger: new InMemoryManagedWorktreeLedger(),
-      ledgerCapability: LedgerCapability.issue("test"),
-    }, "seed");
+    const created = resolveOrCreate(
+      project,
+      {
+        registry,
+        ledger: new InMemoryManagedWorktreeLedger(),
+        ledgerCapability: LedgerCapability.issue("test"),
+      },
+      "seed",
+    );
     expect(created.status).toBe("RESOLVED");
-    if (created.status !== "RESOLVED") throw new Error("project was not created");
+    if (created.status !== "RESOLVED")
+      throw new Error("project was not created");
 
     const snapshot = registry.snapshot();
     snapshot.records[0]!.evidence.dev += 1;
-    writeFileSync(join(hiveHome, "project-registry.json"), JSON.stringify(snapshot));
+    writeFileSync(
+      join(hiveHome, "project-registry.json"),
+      JSON.stringify(snapshot),
+    );
 
     expect(resolveHandshakeProject(project).hiveUuid).toBe(created.hiveUuid);
     const persisted = JSON.parse(
@@ -61,23 +71,32 @@ describe("durable project identity", () => {
 
   test("a staged fixed binary repairs evidence for a pre-fix updater", () => {
     const registry = new ProjectRegistry();
-    const created = resolveOrCreate(project, {
-      registry,
-      ledger: new InMemoryManagedWorktreeLedger(),
-      ledgerCapability: LedgerCapability.issue("test"),
-    }, "legacy-seed");
-    if (created.status !== "RESOLVED") throw new Error("project was not created");
+    const created = resolveOrCreate(
+      project,
+      {
+        registry,
+        ledger: new InMemoryManagedWorktreeLedger(),
+        ledgerCapability: LedgerCapability.issue("test"),
+      },
+      "legacy-seed",
+    );
+    if (created.status !== "RESOLVED")
+      throw new Error("project was not created");
 
     const snapshot = registry.snapshot();
     snapshot.records[0]!.evidence.dev += 1;
-    writeFileSync(join(hiveHome, "project-registry.json"), JSON.stringify(snapshot));
+    writeFileSync(
+      join(hiveHome, "project-registry.json"),
+      JSON.stringify(snapshot),
+    );
     const current = {
       dev: statSync(project).dev,
       ino: statSync(project).ino,
       birthtimeMs: statSync(project).birthtimeMs,
     };
     const legacyMatches = (left: typeof current, right: typeof current) =>
-      left.dev === right.dev && left.ino === right.ino &&
+      left.dev === right.dev &&
+      left.ino === right.ino &&
       left.birthtimeMs === right.birthtimeMs;
     expect(legacyMatches(snapshot.records[0]!.evidence, current)).toBe(false);
 
@@ -111,6 +130,8 @@ describe("durable project identity", () => {
     const evidence = { dev: 10, ino: 20, birthtimeMs: 30 };
     expect(evidenceMatches(evidence, { ...evidence, dev: 11 })).toBe(true);
     expect(evidenceMatches(evidence, { ...evidence, ino: 21 })).toBe(false);
-    expect(evidenceMatches(evidence, { ...evidence, birthtimeMs: 31 })).toBe(false);
+    expect(evidenceMatches(evidence, { ...evidence, birthtimeMs: 31 })).toBe(
+      false,
+    );
   });
 });

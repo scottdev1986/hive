@@ -36,7 +36,9 @@ export function parseReleaseTag(tag: string): number | null {
   if (match?.[1] === undefined) return null;
   const patch = Number.parseInt(match[1], 10);
   // `v0.0.007` parses as 7 but is a second name for one release; refuse it.
-  return Number.isSafeInteger(patch) && String(patch) === match[1] ? patch : null;
+  return Number.isSafeInteger(patch) && String(patch) === match[1]
+    ? patch
+    : null;
 }
 
 /**
@@ -111,8 +113,9 @@ export function planRelease({ tags, headTags }: ReleasePlanInput): ReleasePlan {
     action: "release",
     version,
     tag: `v${version}`,
-    reason: highestPatch(tags) === 0
-      ? "no release exists yet; this is the first"
-      : `one patch above v${PATCH_SERIES}.${highestPatch(tags)}`,
+    reason:
+      highestPatch(tags) === 0
+        ? "no release exists yet; this is the first"
+        : `one patch above v${PATCH_SERIES}.${highestPatch(tags)}`,
   };
 }

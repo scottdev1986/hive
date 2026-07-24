@@ -58,7 +58,9 @@ try {
 const trust = verifyManifest(manifestBytes, signature, publicKey);
 
 if (!trust.verified) {
-  console.error(`::error::The release manifest does not verify against the embedded public key: ${trust.reason}`);
+  console.error(
+    `::error::The release manifest does not verify against the embedded public key: ${trust.reason}`,
+  );
   console.error(
     "Every installed hive would REFUSE this release. Check that " +
       "HIVE_RELEASE_PRIVATE_KEY is the private half of HIVE_RELEASE_PUBLIC_KEY.",
@@ -66,7 +68,9 @@ if (!trust.verified) {
   process.exit(1);
 }
 if (!trust.signed) {
-  console.error("::error::A public key is embedded but the manifest is unsigned; this release would be refused.");
+  console.error(
+    "::error::A public key is embedded but the manifest is unsigned; this release would be refused.",
+  );
   process.exit(1);
 }
 

@@ -1,19 +1,17 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import {
-  findLatestCodexRollout,
-} from "../adapters/tools/codex";
+import { findLatestCodexRollout } from "../adapters/tools/codex";
 import {
   findLatestGrokSessionDirectory,
   findLatestGrokSessionId,
 } from "../adapters/tools/grok";
 import { getHiveHome } from "../daemon/db";
-import { readNativeTurnCompleted } from "../daemon/tool-telemetry";
 import type { TurnBoundaryKind } from "../daemon/orchestrator-status";
-import { ORCHESTRATOR_NAME, type CapabilityProvider } from "../schemas";
-import { buildHookEvent } from "./event";
+import { readNativeTurnCompleted } from "../daemon/tool-telemetry";
+import { type CapabilityProvider, ORCHESTRATOR_NAME } from "../schemas";
 import { operatorFetch } from "./credential";
+import { buildHookEvent } from "./event";
 import { publishOrchestratorSessionId } from "./orchestrator-runtime";
 
 const POLL_MS = 250;
@@ -26,10 +24,7 @@ export interface NativeTurnArtifact {
 export interface NativeTurnMonitorDependencies {
   readonly locate: () => Promise<NativeTurnArtifact | null>;
   readonly read: (artifact: NativeTurnArtifact) => Promise<boolean | null>;
-  readonly report: (
-    kind: TurnBoundaryKind,
-    sessionId: string,
-  ) => Promise<void>;
+  readonly report: (kind: TurnBoundaryKind, sessionId: string) => Promise<void>;
   readonly identify?: (artifact: NativeTurnArtifact) => Promise<void>;
   readonly sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   readonly warn: (message: string) => void;
@@ -72,9 +67,7 @@ export async function monitorNativeOrchestratorTurns(
     try {
       if (artifact === null) {
         const candidate = await dependencies.locate();
-        if (
-          candidate !== null && candidate.sessionId !== baselineSessionId
-        ) {
+        if (candidate !== null && candidate.sessionId !== baselineSessionId) {
           await dependencies.identify?.(candidate);
           artifact = candidate;
         }
@@ -98,7 +91,9 @@ export async function monitorNativeOrchestratorTurns(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message !== lastWarning) {
-        dependencies.warn(`[hive] orchestrator status observation failed: ${message}`);
+        dependencies.warn(
+          `[hive] orchestrator status observation failed: ${message}`,
+        );
         lastWarning = message;
       }
     }
@@ -133,10 +128,12 @@ async function reportBoundary(
   const response = await operatorFetch(`http://127.0.0.1:${port}/event`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(buildHookEvent(kind, {
-      agent: ORCHESTRATOR_NAME,
-      toolSessionId: sessionId,
-    })),
+    body: JSON.stringify(
+      buildHookEvent(kind, {
+        agent: ORCHESTRATOR_NAME,
+        toolSessionId: sessionId,
+      }),
+    ),
     signal: AbortSignal.timeout(1_000),
   });
   if (!response.ok) {

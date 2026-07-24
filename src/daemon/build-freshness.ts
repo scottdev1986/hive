@@ -61,7 +61,11 @@ export function runningBuildProvenance(): BuildProvenance {
   };
 }
 
-const unknown = (version: string, commit: string | null, reason: string): BuildFreshness => ({
+const unknown = (
+  version: string,
+  commit: string | null,
+  reason: string,
+): BuildFreshness => ({
   state: "unknown",
   version,
   buildCommit: commit,
@@ -92,7 +96,11 @@ export async function checkBuildFreshness(
   try {
     const main = await git(["rev-parse", "main"]);
     if (main.exitCode !== 0) {
-      return unknown(version, commit, "this repository has no `main` branch to compare against");
+      return unknown(
+        version,
+        commit,
+        "this repository has no `main` branch to compare against",
+      );
     }
     const mainCommit = main.stdout.trim();
     const known = await git(["cat-file", "-e", `${commit}^{commit}`]);
@@ -106,7 +114,11 @@ export async function checkBuildFreshness(
     const behind = await git(["rev-list", "--count", `${commit}..main`]);
     const count = Number.parseInt(behind.stdout.trim(), 10);
     if (behind.exitCode !== 0 || !Number.isInteger(count)) {
-      return unknown(version, commit, "git could not count the commits between it and main");
+      return unknown(
+        version,
+        commit,
+        "git could not count the commits between it and main",
+      );
     }
     if (count === 0) {
       return {
@@ -115,8 +127,7 @@ export async function checkBuildFreshness(
         buildCommit: commit,
         mainCommit,
         commitsBehind: 0,
-        message:
-          `Running binary ${version} was built from ${commit} and contains everything on main.`,
+        message: `Running binary ${version} was built from ${commit} and contains everything on main.`,
       };
     }
     return {

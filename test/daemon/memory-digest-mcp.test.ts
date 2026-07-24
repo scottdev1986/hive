@@ -3,19 +3,26 @@
 // (agent session end/kill and landing/completion events), including their
 // failure isolation from the lifecycle paths that fire them.
 import { afterEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
 import type { SessionSender } from "../../src/daemon/delivery";
-import { compileDigest, MEMORY_DIGEST_DEFAULT_BUDGET } from "../../src/daemon/episodic-digest";
+import {
+  compileDigest,
+  MEMORY_DIGEST_DEFAULT_BUDGET,
+} from "../../src/daemon/episodic-digest";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { HiveDaemon } from "../../src/daemon/server";
-import { actingAs, type AuthorizedFetch, submitPaste } from "../../src/daemon/testing";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
+import {
+  type AuthorizedFetch,
+  actingAs,
+  submitPaste,
+} from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -30,7 +37,9 @@ afterEach(async () => {
     await daemon.stop().catch(() => undefined);
   }
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -89,10 +98,14 @@ interface DigestEnvelope {
   events: Array<{ id: number; type: string; summary: string }>;
 }
 
-function envelope(result: Awaited<ReturnType<Client["callTool"]>>): DigestEnvelope {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+function envelope(
+  result: Awaited<ReturnType<Client["callTool"]>>,
+): DigestEnvelope {
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -104,7 +117,10 @@ async function connectedClient(fetch: AuthorizedFetch): Promise<Client> {
     new URL("http://hive/mcp"),
     { fetch },
   );
-  const client = new Client({ name: "hive-memory-digest-test", version: "1.0.0" });
+  const client = new Client({
+    name: "hive-memory-digest-test",
+    version: "1.0.0",
+  });
   await client.connect(transport);
   return client;
 }
@@ -113,7 +129,10 @@ async function readDigest(
   client: Client,
   args: Record<string, unknown>,
 ): Promise<DigestEnvelope> {
-  const result = await client.callTool({ name: "memory_digest", arguments: args });
+  const result = await client.callTool({
+    name: "memory_digest",
+    arguments: args,
+  });
   expect(result.isError).not.toBe(true);
   return envelope(result);
 }
@@ -130,9 +149,7 @@ function daemonFixture(options: {
     spawner: new UnusedSpawner(),
     db,
     repoRoot: options.repoRoot,
-    ...(options.episodic === null
-      ? {}
-      : { episodicStore: options.episodic }),
+    ...(options.episodic === null ? {} : { episodicStore: options.episodic }),
   });
   daemons.push(daemon);
   return { daemon, db };
@@ -160,7 +177,9 @@ describe("memory_digest MCP tool", () => {
       compiledAt: T1,
     })!;
 
-    const client = await connectedClient(actingAs(daemon, "operator", "operator"));
+    const client = await connectedClient(
+      actingAs(daemon, "operator", "operator"),
+    );
     try {
       const byId = await readDigest(client, { digestId: compiled.id });
       expect(byId.state).toBe("ok");
@@ -282,7 +301,9 @@ describe("memory_digest MCP tool", () => {
       compiledAt: T1,
     })!;
 
-    const client = await connectedClient(actingAs(daemon, "operator", "operator"));
+    const client = await connectedClient(
+      actingAs(daemon, "operator", "operator"),
+    );
     try {
       const inflated = await readDigest(client, {
         digestId: compiled.id,
@@ -382,43 +403,51 @@ describe("daemon digest compile triggers", () => {
       agents: [agent("maya")],
     });
     const assignment = daemon.status.currentAssignment("agent-maya")!;
-    daemon.status.appendAgentReport({
-      subject: "maya",
-      agentId: "agent-maya",
-      role: "writer",
-      incarnationGeneration: 1,
-      capabilityEpoch: 0,
-      toolSessionId: null,
-    }, {
-      requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000a1",
-      assignmentId: assignment.assignmentId,
-      assignmentGeneration: assignment.assignmentGeneration,
-      phase: "implementing",
-      summary: "Mid-task, no digest yet",
-      blocker: null,
-      evidenceRefs: [],
-      freshForSeconds: 600,
-    }, new Date(T0));
+    daemon.status.appendAgentReport(
+      {
+        subject: "maya",
+        agentId: "agent-maya",
+        role: "writer",
+        incarnationGeneration: 1,
+        capabilityEpoch: 0,
+        toolSessionId: null,
+      },
+      {
+        requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000a1",
+        assignmentId: assignment.assignmentId,
+        assignmentGeneration: assignment.assignmentGeneration,
+        phase: "implementing",
+        summary: "Mid-task, no digest yet",
+        blocker: null,
+        evidenceRefs: [],
+        freshForSeconds: 600,
+      },
+      new Date(T0),
+    );
     // A non-boundary event does not compile.
     expect(episodic.digestFor({ agent: "agent-maya" })).toBeNull();
 
-    daemon.status.appendAgentReport({
-      subject: "maya",
-      agentId: "agent-maya",
-      role: "writer",
-      incarnationGeneration: 1,
-      capabilityEpoch: 0,
-      toolSessionId: null,
-    }, {
-      requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000a2",
-      assignmentId: assignment.assignmentId,
-      assignmentGeneration: assignment.assignmentGeneration,
-      phase: "complete",
-      summary: "Task complete, digest me",
-      blocker: null,
-      evidenceRefs: [],
-      freshForSeconds: 600,
-    }, new Date(T1));
+    daemon.status.appendAgentReport(
+      {
+        subject: "maya",
+        agentId: "agent-maya",
+        role: "writer",
+        incarnationGeneration: 1,
+        capabilityEpoch: 0,
+        toolSessionId: null,
+      },
+      {
+        requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000a2",
+        assignmentId: assignment.assignmentId,
+        assignmentGeneration: assignment.assignmentGeneration,
+        phase: "complete",
+        summary: "Task complete, digest me",
+        blocker: null,
+        evidenceRefs: [],
+        freshForSeconds: 600,
+      },
+      new Date(T1),
+    );
 
     const digest = episodic.digestFor({ agent: "agent-maya" });
     expect(digest).not.toBeNull();

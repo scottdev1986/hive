@@ -15,7 +15,7 @@
  * repo-only setup command and does not start a session. Machine-facing commands
  * (hooks, helpers and hidden process boundaries) never speak at all.
  */
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getHiveHome } from "../daemon/db";
 import {
@@ -140,8 +140,7 @@ export async function withTrailingUpdateNotice<T>(
   enabled: boolean,
   run: () => Promise<T>,
   deps: UpdateNoticeDeps = {},
-  write: (line: string) => void = (line) =>
-    process.stderr.write(`${line}\n`),
+  write: (line: string) => void = (line) => process.stderr.write(`${line}\n`),
 ): Promise<T> {
   if (!enabled) return run();
   const pending = resolveUpdateNotice(deps);

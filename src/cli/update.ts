@@ -16,7 +16,19 @@
  * reason to roll back a healthy binary.
  */
 import { spawn } from "node:child_process";
-import { cliPath, currentLink, detectInstallMethod, installRoot } from "../update/paths";
+import { expectedDaemonHandshake } from "../daemon/handshake";
+import {
+  type InstanceMutationBlocker,
+  instanceMutationBlockers,
+} from "../daemon/instances";
+import { isRunning } from "../daemon/lifecycle";
+import {
+  acquireMachineMutationLease,
+  type MachineMutationLease,
+  type MachineMutationPurpose,
+} from "../daemon/mutation-lease";
+import type { HiveArch } from "../release/manifest";
+import { releaseKeys } from "../release/manifest";
 import {
   checkForUpdate,
   dismissVersion,
@@ -24,36 +36,30 @@ import {
   readUpdateCache,
   updatesDisabled,
 } from "../update/check";
-import { githubReleaseSource } from "../update/source";
 import {
-  UpdateError,
+  type DaemonUpdateState,
+  explainRefusal,
+  inspectDaemonForUpdate,
+  restartStaleDaemon,
+} from "../update/daemon";
+import {
+  type ActivationOutcome,
   activateWithHealthCheck,
   ensureBinLink,
   ensureStaged,
   readInstallState,
   rollback,
-  type ActivationOutcome,
   type StageOutcome,
+  UpdateError,
 } from "../update/install";
 import {
-  explainRefusal,
-  inspectDaemonForUpdate,
-  restartStaleDaemon,
-  type DaemonUpdateState,
-} from "../update/daemon";
+  cliPath,
+  currentLink,
+  detectInstallMethod,
+  installRoot,
+} from "../update/paths";
 import { startDownload } from "../update/progress";
-import { releaseKeys } from "../release/manifest";
-import {
-  ensureEmbeddingsRuntimeForRelease,
-  type EmbeddingsInstallOutcome,
-} from "./embeddings";
-import { expectedDaemonHandshake } from "../daemon/handshake";
-import { isRunning } from "../daemon/lifecycle";
-import {
-  instanceMutationBlockers,
-  type InstanceMutationBlocker,
-} from "../daemon/instances";
-import { fetchAgentStatus } from "./mcp";
+import { githubReleaseSource } from "../update/source";
 import {
   HIVE_ARCH,
   HIVE_COMMIT,
@@ -62,12 +68,11 @@ import {
   IS_RELEASE_BUILD,
   versionLine,
 } from "../version";
-import type { HiveArch } from "../release/manifest";
 import {
-  acquireMachineMutationLease,
-  type MachineMutationLease,
-  type MachineMutationPurpose,
-} from "../daemon/mutation-lease";
+  type EmbeddingsInstallOutcome,
+  ensureEmbeddingsRuntimeForRelease,
+} from "./embeddings";
+import { fetchAgentStatus } from "./mcp";
 
 const arch = (): HiveArch => (HIVE_ARCH === "arm64" ? "arm64" : "x64");
 
@@ -88,18 +93,26 @@ function run(command: string, args: string[]): Promise<string> {
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
     child.on("error", reject);
     child.on("close", (code) =>
-      code === 0 ? resolvePromise(stdout) : reject(new Error(
-        `${command} exited ${code}${stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`}`,
-      )));
+      code === 0
+        ? resolvePromise(stdout)
+        : reject(
+            new Error(
+              `${command} exited ${code}${stderr.trim() === "" ? "" : `: ${stderr.trim().slice(0, 500)}`}`,
+            ),
+          ),
+    );
   });
 }
 
-const probeVersion = (binary: string): Promise<string> => run(binary, ["--version"]);
+const probeVersion = (binary: string): Promise<string> =>
+  run(binary, ["--version"]);
 const unpackApp = async (tarball: string, into: string): Promise<void> => {
   await run("tar", ["-xzf", tarball, "-C", into]);
 };
 const healthCheck = async (binary: string): Promise<boolean> =>
-  probeVersion(binary).then((out) => out.includes("hive")).catch(() => false);
+  probeVersion(binary)
+    .then((out) => out.includes("hive"))
+    .catch(() => false);
 
 function guardSelfUpdate(): void {
   const disabled = updatesDisabled();
@@ -174,7 +187,9 @@ export async function runUpdateCheck(): Promise<number> {
       console.error(`could not check for updates: ${check.reason}`);
       return 1;
     case "dev-build":
-      console.log(`hive ${check.current} (source checkout) — no update to check`);
+      console.log(
+        `hive ${check.current} (source checkout) — no update to check`,
+      );
       return 0;
     case "disabled":
       console.log(`update checks are disabled (${check.reason})`);
@@ -193,18 +208,23 @@ export async function runUpdateSkip(): Promise<void> {
 }
 
 export interface RollbackMutationDeps {
-  acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
+  acquireLease: (
+    purpose: MachineMutationPurpose,
+  ) => Promise<MachineMutationLease>;
   blockers: () => Promise<readonly InstanceMutationBlocker[]>;
   rollback: () => Promise<ActivationOutcome>;
   stopStaleDaemon: () => Promise<void>;
   log: (line: string) => void;
 }
 
-export async function rollbackWhenIdle(deps: RollbackMutationDeps): Promise<void> {
+export async function rollbackWhenIdle(
+  deps: RollbackMutationDeps,
+): Promise<void> {
   const lease = await deps.acquireLease("rollback");
   try {
     const blockers = await deps.blockers();
-    if (blockers.length > 0) throw new UpdateError(globalMutationRefusal(blockers));
+    if (blockers.length > 0)
+      throw new UpdateError(globalMutationRefusal(blockers));
     const outcome = await deps.rollback();
     if (!outcome.activated) throw new UpdateError(outcome.reason);
     deps.log(`hive ${outcome.version} active (rolled back)`);
@@ -228,11 +248,16 @@ export async function runRollback(): Promise<void> {
 export function globalMutationRefusal(
   blockers: readonly InstanceMutationBlocker[],
 ): string {
-  return blockers.map(({ instance, liveAgents }) =>
-    `${instance.name}: ${liveAgents.join(", ")}`
-  ).join("; ") +
+  return (
+    blockers
+      .map(
+        ({ instance, liveAgents }) =>
+          `${instance.name}: ${liveAgents.join(", ")}`,
+      )
+      .join("; ") +
     " — refusing to change the machine-wide active Hive binary while any instance has a live or unobservable team\n" +
-    "Fix: wait for every team to finish or stop them, then retry.";
+    "Fix: wait for every team to finish or stop them, then retry."
+  );
 }
 
 /**
@@ -244,7 +269,10 @@ export function globalMutationRefusal(
 async function stopStaleDaemonAfterActivation(): Promise<void> {
   if (!(await isRunning())) return;
   const expected = await expectedDaemonHandshake(process.cwd());
-  const state = await inspectDaemonForUpdate({ expected, liveAgents: liveAgentNames });
+  const state = await inspectDaemonForUpdate({
+    expected,
+    liveAgents: liveAgentNames,
+  });
   const refusal = explainRefusal(state);
   if (refusal !== null) {
     console.log(refusal);
@@ -252,7 +280,9 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
   }
   if (state.state === "current" || state.state === "absent") return;
 
-  const outcome = await restartStaleDaemon(state, { isRunning: () => isRunning() });
+  const outcome = await restartStaleDaemon(state, {
+    isRunning: () => isRunning(),
+  });
   console.log(
     outcome.stopped
       ? "Stopped the previous daemon; the next `hive` runs the new build."
@@ -283,7 +313,9 @@ function verifiedLine(staged: StageOutcome): string {
 }
 
 export interface StagedUpdateActivationDeps {
-  acquireLease: (purpose: MachineMutationPurpose) => Promise<MachineMutationLease>;
+  acquireLease: (
+    purpose: MachineMutationPurpose,
+  ) => Promise<MachineMutationLease>;
   blockers: () => Promise<readonly InstanceMutationBlocker[]>;
   inspectDaemon: () => Promise<DaemonUpdateState>;
   activate: () => Promise<ActivationOutcome>;
@@ -389,10 +421,11 @@ export async function runUpdate(requested?: string): Promise<void> {
   await activateStagedUpdate(version, {
     acquireLease: acquireMachineMutationLease,
     blockers: () => instanceMutationBlockers(liveAgentNames),
-    inspectDaemon: () => inspectDaemonForUpdate({
-      expected: () => expectedDaemonHandshake(process.cwd()),
-      liveAgents: liveAgentNames,
-    }),
+    inspectDaemon: () =>
+      inspectDaemonForUpdate({
+        expected: () => expectedDaemonHandshake(process.cwd()),
+        liveAgents: liveAgentNames,
+      }),
     activate: () => activateWithHealthCheck(version, { root, healthCheck }),
     ensureBinLink: () => ensureBinLink(root),
     stopStaleDaemon: stopStaleDaemonAfterActivation,

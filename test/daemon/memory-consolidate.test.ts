@@ -10,17 +10,17 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readMemoryFact, writeMemoryFact } from "../../src/adapters/memory";
-import type { MemoryRetentionConfig } from "../../src/schemas";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import {
   countConsolidationCandidates,
   runMemoryConsolidation,
 } from "../../src/daemon/memory-consolidate";
 import {
-  MemoryEmbeddingService,
   type MemoryEmbedder,
+  MemoryEmbeddingService,
 } from "../../src/daemon/memory-embeddings";
 import { runRetentionSweep } from "../../src/daemon/memory-retention";
+import type { MemoryRetentionConfig } from "../../src/schemas";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -33,7 +33,9 @@ afterEach(async () => {
   if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
   else Bun.env.HIVE_HOME = previousHiveHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -205,8 +207,16 @@ describe("runMemoryConsolidation — apply mode", () => {
     const { repo, store } = await makeFixture();
     try {
       const vectors = await plantArticles(repo);
-      const olderBefore = await readMemoryFact(repo, "repo", IDENTICAL_OLDER.id);
-      const newerBefore = await readMemoryFact(repo, "repo", IDENTICAL_NEWER.id);
+      const olderBefore = await readMemoryFact(
+        repo,
+        "repo",
+        IDENTICAL_OLDER.id,
+      );
+      const newerBefore = await readMemoryFact(
+        repo,
+        "repo",
+        IDENTICAL_NEWER.id,
+      );
 
       const report = await runMemoryConsolidation({
         repoRoot: repo,
@@ -243,7 +253,9 @@ describe("runMemoryConsolidation — apply mode", () => {
         store.memoryEmbeddings({ kind: "article" }).map((row) => row.sourceId),
       ).not.toContain(IDENTICAL_OLDER.id);
       // The similar pair's articles are untouched.
-      expect(await readMemoryFact(repo, "repo", SIMILAR_OLDER.id)).not.toBeNull();
+      expect(
+        await readMemoryFact(repo, "repo", SIMILAR_OLDER.id),
+      ).not.toBeNull();
       expect(
         (await readMemoryFact(repo, "repo", SIMILAR_NEWER.id))!.supersedes,
       ).toHaveLength(0);

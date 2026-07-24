@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  appendFileSync,
-  mkdirSync,
-  mkdtempSync,
-  writeFileSync,
-} from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { claudeProjectDirectory } from "../../src/adapters/tools/claude";
@@ -12,8 +7,8 @@ import { HiveDatabase } from "../../src/daemon/db";
 import { HiveDaemon } from "../../src/daemon/server";
 import {
   defaultTokenUsageAdapters,
-  TokenUsageStore,
   type TokenUsageAdapter,
+  TokenUsageStore,
 } from "../../src/daemon/token-usage";
 
 const at = "2026-07-13T12:00:00.000Z";
@@ -32,72 +27,91 @@ describe("TokenUsageStore", () => {
     const codexDirectory = join(home, ".codex", "sessions", "2026", "07", "13");
     mkdirSync(codexDirectory, { recursive: true });
     const codexPath = join(codexDirectory, "rollout-test.jsonl");
-    writeFileSync(codexPath, [
-      JSON.stringify({ type: "session_meta", payload: { id: "codex-session", cwd: resolve(repo) } }),
-      JSON.stringify({
-        timestamp: at,
-        payload: {
-          type: "token_count",
-          info: { total_token_usage: {
-            input_tokens: 100,
-            cached_input_tokens: 70,
-            output_tokens: 20,
-            reasoning_output_tokens: 5,
-          } },
-        },
-      }),
-    ].join("\n") + "\n");
+    writeFileSync(
+      codexPath,
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: { id: "codex-session", cwd: resolve(repo) },
+        }),
+        JSON.stringify({
+          timestamp: at,
+          payload: {
+            type: "token_count",
+            info: {
+              total_token_usage: {
+                input_tokens: 100,
+                cached_input_tokens: 70,
+                output_tokens: 20,
+                reasoning_output_tokens: 5,
+              },
+            },
+          },
+        }),
+      ].join("\n") + "\n",
+    );
     const codex = store.startOrchestrator(session, "codex", repo, at);
     store.registerOrchestratorProviderSession("codex-session", repo);
     await store.refreshSubject(codex);
-    appendFileSync(codexPath, JSON.stringify({
-      timestamp: "2026-07-13T12:01:00.000Z",
-      payload: {
-        type: "token_count",
-        info: { total_token_usage: {
-          input_tokens: 150,
-          cached_input_tokens: 90,
-          output_tokens: 30,
-          reasoning_output_tokens: 8,
-        } },
-      },
-    }) + "\n");
+    appendFileSync(
+      codexPath,
+      JSON.stringify({
+        timestamp: "2026-07-13T12:01:00.000Z",
+        payload: {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 150,
+              cached_input_tokens: 90,
+              output_tokens: 30,
+              reasoning_output_tokens: 8,
+            },
+          },
+        },
+      }) + "\n",
+    );
     await store.endSubject(codex);
 
     const claudeDirectory = claudeProjectDirectory(repo, home);
     mkdirSync(claudeDirectory, { recursive: true });
     const claudePath = join(claudeDirectory, "claude-session.jsonl");
-    writeFileSync(claudePath, JSON.stringify({
-      type: "assistant",
-      uuid: "entry-1",
-      timestamp: at,
-      message: {
-        id: "message-1",
-        usage: {
-          input_tokens: 10,
-          cache_creation_input_tokens: 20,
-          cache_read_input_tokens: 30,
-          output_tokens: 4,
+    writeFileSync(
+      claudePath,
+      JSON.stringify({
+        type: "assistant",
+        uuid: "entry-1",
+        timestamp: at,
+        message: {
+          id: "message-1",
+          usage: {
+            input_tokens: 10,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+            output_tokens: 4,
+          },
         },
-      },
-    }) + "\n");
+      }) + "\n",
+    );
     const claude = store.startOrchestrator(session, "claude", repo, at);
     store.registerOrchestratorProviderSession("claude-session", repo);
     await store.refreshSubject(claude);
-    appendFileSync(claudePath, JSON.stringify({
-      type: "assistant",
-      uuid: "entry-2",
-      timestamp: "2026-07-13T12:02:00.000Z",
-      message: {
-        id: "message-1",
-        usage: {
-          input_tokens: 10,
-          cache_creation_input_tokens: 20,
-          cache_read_input_tokens: 30,
-          output_tokens: 6,
+    appendFileSync(
+      claudePath,
+      JSON.stringify({
+        type: "assistant",
+        uuid: "entry-2",
+        timestamp: "2026-07-13T12:02:00.000Z",
+        message: {
+          id: "message-1",
+          usage: {
+            input_tokens: 10,
+            cache_creation_input_tokens: 20,
+            cache_read_input_tokens: 30,
+            output_tokens: 6,
+          },
         },
-      },
-    }) + "\n");
+      }) + "\n",
+    );
     await store.endSubject(claude);
 
     const grokSession = "grok-session";
@@ -109,23 +123,31 @@ describe("TokenUsageStore", () => {
       grokSession,
     );
     mkdirSync(grokDirectory, { recursive: true });
-    writeFileSync(join(grokDirectory, "summary.json"), JSON.stringify({
-      info: { id: grokSession, cwd: resolve(repo) },
-      current_model_id: "grok-code-fast-1",
-    }));
-    writeFileSync(join(grokDirectory, "updates.jsonl"), JSON.stringify({
-      timestamp: 1_752_408_000,
-      params: { update: {
-        sessionUpdate: "turn_completed",
-        prompt_id: "prompt-1",
-        usage: {
-          inputTokens: 40,
-          cachedReadTokens: 25,
-          outputTokens: 9,
-          reasoningTokens: 3,
+    writeFileSync(
+      join(grokDirectory, "summary.json"),
+      JSON.stringify({
+        info: { id: grokSession, cwd: resolve(repo) },
+        current_model_id: "grok-code-fast-1",
+      }),
+    );
+    writeFileSync(
+      join(grokDirectory, "updates.jsonl"),
+      JSON.stringify({
+        timestamp: 1_752_408_000,
+        params: {
+          update: {
+            sessionUpdate: "turn_completed",
+            prompt_id: "prompt-1",
+            usage: {
+              inputTokens: 40,
+              cachedReadTokens: 25,
+              outputTokens: 9,
+              reasoningTokens: 3,
+            },
+          },
         },
-      } },
-    }) + "\n");
+      }) + "\n",
+    );
     const grok = store.startOrchestrator(session, "grok", repo, at);
     store.registerOrchestratorProviderSession(grokSession, repo);
     await store.endSubject(grok);
@@ -141,10 +163,14 @@ describe("TokenUsageStore", () => {
       reasoningTokens: null,
       totalTokens: 295,
     });
-    expect(current.subjects.map((subject) => [
-      subject.provider,
-      subject.reading.state === "measured" ? subject.reading.counts.totalTokens : null,
-    ])).toEqual([
+    expect(
+      current.subjects.map((subject) => [
+        subject.provider,
+        subject.reading.state === "measured"
+          ? subject.reading.counts.totalTokens
+          : null,
+      ]),
+    ).toEqual([
       ["codex", 180],
       ["claude", 66],
       ["grok", 49],
@@ -185,7 +211,8 @@ describe("TokenUsageStore", () => {
     const subject = store.startOrchestrator(session, "claude", repo, at);
 
     await store.refreshSubject(subject);
-    let reading = (await store.snapshot(repo)).sessions[0]!.subjects[0]!.reading;
+    let reading = (await store.snapshot(repo)).sessions[0]!.subjects[0]!
+      .reading;
     expect(reading).toEqual({
       state: "unknown",
       reason: "claude provider session id has not been observed",
@@ -210,18 +237,20 @@ describe("TokenUsageStore", () => {
       discover: async () => ({ paths: ["virtual://opencode/session"] }),
       read: async () => ({
         cursorBytes: 1,
-        events: [{
-          key: "turn-1",
-          counts: {
-            inputTokens: 12,
-            cachedInputTokens: null,
-            cacheCreationInputTokens: null,
-            outputTokens: 3,
-            reasoningTokens: null,
+        events: [
+          {
+            key: "turn-1",
+            counts: {
+              inputTokens: 12,
+              cachedInputTokens: null,
+              cacheCreationInputTokens: null,
+              outputTokens: 3,
+              reasoningTokens: null,
+            },
+            observedAt: at,
+            source: "opencode-test",
           },
-          observedAt: at,
-          source: "opencode-test",
-        }],
+        ],
       }),
     };
     const repo = "/tmp/hive-opencode-token-test";
@@ -241,19 +270,21 @@ describe("TokenUsageStore", () => {
       discover: async (subject) => ({ paths: [`virtual://${subject.id}`] }),
       read: async () => ({
         cursorBytes: 1,
-        events: [{
-          key: "cumulative",
-          cumulative: true,
-          counts: {
-            inputTokens: 10,
-            cachedInputTokens: 5,
-            cacheCreationInputTokens: null,
-            outputTokens: 2,
-            reasoningTokens: 1,
+        events: [
+          {
+            key: "cumulative",
+            cumulative: true,
+            counts: {
+              inputTokens: 10,
+              cachedInputTokens: 5,
+              cacheCreationInputTokens: null,
+              outputTokens: 2,
+              reasoningTokens: 1,
+            },
+            observedAt: at,
+            source: "codex-test",
           },
-          observedAt: at,
-          source: "codex-test",
-        }],
+        ],
       }),
     };
     const db = new HiveDatabase(":memory:");
@@ -330,18 +361,20 @@ describe("TokenUsageStore", () => {
         if (!readable) throw new Error("artifact disappeared");
         return {
           cursorBytes: 1,
-          events: [{
-            key: "turn",
-            counts: {
-              inputTokens: 4,
-              cachedInputTokens: null,
-              cacheCreationInputTokens: null,
-              outputTokens: 1,
-              reasoningTokens: null,
+          events: [
+            {
+              key: "turn",
+              counts: {
+                inputTokens: 4,
+                cachedInputTokens: null,
+                cacheCreationInputTokens: null,
+                outputTokens: 1,
+                reasoningTokens: null,
+              },
+              observedAt: at,
+              source: "flaky-test",
             },
-            observedAt: at,
-            source: "flaky-test",
-          }],
+          ],
         };
       },
     };
@@ -370,43 +403,51 @@ describe("TokenUsageStore", () => {
       db,
       tokenUsage,
       repoRoot: "/tmp/hive-token-api",
-      spawner: { spawn: async () => { throw new Error("unused"); } },
-    });
-    const operator = daemon.capabilities.mint("operator-test", "operator", { epoch: 0 }).token;
-    const orchestrator = daemon.capabilities.mint("orchestrator", "orchestrator", { epoch: 0 }).token;
-    const request = (path: string, token: string, body?: unknown) => daemon.fetch(new Request(
-      `http://127.0.0.1${path}`,
-      {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
+      spawner: {
+        spawn: async () => {
+          throw new Error("unused");
         },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       },
-    ));
+    });
+    const operator = daemon.capabilities.mint("operator-test", "operator", {
+      epoch: 0,
+    }).token;
+    const orchestrator = daemon.capabilities.mint(
+      "orchestrator",
+      "orchestrator",
+      { epoch: 0 },
+    ).token;
+    const request = (path: string, token: string, body?: unknown) =>
+      daemon.fetch(
+        new Request(`http://127.0.0.1${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        }),
+      );
 
-    const denied = await request(
-      "/token-usage/sessions",
-      orchestrator,
-      { repoRoot: "/tmp/hive-token-api" },
-    );
+    const denied = await request("/token-usage/sessions", orchestrator, {
+      repoRoot: "/tmp/hive-token-api",
+    });
     expect(denied.status).toBe(403);
 
-    const started = await request(
-      "/token-usage/sessions",
-      operator,
-      { repoRoot: "/tmp/hive-token-api" },
-    );
+    const started = await request("/token-usage/sessions", operator, {
+      repoRoot: "/tmp/hive-token-api",
+    });
     expect(started.status).toBe(200);
-    const sessionId = (await started.json() as { sessionId: string }).sessionId;
+    const sessionId = ((await started.json()) as { sessionId: string })
+      .sessionId;
     const read = await request(
       "/token-usage?repoRoot=%2Ftmp%2Fhive-token-api",
       orchestrator,
     );
     expect(read.status).toBe(200);
-    expect((await read.json() as { currentSessionId: string }).currentSessionId)
-      .toBe(sessionId);
+    expect(
+      ((await read.json()) as { currentSessionId: string }).currentSessionId,
+    ).toBe(sessionId);
   });
 
   test("a profiling-era database migrates: profiler rows and their events are dropped, legacy rows survive", async () => {
@@ -445,70 +486,101 @@ describe("TokenUsageStore", () => {
         PRIMARY KEY(subjectId, eventKey)
       );
     `);
-    db.database.query(
-      "INSERT INTO token_usage_sessions (id, repoRoot, startedAt, endedAt) VALUES (?, ?, ?, NULL)",
-    ).run(sessionId, repo, at);
-    db.database.query(`
+    db.database
+      .query(
+        "INSERT INTO token_usage_sessions (id, repoRoot, startedAt, endedAt) VALUES (?, ?, ?, NULL)",
+      )
+      .run(sessionId, repo, at);
+    db.database
+      .query(`
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, profileRunId, startedAt, endedAt, unknownReason
       ) VALUES (?, ?, NULL, 'Orchestrator', 'orchestrator', 'codex', NULL, ?, NULL, NULL, ?, NULL, NULL)
-    `).run(legacyId, sessionId, repo, at);
+    `)
+      .run(legacyId, sessionId, repo, at);
     // A profiler subject from the removed surface, keyed by a profileRunId.
-    db.database.query(`
+    db.database
+      .query(`
       INSERT INTO token_usage_subjects (
         id, sessionId, agentId, name, role, provider, model, cwd,
         providerSessionId, profileRunId, startedAt, endedAt, unknownReason
       ) VALUES (?, ?, NULL, 'profile-run-1', 'profiler', 'codex', NULL, ?, NULL, 'run-1', ?, NULL, NULL)
-    `).run(profilerId, sessionId, repo, at);
+    `)
+      .run(profilerId, sessionId, repo, at);
     // A child event on each: the legacy one proves the rebuild preserves
     // foreign-key-referenced rows; the profiler's proves its children are cleaned.
-    db.database.query(`
+    db.database
+      .query(`
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
       ) VALUES (?, 'e1', 1, 10, 5, NULL, 2, NULL, ?, 'legacy')
-    `).run(legacyId, at);
-    db.database.query(`
+    `)
+      .run(legacyId, at);
+    db.database
+      .query(`
       INSERT INTO token_usage_events (
         subjectId, eventKey, cumulative, inputTokens, cachedInputTokens,
         cacheCreationInputTokens, outputTokens, reasoningTokens, observedAt, source
       ) VALUES (?, 'p1', 1, 400, 250, NULL, 60, 20, ?, 'codex-rollout')
-    `).run(profilerId, at);
+    `)
+      .run(profilerId, at);
 
     // Constructing the store runs the migration.
     new TokenUsageStore(db, []);
 
     // The profileRunId column is gone.
     const columns = db.database
-      .query("PRAGMA table_info(token_usage_subjects)").all() as { name: string }[];
+      .query("PRAGMA table_info(token_usage_subjects)")
+      .all() as { name: string }[];
     expect(columns.some((c) => c.name === "profileRunId")).toBe(false);
     // The legacy orchestrator and its event survive untouched.
     expect(
-      db.database.query("SELECT name, role FROM token_usage_subjects WHERE id = ?").get(legacyId),
+      db.database
+        .query("SELECT name, role FROM token_usage_subjects WHERE id = ?")
+        .get(legacyId),
     ).toEqual({ name: "Orchestrator", role: "orchestrator" });
     expect(
-      db.database.query("SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?").get(legacyId),
+      db.database
+        .query(
+          "SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?",
+        )
+        .get(legacyId),
     ).toEqual({ n: 1 });
     // The profiler subject and its event are gone.
     expect(
-      db.database.query("SELECT COUNT(*) AS n FROM token_usage_subjects WHERE role = 'profiler'").get(),
+      db.database
+        .query(
+          "SELECT COUNT(*) AS n FROM token_usage_subjects WHERE role = 'profiler'",
+        )
+        .get(),
     ).toEqual({ n: 0 });
     expect(
-      db.database.query("SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?").get(profilerId),
+      db.database
+        .query(
+          "SELECT COUNT(*) AS n FROM token_usage_events WHERE subjectId = ?",
+        )
+        .get(profilerId),
     ).toEqual({ n: 0 });
     // The narrowed CHECK now rejects a profiler insert.
     expect(() =>
-      db.database.query(`
+      db.database
+        .query(`
         INSERT INTO token_usage_subjects (
           id, sessionId, agentId, name, role, provider, model, cwd,
           providerSessionId, startedAt, endedAt, unknownReason
         ) VALUES (?, ?, NULL, 'x', 'profiler', 'codex', NULL, ?, NULL, ?, NULL, NULL)
-      `).run("44444444-4444-4444-8444-444444444444", sessionId, repo, at),
+      `)
+        .run("44444444-4444-4444-8444-444444444444", sessionId, repo, at),
     ).toThrow();
     // Foreign-key enforcement is restored after the rebuild.
     expect(
-      (db.database.query("PRAGMA foreign_keys").all() as { foreign_keys: number }[])[0]!.foreign_keys,
+      (
+        db.database.query("PRAGMA foreign_keys").all() as {
+          foreign_keys: number;
+        }[]
+      )[0]!.foreign_keys,
     ).toBe(1);
   });
 });

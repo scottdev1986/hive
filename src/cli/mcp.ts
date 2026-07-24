@@ -1,26 +1,26 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
-import { operatorFetch } from "./credential";
-import { HIVE_VERSION } from "../version";
 import {
-  AgentRecordSchema,
-  MemoryFactSchema,
-  MemoryScopeSchema,
-  MemorySearchResultSchema,
-  MemoryWriteResultSchema,
-  ORCHESTRATOR_NAME,
-  QuotaObservationSchema,
   type AgentRecord,
+  AgentRecordSchema,
   type MemoryFact,
+  MemoryFactSchema,
   type MemoryScope,
+  MemoryScopeSchema,
   type MemorySearchResult,
+  MemorySearchResultSchema,
   type MemoryWriteInput,
   type MemoryWriteResult,
+  MemoryWriteResultSchema,
+  ORCHESTRATOR_NAME,
   type QuotaObservation,
   type QuotaObservationInput,
+  QuotaObservationSchema,
   type QuotaStatus,
 } from "../schemas";
+import { HIVE_VERSION } from "../version";
+import { operatorFetch } from "./credential";
 
 export type McpFetcher = (
   input: string | URL,
@@ -28,12 +28,16 @@ export type McpFetcher = (
 ) => Promise<Response>;
 
 function textToolValue(content: unknown, toolName: string): unknown {
-  const items = z.array(z.object({
-    type: z.string(),
-    text: z.string().optional(),
-  })).parse(content);
-  const item = items.find((candidate) =>
-    candidate.type === "text" && candidate.text !== undefined
+  const items = z
+    .array(
+      z.object({
+        type: z.string(),
+        text: z.string().optional(),
+      }),
+    )
+    .parse(content);
+  const item = items.find(
+    (candidate) => candidate.type === "text" && candidate.text !== undefined,
   );
   if (item?.text === undefined) {
     throw new Error(`${toolName} returned no text content`);
@@ -58,7 +62,9 @@ async function callHiveTool(
     await client.connect(transport);
     const result = await client.callTool({ name, arguments: args });
     if (result.isError === true) throw new Error(`${errorLabel} failed`);
-    const structured = z.record(z.string(), z.unknown()).optional()
+    const structured = z
+      .record(z.string(), z.unknown())
+      .optional()
       .parse(result.structuredContent);
     return structured?.[key] ?? textToolValue(result.content, name);
   } finally {
@@ -71,7 +77,13 @@ export async function fetchAgentStatus(
   fetcher?: McpFetcher,
 ): Promise<AgentRecord[]> {
   return AgentRecordSchema.array().parse(
-    await callHiveTool(port, "hive_status", { detail: "full" }, "agents", fetcher),
+    await callHiveTool(
+      port,
+      "hive_status",
+      { detail: "full" },
+      "agents",
+      fetcher,
+    ),
   );
 }
 
@@ -96,23 +108,27 @@ export async function markAgentDead(
   agentName: string,
   fetcher?: McpFetcher,
 ): Promise<AgentRecord> {
-  return AgentRecordSchema.parse(await callHiveTool(
-    port,
-    "hive_mark_dead",
-    { agent: agentName },
-    "agent",
-    fetcher,
-    `hive_mark_dead for ${agentName}`,
-  ));
+  return AgentRecordSchema.parse(
+    await callHiveTool(
+      port,
+      "hive_mark_dead",
+      { agent: agentName },
+      "agent",
+      fetcher,
+      `hive_mark_dead for ${agentName}`,
+    ),
+  );
 }
 
 export async function fetchQuotaStatus(
   port: number,
   fetcher?: McpFetcher,
 ): Promise<QuotaStatus[]> {
-  return z.array(z.unknown()).parse(
-    await callHiveTool(port, "hive_quota_status", {}, "quotas", fetcher),
-  ) as QuotaStatus[];
+  return z
+    .array(z.unknown())
+    .parse(
+      await callHiveTool(port, "hive_quota_status", {}, "quotas", fetcher),
+    ) as QuotaStatus[];
 }
 
 export async function reconcileQuota(
@@ -120,13 +136,15 @@ export async function reconcileQuota(
   observation: QuotaObservationInput,
   fetcher?: McpFetcher,
 ): Promise<QuotaObservation> {
-  return QuotaObservationSchema.parse(await callHiveTool(
-    port,
-    "hive_quota_reconcile",
-    observation,
-    "observation",
-    fetcher,
-  ));
+  return QuotaObservationSchema.parse(
+    await callHiveTool(
+      port,
+      "hive_quota_reconcile",
+      observation,
+      "observation",
+      fetcher,
+    ),
+  );
 }
 
 export async function searchMemory(
@@ -135,13 +153,15 @@ export async function searchMemory(
   options?: { scope?: MemoryScope; limit?: number },
   fetcher?: McpFetcher,
 ): Promise<MemorySearchResult[]> {
-  return MemorySearchResultSchema.array().parse(await callHiveTool(
-    port,
-    "memory_search",
-    { query, ...options },
-    "results",
-    fetcher,
-  ));
+  return MemorySearchResultSchema.array().parse(
+    await callHiveTool(
+      port,
+      "memory_search",
+      { query, ...options },
+      "results",
+      fetcher,
+    ),
+  );
 }
 
 export async function writeMemory(
@@ -171,9 +191,17 @@ export async function deleteMemory(
   id: string,
   fetcher?: McpFetcher,
 ): Promise<boolean> {
-  const result = z.object({ deleted: z.boolean() }).parse(
-    await callHiveTool(port, "memory_delete", { scope, id }, "result", fetcher),
-  );
+  const result = z
+    .object({ deleted: z.boolean() })
+    .parse(
+      await callHiveTool(
+        port,
+        "memory_delete",
+        { scope, id },
+        "result",
+        fetcher,
+      ),
+    );
   return result.deleted;
 }
 
@@ -183,13 +211,17 @@ const MemoryEmbeddingsStatusSchema = z.object({
   state: z.string(),
   detail: z.string().optional(),
   runtimeDir: z.string().optional(),
-  vectors: z.object({
-    articles: z.number(),
-    facts: z.number(),
-    total: z.number(),
-  }).optional(),
+  vectors: z
+    .object({
+      articles: z.number(),
+      facts: z.number(),
+      total: z.number(),
+    })
+    .optional(),
 });
-export type MemoryEmbeddingsStatus = z.infer<typeof MemoryEmbeddingsStatusSchema>;
+export type MemoryEmbeddingsStatus = z.infer<
+  typeof MemoryEmbeddingsStatusSchema
+>;
 
 /** The memory.embeddings section of the hive_status structuredContent
  * (defect D2): provider, model, one-word state, vector counts, runtime dir. */
@@ -197,9 +229,9 @@ export async function fetchMemoryEmbeddingsStatus(
   port: number,
   fetcher?: McpFetcher,
 ): Promise<MemoryEmbeddingsStatus> {
-  const memory = z.object({ embeddings: MemoryEmbeddingsStatusSchema }).parse(
-    await callHiveTool(port, "hive_status", {}, "memory", fetcher),
-  );
+  const memory = z
+    .object({ embeddings: MemoryEmbeddingsStatusSchema })
+    .parse(await callHiveTool(port, "hive_status", {}, "memory", fetcher));
   return memory.embeddings;
 }
 
@@ -226,13 +258,15 @@ export async function recallMemory(
   options?: { budget?: number },
   fetcher?: McpFetcher,
 ): Promise<MemoryRecallEnvelope> {
-  return MemoryRecallEnvelopeSchema.parse(await callHiveTool(
-    port,
-    "memory_recall",
-    { query, ...options },
-    "results",
-    fetcher,
-  ));
+  return MemoryRecallEnvelopeSchema.parse(
+    await callHiveTool(
+      port,
+      "memory_recall",
+      { query, ...options },
+      "results",
+      fetcher,
+    ),
+  );
 }
 
 const MemoryNoteResultSchema = z.object({
@@ -298,7 +332,8 @@ export async function digestMemory(
     sessionId?: string;
     digestId?: number;
     eventId?: number;
-    budget?: number },
+    budget?: number;
+  },
   fetcher?: McpFetcher,
 ): Promise<MemoryDigestEnvelope> {
   return MemoryDigestEnvelopeSchema.parse(
@@ -318,20 +353,24 @@ export async function reindexMemory(
     alreadyMigrated: MemoryScope[];
   };
 }> {
-  return z.object({
-    count: z.number(),
-    migration: z.object({
-      scanned: z.number(),
-      migrated: z.number(),
-      flagged: z.array(z.object({
-        scope: MemoryScopeSchema,
-        id: z.string(),
-        status: z.string(),
-      })),
-      backups: z.array(z.object({ scope: MemoryScopeSchema, path: z.string() })),
-      alreadyMigrated: z.array(MemoryScopeSchema),
-    }),
-  }).parse(
-    await callHiveTool(port, "memory_reindex", {}, "result", fetcher),
-  );
+  return z
+    .object({
+      count: z.number(),
+      migration: z.object({
+        scanned: z.number(),
+        migrated: z.number(),
+        flagged: z.array(
+          z.object({
+            scope: MemoryScopeSchema,
+            id: z.string(),
+            status: z.string(),
+          }),
+        ),
+        backups: z.array(
+          z.object({ scope: MemoryScopeSchema, path: z.string() }),
+        ),
+        alreadyMigrated: z.array(MemoryScopeSchema),
+      }),
+    })
+    .parse(await callHiveTool(port, "memory_reindex", {}, "result", fetcher));
 }

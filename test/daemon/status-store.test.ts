@@ -1,8 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import {
-  HiveUpdateStatusAdvertisedSchema,
-  HiveUpdateStatusInputSchema,
-} from "../../src/schemas/status-envelope";
 import { HiveDatabase } from "../../src/daemon/db";
 import { verifyWorkspaceSnapshot } from "../../src/daemon/status-events";
 import {
@@ -10,57 +6,82 @@ import {
   StatusRequestConflictError,
   StatusStore,
 } from "../../src/daemon/status-store";
+import {
+  HiveUpdateStatusAdvertisedSchema,
+  HiveUpdateStatusInputSchema,
+} from "../../src/schemas/status-envelope";
 
 const AT = "2026-07-16T12:00:00.000Z";
 const REQUEST = "req_018f1e90-7b5a-7cc0-8000-000000000001";
 
 describe("StatusStore", () => {
   test("increments flat Assignment generations and rejects closed or spoofed bindings", () => {
-    const store = new StatusStore(new HiveDatabase(":memory:"), "instance-fixture");
+    const store = new StatusStore(
+      new HiveDatabase(":memory:"),
+      "instance-fixture",
+    );
     const first = store.openAssignment("agent-fixture", AT);
     expect(first.assignmentGeneration).toBe("1");
     store.closeAssignment("agent-fixture", "2026-07-16T12:01:00.000Z");
-    expect(() => store.appendAgentReport({
-      subject: "maya",
-      agentId: "agent-fixture",
-      incarnationGeneration: 7,
-      role: "writer",
-      capabilityEpoch: 0,
-      toolSessionId: null,
-    }, {
-      requestId: REQUEST,
-      assignmentId: first.assignmentId,
-      assignmentGeneration: first.assignmentGeneration,
-      phase: "testing",
-      summary: "Testing",
-      blocker: null,
-      evidenceRefs: [],
-      freshForSeconds: 120,
-    }, new Date(AT))).toThrow(StatusAssignmentMismatchError);
+    expect(() =>
+      store.appendAgentReport(
+        {
+          subject: "maya",
+          agentId: "agent-fixture",
+          incarnationGeneration: 7,
+          role: "writer",
+          capabilityEpoch: 0,
+          toolSessionId: null,
+        },
+        {
+          requestId: REQUEST,
+          assignmentId: first.assignmentId,
+          assignmentGeneration: first.assignmentGeneration,
+          phase: "testing",
+          summary: "Testing",
+          blocker: null,
+          evidenceRefs: [],
+          freshForSeconds: 120,
+        },
+        new Date(AT),
+      ),
+    ).toThrow(StatusAssignmentMismatchError);
 
-    const second = store.openAssignment("agent-fixture", "2026-07-16T12:02:00.000Z");
+    const second = store.openAssignment(
+      "agent-fixture",
+      "2026-07-16T12:02:00.000Z",
+    );
     expect(second.assignmentGeneration).toBe("2");
-    expect(() => store.appendAgentReport({
-      subject: "maya",
-      agentId: "agent-fixture",
-      incarnationGeneration: 7,
-      role: "writer",
-      capabilityEpoch: 0,
-      toolSessionId: null,
-    }, {
-      requestId: REQUEST,
-      assignmentId: second.assignmentId,
-      assignmentGeneration: "1",
-      phase: "testing",
-      summary: "Spoofed generation",
-      blocker: null,
-      evidenceRefs: [],
-      freshForSeconds: 120,
-    }, new Date(AT))).toThrow(StatusAssignmentMismatchError);
+    expect(() =>
+      store.appendAgentReport(
+        {
+          subject: "maya",
+          agentId: "agent-fixture",
+          incarnationGeneration: 7,
+          role: "writer",
+          capabilityEpoch: 0,
+          toolSessionId: null,
+        },
+        {
+          requestId: REQUEST,
+          assignmentId: second.assignmentId,
+          assignmentGeneration: "1",
+          phase: "testing",
+          summary: "Spoofed generation",
+          blocker: null,
+          evidenceRefs: [],
+          freshForSeconds: 120,
+        },
+        new Date(AT),
+      ),
+    ).toThrow(StatusAssignmentMismatchError);
   });
 
   test("appends immutable reports and retries only identical request digests", () => {
-    const store = new StatusStore(new HiveDatabase(":memory:"), "instance-fixture");
+    const store = new StatusStore(
+      new HiveDatabase(":memory:"),
+      "instance-fixture",
+    );
     const assignment = store.openAssignment("agent-fixture", AT);
     const actor = {
       subject: "maya",
@@ -84,10 +105,16 @@ describe("StatusStore", () => {
     const first = store.appendAgentReport(actor, input, new Date(AT));
     expect(store.appendAgentReport(actor, input, new Date(AT))).toEqual(first);
     expect(store.listEvents()).toHaveLength(1);
-    expect(() => store.appendAgentReport(actor, {
-      ...input,
-      summary: "Different retry body",
-    }, new Date(AT))).toThrow(StatusRequestConflictError);
+    expect(() =>
+      store.appendAgentReport(
+        actor,
+        {
+          ...input,
+          summary: "Different retry body",
+        },
+        new Date(AT),
+      ),
+    ).toThrow(StatusRequestConflictError);
 
     const report = store.listEvents()[0]!;
     expect(report.data.binding).toEqual({
@@ -99,16 +126,20 @@ describe("StatusStore", () => {
       issuer: "hive-daemon",
       session: "tool-fixture",
     });
-    expect(HiveUpdateStatusInputSchema.safeParse({
-      ...input,
-      taskState: "complete",
-      approval: "approved",
-      landState: "landed",
-    }).success).toBeFalse();
+    expect(
+      HiveUpdateStatusInputSchema.safeParse({
+        ...input,
+        taskState: "complete",
+        approval: "approved",
+        landState: "landed",
+      }).success,
+    ).toBeFalse();
 
     // hive_update_status advertises an object over MCP but is validated here by
     // the union, so the two must keep declaring the same fields.
-    const advertised = Object.keys(HiveUpdateStatusAdvertisedSchema.shape).sort();
+    const advertised = Object.keys(
+      HiveUpdateStatusAdvertisedSchema.shape,
+    ).sort();
     expect(HiveUpdateStatusInputSchema.options).toHaveLength(6);
     for (const branch of HiveUpdateStatusInputSchema.options) {
       expect(Object.keys(branch.shape).sort()).toEqual(advertised);
@@ -116,24 +147,33 @@ describe("StatusStore", () => {
 
     // The advertised schema types blocker as `string | null`; only the union's
     // phase correlation keeps a blocker exclusive to blocked reports.
-    expect(HiveUpdateStatusInputSchema.safeParse({
-      ...input,
-      blocker: "not a blocked report",
-    }).success).toBeFalse();
-    expect(HiveUpdateStatusInputSchema.safeParse({
-      ...input,
-      phase: "blocked",
-      blocker: null,
-    }).success).toBeFalse();
-    expect(HiveUpdateStatusInputSchema.safeParse({
-      ...input,
-      phase: "blocked",
-      blocker: "waiting on review",
-    }).success).toBeTrue();
+    expect(
+      HiveUpdateStatusInputSchema.safeParse({
+        ...input,
+        blocker: "not a blocked report",
+      }).success,
+    ).toBeFalse();
+    expect(
+      HiveUpdateStatusInputSchema.safeParse({
+        ...input,
+        phase: "blocked",
+        blocker: null,
+      }).success,
+    ).toBeFalse();
+    expect(
+      HiveUpdateStatusInputSchema.safeParse({
+        ...input,
+        phase: "blocked",
+        blocker: "waiting on review",
+      }).success,
+    ).toBeTrue();
   });
 
   test("builds verifiable snapshots and redacted terminal-content audit events", async () => {
-    const store = new StatusStore(new HiveDatabase(":memory:"), "instance-fixture");
+    const store = new StatusStore(
+      new HiveDatabase(":memory:"),
+      "instance-fixture",
+    );
     store.appendObservationAudit({
       reader: "maya",
       readerRole: "writer",

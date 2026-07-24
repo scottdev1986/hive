@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
- 
+import type { DaemonHandshake } from "../../src/daemon/handshake";
+
 import {
   getPidFilePath,
   getPortFilePath,
   writeLifecycleFiles,
 } from "../../src/daemon/lifecycle";
-import type { DaemonHandshake } from "../../src/daemon/handshake";
 import {
   explainRefusal,
   inspectDaemonForUpdate,
@@ -47,7 +47,8 @@ function serve(body: unknown | null): number {
     fetch: (request) => {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") return Response.json({ ok: true });
-      if (pathname === "/handshake" && body !== null) return Response.json(body);
+      if (pathname === "/handshake" && body !== null)
+        return Response.json(body);
       return new Response("not found", { status: 404 });
     },
   });
@@ -82,11 +83,14 @@ function processIsAlive(pid: number): boolean {
 }
 
 async function spawnLongLivedChild() {
-  const child = Bun.spawn([
-    process.execPath,
-    "-e",
-    'process.on("SIGTERM", () => process.exit(0)); console.log("ready"); setInterval(() => {}, 1000);',
-  ], { stdout: "pipe", stderr: "pipe" });
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "-e",
+      'process.on("SIGTERM", () => process.exit(0)); console.log("ready"); setInterval(() => {}, 1000);',
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
   const reader = child.stdout.getReader();
   const ready = await reader.read();
   reader.releaseLock();
@@ -96,7 +100,9 @@ async function spawnLongLivedChild() {
   return child;
 }
 
-async function stopChild(child: Awaited<ReturnType<typeof spawnLongLivedChild>>): Promise<void> {
+async function stopChild(
+  child: Awaited<ReturnType<typeof spawnLongLivedChild>>,
+): Promise<void> {
   if (processIsAlive(child.pid)) process.kill(child.pid, "SIGKILL");
   await child.exited;
 }
@@ -105,7 +111,11 @@ describe("the daemon left behind by an update", () => {
   test("a daemon running the previous build is stale, not current", async () => {
     const port = serve(stalePeer);
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
     expect(state).toEqual({
       state: "stale",
       port,
@@ -120,7 +130,11 @@ describe("the daemon left behind by an update", () => {
     // code. A version-only check would silently adopt this daemon.
     const port = serve({ ...expected, buildHash: "hash-of-a-different-build" });
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
     expect(state).toMatchObject({
       state: "stale",
       reason: "content-addressed build hash",
@@ -130,7 +144,11 @@ describe("the daemon left behind by an update", () => {
   test("a daemon running our exact build is current and must not be restarted", async () => {
     const port = serve(expected);
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
     expect(state).toEqual({ state: "current", port });
     expect(await restartStaleDaemon(state)).toEqual({
       stopped: false,
@@ -143,7 +161,11 @@ describe("the daemon left behind by an update", () => {
     // identity. Acting on that string alone would kill a stranger's daemon.
     const port = serve({ ...stalePeer, hiveUuid: "hive-project-b" });
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
     expect(state).toEqual({
       state: "foreign",
       port,
@@ -151,7 +173,9 @@ describe("the daemon left behind by an update", () => {
     });
 
     let killed = false;
-    const outcome = await restartStaleDaemon(state, { kill: () => (killed = true) });
+    const outcome = await restartStaleDaemon(state, {
+      kill: () => (killed = true),
+    });
     expect(killed).toEqual(false);
     expect(outcome).toMatchObject({ stopped: false });
     expect(explainRefusal(state)).toContain("different project");
@@ -162,8 +186,16 @@ describe("the daemon left behind by an update", () => {
     // resolved to it. Either differing means the daemon is not ours.
     const port = serve({ ...stalePeer, identityKey: "project-b" });
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
-    expect(state).toEqual({ state: "foreign", port, reason: "project identity key" });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
+    expect(state).toEqual({
+      state: "foreign",
+      port,
+      reason: "project identity key",
+    });
 
     let killed = false;
     await restartStaleDaemon(state, { kill: () => (killed = true) });
@@ -178,10 +210,15 @@ describe("the daemon left behind by an update", () => {
       liveAgents: async () => ["leo", "maya", "sam"],
       port,
     });
-    expect(state).toMatchObject({ state: "busy", liveAgents: ["leo", "maya", "sam"] });
+    expect(state).toMatchObject({
+      state: "busy",
+      liveAgents: ["leo", "maya", "sam"],
+    });
 
     let killed = false;
-    const outcome = await restartStaleDaemon(state, { kill: () => (killed = true) });
+    const outcome = await restartStaleDaemon(state, {
+      kill: () => (killed = true),
+    });
     expect(killed).toEqual(false);
     expect(outcome).toEqual({
       stopped: false,
@@ -208,7 +245,11 @@ describe("the daemon left behind by an update", () => {
   test("a stale idle daemon is stopped so the next start runs the new build", async () => {
     const port = serve(stalePeer);
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
 
     const signals: Array<[number, string]> = [];
     let alive = true;
@@ -255,7 +296,11 @@ describe("the daemon left behind by an update", () => {
   test("a daemon that will not exit is reported, not assumed dead", async () => {
     const port = serve(stalePeer);
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
     const outcome = await restartStaleDaemon(state, {
       kill: () => {},
       isRunning: async () => true,
@@ -263,7 +308,10 @@ describe("the daemon left behind by an update", () => {
       timeoutMs: 100,
     });
     expect(outcome).toMatchObject({ stopped: false });
-    expect(outcome).toHaveProperty("reason", expect.stringContaining("did not exit"));
+    expect(outcome).toHaveProperty(
+      "reason",
+      expect.stringContaining("did not exit"),
+    );
   });
 
   test("no daemon at all means activation is unconditionally safe", async () => {
@@ -278,13 +326,20 @@ describe("the daemon left behind by an update", () => {
     });
     expect(state).toEqual({ state: "absent" });
     expect(resolvedIdentity).toBe(false);
-    expect(await restartStaleDaemon(state)).toEqual({ stopped: true, pid: null });
+    expect(await restartStaleDaemon(state)).toEqual({
+      stopped: true,
+      pid: null,
+    });
   });
 
   test("a port serving something that is not Hive is absent, not a kill target", async () => {
     const port = serve(null);
     writeLifecycleFiles(port, 4242);
-    const state = await inspectDaemonForUpdate({ expected, liveAgents: noAgents, port });
+    const state = await inspectDaemonForUpdate({
+      expected,
+      liveAgents: noAgents,
+      port,
+    });
     expect(state).toEqual({ state: "absent" });
   });
 });

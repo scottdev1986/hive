@@ -1,21 +1,16 @@
-import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  AgentMessage,
-  AgentRecord,
-  HookEvent,
-} from "../../src/schemas";
 import {
+  type Approval,
   getDatabaseIdentityPath,
   HiveDatabase,
-  type Approval,
 } from "../../src/daemon/db";
 import {
-  TerminalHostBindingConflictError,
   type HiveTerminalBinding,
+  TerminalHostBindingConflictError,
 } from "../../src/daemon/session-host/terminal-host-binding";
 import {
   deleteAgentRow,
@@ -24,6 +19,7 @@ import {
   deleteMessageRow,
   listAgentsNamed,
 } from "../../src/daemon/testing";
+import type { AgentMessage, AgentRecord, HookEvent } from "../../src/schemas";
 
 const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
 process.env.HIVE_HOME = home;
@@ -104,22 +100,29 @@ describe("HiveDatabase", () => {
     try {
       expect(db.bindTerminalHostSession(binding)).toEqual(binding);
       expect(db.bindTerminalHostSession(binding)).toEqual(binding);
-      expect(db.completeTerminalHostSession(binding.locator, createEvidence))
-        .toEqual({ ...binding, createEvidence });
-      expect(db.releaseUncreatedTerminalHostSession(binding.locator)).toBe(false);
-      db.insertAgent(agent({
-        id: binding.locator.subject.kind === "agent"
-          ? binding.locator.subject.agentId
-          : "agent-maya",
-        status: "failed",
-        sessionLocator: binding.locator,
-        failedAt: timestamp,
-      }));
+      expect(
+        db.completeTerminalHostSession(binding.locator, createEvidence),
+      ).toEqual({ ...binding, createEvidence });
+      expect(db.releaseUncreatedTerminalHostSession(binding.locator)).toBe(
+        false,
+      );
+      db.insertAgent(
+        agent({
+          id:
+            binding.locator.subject.kind === "agent"
+              ? binding.locator.subject.agentId
+              : "agent-maya",
+          status: "failed",
+          sessionLocator: binding.locator,
+          failedAt: timestamp,
+        }),
+      );
       expect(db.discardFailedSpawn("agent-maya", "never-created")).toBe(false);
       expect(db.getAgentById("agent-maya")).not.toBeNull();
       expect(deleteAgentRow(db, "agent-maya")).toBe(true);
-      expect(db.recordTerminalHostTermination(binding.locator, terminationAudit))
-        .toEqual({ ...binding, createEvidence, terminationAudit });
+      expect(
+        db.recordTerminalHostTermination(binding.locator, terminationAudit),
+      ).toEqual({ ...binding, createEvidence, terminationAudit });
     } finally {
       db.close();
     }
@@ -127,18 +130,26 @@ describe("HiveDatabase", () => {
     db = new HiveDatabase(path);
     try {
       const completed = { ...binding, createEvidence, terminationAudit };
-      expect(db.getTerminalHostBindingByLocator(binding.locator)).toEqual(completed);
-      expect(db.listTerminalHostBindings(binding.locator.instanceId)).toEqual([completed]);
+      expect(db.getTerminalHostBindingByLocator(binding.locator)).toEqual(
+        completed,
+      );
+      expect(db.listTerminalHostBindings(binding.locator.instanceId)).toEqual([
+        completed,
+      ]);
       expect(db.listTerminalHostBindings("another-hive")).toEqual([]);
       expect(db.bindTerminalHostSession(binding)).toEqual(completed);
-      expect(() => db.completeTerminalHostSession(binding.locator, {
-        ...createEvidence,
-        expectedExecutable: "/usr/bin/false",
-      })).toThrow(TerminalHostBindingConflictError);
-      expect(() => db.bindTerminalHostSession({
-        ...binding,
-        visibility: { ...binding.visibility, openTerminalRevision: "8" },
-      })).toThrow(TerminalHostBindingConflictError);
+      expect(() =>
+        db.completeTerminalHostSession(binding.locator, {
+          ...createEvidence,
+          expectedExecutable: "/usr/bin/false",
+        }),
+      ).toThrow(TerminalHostBindingConflictError);
+      expect(() =>
+        db.bindTerminalHostSession({
+          ...binding,
+          visibility: { ...binding.visibility, openTerminalRevision: "8" },
+        }),
+      ).toThrow(TerminalHostBindingConflictError);
     } finally {
       db.close();
     }
@@ -167,14 +178,18 @@ describe("HiveDatabase", () => {
       expect(db.getTerminalHostBindingByLocator(locator)).toBeNull();
 
       db.bindTerminalHostSession({ locator, visibility });
-      db.insertAgent(agent({
-        id: locator.subject.agentId,
-        status: "failed",
-        sessionLocator: locator,
-        failureReason: "typed capacity refusal",
-        failedAt: timestamp,
-      }));
-      expect(db.discardFailedSpawn(locator.subject.agentId, "never-created")).toBe(true);
+      db.insertAgent(
+        agent({
+          id: locator.subject.agentId,
+          status: "failed",
+          sessionLocator: locator,
+          failureReason: "typed capacity refusal",
+          failedAt: timestamp,
+        }),
+      );
+      expect(
+        db.discardFailedSpawn(locator.subject.agentId, "never-created"),
+      ).toBe(true);
       expect(db.getAgentById(locator.subject.agentId)).toBeNull();
       expect(db.getTerminalHostBindingByLocator(locator)).toBeNull();
     } finally {
@@ -215,32 +230,47 @@ describe("HiveDatabase", () => {
       workspaceStartToken: "4200:123456",
       openTerminalRevision: "9",
     };
-    legacy.query(`
+    legacy
+      .query(`
       INSERT INTO terminal_host_bindings (
         sessionKey, sessionIncarnation,
         locatorInstanceId, locatorSessionId, locatorGeneration,
         locatorJson, visibilityJson
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      "neutral-key", "neutral-incarnation", locator.instanceId,
-      locator.sessionId, locator.generation, JSON.stringify(locator),
-      JSON.stringify(visibility),
-    );
+    `)
+      .run(
+        "neutral-key",
+        "neutral-incarnation",
+        locator.instanceId,
+        locator.sessionId,
+        locator.generation,
+        JSON.stringify(locator),
+        JSON.stringify(visibility),
+      );
     legacy.close();
 
     const db = new HiveDatabase(path);
     try {
-      expect(db.getTerminalHostBindingByLocator(locator)).toEqual({ locator, visibility });
-      expect(db.database.query("PRAGMA table_info(terminal_host_bindings)").all())
-        .not.toEqual(expect.arrayContaining([
+      expect(db.getTerminalHostBindingByLocator(locator)).toEqual({
+        locator,
+        visibility,
+      });
+      expect(
+        db.database.query("PRAGMA table_info(terminal_host_bindings)").all(),
+      ).not.toEqual(
+        expect.arrayContaining([
           expect.objectContaining({ name: "sessionKey" }),
           expect.objectContaining({ name: "sessionIncarnation" }),
-        ]));
-      expect(db.database.query("PRAGMA table_info(terminal_host_bindings)").all())
-        .toEqual(expect.arrayContaining([
+        ]),
+      );
+      expect(
+        db.database.query("PRAGMA table_info(terminal_host_bindings)").all(),
+      ).toEqual(
+        expect.arrayContaining([
           expect.objectContaining({ name: "createEvidenceJson" }),
           expect.objectContaining({ name: "terminationAuditJson" }),
-        ]));
+        ]),
+      );
     } finally {
       db.close();
     }
@@ -254,14 +284,19 @@ describe("HiveDatabase", () => {
 
     const db = HiveDatabase.openReadonly(path);
     try {
-      expect(db.database.query(
-        "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
-      ).all()).toEqual([{ name: "sentinel" }]);
+      expect(
+        db.database
+          .query(
+            "SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name",
+          )
+          .all(),
+      ).toEqual([{ name: "sentinel" }]);
       expect(db.database.query("PRAGMA busy_timeout").get()).toEqual({
         timeout: 5000,
       });
-      expect(() => db.database.exec("CREATE TABLE migrated (value TEXT)"))
-        .toThrow("attempt to write a readonly database");
+      expect(() =>
+        db.database.exec("CREATE TABLE migrated (value TEXT)"),
+      ).toThrow("attempt to write a readonly database");
     } finally {
       db.close();
     }
@@ -287,30 +322,35 @@ describe("HiveDatabase", () => {
     try {
       const inserted = db.insertAgent(agent());
       expect(inserted).toEqual(expect.objectContaining(agent()));
-      expect(inserted.sessionLocator).toEqual(expect.objectContaining({
-        schemaVersion: 1,
-        subject: { kind: "agent", agentId: "agent-maya" },
-        generation: 1,
-        hostKind: "sessiond",
-        engineBuildId: "unbound",
-      }));
+      expect(inserted.sessionLocator).toEqual(
+        expect.objectContaining({
+          schemaVersion: 1,
+          subject: { kind: "agent", agentId: "agent-maya" },
+          generation: 1,
+          hostKind: "sessiond",
+          engineBuildId: "unbound",
+        }),
+      );
       expect(db.getAgentByName("maya")).toEqual(inserted);
 
-      const updated = { ...inserted, ...agent({
-        status: "failed",
-        contextPct: 28,
-        failureReason: "Error: model not supported",
-        failedAt: "2026-07-09T12:01:00.000Z",
-        executionIdentity: {
-          tool: "codex",
-          model: "gpt-5-codex",
-          effort: "high",
-        },
-        controlMessageId: "control-1",
-        controlQuotaReservationId: "quota-control-1",
-        toolSessionId: "0189-session",
-        recoveryAttempts: 2,
-      }) };
+      const updated = {
+        ...inserted,
+        ...agent({
+          status: "failed",
+          contextPct: 28,
+          failureReason: "Error: model not supported",
+          failedAt: "2026-07-09T12:01:00.000Z",
+          executionIdentity: {
+            tool: "codex",
+            model: "gpt-5-codex",
+            effort: "high",
+          },
+          controlMessageId: "control-1",
+          controlQuotaReservationId: "quota-control-1",
+          toolSessionId: "0189-session",
+          recoveryAttempts: 2,
+        }),
+      };
       // Reaching a terminal status stamps closure durably, from failedAt.
       const closed = { ...updated, closedAt: "2026-07-09T12:01:00.000Z" };
       expect(db.upsertAgent(updated)).toEqual(closed);
@@ -325,17 +365,21 @@ describe("HiveDatabase", () => {
   test("migrates legacy readers without clearing genuine control revocation", () => {
     const path = join(home, "legacy-reader-authority.db");
     const initial = new HiveDatabase(path);
-    initial.insertAgent(agent({
-      id: "legacy-reader",
-      name: "reader",
-      status: "control-paused",
-    }));
-    initial.insertAgent(agent({
-      id: "critical-writer",
-      name: "writer",
-      status: "control-paused",
-      controlMessageId: "critical-1",
-    }));
+    initial.insertAgent(
+      agent({
+        id: "legacy-reader",
+        name: "reader",
+        status: "control-paused",
+      }),
+    );
+    initial.insertAgent(
+      agent({
+        id: "critical-writer",
+        name: "writer",
+        status: "control-paused",
+        controlMessageId: "critical-1",
+      }),
+    );
     initial.close();
 
     const legacy = new Database(path);
@@ -367,10 +411,7 @@ describe("HiveDatabase", () => {
       db.insertAgent(agent());
       expect(db.getAgentByName("maya")?.closedAt).toBeUndefined();
 
-      const dead = db.markAgentDead(
-        "agent-maya",
-        "2026-07-09T12:02:00.000Z",
-      );
+      const dead = db.markAgentDead("agent-maya", "2026-07-09T12:02:00.000Z");
       expect(dead?.closedAt).toEqual("2026-07-09T12:02:00.000Z");
 
       // A later write that keeps the agent closed must not slide the instant.
@@ -396,15 +437,19 @@ describe("HiveDatabase", () => {
       db.insertAgent(agent({ taskDescription: "crash matrix" }));
       db.markAgentDead("agent-maya", "2026-07-09T12:02:00.000Z");
       // The name comes back on a brand-new AgentUUID.
-      db.insertAgent(agent({
-        id: "agent-maya-2",
-        taskDescription: "quota ledger",
-        createdAt: "2026-07-09T13:00:00.000Z",
-      }));
+      db.insertAgent(
+        agent({
+          id: "agent-maya-2",
+          taskDescription: "quota ledger",
+          createdAt: "2026-07-09T13:00:00.000Z",
+        }),
+      );
 
       const holders = listAgentsNamed(db, "maya");
-      expect(holders.map((holder) => holder.id))
-        .toEqual(["agent-maya", "agent-maya-2"]);
+      expect(holders.map((holder) => holder.id)).toEqual([
+        "agent-maya",
+        "agent-maya-2",
+      ]);
       // The closed holder keeps its own task and closure instant: history can
       // still say which maya did what.
       expect(holders[0]).toMatchObject({
@@ -429,12 +474,15 @@ describe("HiveDatabase", () => {
     const db = new HiveDatabase(join(home, "one-live-holder.db"));
     try {
       db.insertAgent(agent());
-      expect(() => db.insertAgent(agent({ id: "agent-maya-2" })))
-        .toThrow(/UNIQUE constraint failed/);
+      expect(() => db.insertAgent(agent({ id: "agent-maya-2" }))).toThrow(
+        /UNIQUE constraint failed/,
+      );
 
       // Once the first holder closes, the name is free again.
       db.markAgentDead("agent-maya", "2026-07-09T12:02:00.000Z");
-      expect(db.insertAgent(agent({ id: "agent-maya-2" })).name).toEqual("maya");
+      expect(db.insertAgent(agent({ id: "agent-maya-2" })).name).toEqual(
+        "maya",
+      );
     } finally {
       db.close();
     }
@@ -444,12 +492,14 @@ describe("HiveDatabase", () => {
     const db = new HiveDatabase(join(home, "closed-lookup.db"));
     try {
       db.insertAgent(agent({ status: "dead", closedAt: timestamp }));
-      db.insertAgent(agent({
-        id: "agent-maya-2",
-        status: "failed",
-        createdAt: "2026-07-09T13:00:00.000Z",
-        closedAt: "2026-07-09T13:05:00.000Z",
-      }));
+      db.insertAgent(
+        agent({
+          id: "agent-maya-2",
+          status: "failed",
+          createdAt: "2026-07-09T13:00:00.000Z",
+          closedAt: "2026-07-09T13:05:00.000Z",
+        }),
+      );
 
       expect(db.getLiveAgentByName("maya")).toEqual(null);
       // Delivery looks a recipient up by name and rejects terminal agents; it
@@ -501,11 +551,14 @@ describe("HiveDatabase", () => {
       });
       // And the name is now reusable without overwriting that history.
       db.insertAgent(agent({ id: "agent-maya-2" }));
-      expect(listAgentsNamed(db, "maya").map((holder) => holder.id))
-        .toEqual(["agent-maya", "agent-maya-2"]);
+      expect(listAgentsNamed(db, "maya").map((holder) => holder.id)).toEqual([
+        "agent-maya",
+        "agent-maya-2",
+      ]);
       // The rebuilt table still admits only one live holder.
-      expect(() => db.insertAgent(agent({ id: "agent-maya-3" })))
-        .toThrow(/UNIQUE constraint failed/);
+      expect(() => db.insertAgent(agent({ id: "agent-maya-3" }))).toThrow(
+        /UNIQUE constraint failed/,
+      );
     } finally {
       db.close();
     }
@@ -524,12 +577,14 @@ describe("HiveDatabase", () => {
         "terminal session missing (reconciled)",
       );
 
-      db.upsertAgent(agent({
-        id: "agent-david",
-        name: "david",
-        status: "stuck",
-        failureReason: "earlier reason",
-      }));
+      db.upsertAgent(
+        agent({
+          id: "agent-david",
+          name: "david",
+          status: "stuck",
+          failureReason: "earlier reason",
+        }),
+      );
       const preserved = db.markAgentDead(
         "agent-david",
         "2026-07-09T13:00:00.000Z",
@@ -563,25 +618,27 @@ describe("HiveDatabase", () => {
       );
     `);
     const value = agent();
-    legacy.query(`
+    legacy
+      .query(`
       INSERT INTO agents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.id,
-      value.name,
-      value.tool,
-      value.model,
-      value.category,
-      value.status,
-      value.taskDescription,
-      value.worktreePath,
-      value.branch,
-      "hive-maya",
-      value.contextPct,
-      value.createdAt,
-      value.lastEventAt,
-      null,
-      null,
-    );
+    `)
+      .run(
+        value.id,
+        value.name,
+        value.tool,
+        value.model,
+        value.category,
+        value.status,
+        value.taskDescription,
+        value.worktreePath,
+        value.branch,
+        "hive-maya",
+        value.contextPct,
+        value.createdAt,
+        value.lastEventAt,
+        null,
+        null,
+      );
     legacy.close();
 
     const db = new HiveDatabase(path);
@@ -609,9 +666,13 @@ describe("HiveDatabase", () => {
       );
       const retiredViewerColumn = ["terminal", "Handle"].join("");
       expect(
-        db.database.query("PRAGMA table_info(agents)").all().some(
-          (column) => (column as { name: string }).name === retiredViewerColumn,
-        ),
+        db.database
+          .query("PRAGMA table_info(agents)")
+          .all()
+          .some(
+            (column) =>
+              (column as { name: string }).name === retiredViewerColumn,
+          ),
       ).toEqual(false);
       for (const name of [
         "executionIdentity",
@@ -619,16 +680,20 @@ describe("HiveDatabase", () => {
         "controlQuotaReservationId",
       ]) {
         expect(
-          db.database.query("PRAGMA table_info(agents)").all().some(
-            (column) => (column as { name: string }).name === name,
-          ),
+          db.database
+            .query("PRAGMA table_info(agents)")
+            .all()
+            .some((column) => (column as { name: string }).name === name),
         ).toEqual(true);
       }
       expect(
-        db.database.query("PRAGMA table_info(agents)").all().some(
-          (column) =>
-            (column as { name: string }).name === "quotaReservationId",
-        ),
+        db.database
+          .query("PRAGMA table_info(agents)")
+          .all()
+          .some(
+            (column) =>
+              (column as { name: string }).name === "quotaReservationId",
+          ),
       ).toEqual(true);
     } finally {
       db.close();
@@ -831,8 +896,12 @@ describe("HiveDatabase", () => {
         status: "approved",
         resolvedAt,
       } satisfies Approval;
-      expect(db.resolveApproval(approval.id, "approved", resolvedAt)).toEqual(resolved);
-      expect(db.resolveApproval(approval.id, "denied", resolvedAt)).toEqual(null);
+      expect(db.resolveApproval(approval.id, "approved", resolvedAt)).toEqual(
+        resolved,
+      );
+      expect(db.resolveApproval(approval.id, "denied", resolvedAt)).toEqual(
+        null,
+      );
       expect(db.listApprovals("approved")).toEqual([resolved]);
       expect(deleteApprovalRow(db, approval.id)).toEqual(true);
     } finally {
@@ -857,17 +926,19 @@ describe("HiveDatabase", () => {
         resolvedAt TEXT
       );
     `);
-    legacy.query(`
+    legacy
+      .query(`
       INSERT INTO approvals (id, agentName, description, status, createdAt, resolvedAt)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      "legacy-approval",
-      "maya",
-      "Bash: rm -rf ./build && npm publish --access public",
-      "pending",
-      timestamp,
-      null,
-    );
+    `)
+      .run(
+        "legacy-approval",
+        "maya",
+        "Bash: rm -rf ./build && npm publish --access public",
+        "pending",
+        timestamp,
+        null,
+      );
     legacy.close();
 
     const db = new HiveDatabase(path);
@@ -912,16 +983,19 @@ describe("HiveDatabase", () => {
         createdAt: timestamp,
         resolvedAt: null,
       });
-      db.upsertAgent({ ...db.getAgentByName("maya")!, status: "awaiting-approval" });
+      db.upsertAgent({
+        ...db.getAgentByName("maya")!,
+        status: "awaiting-approval",
+      });
     } finally {
       db.close();
     }
 
     db = new HiveDatabase(path);
     try {
-      expect(db.listApprovals("pending").map((approval) => approval.id)).toEqual([
-        "real-approval",
-      ]);
+      expect(
+        db.listApprovals("pending").map((approval) => approval.id),
+      ).toEqual(["real-approval"]);
       expect(db.getAgentByName("maya")?.status).toEqual("awaiting-approval");
     } finally {
       db.close();
@@ -999,14 +1073,16 @@ describe("HiveDatabase", () => {
   });
 
   test("read-only adoption of a legacy database never creates identity or schema", () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "hive-readonly-adopt-test-"));
+    const isolatedHome = mkdtempSync(
+      join(tmpdir(), "hive-readonly-adopt-test-"),
+    );
     process.env.HIVE_HOME = isolatedHome;
     const path = join(isolatedHome, "hive.db");
     const legacy = new Database(path, { create: true });
     legacy.exec("CREATE TABLE sentinel (value TEXT)");
-    const before = legacy.query(
-      "SELECT type, name, sql FROM sqlite_schema ORDER BY type, name",
-    ).all();
+    const before = legacy
+      .query("SELECT type, name, sql FROM sqlite_schema ORDER BY type, name")
+      .all();
     legacy.close();
     try {
       expect(existsSync(getDatabaseIdentityPath())).toBe(false);
@@ -1016,9 +1092,13 @@ describe("HiveDatabase", () => {
 
       const observed = new Database(path, { readonly: true });
       try {
-        expect(observed.query(
-          "SELECT type, name, sql FROM sqlite_schema ORDER BY type, name",
-        ).all()).toEqual(before);
+        expect(
+          observed
+            .query(
+              "SELECT type, name, sql FROM sqlite_schema ORDER BY type, name",
+            )
+            .all(),
+        ).toEqual(before);
       } finally {
         observed.close();
       }
@@ -1066,12 +1146,14 @@ describe("contextPct can say 'unknown'", () => {
 
     const db = new HiveDatabase(path);
     try {
-      const columns = db.database.query("PRAGMA table_info(agents)").all() as Array<
-        { name: string; notnull: number }
-      >;
+      const columns = db.database
+        .query("PRAGMA table_info(agents)")
+        .all() as Array<{ name: string; notnull: number }>;
       const contextPct = columns.find((column) => column.name === "contextPct");
       expect(contextPct?.notnull).toBe(0);
-      expect(columns.some((column) => column.name === retiredViewerColumn)).toBe(false);
+      expect(
+        columns.some((column) => column.name === retiredViewerColumn),
+      ).toBe(false);
 
       const zoe = db.getAgentByName("zoe");
       // The 100 is gone, not migrated forward: it was computed against the wrong
@@ -1091,7 +1173,9 @@ describe("contextPct can say 'unknown'", () => {
   test("null survives a write and a read", () => {
     const db = new HiveDatabase(join(home, "null-contextpct.db"));
     try {
-      db.insertAgent(agent({ id: "agent-lucas", name: "lucas", contextPct: null }));
+      db.insertAgent(
+        agent({ id: "agent-lucas", name: "lucas", contextPct: null }),
+      );
       expect(db.getAgentByName("lucas")?.contextPct).toBeNull();
       db.upsertAgent({ ...db.getAgentByName("lucas")!, contextPct: 22 });
       expect(db.getAgentByName("lucas")?.contextPct).toBe(22);
@@ -1131,19 +1215,23 @@ describe("contextPct can say 'unknown'", () => {
 
     const db = new HiveDatabase(path);
     try {
-      const columns = db.database.query("PRAGMA table_info(agents)").all() as Array<
-        { name: string; notnull: number; dflt_value: unknown }
-      >;
+      const columns = db.database
+        .query("PRAGMA table_info(agents)")
+        .all() as Array<{ name: string; notnull: number; dflt_value: unknown }>;
       const shard = columns.find((column) => column.name === "shardIndex");
-      expect(columns.some((column) => column.name === "deploymentRegion")).toBe(true);
+      expect(columns.some((column) => column.name === "deploymentRegion")).toBe(
+        true,
+      );
       // Rebuilt from the old table's own declaration, so the constraint and the
       // default come across too, not just the name.
       expect(shard?.notnull).toBe(1);
       expect(String(shard?.dflt_value)).toBe("7");
 
-      const row = db.database.query(
-        "SELECT deploymentRegion, shardIndex FROM agents WHERE id = 'a1'",
-      ).get() as { deploymentRegion: string; shardIndex: number };
+      const row = db.database
+        .query(
+          "SELECT deploymentRegion, shardIndex FROM agents WHERE id = 'a1'",
+        )
+        .get() as { deploymentRegion: string; shardIndex: number };
       expect(row.deploymentRegion).toBe("us-east-1");
       expect(row.shardIndex).toBe(7);
       // The one column the migration does mean to discard, still discarded.
@@ -1160,16 +1248,19 @@ describe("contextPct can say 'unknown'", () => {
     const db = new HiveDatabase(join(home, "rebuild-throws.db"));
     try {
       const enforced = (): number =>
-        (db.database.query("PRAGMA foreign_keys").get() as {
-          foreign_keys: number;
-        }).foreign_keys;
+        (
+          db.database.query("PRAGMA foreign_keys").get() as {
+            foreign_keys: number;
+          }
+        ).foreign_keys;
       expect(enforced()).toBe(1);
 
       // Fail the rebuild where it hurts: after foreign keys are already off.
       db.database.exec("CREATE TABLE agents_rebuilt (taken TEXT)");
       expect(() =>
-        (db as unknown as { rebuildAgentsTable(expression: string): void })
-          .rebuildAgentsTable("NULL")
+        (
+          db as unknown as { rebuildAgentsTable(expression: string): void }
+        ).rebuildAgentsTable("NULL"),
       ).toThrow();
 
       expect(enforced()).toBe(1);

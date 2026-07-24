@@ -2,26 +2,26 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  DEFAULT_QUOTA_CONFIG,
-  QuotaConfigSchema,
-  type QuotaConfig,
-  type QuotaLimit,
-} from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import type { RootProtocolDeliverer } from "../../src/daemon/delivery";
-import { HiveDaemon } from "../../src/daemon/server";
-import {
-  migrateDefaultQuotaLedger,
-  QuotaDatabase,
-  QuotaLedgerUnknownError,
-} from "../../src/daemon/quota-ledger";
 import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import {
   calendarWeekBounds,
   QuotaExhaustedError,
   QuotaService,
 } from "../../src/daemon/quota";
+import {
+  migrateDefaultQuotaLedger,
+  QuotaDatabase,
+  QuotaLedgerUnknownError,
+} from "../../src/daemon/quota-ledger";
+import { HiveDaemon } from "../../src/daemon/server";
+import {
+  DEFAULT_QUOTA_CONFIG,
+  type QuotaConfig,
+  QuotaConfigSchema,
+  type QuotaLimit,
+} from "../../src/schemas";
 import {
   authorizeForQuotaTest,
   CatalogedQuotaLedger as QuotaLedger,
@@ -30,9 +30,9 @@ import {
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 function limit(
@@ -82,8 +82,8 @@ async function fileDatabase(name: string): Promise<{
 }
 
 const AUTHORIZED_CANDIDATES = await authorizeForQuotaTest([
-    { tool: "claude" as const, model: "claude-model" },
-    { tool: "codex" as const, model: "codex-model" },
+  { tool: "claude" as const, model: "claude-model" },
+  { tool: "codex" as const, model: "codex-model" },
 ]);
 
 function candidates() {
@@ -150,7 +150,9 @@ describe("quota windows", () => {
       () => now,
     );
     const exact = service.statuses()[0];
-    expect(exact && !("configured" in exact) && exact.fiveHour.used).toEqual(10);
+    expect(exact && !("configured" in exact) && exact.fiveHour.used).toEqual(
+      10,
+    );
     now = new Date("2026-07-09T12:00:00.001Z");
     const after = service.statuses()[0];
     expect(after && !("configured" in after) && after.fiveHour.used).toEqual(0);
@@ -186,10 +188,14 @@ describe("quota persistence and reservations", () => {
     `);
 
     expect(() => new QuotaLedger(db)).not.toThrow();
-    expect(db.database.query(`
+    expect(
+      db.database
+        .query(`
       SELECT usageRows, reservationRows, nextUsageSeq
       FROM quota_ledger_integrity WHERE id = 0
-    `).get()).toEqual({
+    `)
+        .get(),
+    ).toEqual({
       usageRows: 1,
       reservationRows: 0,
       nextUsageSeq: 1,
@@ -215,10 +221,14 @@ describe("quota persistence and reservations", () => {
         '2026-07-13T14:11:01.602Z', '2026-07-13T15:11:01.602Z'
       );
     `);
-    expect(db.database.query(`
+    expect(
+      db.database
+        .query(`
       SELECT usageRows, reservationRows, nextUsageSeq
       FROM quota_ledger_integrity WHERE id = 0
-    `).get()).toEqual({
+    `)
+        .get(),
+    ).toEqual({
       usageRows: 2,
       reservationRows: 1,
       nextUsageSeq: 2,
@@ -254,11 +264,13 @@ describe("quota persistence and reservations", () => {
       account: "personal",
       pool: "claude-premium",
     };
-    expect(ledger.usageTotals(
-      scope,
-      "2026-07-09T07:00:00.000Z",
-      "2026-07-02T12:00:00.000Z",
-    )).toMatchObject({ fiveHour: 0, weekly: 0, reserved: 0 });
+    expect(
+      ledger.usageTotals(
+        scope,
+        "2026-07-09T07:00:00.000Z",
+        "2026-07-02T12:00:00.000Z",
+      ),
+    ).toMatchObject({ fiveHour: 0, weekly: 0, reserved: 0 });
 
     ledger.insertUnboundedReservation({
       id: "spent-run",
@@ -279,23 +291,27 @@ describe("quota persistence and reservations", () => {
     );
     db.database.exec("DELETE FROM quota_usage");
 
-    expect(() => ledger.usageTotals(
-      scope,
-      "2026-07-09T07:00:00.000Z",
-      "2026-07-02T12:00:00.000Z",
-    )).toThrow(QuotaLedgerUnknownError);
+    expect(() =>
+      ledger.usageTotals(
+        scope,
+        "2026-07-09T07:00:00.000Z",
+        "2026-07-02T12:00:00.000Z",
+      ),
+    ).toThrow(QuotaLedgerUnknownError);
     const service = new QuotaService(
       ledger,
       config([limit("claude")]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    await expect(service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    })).rejects.toThrow("quota ledger history is unknown");
+    await expect(
+      service.routeAndReserve({
+        agentName: "maya",
+        category: "simple_coding",
+        selection: "strict",
+        explicitTool: "claude",
+        candidates: candidates(),
+      }),
+    ).rejects.toThrow("quota ledger history is unknown");
     expect(ledger.getActiveReservationForAgent("maya")).toBeNull();
     db.close();
   });
@@ -314,11 +330,13 @@ describe("quota persistence and reservations", () => {
       explicitTool: "codex",
       candidates: candidates(),
     });
-    expect(() => service.requireActiveReservation(decision.reservation.id))
-      .not.toThrow();
+    expect(() =>
+      service.requireActiveReservation(decision.reservation.id),
+    ).not.toThrow();
     await service.cancel(decision.reservation.id);
-    expect(() => service.requireActiveReservation(decision.reservation.id))
-      .toThrow("no longer active at launch");
+    expect(() =>
+      service.requireActiveReservation(decision.reservation.id),
+    ).toThrow("no longer active at launch");
     db.close();
   });
 
@@ -345,9 +363,13 @@ describe("quota persistence and reservations", () => {
     `);
     new QuotaLedger(db);
     const columns = new Set(
-      (db.database.query("PRAGMA table_info(quota_reservations)").all() as Array<{
-        name: string;
-      }>).map((column) => column.name),
+      (
+        db.database
+          .query("PRAGMA table_info(quota_reservations)")
+          .all() as Array<{
+          name: string;
+        }>
+      ).map((column) => column.name),
     );
     expect(columns.has("purpose")).toEqual(true);
     expect(columns.has("controlMessageId")).toEqual(true);
@@ -357,25 +379,29 @@ describe("quota persistence and reservations", () => {
   test("atomically prevents two database connections from reserving the same headroom", async () => {
     const { path, db } = await fileDatabase("concurrency");
     const secondDb = new HiveDatabase(path);
-    const quotaConfig = config([
-      limit("claude", 15, { weeklyAllowance: 100 }),
-    ]);
+    const quotaConfig = config([limit("claude", 15, { weeklyAllowance: 100 })]);
     const now = () => new Date("2026-07-09T12:00:00.000Z");
     const services = [
       new QuotaService(new QuotaLedger(db), quotaConfig, now),
       new QuotaService(new QuotaLedger(secondDb), quotaConfig, now),
     ];
-    const results = await Promise.allSettled(services.map((service, index) =>
-      service.routeAndReserve({
-        agentName: index === 0 ? "maya" : "sam",
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      })
-    ));
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const results = await Promise.allSettled(
+      services.map((service, index) =>
+        service.routeAndReserve({
+          agentName: index === 0 ? "maya" : "sam",
+          category: "simple_coding",
+          selection: "strict",
+          explicitTool: "claude",
+          candidates: candidates(),
+        }),
+      ),
+    );
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
     secondDb.close();
     db.close();
   });
@@ -387,7 +413,11 @@ describe("quota persistence and reservations", () => {
     const firstDb = new QuotaDatabase(path);
     const secondDb = new QuotaDatabase(path);
     const firstLedger = new QuotaLedger(firstDb, "instance-a", join(root, "a"));
-    const secondLedger = new QuotaLedger(secondDb, "instance-b", join(root, "b"));
+    const secondLedger = new QuotaLedger(
+      secondDb,
+      "instance-b",
+      join(root, "b"),
+    );
     const quotaConfig = config([limit("claude", 100)]);
     const clock = () => new Date("2026-07-09T12:00:00.000Z");
     const first = new QuotaService(firstLedger, quotaConfig, clock);
@@ -410,14 +440,18 @@ describe("quota persistence and reservations", () => {
       }),
     ]);
 
-    expect(firstLedger.activeReservations().map((row) => row.id))
-      .toEqual([firstRoute.reservation.id]);
-    expect(secondLedger.activeReservations().map((row) => row.id))
-      .toEqual([secondRoute.reservation.id]);
-    expect(firstLedger.getReservation(secondRoute.reservation.id)?.instanceId)
-      .toEqual("instance-b");
-    expect(secondLedger.getReservation(firstRoute.reservation.id)?.instanceId)
-      .toEqual("instance-a");
+    expect(firstLedger.activeReservations().map((row) => row.id)).toEqual([
+      firstRoute.reservation.id,
+    ]);
+    expect(secondLedger.activeReservations().map((row) => row.id)).toEqual([
+      secondRoute.reservation.id,
+    ]);
+    expect(
+      firstLedger.getReservation(secondRoute.reservation.id)?.instanceId,
+    ).toEqual("instance-b");
+    expect(
+      secondLedger.getReservation(firstRoute.reservation.id)?.instanceId,
+    ).toEqual("instance-a");
     firstDb.close();
     secondDb.close();
   });
@@ -433,7 +467,7 @@ describe("quota persistence and reservations", () => {
       ["instance-b", "live"],
     ]);
     const probe = async (_home: string, instanceId: string) =>
-      liveness.get(instanceId) ?? "unknown" as const;
+      liveness.get(instanceId) ?? ("unknown" as const);
     const firstLedger = new QuotaLedger(
       firstDb,
       "instance-a",
@@ -454,32 +488,43 @@ describe("quota persistence and reservations", () => {
       new QuotaService(firstLedger, quotaConfig, clock),
       new QuotaService(secondLedger, quotaConfig, clock),
     ];
-    const results = await Promise.allSettled(services.map((service, index) =>
-      service.routeAndReserve({
-        agentName: index === 0 ? "maya" : "sam",
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      })
-    ));
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const results = await Promise.allSettled(
+      services.map((service, index) =>
+        service.routeAndReserve({
+          agentName: index === 0 ? "maya" : "sam",
+          category: "simple_coding",
+          selection: "strict",
+          explicitTool: "claude",
+          candidates: candidates(),
+        }),
+      ),
+    );
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
     const accepted = results.find((result) => result.status === "fulfilled");
-    if (accepted?.status !== "fulfilled") throw new Error("missing accepted reservation");
+    if (accepted?.status !== "fulfilled")
+      throw new Error("missing accepted reservation");
 
     const owner = accepted.value.reservation.instanceId;
     const sibling = owner === "instance-a" ? services[1]! : services[0]!;
-    expect(await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")))
-      .toEqual(0);
-    expect(firstLedger.getReservation(accepted.value.reservation.id)?.status)
-      .toEqual("active");
+    expect(
+      await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")),
+    ).toEqual(0);
+    expect(
+      firstLedger.getReservation(accepted.value.reservation.id)?.status,
+    ).toEqual("active");
 
     liveness.set(owner, "dead");
-    expect(await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")))
-      .toEqual(1);
-    expect(firstLedger.getReservation(accepted.value.reservation.id)?.status)
-      .toEqual("released");
+    expect(
+      await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")),
+    ).toEqual(1);
+    expect(
+      firstLedger.getReservation(accepted.value.reservation.id)?.status,
+    ).toEqual("released");
     const replacement = await sibling.routeAndReserve({
       agentName: "replacement",
       category: "simple_coding",
@@ -530,19 +575,19 @@ describe("quota persistence and reservations", () => {
       status: "reconciled",
       actualUnits: 7,
     });
-    expect(migrated.usageTotals(
-      { provider: "claude", account: "personal", pool: "claude-premium" },
-      "2026-07-09T11:00:00.000Z",
-      "2026-07-01T00:00:00.000Z",
-    ).fiveHour).toEqual(7);
+    expect(
+      migrated.usageTotals(
+        { provider: "claude", account: "personal", pool: "claude-premium" },
+        "2026-07-09T11:00:00.000Z",
+        "2026-07-01T00:00:00.000Z",
+      ).fiveHour,
+    ).toEqual(7);
     quotaDb.close();
   });
 
   test("gives a control restart its own idempotent reservation without double-counting the interrupted run", async () => {
     const { path, db } = await fileDatabase("control-reservation");
-    const quotaConfig = config([
-      limit("codex", 30, { weeklyAllowance: 300 }),
-    ]);
+    const quotaConfig = config([limit("codex", 30, { weeklyAllowance: 300 })]);
     const now = () => new Date("2026-07-09T12:00:00.000Z");
     const ledger = new QuotaLedger(db);
     const service = new QuotaService(ledger, quotaConfig, now);
@@ -617,33 +662,38 @@ describe("quota persistence and reservations", () => {
     const reservation = await service.reserveControlRun(request);
     const retried = await service.reserveControlRun(request);
     expect(retried.id).toEqual(reservation.id);
-    expect(ledger.activeReservations().filter((row) => row.agentName === "maya"))
-      .toHaveLength(2);
+    expect(
+      ledger.activeReservations().filter((row) => row.agentName === "maya"),
+    ).toHaveLength(2);
     db.close();
   });
 
   test("atomically prevents concurrent control restarts from overcommitting headroom", async () => {
     const { path, db } = await fileDatabase("control-concurrency");
     const secondDb = new HiveDatabase(path);
-    const quotaConfig = config([
-      limit("claude", 15, { weeklyAllowance: 100 }),
-    ]);
+    const quotaConfig = config([limit("claude", 15, { weeklyAllowance: 100 })]);
     const now = () => new Date("2026-07-09T12:00:00.000Z");
     const services = [
       new QuotaService(new QuotaLedger(db), quotaConfig, now),
       new QuotaService(new QuotaLedger(secondDb), quotaConfig, now),
     ];
-    const results = await Promise.allSettled(services.map((service, index) =>
-      service.reserveControlRun({
-        agentName: index === 0 ? "maya" : "sam",
-        category: "simple_coding",
-        tool: "claude",
-        model: "claude-model",
-        controlMessageId: `control-${index}`,
-      })
-    ));
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const results = await Promise.allSettled(
+      services.map((service, index) =>
+        service.reserveControlRun({
+          agentName: index === 0 ? "maya" : "sam",
+          category: "simple_coding",
+          tool: "claude",
+          model: "claude-model",
+          controlMessageId: `control-${index}`,
+        }),
+      ),
+    );
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    expect(
+      results.filter((result) => result.status === "rejected"),
+    ).toHaveLength(1);
     const rejected = results.find((result) => result.status === "rejected");
     expect(rejected?.status === "rejected" && rejected.reason).toBeInstanceOf(
       QuotaExhaustedError,
@@ -695,7 +745,9 @@ describe("quota persistence and reservations", () => {
       () => new Date("2026-07-09T12:02:00.000Z"),
     );
     expect(await restarted.recoverExpired()).toEqual(1);
-    expect(restartedLedger.getReservation(started.reservation.id)).toMatchObject({
+    expect(
+      restartedLedger.getReservation(started.reservation.id),
+    ).toMatchObject({
       status: "reconciled",
       actualUnits: 10,
       source: "estimated",
@@ -740,7 +792,11 @@ describe("quota persistence and reservations", () => {
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
-      spawner: { async spawn() { throw new Error("unused"); } },
+      spawner: {
+        async spawn() {
+          throw new Error("unused");
+        },
+      },
       sessionSender: { async sendSessionMessage() {} },
       quota: service,
     });
@@ -900,10 +956,10 @@ describe("quota-aware routing", () => {
     const { db } = await fileDatabase("explicit");
     const service = new QuotaService(
       new QuotaLedger(db),
-      config(
-        [limit("claude", 6), limit("codex", 100)],
-        { reserveFiveHourPct: 0.5, reserveWeeklyPct: 0.5 },
-      ),
+      config([limit("claude", 6), limit("codex", 100)], {
+        reserveFiveHourPct: 0.5,
+        reserveWeeklyPct: 0.5,
+      }),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
     let error: unknown;
@@ -970,7 +1026,10 @@ describe("quota-aware routing", () => {
       candidates: candidates(),
     });
     expect(first.tool).toEqual("claude");
-    expect(first.status).toMatchObject({ configured: false, confidence: "missing" });
+    expect(first.status).toMatchObject({
+      configured: false,
+      confidence: "missing",
+    });
     expect(alerts).toHaveLength(1);
     db.close();
   });
@@ -982,10 +1041,12 @@ describe("quota telemetry and alerts", () => {
     const ledger = new QuotaLedger(db);
     const service = new QuotaService(
       ledger,
-      config([limit("codex", 200, {
-        pool: "codex",
-        weeklyAllowance: 1_000,
-      })]),
+      config([
+        limit("codex", 200, {
+          pool: "codex",
+          weeklyAllowance: 1_000,
+        }),
+      ]),
       () => new Date("2026-07-10T12:00:00.000Z"),
     );
     const reading = await service.observeCodexRateLimits("codex-model", {
@@ -1004,11 +1065,13 @@ describe("quota telemetry and alerts", () => {
       },
     });
     expect(reading).toEqual({ fiveHourUsed: 50, weeklyUsed: 400 });
-    expect(ledger.getObservation({
-      provider: "codex",
-      account: "personal",
-      pool: "codex",
-    })).toMatchObject({
+    expect(
+      ledger.getObservation({
+        provider: "codex",
+        account: "personal",
+        pool: "codex",
+      }),
+    ).toMatchObject({
       fiveHourUsed: 50,
       weeklyUsed: 400,
       source: "provider",
@@ -1030,16 +1093,18 @@ describe("quota telemetry and alerts", () => {
       config([limit("codex")]),
       () => new Date("2026-07-10T12:00:00.000Z"),
     );
-    expect(await service.observeCodexRateLimits("codex-model", {
-      rateLimits: {
-        primary: {
-          usedPercent: 25,
-          windowDurationMins: 300,
-          resetsAt: null,
+    expect(
+      await service.observeCodexRateLimits("codex-model", {
+        rateLimits: {
+          primary: {
+            usedPercent: 25,
+            windowDurationMins: 300,
+            resetsAt: null,
+          },
+          secondary: null,
         },
-        secondary: null,
-      },
-    })).toEqual(null);
+      }),
+    ).toEqual(null);
     expect(ledger.getObservation(limit("codex"))).toEqual(null);
     db.close();
   });
@@ -1047,25 +1112,29 @@ describe("quota telemetry and alerts", () => {
   test("fails closed before reservation when persisted telemetry is corrupt", async () => {
     const { db } = await fileDatabase("corrupt");
     const ledger = new QuotaLedger(db);
-    db.database.query(`
+    db.database
+      .query(`
       INSERT INTO quota_observations (
         provider, account, pool, fiveHourUsed, weeklyUsed, observedAt,
         fiveHourResetAt, weeklyResetAt, source, confidence
       ) VALUES ('claude', 'personal', 'claude-premium', 10, 10,
         'not-a-date', NULL, NULL, 'manual', 'reported')
-    `).run();
+    `)
+      .run();
     const service = new QuotaService(
       ledger,
       config([limit("claude")]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    await expect(service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    })).rejects.toThrow("Corrupt quota observation");
+    await expect(
+      service.routeAndReserve({
+        agentName: "maya",
+        category: "simple_coding",
+        selection: "strict",
+        explicitTool: "claude",
+        candidates: candidates(),
+      }),
+    ).rejects.toThrow("Corrupt quota observation");
     expect(ledger.getActiveReservationForAgent("maya")).toEqual(null);
     db.close();
   });
@@ -1083,14 +1152,24 @@ describe("quota telemetry and alerts", () => {
     const service = new QuotaService(
       new QuotaLedger(db),
       config([limit("claude", 20, { weeklyAllowance: 1_000 })], {
-        estimates: { ...DEFAULT_QUOTA_CONFIG.estimates, complex_coding: 20, simple_coding: 10, summarization: 4, code_review: 8 },
+        estimates: {
+          ...DEFAULT_QUOTA_CONFIG.estimates,
+          complex_coding: 20,
+          simple_coding: 10,
+          summarization: 4,
+          code_review: 8,
+        },
       }),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
     new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
-      spawner: { async spawn() { throw new Error("unused"); } },
+      spawner: {
+        async spawn() {
+          throw new Error("unused");
+        },
+      },
       rootProtocol: sender,
       quota: service,
     });
@@ -1101,12 +1180,14 @@ describe("quota telemetry and alerts", () => {
       explicitTool: "claude",
       candidates: candidates(),
     });
-    expect(db.listMessages()).toMatchObject([{
-      from: "hive-quota",
-      to: "queen",
-      state: "injected",
-      deliveredAt: expect.any(String),
-    }]);
+    expect(db.listMessages()).toMatchObject([
+      {
+        from: "hive-quota",
+        to: "queen",
+        state: "injected",
+        deliveredAt: expect.any(String),
+      },
+    ]);
     expect(sender.calls).toHaveLength(1);
     expect(sender.calls[0]).toContain("Hive quota critical:");
     db.close();
@@ -1147,7 +1228,13 @@ describe("quota telemetry and alerts", () => {
     const service = new QuotaService(
       new QuotaLedger(db),
       config([limit("claude", 100, { weeklyAllowance: 1_000 })], {
-        estimates: { ...DEFAULT_QUOTA_CONFIG.estimates, complex_coding: 10, simple_coding: 20, summarization: 20, code_review: 10 },
+        estimates: {
+          ...DEFAULT_QUOTA_CONFIG.estimates,
+          complex_coding: 10,
+          simple_coding: 20,
+          summarization: 20,
+          code_review: 10,
+        },
       }),
       () => now,
     );
@@ -1233,7 +1320,11 @@ describe("spend is ordered against a reading by sequence, not by the clock", () 
     ledger.reconcile(id, 1, 1, "estimated", at);
   };
 
-  const report = (ledger: QuotaLedger, weeklyUsed: number, at: string): void => {
+  const report = (
+    ledger: QuotaLedger,
+    weeklyUsed: number,
+    at: string,
+  ): void => {
     ledger.upsertObservation({
       ...scope,
       fiveHourUsed: 0,

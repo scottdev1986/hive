@@ -1,5 +1,5 @@
 export const PROVIDERS = ["claude", "codex"] as const;
-export type Provider = typeof PROVIDERS[number];
+export type Provider = (typeof PROVIDERS)[number];
 
 export const COMMON_SCENARIOS = [
   "lifecycle",
@@ -12,13 +12,19 @@ export const COMMON_SCENARIOS = [
   "invalid-model",
   "read-only",
 ] as const;
-export type CommonScenario = typeof COMMON_SCENARIOS[number];
+export type CommonScenario = (typeof COMMON_SCENARIOS)[number];
 
 export const CODEX_ONLY_SCENARIOS = ["dual-client"] as const;
-export const SCENARIOS = [...COMMON_SCENARIOS, ...CODEX_ONLY_SCENARIOS] as const;
-export type Scenario = typeof SCENARIOS[number];
+export const SCENARIOS = [
+  ...COMMON_SCENARIOS,
+  ...CODEX_ONLY_SCENARIOS,
+] as const;
+export type Scenario = (typeof SCENARIOS)[number];
 
-export function scenarioApplies(provider: Provider, scenario: Scenario): boolean {
+export function scenarioApplies(
+  provider: Provider,
+  scenario: Scenario,
+): boolean {
   return provider === "codex" || scenario !== "dual-client";
 }
 

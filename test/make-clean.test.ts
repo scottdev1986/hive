@@ -26,16 +26,14 @@ test("make clean removes dev state without following shared-memory symlinks", ()
     writeFileSync(join(sharedMemory, "article.md"), "live memory\n");
     symlinkSync(sharedMemory, join(devHome, "memory"));
 
-    const result = Bun.spawnSync([
-      "make",
-      "clean",
-      `DEV=${dev}`,
-      `DEV_HOME=${devHome}`,
-    ], {
-      cwd: root,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const result = Bun.spawnSync(
+      ["make", "clean", `DEV=${dev}`, `DEV_HOME=${devHome}`],
+      {
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     const output = result.stdout.toString() + result.stderr.toString();
 
     expect(result.exitCode, output).toBe(0);

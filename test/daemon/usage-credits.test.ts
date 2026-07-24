@@ -32,7 +32,11 @@ const LIVE = {
       disclaimer: "Usage credits cover you when you hit your plan limits.",
     },
     model_scoped: [
-      { display_name: "Fable", utilization: 12, resets_at: "2026-07-18T19:00:00Z" },
+      {
+        display_name: "Fable",
+        utilization: 12,
+        resets_at: "2026-07-18T19:00:00Z",
+      },
     ],
   },
 };
@@ -150,27 +154,33 @@ describe("Codex paid overflow uses the same guard without inventing auto-top-up 
   });
 
   test("credits present + exhausted plan asks about real money", () => {
-    const billing = accountBillingFromCodexRateLimits({
-      ...LIVE_CODEX,
-      rateLimits: {
-        ...LIVE_CODEX.rateLimits,
-        primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 100 },
-        credits: { hasCredits: true, unlimited: false, balance: "100" },
+    const billing = accountBillingFromCodexRateLimits(
+      {
+        ...LIVE_CODEX,
+        rateLimits: {
+          ...LIVE_CODEX.rateLimits,
+          primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 100 },
+          credits: { hasCredits: true, unlimited: false, balance: "100" },
+        },
       },
-    }, AT);
+      AT,
+    );
     const risk = spendRisk(billing, "GPT-5.6-Sol");
     expect(risk.state).toBe("would-spend");
     expect(risk.detail).toContain("real money");
   });
 
   test("zero balance + exhausted plan asks and names auto-top-up uncertainty", () => {
-    const billing = accountBillingFromCodexRateLimits({
-      ...LIVE_CODEX,
-      rateLimits: {
-        ...LIVE_CODEX.rateLimits,
-        primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 100 },
+    const billing = accountBillingFromCodexRateLimits(
+      {
+        ...LIVE_CODEX,
+        rateLimits: {
+          ...LIVE_CODEX.rateLimits,
+          primary: { ...LIVE_CODEX.rateLimits.primary, usedPercent: 100 },
+        },
       },
-    }, AT);
+      AT,
+    );
     const risk = spendRisk(billing, "GPT-5.6-Sol");
     expect(risk.state).toBe("would-spend");
     expect(risk.detail).toContain("auto-top-up");
@@ -186,14 +196,17 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
     // the plan limit is REFUSED, not billed. A guard that nags a user who cannot
     // be charged is a broken guard, and one he learns to click through is worse
     // than none.
-    const spent = accountBillingFromUsage({
-      ...LIVE,
-      rate_limits: {
-        ...LIVE.rate_limits,
-        five_hour: { utilization: 100, resets_at: null },
-        model_scoped: [{ display_name: "Fable", utilization: 100 }],
+    const spent = accountBillingFromUsage(
+      {
+        ...LIVE,
+        rate_limits: {
+          ...LIVE.rate_limits,
+          five_hour: { utilization: 100, resets_at: null },
+          model_scoped: [{ display_name: "Fable", utilization: 100 }],
+        },
       },
-    }, AT);
+      AT,
+    );
     // Even with every pool exhausted, credits being off means no charge is
     // possible, so there is nothing to ask about.
     expect(spendRisk(spent, "Fable").state).toBe("no-spend");
@@ -205,46 +218,56 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
     expect(spendRisk(billing, "Fable").state).toBe("no-spend");
     // And neither does anything else. There is no model list in this guard.
     expect(spendRisk(billing, "Opus").state).toBe("no-spend");
-    expect(spendRisk(billing, "Some-Model-Nobody-Has-Heard-Of").state)
-      .toBe("no-spend");
+    expect(spendRisk(billing, "Some-Model-Nobody-Has-Heard-Of").state).toBe(
+      "no-spend",
+    );
   });
 
   test("credits ON + an exhausted pool WOULD spend money -> ask", () => {
-    const spent = accountBillingFromUsage({
-      ...LIVE,
-      rate_limits: {
-        ...LIVE.rate_limits,
-        extra_usage: { is_enabled: true },
-        spend: { enabled: true },
-        model_scoped: [{ display_name: "Fable", utilization: 100 }],
+    const spent = accountBillingFromUsage(
+      {
+        ...LIVE,
+        rate_limits: {
+          ...LIVE.rate_limits,
+          extra_usage: { is_enabled: true },
+          spend: { enabled: true },
+          model_scoped: [{ display_name: "Fable", utilization: 100 }],
+        },
       },
-    }, AT);
+      AT,
+    );
     const risk = spendRisk(spent, "Fable");
     expect(risk.state).toBe("would-spend");
     expect(risk.detail).toContain("real money");
   });
 
   test("credits ON but the plan still covers it -> no ask, no nagging", () => {
-    const on = accountBillingFromUsage({
-      ...LIVE,
-      rate_limits: {
-        ...LIVE.rate_limits,
-        extra_usage: { is_enabled: true },
-        spend: { enabled: true },
+    const on = accountBillingFromUsage(
+      {
+        ...LIVE,
+        rate_limits: {
+          ...LIVE.rate_limits,
+          extra_usage: { is_enabled: true },
+          spend: { enabled: true },
+        },
       },
-    }, AT);
+      AT,
+    );
     // A false positive here is what trains a user to click through the prompt,
     // which destroys the guard as surely as a false negative empties his wallet.
     expect(spendRisk(on, "Fable").state).toBe("no-spend");
   });
 
   test("an exhausted pool with UNREADABLE credits resolves to ASK, never to spend", () => {
-    const murky = accountBillingFromUsage({
-      rate_limits: {
-        five_hour: { utilization: 100 },
-        model_scoped: [{ display_name: "Fable", utilization: 100 }],
+    const murky = accountBillingFromUsage(
+      {
+        rate_limits: {
+          five_hour: { utilization: 100 },
+          model_scoped: [{ display_name: "Fable", utilization: 100 }],
+        },
       },
-    }, AT);
+      AT,
+    );
     expect(spendRisk(murky, "Fable").state).toBe("would-spend");
     expect(spendRisk(murky, "Fable").detail).toContain("cannot read");
   });
@@ -252,6 +275,8 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
   test("no plan reading at all is unknown, and unknown asks", () => {
     const blind = accountBillingFromUsage({ rate_limits: {} }, AT);
     expect(spendRisk(blind, "Fable").state).toBe("unknown");
-    expect(spendRisk(blind, "Fable").detail).toContain("will not spend your money");
+    expect(spendRisk(blind, "Fable").detail).toContain(
+      "will not spend your money",
+    );
   });
 });

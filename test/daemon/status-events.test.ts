@@ -1,26 +1,34 @@
+import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, test } from "bun:test";
-import { WorkspaceEventV2Schema, type WorkspaceEventV2 } from "../../src/schemas/status-envelope";
 import type { SessionEvent } from "../../src/daemon/session-host/contract";
 import {
+  canonicalJson,
+  emptyStatusProjection,
   FakeSessionStatusSourceAdapter,
   InvalidWorkspaceSnapshotError,
   ResumableStatusSubscription,
-  canonicalJson,
-  emptyStatusProjection,
   reconcileStatusSnapshot,
   reduceStatusEvent,
   verifyWorkspaceSnapshot,
   type WorkspaceStatusEventSource,
   type WorkspaceStatusSourceEvent,
 } from "../../src/daemon/status-events";
+import {
+  type WorkspaceEventV2,
+  WorkspaceEventV2Schema,
+} from "../../src/schemas/status-envelope";
 
-const corpus = JSON.parse(readFileSync(resolve(
-  import.meta.dir,
-  "../../workspace/Tests/WorkspaceCoreTests/Fixtures/reducer-parity-corpus.json",
-), "utf8")) as {
+const corpus = JSON.parse(
+  readFileSync(
+    resolve(
+      import.meta.dir,
+      "../../workspace/Tests/WorkspaceCoreTests/Fixtures/reducer-parity-corpus.json",
+    ),
+    "utf8",
+  ),
+) as {
   scenarios: Array<{ name: string; events: unknown[]; prefixes: unknown[] }>;
 };
 
@@ -42,19 +50,23 @@ const event = (seq: string, revision = seq): WorkspaceEventV2 => ({
 });
 
 const snapshot = (seq: string) => {
-  const entities = [{
-    kind: "agent",
-    id: "agent-fixture",
-    entityRevision: seq,
-    projection: { kind: "status.turn", data: { value: "working" } },
-  }];
+  const entities = [
+    {
+      kind: "agent",
+      id: "agent-fixture",
+      entityRevision: seq,
+      projection: { kind: "status.turn", data: { value: "working" } },
+    },
+  ];
   return {
     schemaVersion: 2 as const,
     instanceId: "instance-fixture",
     seq,
     entities,
     createdAt: "2026-07-16T12:00:00.000Z",
-    contentSha256: createHash("sha256").update(canonicalJson(entities)).digest("hex"),
+    contentSha256: createHash("sha256")
+      .update(canonicalJson(entities))
+      .digest("hex"),
   };
 };
 
@@ -64,17 +76,24 @@ describe("status event reduction", () => {
       let state = emptyStatusProjection();
       scenario.events.forEach((value, index) => {
         state = reduceStatusEvent(state, WorkspaceEventV2Schema.parse(value));
-        expect(canonicalJson(state), `${scenario.name} prefix ${index + 1}`)
-          .toBe(canonicalJson(scenario.prefixes[index]));
+        expect(
+          canonicalJson(state),
+          `${scenario.name} prefix ${index + 1}`,
+        ).toBe(canonicalJson(scenario.prefixes[index]));
       });
     }
   });
 
   test("rejects digest mismatch and regressed snapshot high-water", () => {
-    expect(() => verifyWorkspaceSnapshot({ ...snapshot("2"), contentSha256: "0".repeat(64) }, "1"))
-      .toThrow(InvalidWorkspaceSnapshotError);
-    expect(() => verifyWorkspaceSnapshot(snapshot("1"), "2"))
-      .toThrow("high-water regressed");
+    expect(() =>
+      verifyWorkspaceSnapshot(
+        { ...snapshot("2"), contentSha256: "0".repeat(64) },
+        "1",
+      ),
+    ).toThrow(InvalidWorkspaceSnapshotError);
+    expect(() => verifyWorkspaceSnapshot(snapshot("1"), "2")).toThrow(
+      "high-water regressed",
+    );
   });
 
   test("replaces a paused projection with a verified snapshot", () => {
@@ -103,11 +122,20 @@ describe("status event reduction", () => {
     const subscription = new ResumableStatusSubscription(source);
     await subscription.run(() => {});
     expect(calls).toEqual(["0", "2"]);
-    expect(subscription.current).toMatchObject({ highWaterSeq: "3", paused: false });
+    expect(subscription.current).toMatchObject({
+      highWaterSeq: "3",
+      paused: false,
+    });
   });
 
   test("keeps the unlanded sessiond broker behind the typed adapter seam", () => {
-    const { schemaVersion: _, eventId: __, seq: ___, entityRevision: ____, ...adapted } = event("1");
+    const {
+      schemaVersion: _,
+      eventId: __,
+      seq: ___,
+      entityRevision: ____,
+      ...adapted
+    } = event("1");
     const adapter = new FakeSessionStatusSourceAdapter(() => adapted);
     const sessionEvent: SessionEvent = {
       schemaVersion: 1,
@@ -127,6 +155,8 @@ describe("status event reduction", () => {
       occurredAt: "2026-07-16T12:00:00.000Z",
       data: {},
     };
-    expect(adapter.adapt(sessionEvent)).toBe(adapted as WorkspaceStatusSourceEvent);
+    expect(adapter.adapt(sessionEvent)).toBe(
+      adapted as WorkspaceStatusSourceEvent,
+    );
   });
 });

@@ -9,18 +9,22 @@
 // Nothing in this file touches live work: an in-memory database, a stub
 // spawner that launches nothing, and a stub landBranch that runs no git.
 import { describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  credentialPath,
+  readCredential,
+  writeCredential,
+} from "../../src/daemon/credentials";
 import { HiveDatabase } from "../../src/daemon/db";
 import type { LandReadiness } from "../../src/daemon/landing";
-import { deleteAgentRow, listAuditEntries } from "../../src/daemon/testing";
-import { readCredential, writeCredential, credentialPath } from "../../src/daemon/credentials";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "../../src/daemon/server";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
+import { deleteAgentRow, listAuditEntries } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const home = mkdtempSync(join(tmpdir(), "hive-auth-test-"));
 process.env.HIVE_HOME = home;
@@ -77,8 +81,10 @@ function harness(
   // branch" is exactly what the daemon must treat as a reason to ask, not as a
   // reason to grant. Every pre-existing re-arm test below therefore proves the
   // fail-closed path.
-  const readiness: LandReadiness = options.readiness ??
-    { pending: null, rebased: null };
+  const readiness: LandReadiness = options.readiness ?? {
+    pending: null,
+    rebased: null,
+  };
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
@@ -143,7 +149,10 @@ async function callTool(
     await client.connect(transport);
     const result = await client.callTool({ name, arguments: args });
     const text = JSON.stringify(result.content ?? "");
-    return { ok: result.isError !== true, error: result.isError === true ? text : "" };
+    return {
+      ok: result.isError !== true,
+      error: result.isError === true ? text : "",
+    };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "?" };
   } finally {
@@ -162,7 +171,11 @@ describe("an unauthenticated process cannot mutate anything", () => {
     db.upsertAgent(agentRecord());
 
     const routes: Array<[string, string, unknown]> = [
-      ["/event", "POST", { kind: "notification", agentName: "maya", timestamp }],
+      [
+        "/event",
+        "POST",
+        { kind: "notification", agentName: "maya", timestamp },
+      ],
       ["/recover", "POST", { agent: "maya" }],
       ["/statusline", "POST", { agent: "maya" }],
     ];
@@ -176,7 +189,12 @@ describe("an unauthenticated process cannot mutate anything", () => {
     }
 
     // The MCP transport refuses before a tool can even be enumerated.
-    for (const tool of ["hive_spawn", "hive_kill", "hive_approve", "hive_land"]) {
+    for (const tool of [
+      "hive_spawn",
+      "hive_kill",
+      "hive_approve",
+      "hive_land",
+    ]) {
       expect((await callTool(daemon, null, tool, {})).ok).toBe(false);
     }
     expect(spawner.requests).toHaveLength(0);
@@ -187,10 +205,13 @@ describe("an unauthenticated process cannot mutate anything", () => {
 
   test("a malformed or unknown token is refused, and audited", async () => {
     const { daemon } = harness();
-    const response = await authorized(daemon, "not-a-token")("http://hive/recover", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
+    const response = await authorized(daemon, "not-a-token")(
+      "http://hive/recover",
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    );
     expect(response.status).toBe(401);
 
     const unknown = `hv1.${crypto.randomUUID()}.deadbeef`;
@@ -222,14 +243,35 @@ describe("a foreign agent cannot act on another tenant", () => {
   test("maya cannot land, kill, or read the inbox of zara", async () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
-    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara", branch: "hive/zara-work" }));
+    db.upsertAgent(
+      agentRecord({ id: "agent-zara", name: "zara", branch: "hive/zara-work" }),
+    );
     const { token } = daemon.capabilities.mint("maya", "writer");
 
     // The confused deputy: a body field naming another subject grants nothing.
-    expect((await callTool(daemon, token, "hive_land", { agent: "zara", capabilityEpoch: 0 })).ok).toBe(false);
-    expect((await callTool(daemon, token, "hive_inbox", { agent: "zara" })).ok).toBe(false);
-    expect((await callTool(daemon, token, "hive_kill", { name: "zara" })).ok).toBe(false);
-    expect((await callTool(daemon, token, "hive_send", { from: "zara", to: "orchestrator", body: "spoofed" })).ok).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "zara",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (await callTool(daemon, token, "hive_inbox", { agent: "zara" })).ok,
+    ).toBe(false);
+    expect(
+      (await callTool(daemon, token, "hive_kill", { name: "zara" })).ok,
+    ).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "hive_send", {
+          from: "zara",
+          to: "orchestrator",
+          body: "spoofed",
+        })
+      ).ok,
+    ).toBe(false);
 
     expect(landed).toEqual([]);
     expect(db.getAgentByName("zara")?.status).toBe("working");
@@ -250,7 +292,10 @@ describe("a foreign agent cannot act on another tenant", () => {
       ["hive_read_message", { id: "any" }],
       ["hive_quota_reconcile", {}],
     ] as const) {
-      expect([tool, (await callTool(daemon, token, tool, args)).ok]).toEqual([tool, false]);
+      expect([tool, (await callTool(daemon, token, tool, args)).ok]).toEqual([
+        tool,
+        false,
+      ]);
     }
     expect(spawner.requests).toHaveLength(0);
     expect(denials(daemon)).toContain("capability.forbidden-action");
@@ -278,10 +323,12 @@ describe("a foreign agent cannot act on another tenant", () => {
       const root = daemon.capabilities.mint(subject, role).token;
       // The article does not exist, but the call is authorized and answers.
       expect(
-        (await callTool(daemon, root, "memory_delete", {
-          scope: "repo",
-          id: "any",
-        })).ok,
+        (
+          await callTool(daemon, root, "memory_delete", {
+            scope: "repo",
+            id: "any",
+          })
+        ).ok,
       ).toBe(true);
     }
     await daemon.stop();
@@ -311,7 +358,10 @@ describe("the orchestrator decides but never merges", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
 
-    const result = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const result = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(result.ok).toBe(false);
     expect(result.error).toContain("may not branch:land");
     expect(landed).toEqual([]);
@@ -327,7 +377,14 @@ describe("a revoked epoch invalidates a capability", () => {
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
     db.upsertAgent(agentRecord({ capabilityEpoch: 1 }));
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 1 })).ok).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 1,
+        })
+      ).ok,
+    ).toBe(false);
     expect(landed).toEqual([]);
     expect(denials(daemon)).toContain("capability.stale-epoch");
     await daemon.stop();
@@ -341,13 +398,36 @@ describe("a revoked epoch invalidates a capability", () => {
     // This is exactly what `hive_send --priority critical` calls.
     db.revokeAgentCapabilities("maya", timestamp);
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
-    expect((await callTool(daemon, token, "memory_write", { scope: "repo", title: "x", body: "y" })).ok).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "memory_write", {
+          scope: "repo",
+          title: "x",
+          body: "y",
+        })
+      ).ok,
+    ).toBe(false);
     expect(landed).toEqual([]);
     expect(denials(daemon)).toContain("capability.write-revoked");
 
     // The paused agent can still speak, which is the whole point of a pause.
-    expect((await callTool(daemon, token, "hive_send", { from: "maya", to: "orchestrator", body: "paused" })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_send", {
+          from: "maya",
+          to: "orchestrator",
+          body: "paused",
+        })
+      ).ok,
+    ).toBe(true);
     await daemon.stop();
   });
 
@@ -358,7 +438,9 @@ describe("a revoked epoch invalidates a capability", () => {
     const operator = daemon.capabilities.mint("operator", "operator").token;
 
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
-    expect((await callTool(daemon, operator, "hive_kill", { name: "maya" })).ok).toBe(true);
+    expect(
+      (await callTool(daemon, operator, "hive_kill", { name: "maya" })).ok,
+    ).toBe(true);
     // A surviving descendant of the killed process holds a dead credential.
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(false);
     expect(denials(daemon)).toContain("capability.revoked");
@@ -379,13 +461,17 @@ describe("an agent-bound capability requires a live authority record", () => {
   test("a writer whose agent row vanished is refused instead of inheriting permission", async () => {
     const { daemon, db } = harness();
     const record = db.upsertAgent(agentRecord());
-    const { capability } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+    const { capability } = daemon.capabilities.mint("maya", "writer", {
+      epoch: 0,
+    });
     expect(deleteAgentRow(db, record.id)).toBe(true);
 
-    expect(daemon.capabilities.authorize(capability, {
-      action: "branch:land",
-      route: "hive_land",
-    })).toMatchObject({
+    expect(
+      daemon.capabilities.authorize(capability, {
+        action: "branch:land",
+        route: "hive_land",
+      }),
+    ).toMatchObject({
       ok: false,
       reason: "capability.authority-unknown",
     });
@@ -396,14 +482,19 @@ describe("an agent-bound capability requires a live authority record", () => {
 describe("the codex root token endpoint", () => {
   test("mints a session-lived orchestrator capability for the operator", async () => {
     const { daemon } = harness();
-    const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
+    const operator = daemon.capabilities.mint("operator", "operator", {
+      epoch: 0,
+    });
 
     const response = await authorized(daemon, operator.token)(
       "http://hive/codex-root-token",
       { method: "POST" },
     );
     expect(response.status).toEqual(200);
-    const body = await response.json() as { token: string; expiresAt: string };
+    const body = (await response.json()) as {
+      token: string;
+      expiresAt: string;
+    };
     expect(body.token.length).toBeGreaterThan(0);
     expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
 
@@ -437,10 +528,20 @@ describe("a one-shot landing grant cannot be replayed", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
     expect(landed).toEqual(["hive/maya-work"]);
 
-    const replay = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const replay = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(replay.ok).toBe(false);
     expect(replay.error).toContain("already spent");
     expect(landed).toEqual(["hive/maya-work"]);
@@ -452,24 +553,41 @@ describe("a one-shot landing grant cannot be replayed", () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
-    const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
+    const operator = daemon.capabilities.mint("operator", "operator", {
+      epoch: 0,
+    });
 
     // Land once (spends the grant), then land follow-up work: refused, but
     // the refusal files exactly one pending re-arm approval, even across
     // repeated refusals.
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
-    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(refused.ok).toBe(false);
     // The refusal names what happened, and tells the agent there is nothing for
     // *it* to run — Hive filed the approval itself. The only action left is the
     // orchestrator's, so that is the one thing on the Fix: line.
     expect(refused.error).toContain("already spent");
-    expect(refused.error).toContain("Hive has already filed the re-arm approval");
-    expect(refused.error).toContain("Fix: the orchestrator approves");
-    await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
-    const pending = db.listApprovals("pending").filter(
-      (approval) => approval.agentName === "maya",
+    expect(refused.error).toContain(
+      "Hive has already filed the re-arm approval",
     );
+    expect(refused.error).toContain("Fix: the orchestrator approves");
+    await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
+    const pending = db
+      .listApprovals("pending")
+      .filter((approval) => approval.agentName === "maya");
     expect(pending).toHaveLength(1);
     expect(pending[0]?.description).toContain("Re-arm landing");
 
@@ -484,16 +602,32 @@ describe("a one-shot landing grant cannot be replayed", () => {
     // Nothing tells a waiting agent its re-arm resolved unless the daemon
     // says so itself — this is the notification that replaces the human
     // having to prod it with an urgent message.
-    const notice = db.listMessages().find(
-      (message) => message.from === "hive-approvals" && message.to === "maya",
-    );
+    const notice = db
+      .listMessages()
+      .find(
+        (message) => message.from === "hive-approvals" && message.to === "maya",
+      );
     expect(notice?.body).toContain(pending[0]!.description);
     expect(notice?.body).toContain("approved");
     expect(notice?.body).toContain("retry hive_land now");
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
     expect(landed).toEqual(["hive/maya-work", "hive/maya-work"]);
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(false);
     await daemon.stop();
   });
 
@@ -501,29 +635,58 @@ describe("a one-shot landing grant cannot be replayed", () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
-    const operator = daemon.capabilities.mint("operator", "operator", { epoch: 0 });
+    const operator = daemon.capabilities.mint("operator", "operator", {
+      epoch: 0,
+    });
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
-    const pending = db.listApprovals("pending").filter(
-      (approval) => approval.agentName === "maya",
-    );
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(false);
+    const pending = db
+      .listApprovals("pending")
+      .filter((approval) => approval.agentName === "maya");
     expect(pending).toHaveLength(1);
-    expect((await callTool(daemon, operator.token, "hive_approve", {
-      id: pending[0]!.id,
-      decision: "deny",
-    })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, operator.token, "hive_approve", {
+          id: pending[0]!.id,
+          decision: "deny",
+        })
+      ).ok,
+    ).toBe(true);
 
     // A denial must not leave the agent waiting or guessing: it is told
     // explicitly, so it reports back instead of retrying blindly.
-    const notice = db.listMessages().find(
-      (message) => message.from === "hive-approvals" && message.to === "maya",
-    );
+    const notice = db
+      .listMessages()
+      .find(
+        (message) => message.from === "hive-approvals" && message.to === "maya",
+      );
     expect(notice?.body).toContain(pending[0]!.description);
     expect(notice?.body).toContain("denied");
     expect(notice?.body).toContain("report back");
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(false);
     expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
   });
@@ -534,8 +697,14 @@ describe("a one-shot landing grant cannot be replayed", () => {
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
     const results = await Promise.all([
-      callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 }),
-      callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 }),
+      callTool(daemon, token, "hive_land", {
+        agent: "maya",
+        capabilityEpoch: 0,
+      }),
+      callTool(daemon, token, "hive_land", {
+        agent: "maya",
+        capabilityEpoch: 0,
+      }),
     ]);
     expect(results.filter((result) => result.ok)).toHaveLength(1);
     expect(landed).toEqual(["hive/maya-work"]);
@@ -548,12 +717,18 @@ describe("a one-shot landing grant cannot be replayed", () => {
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
     // main moved: the merge fails and the writer must still be able to land.
-    const rejected = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const rejected = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(rejected.ok).toBe(false);
     expect(rejected.error).toContain("fast-forward");
     expect(landed).toEqual([]);
 
-    const retried = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const retried = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(retried.ok).toBe(true);
     expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
@@ -608,7 +783,14 @@ describe("a descendant process inherits no reusable credential", () => {
     // A descendant with no credential — the environment gave it nothing and
     // the descriptor did not survive its exec — presents no token at all.
     expect(readCredential("a-name-that-was-never-issued")).toBeNull();
-    expect((await callTool(daemon, null, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(false);
+    expect(
+      (
+        await callTool(daemon, null, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(false);
     expect(denials(daemon)).toContain("capability.absent");
     await daemon.stop();
   });
@@ -616,7 +798,9 @@ describe("a descendant process inherits no reusable credential", () => {
   test("a written credential round-trips through a close-on-exec read", () => {
     writeCredential("roundtrip", "hv1.abc.def");
     expect(readCredential("roundtrip")).toBe("hv1.abc.def");
-    expect(readFileSync(credentialPath("roundtrip"), "utf8").trim()).toBe("hv1.abc.def");
+    expect(readFileSync(credentialPath("roundtrip"), "utf8").trim()).toBe(
+      "hv1.abc.def",
+    );
   });
 });
 
@@ -626,15 +810,32 @@ describe("legitimate workflows keep working", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
 
-    expect((await callTool(daemon, token, "hive_spawn", { task: "do a thing", category: "simple_coding" })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_spawn", {
+          task: "do a thing",
+          category: "simple_coding",
+        })
+      ).ok,
+    ).toBe(true);
     expect(spawner.requests).toHaveLength(1);
 
     const approvalId = await daemon.queueCodexApproval("maya", "run a command");
     expect((await callTool(daemon, token, "hive_approvals")).ok).toBe(true);
-    expect((await callTool(daemon, token, "hive_approve", { id: approvalId, decision: "approve" })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_approve", {
+          id: approvalId,
+          decision: "approve",
+        })
+      ).ok,
+    ).toBe(true);
     expect(db.getApproval(approvalId)?.status).toBe("approved");
 
-    expect((await callTool(daemon, token, "hive_inbox", { agent: "orchestrator" })).ok).toBe(true);
+    expect(
+      (await callTool(daemon, token, "hive_inbox", { agent: "orchestrator" }))
+        .ok,
+    ).toBe(true);
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
     await daemon.stop();
   });
@@ -644,20 +845,45 @@ describe("legitimate workflows keep working", () => {
     db.upsertAgent(agentRecord());
     // Preferred mint subject is queen; synonym still appears on older tooling.
     const asQueen = daemon.capabilities.mint("queen", "orchestrator").token;
-    const asSynonym = daemon.capabilities.mint("orchestrator", "orchestrator").token;
+    const asSynonym = daemon.capabilities.mint(
+      "orchestrator",
+      "orchestrator",
+    ).token;
 
-    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "orchestrator" })).ok).toBe(true);
-    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "Orchestrator" })).ok).toBe(true);
-    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "queen" })).ok).toBe(true);
-    expect((await callTool(daemon, asQueen, "hive_inbox", { agent: "Queen" })).ok).toBe(true);
+    expect(
+      (await callTool(daemon, asQueen, "hive_inbox", { agent: "orchestrator" }))
+        .ok,
+    ).toBe(true);
+    expect(
+      (await callTool(daemon, asQueen, "hive_inbox", { agent: "Orchestrator" }))
+        .ok,
+    ).toBe(true);
+    expect(
+      (await callTool(daemon, asQueen, "hive_inbox", { agent: "queen" })).ok,
+    ).toBe(true);
+    expect(
+      (await callTool(daemon, asQueen, "hive_inbox", { agent: "Queen" })).ok,
+    ).toBe(true);
 
-    expect((await callTool(daemon, asSynonym, "hive_inbox", { agent: "queen" })).ok).toBe(true);
-    expect((await callTool(daemon, asSynonym, "hive_inbox", { agent: "Queen" })).ok).toBe(true);
-    expect((await callTool(daemon, asSynonym, "hive_inbox", { agent: "orchestrator" })).ok).toBe(true);
+    expect(
+      (await callTool(daemon, asSynonym, "hive_inbox", { agent: "queen" })).ok,
+    ).toBe(true);
+    expect(
+      (await callTool(daemon, asSynonym, "hive_inbox", { agent: "Queen" })).ok,
+    ).toBe(true);
+    expect(
+      (
+        await callTool(daemon, asSynonym, "hive_inbox", {
+          agent: "orchestrator",
+        })
+      ).ok,
+    ).toBe(true);
 
     // Foreign root-style subject from a worker is still denied.
     const worker = daemon.capabilities.mint("maya", "writer").token;
-    expect((await callTool(daemon, worker, "hive_inbox", { agent: "queen" })).ok).toBe(false);
+    expect(
+      (await callTool(daemon, worker, "hive_inbox", { agent: "queen" })).ok,
+    ).toBe(false);
     await daemon.stop();
   });
 
@@ -669,16 +895,39 @@ describe("legitimate workflows keep working", () => {
     const event = await authorized(daemon, token)("http://hive/event", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "turn-start", agentName: "maya", timestamp }),
+      body: JSON.stringify({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp,
+      }),
     });
     expect(event.status).toBe(200);
 
-    expect((await callTool(daemon, token, "hive_send", { from: "maya", to: "orchestrator", body: "report" })).ok).toBe(true);
-    expect((await callTool(daemon, token, "hive_inbox", { agent: "maya" })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_send", {
+          from: "maya",
+          to: "orchestrator",
+          body: "report",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (await callTool(daemon, token, "hive_inbox", { agent: "maya" })).ok,
+    ).toBe(true);
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
-    expect((await callTool(daemon, token, "memory_search", { query: "phase" })).ok).toBe(true);
+    expect(
+      (await callTool(daemon, token, "memory_search", { query: "phase" })).ok,
+    ).toBe(true);
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
     expect(landed).toEqual(["hive/maya-work"]);
     await daemon.stop();
   });
@@ -705,10 +954,13 @@ describe("audit", () => {
     db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara" }));
     const { token, capability } = daemon.capabilities.mint("maya", "writer");
 
-    await callTool(daemon, token, "hive_land", { agent: "zara", capabilityEpoch: 0 });
+    await callTool(daemon, token, "hive_land", {
+      agent: "zara",
+      capabilityEpoch: 0,
+    });
 
-    const entry = listAuditEntries(db, 50).find((row) =>
-      row.decision === "deny" && row.action === "branch:land"
+    const entry = listAuditEntries(db, 50).find(
+      (row) => row.decision === "deny" && row.action === "branch:land",
     );
     expect(entry).toBeDefined();
     expect(entry?.callerSubject).toBe("maya");
@@ -725,8 +977,14 @@ describe("audit", () => {
     const { token } = daemon.capabilities.mint("maya", "writer");
     const secret = token.split(".")[2]!;
 
-    await callTool(daemon, token, "hive_spawn", { task: "denied", category: "simple_coding" });
-    await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    await callTool(daemon, token, "hive_spawn", {
+      task: "denied",
+      category: "simple_coding",
+    });
+    await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
 
     const serialized = JSON.stringify(listAuditEntries(db, 50));
     expect(serialized).not.toContain(secret);
@@ -749,7 +1007,8 @@ describe("audit", () => {
     const { daemon, db } = harness();
     const { token, capability } = daemon.capabilities.mint("maya", "writer");
     const secret = token.split(".")[2]!;
-    const row = db.database.query("SELECT secretHash FROM capabilities WHERE id = ?")
+    const row = db.database
+      .query("SELECT secretHash FROM capabilities WHERE id = ?")
       .get(capability.id) as { secretHash: string };
     expect(row.secretHash).not.toContain(secret);
     expect(row.secretHash).toMatch(/^[0-9a-f]{64}$/);
@@ -762,9 +1021,10 @@ describe("audit", () => {
 // grant one on evidence it does not have.
 describe("a spent land grant is measured before a human is asked", () => {
   const pendingRearms = (db: HiveDatabase): number =>
-    db.listApprovals("pending").filter(
-      (approval) => approval.description.startsWith("Re-arm landing"),
-    ).length;
+    db
+      .listApprovals("pending")
+      .filter((approval) => approval.description.startsWith("Re-arm landing"))
+      .length;
 
   const autoRearms = (daemon: HiveDaemon): number =>
     listAuditEntries(daemon.db, 50).filter(
@@ -780,8 +1040,18 @@ describe("a spent land grant is measured before a human is asked", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
-    const again = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    const again = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(again.ok).toBe(false);
     expect(again.error).toContain("Nothing to land for maya");
     expect(again.error).toContain("No re-arm approval was filed");
@@ -801,7 +1071,10 @@ describe("a spent land grant is measured before a human is asked", () => {
     // The granted landing plus AUTO_REARM_BUDGET re-armed ones, none of which
     // touches a human.
     for (let attempt = 0; attempt <= AUTO_REARM_BUDGET; attempt += 1) {
-      const result = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+      const result = await callTool(daemon, token, "hive_land", {
+        agent: "maya",
+        capabilityEpoch: 0,
+      });
       expect(result.ok).toBe(true);
     }
     expect(landed).toHaveLength(AUTO_REARM_BUDGET + 1);
@@ -809,7 +1082,10 @@ describe("a spent land grant is measured before a human is asked", () => {
     expect(pendingRearms(db)).toBe(0);
 
     // The budget is a bound, not a bypass: the next landing asks.
-    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(refused.ok).toBe(false);
     expect(refused.error).toContain("already spent");
     expect(pendingRearms(db)).toBe(1);
@@ -826,8 +1102,18 @@ describe("a spent land grant is measured before a human is asked", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
-    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(refused.ok).toBe(false);
     expect(autoRearms(daemon)).toBe(0);
     expect(pendingRearms(db)).toBe(1);
@@ -844,8 +1130,18 @@ describe("a spent land grant is measured before a human is asked", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
-    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(refused.ok).toBe(false);
     expect(refused.error).toContain("already spent");
     expect(refused.error).not.toContain("Nothing to land");
@@ -864,9 +1160,19 @@ describe("a spent land grant is measured before a human is asked", () => {
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
-    expect((await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 })).ok).toBe(true);
+    expect(
+      (
+        await callTool(daemon, token, "hive_land", {
+          agent: "maya",
+          capabilityEpoch: 0,
+        })
+      ).ok,
+    ).toBe(true);
     db.upsertAgent(agentRecord({ writeRevoked: true }));
-    const refused = await callTool(daemon, token, "hive_land", { agent: "maya", capabilityEpoch: 0 });
+    const refused = await callTool(daemon, token, "hive_land", {
+      agent: "maya",
+      capabilityEpoch: 0,
+    });
     expect(refused.ok).toBe(false);
     expect(refused.error).toContain("revoked");
     expect(autoRearms(daemon)).toBe(0);

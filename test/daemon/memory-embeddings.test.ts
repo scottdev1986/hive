@@ -4,13 +4,13 @@
 // is ALWAYS mocked here — `bun test` never downloads a model. The real-model
 // paraphrase-recall gate lives in test/memory-embedding-live.test.ts behind
 // HIVE_LIVE_MEMORY_EMBEDDINGS=1.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeMemoryFact } from "../../src/adapters/memory";
-import { HiveConfigSchema } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import {
@@ -19,16 +19,17 @@ import {
   EMBEDDINGS_RUNTIME_HOME_ENV,
   embeddingsRuntimeDir,
   MEMORY_EMBEDDING_API_KEY_ENV,
+  type MemoryEmbedder,
   MemoryEmbeddingIndex,
   MemoryEmbeddingService,
   probeExternalRuntime,
-  type MemoryEmbedder,
 } from "../../src/daemon/memory-embeddings";
 import { MemoryIndex } from "../../src/daemon/memory-index";
 import { buildMemoryRecallBundle } from "../../src/daemon/memory-triggers";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import type { AgentRecord } from "../../src/schemas";
+import { HiveConfigSchema } from "../../src/schemas";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -44,12 +45,16 @@ beforeEach(() => {
 afterEach(async () => {
   if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
   else Bun.env.HIVE_HOME = previousHiveHome;
-  if (previousApiKey === undefined) delete Bun.env[MEMORY_EMBEDDING_API_KEY_ENV];
+  if (previousApiKey === undefined)
+    delete Bun.env[MEMORY_EMBEDDING_API_KEY_ENV];
   else Bun.env[MEMORY_EMBEDDING_API_KEY_ENV] = previousApiKey;
-  if (previousEmbeddingsHome === undefined) delete Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
+  if (previousEmbeddingsHome === undefined)
+    delete Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
   else Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV] = previousEmbeddingsHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -61,12 +66,14 @@ async function makeTempDir(prefix: string): Promise<string> {
 
 /** A deterministic mock embedder: 4-dim vectors from a text lookup, with a
  * fixed query vector. Tests control the geometry exactly. */
-function mockEmbedder(overrides: {
-  vectors?: Map<string, number[]>;
-  queryVector?: number[];
-  model?: string;
-  failOnEmbed?: boolean;
-} = {}): MemoryEmbedder {
+function mockEmbedder(
+  overrides: {
+    vectors?: Map<string, number[]>;
+    queryVector?: number[];
+    model?: string;
+    failOnEmbed?: boolean;
+  } = {},
+): MemoryEmbedder {
   const vectors = overrides.vectors ?? new Map<string, number[]>();
   const fallback = [1, 0, 0, 0];
   return {
@@ -116,16 +123,18 @@ describe("config schema ([memory] embedding knobs, D4)", () => {
 
   test("unknown provider or model is rejected", () => {
     expect(() =>
-      HiveConfigSchema.parse({ memory: { embedding_provider: "auto" } })
+      HiveConfigSchema.parse({ memory: { embedding_provider: "auto" } }),
     ).toThrow();
     expect(() =>
-      HiveConfigSchema.parse({ memory: { embedding_model: "text-embedding-3" } })
+      HiveConfigSchema.parse({
+        memory: { embedding_model: "text-embedding-3" },
+      }),
     ).toThrow();
   });
 
   test("unknown keys are rejected (strict)", () => {
     expect(() =>
-      HiveConfigSchema.parse({ memory: { embedding_fallback: "api" } })
+      HiveConfigSchema.parse({ memory: { embedding_fallback: "api" } }),
     ).toThrow();
   });
 });
@@ -206,8 +215,12 @@ describe("EpisodicStore vector store", () => {
       facts: new Set(["current"]),
     });
     expect(pruned).toBe(2);
-    expect(store.memoryEmbeddings().map((row) => row.sourceId).sort())
-      .toEqual(["current", "keep-me"]);
+    expect(
+      store
+        .memoryEmbeddings()
+        .map((row) => row.sourceId)
+        .sort(),
+    ).toEqual(["current", "keep-me"]);
     store.close();
   });
 
@@ -232,7 +245,9 @@ describe("cosineSimilarity", () => {
   test("identical / orthogonal / opposite / zero", () => {
     expect(cosineSimilarity(Float32Array.from([1, 0]), [1, 0])).toBeCloseTo(1);
     expect(cosineSimilarity(Float32Array.from([1, 0]), [0, 1])).toBeCloseTo(0);
-    expect(cosineSimilarity(Float32Array.from([1, 0]), [-1, 0])).toBeCloseTo(-1);
+    expect(cosineSimilarity(Float32Array.from([1, 0]), [-1, 0])).toBeCloseTo(
+      -1,
+    );
     expect(cosineSimilarity(Float32Array.from([0, 0]), [1, 0])).toBe(0);
   });
 });
@@ -292,8 +307,9 @@ describe("MemoryEmbeddingService", () => {
     );
     const status = service.status();
     expect(status.state).toBe("unavailable");
-    expect((status as { detail: string }).detail)
-      .toContain(MEMORY_EMBEDDING_API_KEY_ENV);
+    expect((status as { detail: string }).detail).toContain(
+      MEMORY_EMBEDDING_API_KEY_ENV,
+    );
     expect(await service.embedder()).toBeNull();
     expect(loads).toBe(0);
   });
@@ -325,8 +341,9 @@ describe("external embedding runtime resolution (defect D1)", () => {
     expect(embeddingsRuntimeDir()).toBe("/override/runtime");
     delete Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
     Bun.env.HIVE_HOME = "/tmp/hive-test-home";
-    expect(embeddingsRuntimeDir())
-      .toBe(join("/tmp/hive-test-home", "tools", "embeddings"));
+    expect(embeddingsRuntimeDir()).toBe(
+      join("/tmp/hive-test-home", "tools", "embeddings"),
+    );
   });
 
   test("a broken bundle is a DISTINCT labeled state, never a generic failure", async () => {
@@ -358,8 +375,9 @@ describe("external embedding runtime resolution (defect D1)", () => {
 
   test("the install probe refuses a runtime dir with no bundle", async () => {
     const runtimeDir = await makeTempDir("hive-hm5-runtime-");
-    await expect(probeExternalRuntime(runtimeDir, "bge-small-en-v1.5", "/tmp"))
-      .rejects.toThrow("embedding-runtime-missing");
+    await expect(
+      probeExternalRuntime(runtimeDir, "bge-small-en-v1.5", "/tmp"),
+    ).rejects.toThrow("embedding-runtime-missing");
   });
 });
 
@@ -383,13 +401,15 @@ describe("MemoryEmbeddingIndex", () => {
   test("upsertArticle stores the embedded vector; search ranks by cosine", async () => {
     const near = [0.9, 0.1, 0, 0];
     const far = [0, 1, 0, 0];
-    const { store, index } = makeIndex(mockEmbedder({
-      vectors: new Map([
-        ["near text", near],
-        ["far text", far],
-      ]),
-      queryVector: [1, 0, 0, 0],
-    }));
+    const { store, index } = makeIndex(
+      mockEmbedder({
+        vectors: new Map([
+          ["near text", near],
+          ["far text", far],
+        ]),
+        queryVector: [1, 0, 0, 0],
+      }),
+    );
     // The first upserts ride the queued path (the model load must not block
     // a write); settle drains the background projections.
     await index.upsertArticle("repo", "near", "near text");
@@ -441,8 +461,9 @@ describe("MemoryEmbeddingIndex", () => {
     expect(await index.upsertArticle("repo", "x", "x text")).toBe("queued");
     await index.settle();
     // The failure is memoized — later writes report the state, no retry.
-    expect(await index.upsertArticle("repo", "y", "y text"))
-      .toBe("unavailable:unavailable");
+    expect(await index.upsertArticle("repo", "y", "y text")).toBe(
+      "unavailable:unavailable",
+    );
     expect(store.memoryEmbeddings()).toHaveLength(0);
     store.close();
   });
@@ -451,11 +472,13 @@ describe("MemoryEmbeddingIndex", () => {
     const { store, index } = makeIndex(mockEmbedder());
     // The first upsert queues behind the model load; once settled the leg is
     // warm and the next upsert reports the true outcome.
-    expect(await index.upsertArticle("repo", "cold", "cold text"))
-      .toBe("queued");
+    expect(await index.upsertArticle("repo", "cold", "cold text")).toBe(
+      "queued",
+    );
     await index.settle();
-    expect(await index.upsertArticle("repo", "warm", "warm text"))
-      .toBe("indexed");
+    expect(await index.upsertArticle("repo", "warm", "warm text")).toBe(
+      "indexed",
+    );
     expect(store.memoryEmbeddings()).toHaveLength(2);
     store.close();
 
@@ -468,8 +491,9 @@ describe("MemoryEmbeddingIndex", () => {
       store: apiStore,
       service: apiService,
     });
-    expect(await apiIndex.upsertArticle("repo", "x", "x text"))
-      .toBe("unavailable:disabled");
+    expect(await apiIndex.upsertArticle("repo", "x", "x text")).toBe(
+      "unavailable:disabled",
+    );
     apiStore.close();
   });
 
@@ -508,7 +532,9 @@ const writeInput = (title: string, body: string, kind = "article") => ({
   supersedes: [],
 });
 
-async function makeWiki(articles: Array<{ title: string; body: string; kind?: string }>): Promise<{
+async function makeWiki(
+  articles: Array<{ title: string; body: string; kind?: string }>,
+): Promise<{
   repo: string;
   index: MemoryIndex;
 }> {
@@ -574,21 +600,26 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
       repoRoot: () => repo,
       semantic: () =>
         Promise.resolve([
-          { scope: "repo", id: "lease-renewal-blocks-overlapping-agents", score: 0.9 },
+          {
+            scope: "repo",
+            id: "lease-renewal-blocks-overlapping-agents",
+            score: 0.9,
+          },
           { scope: "repo", id: "unrelated-pitfall-about-ports", score: 0.5 },
         ]),
     });
     expect(bundle.state).toBe("ok");
     const all = [...bundle.pitfalls, ...bundle.articles];
-    const lease = all.find((row) =>
-      row.id === "lease-renewal-blocks-overlapping-agents"
+    const lease = all.find(
+      (row) => row.id === "lease-renewal-blocks-overlapping-agents",
     );
     expect(lease).toBeDefined();
     expect(lease!.title).toBe("Lease renewal blocks overlapping agents");
     expect(lease!.snippet.length).toBeGreaterThan(0);
     // The pitfall semantic hit lands in the pitfall partition.
-    expect(bundle.pitfalls.map((row) => row.id))
-      .toContain("unrelated-pitfall-about-ports");
+    expect(bundle.pitfalls.map((row) => row.id)).toContain(
+      "unrelated-pitfall-about-ports",
+    );
   });
 
   test("RRF blend: a hit on both legs outranks a hit on one", async () => {
@@ -601,8 +632,16 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
       repoRoot: () => repo,
       semantic: () =>
         Promise.resolve([
-          { scope: "repo", id: "lease-renewal-blocks-overlapping-agents", score: 0.9 },
-          { scope: "repo", id: "token-budgets-clamp-recall-bundles", score: 0.8 },
+          {
+            scope: "repo",
+            id: "lease-renewal-blocks-overlapping-agents",
+            score: 0.9,
+          },
+          {
+            scope: "repo",
+            id: "token-budgets-clamp-recall-bundles",
+            score: 0.8,
+          },
         ]),
     });
     expect(bundle.articles.map((row) => row.id)).toEqual([
@@ -627,9 +666,7 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
       memory: index,
       repoRoot: () => repo,
       semantic: () =>
-        Promise.resolve([
-          { scope: "repo", id: "ghost-article", score: 0.99 },
-        ]),
+        Promise.resolve([{ scope: "repo", id: "ghost-article", score: 0.99 }]),
     });
     const all = [...bundle.pitfalls, ...bundle.articles];
     expect(all.find((row) => row.id === "ghost-article")).toBeUndefined();

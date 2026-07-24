@@ -3,11 +3,11 @@
 import { Command, CommanderError } from "commander";
 import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
 import {
-  autonomyCli,
   attachGrantCli,
+  autonomyCli,
+  deleteMemoryCli,
   killAgentCli,
   killOrigin,
-  deleteMemoryCli,
   printQuotaStatus,
   printStatus,
   readMemoryCli,
@@ -20,24 +20,22 @@ import {
 } from "./cli/control";
 import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
+import { runEmbeddingsInstall } from "./cli/embeddings";
 import {
+  type HookEventOptions,
   readHookStdin,
   runHiveEvent,
-  type HookEventOptions,
 } from "./cli/event";
-import { runWorkspaceOrchestrator } from "./cli/orchestrator-supervisor";
-import {
-  runGraphifyEnable,
-  runGraphifyStatus,
-} from "./cli/graphify";
-import { runEmbeddingsInstall } from "./cli/embeddings";
+import { runGraphifyEnable, runGraphifyStatus } from "./cli/graphify";
 import { runInitCli } from "./cli/init";
+import { memoryConsolidateCli } from "./cli/memory-consolidate";
 import { memorySelfTestCli } from "./cli/memory-self-test";
 import { memoryLiveSelfTestCli } from "./cli/memory-self-test-live";
-import { memoryConsolidateCli } from "./cli/memory-consolidate";
+import { printModelControlSnapshot } from "./cli/model-control";
+import { runWorkspaceOrchestrator } from "./cli/orchestrator-supervisor";
 import { projectRootOrCwd } from "./cli/project-root";
-import { printRouting } from "./cli/routing";
 import { promoteDefaultModelControl } from "./cli/promote-default";
+import { printRouting } from "./cli/routing";
 import {
   exportRoutingPolicy,
   printRoutingPolicy,
@@ -47,13 +45,8 @@ import {
   setProviderPolicy,
   setSelectionMode,
 } from "./cli/routing-policy";
-import { printModelControlSnapshot } from "./cli/model-control";
 import { runStatusline } from "./cli/statusline";
 import { runUninstall } from "./cli/uninstall";
-import {
-  CapabilityProviderSchema,
-  type CapabilityProvider,
-} from "./schemas/capability";
 import {
   printUpdateStatus,
   runRollback,
@@ -65,26 +58,27 @@ import {
   wantsUpdateNotice,
   withTrailingUpdateNotice,
 } from "./cli/update-notice";
-import { repairIdentityFromStagedVersionProbe } from "./update/bootstrap";
 import { runWorkspace } from "./cli/workspace";
 import { runWorkspaceFeedCli } from "./cli/workspace-feed";
-import {
-  printInstances,
-  selectInstanceFromArgv,
-} from "./daemon/instances";
-import { versionLine } from "./version";
 import { verifyDaemonInstance } from "./daemon/handshake";
+import { printInstances, selectInstanceFromArgv } from "./daemon/instances";
 import type {
   MemoryScope,
   MemorySource,
   MemoryVerificationStatus,
 } from "./schemas";
 import {
-  MemoryWriterSourceSchema,
   MemoryVerificationStatusSchema,
+  MemoryWriterSourceSchema,
   SessionLocatorSchema,
   TerminalGeometrySchema,
 } from "./schemas";
+import {
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "./schemas/capability";
+import { repairIdentityFromStagedVersionProbe } from "./update/bootstrap";
+import { versionLine } from "./version";
 
 export interface EventCliOptions {
   agent?: string;
@@ -197,16 +191,23 @@ function parseEventPayload(value: string | undefined): HookEventOptions {
   }
   const usageSource = parsed.usageSource ?? parsed.usage_source;
   if (usageSource !== undefined) {
-    if (usageSource !== "provider" && usageSource !== "gateway" &&
-      usageSource !== "estimated") {
+    if (
+      usageSource !== "provider" &&
+      usageSource !== "gateway" &&
+      usageSource !== "estimated"
+    ) {
       throw new Error("Event payload usageSource is invalid");
     }
     payload.usageSource = usageSource;
   }
   // Codex's notify payload names the conversation "thread-id"; it is the
   // session id `codex resume` accepts, so crash recovery records it.
-  const toolSessionId = parsed["thread-id"] ?? parsed.threadId ??
-    parsed["session-id"] ?? parsed.sessionId ?? parsed.session_id;
+  const toolSessionId =
+    parsed["thread-id"] ??
+    parsed.threadId ??
+    parsed["session-id"] ??
+    parsed.sessionId ??
+    parsed.session_id;
   if (toolSessionId !== undefined) {
     if (typeof toolSessionId !== "string" || toolSessionId.length === 0) {
       throw new Error("Event payload session id must be a non-empty string");
@@ -264,37 +265,51 @@ export function createProgram(): Command {
     .description(
       "Scaffold this repo's agent conventions and seed its memory without starting Hive",
     )
-    .option("--scaffold-agents", "offer to scaffold an AGENTS.md when none exists")
-    .option("--seed-facts <path>", "JSON file of narrative facts to seed (source: init)")
+    .option(
+      "--scaffold-agents",
+      "offer to scaffold an AGENTS.md when none exists",
+    )
+    .option(
+      "--seed-facts <path>",
+      "JSON file of narrative facts to seed (source: init)",
+    )
     .option(
       "--force",
       "replace a Hive skill you have edited with the version Hive ships",
     )
-    .action(async (options: {
-      scaffoldAgents?: boolean;
-      seedFacts?: string;
-      force?: boolean;
-    }) => {
-      const root = projectRootOrCwd();
-      await runInitCli({
-        cwd: root,
-        ...(options.scaffoldAgents === undefined
-          ? {}
-          : { scaffoldAgents: options.scaffoldAgents }),
-        ...(options.seedFacts === undefined
-          ? {}
-          : { seedFacts: options.seedFacts }),
-        ...(options.force === undefined ? {} : { force: options.force }),
-      });
-    });
+    .action(
+      async (options: {
+        scaffoldAgents?: boolean;
+        seedFacts?: string;
+        force?: boolean;
+      }) => {
+        const root = projectRootOrCwd();
+        await runInitCli({
+          cwd: root,
+          ...(options.scaffoldAgents === undefined
+            ? {}
+            : { scaffoldAgents: options.scaffoldAgents }),
+          ...(options.seedFacts === undefined
+            ? {}
+            : { seedFacts: options.seedFacts }),
+          ...(options.force === undefined ? {} : { force: options.force }),
+        });
+      },
+    );
 
   program
     .command("uninstall")
     .description(
       "Completely remove Hive from this machine; --repo removes it from the current repo instead",
     )
-    .option("--repo", "remove only what Hive installed into (and derived for) this repo")
-    .option("--yes", "skip the confirmation prompt (required when not on a terminal)")
+    .option(
+      "--repo",
+      "remove only what Hive installed into (and derived for) this repo",
+    )
+    .option(
+      "--yes",
+      "skip the confirmation prompt (required when not on a terminal)",
+    )
     .action(async (options: { repo?: boolean; yes?: boolean }) => {
       process.exitCode = await runUninstall(projectRootOrCwd(), {
         ...(options.repo === undefined ? {} : { repo: options.repo }),
@@ -304,26 +319,34 @@ export function createProgram(): Command {
 
   const update = program
     .command("update [version]")
-    .description("Update the installed Hive to the latest (or an exact) release")
+    .description(
+      "Update the installed Hive to the latest (or an exact) release",
+    )
     .action(async (version?: string) => {
       await runUpdate(version);
     });
 
-  update.command("check")
+  update
+    .command("check")
     .description("Check for a newer release; exit 10 when one is available")
     .action(async () => {
       process.exitCode = await runUpdateCheck();
     });
 
-  update.command("status")
-    .description("Show version, install method, retained versions, and last check")
+  update
+    .command("status")
+    .description(
+      "Show version, install method, retained versions, and last check",
+    )
     .action(printUpdateStatus);
 
-  update.command("rollback")
+  update
+    .command("rollback")
     .description("Reactivate the retained previous version")
     .action(runRollback);
 
-  update.command("skip")
+  update
+    .command("skip")
     .description("Silence update notices for the currently offered version")
     .action(runUpdateSkip);
 
@@ -369,7 +392,7 @@ export function createProgram(): Command {
     .action((options: { port?: string }) =>
       printRoutingPolicy(
         options.port === undefined ? undefined : parsePort(options.port),
-      )
+      ),
     );
   routing
     .command("export")
@@ -380,7 +403,7 @@ export function createProgram(): Command {
     .action((options: { port?: string }) =>
       exportRoutingPolicy(
         options.port === undefined ? undefined : parsePort(options.port),
-      )
+      ),
     );
   routing
     .command("promote-default")
@@ -404,17 +427,18 @@ export function createProgram(): Command {
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
     .option("--port <number>", "daemon port")
-    .action((
-      provider: string,
-      state: string,
-      options: { expectRevision: string; port?: string },
-    ) =>
-      setProviderPolicy(
-        provider,
-        state,
-        options.expectRevision,
-        options.port === undefined ? undefined : parsePort(options.port),
-      )
+    .action(
+      (
+        provider: string,
+        state: string,
+        options: { expectRevision: string; port?: string },
+      ) =>
+        setProviderPolicy(
+          provider,
+          state,
+          options.expectRevision,
+          options.port === undefined ? undefined : parsePort(options.port),
+        ),
     );
   routing
     .command("set-model <provider> <model> <state>")
@@ -427,18 +451,21 @@ export function createProgram(): Command {
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
     .option("--port <number>", "daemon port")
-    .action((
-      provider: string,
-      model: string,
-      state: string,
-      options: { expectRevision: string; port?: string },
-    ) => setModelPolicy(
-      provider,
-      model,
-      state,
-      options.expectRevision,
-      options.port === undefined ? undefined : parsePort(options.port),
-    ));
+    .action(
+      (
+        provider: string,
+        model: string,
+        state: string,
+        options: { expectRevision: string; port?: string },
+      ) =>
+        setModelPolicy(
+          provider,
+          model,
+          state,
+          options.expectRevision,
+          options.port === undefined ? undefined : parsePort(options.port),
+        ),
+    );
   routing
     .command("set-effort <provider> <model> <effort>")
     .description(
@@ -450,18 +477,21 @@ export function createProgram(): Command {
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
     .option("--port <number>", "daemon port")
-    .action((
-      provider: string,
-      model: string,
-      effort: string,
-      options: { expectRevision: string; port?: string },
-    ) => setModelEffort(
-      provider,
-      model,
-      effort,
-      options.expectRevision,
-      options.port === undefined ? undefined : parsePort(options.port),
-    ));
+    .action(
+      (
+        provider: string,
+        model: string,
+        effort: string,
+        options: { expectRevision: string; port?: string },
+      ) =>
+        setModelEffort(
+          provider,
+          model,
+          effort,
+          options.expectRevision,
+          options.port === undefined ? undefined : parsePort(options.port),
+        ),
+    );
   routing
     .command("set-selection <mode>")
     .description(
@@ -476,17 +506,24 @@ export function createProgram(): Command {
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
-    .action((
-      mode: string,
-      options: { category?: string; expectRevision: string; port?: string },
-    ) => setSelectionMode(
-      mode,
-      {
-        ...(options.category === undefined ? {} : { category: options.category }),
-        ...(options.port === undefined ? {} : { port: parsePort(options.port) }),
-      },
-      options.expectRevision,
-    ));
+    .action(
+      (
+        mode: string,
+        options: { category?: string; expectRevision: string; port?: string },
+      ) =>
+        setSelectionMode(
+          mode,
+          {
+            ...(options.category === undefined
+              ? {}
+              : { category: options.category }),
+            ...(options.port === undefined
+              ? {}
+              : { port: parsePort(options.port) }),
+          },
+          options.expectRevision,
+        ),
+    );
   routing
     .command("set-chain <category> [entries...]")
     .description(
@@ -499,16 +536,19 @@ export function createProgram(): Command {
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
     .option("--port <number>", "daemon port")
-    .action((
-      category: string,
-      entries: string[],
-      options: { expectRevision: string; port?: string },
-    ) => setCategoryChain(
-      category,
-      entries,
-      options.expectRevision,
-      options.port === undefined ? undefined : parsePort(options.port),
-    ));
+    .action(
+      (
+        category: string,
+        entries: string[],
+        options: { expectRevision: string; port?: string },
+      ) =>
+        setCategoryChain(
+          category,
+          entries,
+          options.expectRevision,
+          options.port === undefined ? undefined : parsePort(options.port),
+        ),
+    );
 
   program
     .command("kill <agent>")
@@ -519,20 +559,23 @@ export function createProgram(): Command {
     )
     .option("--port <number>", "daemon port")
     .option("--session-locator <json>", "exact pane session locator")
-    .action(async (
-      agent: string,
-      options: { port?: string; sessionLocator?: string },
-    ) => {
-      const locator = options.sessionLocator === undefined
-        ? undefined
-        : SessionLocatorSchema.parse(JSON.parse(options.sessionLocator));
-      await killAgentCli(
-        agent,
-        options.port === undefined ? undefined : parsePort(options.port),
-        locator,
-        killOrigin("kill"),
-      );
-    });
+    .action(
+      async (
+        agent: string,
+        options: { port?: string; sessionLocator?: string },
+      ) => {
+        const locator =
+          options.sessionLocator === undefined
+            ? undefined
+            : SessionLocatorSchema.parse(JSON.parse(options.sessionLocator));
+        await killAgentCli(
+          agent,
+          options.port === undefined ? undefined : parsePort(options.port),
+          locator,
+          killOrigin("kill"),
+        );
+      },
+    );
 
   program
     .command("workspace-attach <agent>")
@@ -544,27 +587,31 @@ export function createProgram(): Command {
     .requiredOption("--viewer-id <id>", "renderer viewer identity")
     .requiredOption("--geometry <json>", "terminal geometry for the grant")
     .option("--port <number>", "daemon port")
-    .action(async (
-      agent: string,
-      options: {
-        port?: string;
-        sessionLocator: string;
-        viewerId: string;
-        geometry: string;
+    .action(
+      async (
+        agent: string,
+        options: {
+          port?: string;
+          sessionLocator: string;
+          viewerId: string;
+          geometry: string;
+        },
+      ) => {
+        const locator = SessionLocatorSchema.parse(
+          JSON.parse(options.sessionLocator),
+        );
+        const geometry = TerminalGeometrySchema.parse(
+          JSON.parse(options.geometry),
+        );
+        await attachGrantCli(
+          agent,
+          locator,
+          options.viewerId,
+          geometry,
+          options.port === undefined ? undefined : parsePort(options.port),
+        );
       },
-    ) => {
-      const locator = SessionLocatorSchema.parse(
-        JSON.parse(options.sessionLocator),
-      );
-      const geometry = TerminalGeometrySchema.parse(JSON.parse(options.geometry));
-      await attachGrantCli(
-        agent,
-        locator,
-        options.viewerId,
-        geometry,
-        options.port === undefined ? undefined : parsePort(options.port),
-      );
-    });
+    );
 
   program
     .command("autonomy [mode]")
@@ -585,7 +632,8 @@ export function createProgram(): Command {
     .description("Show quota capacity, reservations, telemetry, and resets")
     .action(printQuotaStatus);
 
-  quota.command("reconcile")
+  quota
+    .command("reconcile")
     .description("Record a manual provider dashboard observation")
     .requiredOption("--provider <provider>", "claude, codex, or grok")
     .option("--account <account>", "account scope", "default")
@@ -597,15 +645,13 @@ export function createProgram(): Command {
     .option("--weekly-reset-at <iso>", "known weekly reset time")
     .action(async (options: QuotaReconcileOptions) => {
       const provider = CapabilityProviderSchema.safeParse(options.provider);
-      if (!provider.success) throw new Error("provider must be claude, codex, or grok");
+      if (!provider.success)
+        throw new Error("provider must be claude, codex, or grok");
       await recordQuotaObservation({
         provider: provider.data,
         account: options.account,
         pool: options.pool,
-        fiveHourUsed: parseNonnegative(
-          options.fiveHourUsed,
-          "five-hour-used",
-        ),
+        fiveHourUsed: parseNonnegative(options.fiveHourUsed, "five-hour-used"),
         weeklyUsed: parseNonnegative(options.weeklyUsed, "weekly-used"),
         observedAt: options.observedAt ?? new Date().toISOString(),
         fiveHourResetAt: options.fiveHourResetAt ?? null,
@@ -621,15 +667,15 @@ export function createProgram(): Command {
       "Build and inspect Hive's local code knowledge graph (docs/graphify/integration.md)",
     );
 
-  graphify.command("enable")
-    .description(
-      "Install or refresh Graphify, then build the local code graph",
-    )
+  graphify
+    .command("enable")
+    .description("Install or refresh Graphify, then build the local code graph")
     .action(async () => {
       process.exitCode = await runGraphifyEnable(projectRootOrCwd());
     });
 
-  graphify.command("status")
+  graphify
+    .command("status")
     .description("Show pin, install state, and graph freshness for this repo")
     .action(async () => {
       process.exitCode = await runGraphifyStatus(projectRootOrCwd());
@@ -641,7 +687,8 @@ export function createProgram(): Command {
       "Local semantic-memory embedding runtime (required, external to the single-file binary)",
     );
 
-  embeddings.command("install")
+  embeddings
+    .command("install")
     .description(
       "Install the embedding runtime into ~/.hive/tools/embeddings " +
         "(HIVE_EMBEDDINGS_HOME override). A required memory component that " +
@@ -669,31 +716,37 @@ export function createProgram(): Command {
       "Search, read, write, delete, and reindex durable Hive memory articles",
     );
 
-  memory.command("search <query>")
+  memory
+    .command("search <query>")
     .description("Full-text search compiled memory articles")
     .option("--scope <scope>", "repo or global")
     .option("--limit <n>", "max results")
-    .action(async (
-      query: string,
-      options: { scope?: string; limit?: string },
-    ) => {
-      await searchMemoryCli(query, {
-        ...(options.scope === undefined
-          ? {}
-          : { scope: parseMemoryScope(options.scope) }),
-        ...(options.limit === undefined
-          ? {}
-          : { limit: parseNonnegative(options.limit, "limit") }),
-      });
-    });
+    .action(
+      async (query: string, options: { scope?: string; limit?: string }) => {
+        await searchMemoryCli(query, {
+          ...(options.scope === undefined
+            ? {}
+            : { scope: parseMemoryScope(options.scope) }),
+          ...(options.limit === undefined
+            ? {}
+            : { limit: parseNonnegative(options.limit, "limit") }),
+        });
+      },
+    );
 
-  memory.command("write <title>")
-    .description("Record an observation and create or update its compiled article")
+  memory
+    .command("write <title>")
+    .description(
+      "Record an observation and create or update its compiled article",
+    )
     .requiredOption("--scope <scope>", "repo or global")
     .requiredOption("--topic <topic>", "lowercase kebab-case topic")
     .requiredOption("--body <text>", "fact body (Markdown)")
     .requiredOption("--source <source>", "init, agent, orchestrator, or human")
-    .requiredOption("--evidence <text>", "what was measured or supplied, and where")
+    .requiredOption(
+      "--evidence <text>",
+      "what was measured or supplied, and where",
+    )
     .requiredOption(
       "--status <status>",
       "verified, unverified, stale, or conflicted",
@@ -709,58 +762,75 @@ export function createProgram(): Command {
       "--verified <yyyy-mm-dd>",
       "date the fact was last confirmed true against the repo",
     )
-    .action(async (title: string, options: {
-      scope: string;
-      topic: string;
-      body: string;
-      source: string;
-      evidence: string;
-      status: string;
-      supersedes: string;
-      id?: string;
-      tags?: string;
-      date?: string;
-      verified?: string;
-    }) => {
-      await writeMemoryCli({
-        scope: parseMemoryScope(options.scope),
-        topic: options.topic,
-        title,
-        body: options.body,
-        source: parseMemorySource(options.source),
-        evidence: options.evidence,
-        status: parseMemoryStatus(options.status),
-        supersedes: options.supersedes.split(",").map((id) => id.trim()).filter(Boolean),
-        ...(options.id === undefined ? {} : { id: options.id }),
-        ...(options.tags === undefined ? {} : {
-          tags: options.tags.split(",").map((tag) => tag.trim()).filter((
-            tag,
-          ) => tag.length > 0),
-        }),
-        ...(options.date === undefined ? {} : { date: options.date }),
-        ...(options.verified === undefined ? {} : { verified: options.verified }),
-      });
-    });
+    .action(
+      async (
+        title: string,
+        options: {
+          scope: string;
+          topic: string;
+          body: string;
+          source: string;
+          evidence: string;
+          status: string;
+          supersedes: string;
+          id?: string;
+          tags?: string;
+          date?: string;
+          verified?: string;
+        },
+      ) => {
+        await writeMemoryCli({
+          scope: parseMemoryScope(options.scope),
+          topic: options.topic,
+          title,
+          body: options.body,
+          source: parseMemorySource(options.source),
+          evidence: options.evidence,
+          status: parseMemoryStatus(options.status),
+          supersedes: options.supersedes
+            .split(",")
+            .map((id) => id.trim())
+            .filter(Boolean),
+          ...(options.id === undefined ? {} : { id: options.id }),
+          ...(options.tags === undefined
+            ? {}
+            : {
+                tags: options.tags
+                  .split(",")
+                  .map((tag) => tag.trim())
+                  .filter((tag) => tag.length > 0),
+              }),
+          ...(options.date === undefined ? {} : { date: options.date }),
+          ...(options.verified === undefined
+            ? {}
+            : { verified: options.verified }),
+        });
+      },
+    );
 
-  memory.command("read <scope> <id>")
+  memory
+    .command("read <scope> <id>")
     .description("Print one compiled memory article")
     .action(async (scope: string, id: string) => {
       await readMemoryCli(parseMemoryScope(scope), id);
     });
 
-  memory.command("delete <scope> <id>")
+  memory
+    .command("delete <scope> <id>")
     .description("Delete one compiled memory article")
     .action(async (scope: string, id: string) => {
       await deleteMemoryCli(parseMemoryScope(scope), id);
     });
 
-  memory.command("reindex")
+  memory
+    .command("reindex")
     .description(
       "Rebuild the memory search index from the Markdown files on disk",
     )
     .action(reindexMemoryCli);
 
-  memory.command("self-test")
+  memory
+    .command("self-test")
     .description(
       "Golden-canary recall probe: plants canary memories in a throwaway " +
         "fixture and proves search, read-back, dedup, and delete-guard work " +
@@ -790,7 +860,8 @@ export function createProgram(): Command {
       process.exitCode = fixtureCode === 0 && liveCode === 0 ? 0 : 1;
     });
 
-  memory.command("consolidate")
+  memory
+    .command("consolidate")
     .description(
       "Offline consolidation dedup (report first): pairwise cosine over the " +
         "memory vector store; --apply supersedes only >=0.95 identical pairs",
@@ -812,7 +883,7 @@ export function createProgram(): Command {
       "stop even when agents hold unlanded work (skips the confirmation)",
     )
     .action((options: { force?: boolean }) =>
-      stopHive({ force: options.force === true, invokedViaCli: true })
+      stopHive({ force: options.force === true, invokedViaCli: true }),
     );
 
   program
@@ -824,21 +895,20 @@ export function createProgram(): Command {
     .option("--payload <json>", "tool hook JSON payload")
     .option("--description <text>", "approval description")
     .option("--usage-units <number>", "provider or gateway usage units")
-    .option(
-      "--usage-source <source>",
-      "provider, gateway, or estimated",
-    )
+    .option("--usage-source <source>", "provider, gateway, or estimated")
     .action(async (kind: string, options: EventCliOptions) => {
       try {
         // Claude hooks deliver session identity on stdin; explicit CLI and
         // payload options always win over the captured value.
-        await verifyDaemonInstance(parsePort(options.port), options.instanceId!);
-        const captured = await readHookStdin();
-        await runHiveEvent(
-          kind,
+        await verifyDaemonInstance(
           parsePort(options.port),
-          { ...captured, ...buildEventOptions(options) },
+          options.instanceId!,
         );
+        const captured = await readHookStdin();
+        await runHiveEvent(kind, parsePort(options.port), {
+          ...captured,
+          ...buildEventOptions(options),
+        });
       } catch {
         // Commander option parsing and hook delivery must not break agent turns.
       }
@@ -850,13 +920,15 @@ export function createProgram(): Command {
     .requiredOption("--agent <name>", "agent name")
     .requiredOption("--port <number>", "daemon port")
     .requiredOption("--instance-id <id>", "expected Hive instance identity")
-    .action(async (options: { agent: string; port: string; instanceId: string }) => {
-      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-      const stdin = await Bun.stdin.text().catch(() => "");
-      process.stdout.write(
-        await runStatusline(options.agent, parsePort(options.port), stdin),
-      );
-    });
+    .action(
+      async (options: { agent: string; port: string; instanceId: string }) => {
+        await verifyDaemonInstance(parsePort(options.port), options.instanceId);
+        const stdin = await Bun.stdin.text().catch(() => "");
+        process.stdout.write(
+          await runStatusline(options.agent, parsePort(options.port), stdin),
+        );
+      },
+    );
 
   program
     .command("credential")
@@ -893,7 +965,7 @@ export function createProgram(): Command {
     .action((options: { port?: string }) =>
       printModelControlSnapshot(
         options.port === undefined ? undefined : parsePort(options.port),
-      )
+      ),
     );
 
   // The Workspace app's status wire: NDJSON agent snapshots on stdout plus the
@@ -903,17 +975,19 @@ export function createProgram(): Command {
     .requiredOption("--port <number>", "daemon port")
     .requiredOption("--instance-id <id>", "expected Hive instance identity")
     .requiredOption("--workspace-session-id <id>", "Workspace launch identity")
-    .action(async (options: {
-      port: string;
-      instanceId: string;
-      workspaceSessionId: string;
-    }) => {
-      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-      process.exitCode = await runWorkspaceFeedCli(
-        parsePort(options.port),
-        options.workspaceSessionId,
-      );
-    });
+    .action(
+      async (options: {
+        port: string;
+        instanceId: string;
+        workspaceSessionId: string;
+      }) => {
+        process.exitCode = await runWorkspaceFeedCli(
+          parsePort(options.port),
+          options.workspaceSessionId,
+          options.instanceId,
+        );
+      },
+    );
 
   // The Workspace master pane calls this private process boundary. Public
   // `hive claude|codex|grok` launch the app; they must never be invoked from the
@@ -923,17 +997,19 @@ export function createProgram(): Command {
     .requiredOption("--tool <tool>", "claude, codex, or grok")
     .requiredOption("--port <number>", "daemon port")
     .requiredOption("--instance-id <id>", "expected Hive instance identity")
-    .action(async (options: { tool: string; port: string; instanceId: string }) => {
-      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-      const tool = CapabilityProviderSchema.safeParse(options.tool);
-      if (!tool.success) {
-        throw new Error(`unsupported orchestrator tool: ${options.tool}`);
-      }
-      process.exitCode = await runWorkspaceOrchestrator(
-        tool.data,
-        parsePort(options.port),
-      );
-    });
+    .action(
+      async (options: { tool: string; port: string; instanceId: string }) => {
+        await verifyDaemonInstance(parsePort(options.port), options.instanceId);
+        const tool = CapabilityProviderSchema.safeParse(options.tool);
+        if (!tool.success) {
+          throw new Error(`unsupported orchestrator tool: ${options.tool}`);
+        }
+        process.exitCode = await runWorkspaceOrchestrator(
+          tool.data,
+          parsePort(options.port),
+        );
+      },
+    );
 
   program
     .command("codex-app-server-host", { hidden: true })
@@ -966,9 +1042,8 @@ export async function main(argv = process.argv): Promise<number> {
     // The passive update notice trails user-facing commands (npm/gh shape):
     // the check runs alongside the command, the line prints after it, and a
     // failed or slow check is silence, never an error or a stall.
-    await withTrailingUpdateNotice(
-      wantsUpdateNotice(argv),
-      () => createProgram().parseAsync(argv),
+    await withTrailingUpdateNotice(wantsUpdateNotice(argv), () =>
+      createProgram().parseAsync(argv),
     );
     const exitCode = process.exitCode;
     return typeof exitCode === "number" ? exitCode : Number(exitCode ?? 0);

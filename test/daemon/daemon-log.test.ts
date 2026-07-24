@@ -7,10 +7,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DaemonLog, daemonLogPath } from "../../src/daemon/daemon-log";
+import { HiveDatabase } from "../../src/daemon/db";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { HiveDaemon } from "../../src/daemon/server";
-import { HiveDatabase } from "../../src/daemon/db";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import type { AgentRecord } from "../../src/schemas";
 
 const tempRoots: string[] = [];
@@ -24,7 +24,9 @@ afterEach(async () => {
   if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
   else Bun.env.HIVE_HOME = previousHiveHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -40,10 +42,7 @@ describe("DaemonLog", () => {
     Bun.env.HIVE_HOME = home;
     const log = new DaemonLog();
     log.write("Hive memory embeddings: UNAVAILABLE — test line");
-    const content = await readFile(
-      join(home, "logs", "daemon.log"),
-      "utf8",
-    );
+    const content = await readFile(join(home, "logs", "daemon.log"), "utf8");
     const line = content.trimEnd();
     // "<ISO timestamp> <message>"
     const stamp = line.slice(0, 24);
@@ -143,10 +142,7 @@ describe("HiveDaemon daemon-log wiring (defect D2)", () => {
     } finally {
       await daemon.stop();
     }
-    const content = await readFile(
-      join(home, "logs", "daemon.log"),
-      "utf8",
-    );
+    const content = await readFile(join(home, "logs", "daemon.log"), "utf8");
     expect(content).toContain(
       "Hive memory embeddings: provider=local model=bge-small-en-v1.5",
     );

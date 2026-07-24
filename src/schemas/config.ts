@@ -54,9 +54,11 @@ export const MemoryRetentionConfigSchema = z.strictObject({
 });
 
 export const HiveConfigSchema = z.strictObject({
-  codex: z.strictObject({
-    driver: z.enum(["tui", "app-server"]).default("tui"),
-  }).default({ driver: "tui" }),
+  codex: z
+    .strictObject({
+      driver: z.enum(["tui", "app-server"]).default("tui"),
+    })
+    .default({ driver: "tui" }),
   // Agent autonomy. "sandboxed" (the default) runs writers inside
   // their vendor sandboxes with decision 4's approval queue (acceptEdits
   // allowlist, workspace-write + on-request): a fresh install is safe out of
@@ -85,31 +87,37 @@ export const HiveConfigSchema = z.strictObject({
   // 2026-07-12: no external ranking dependency). Nothing reads this value; it
   // remains in the schema so a config.toml written for an older build still
   // parses.
-  benchmarks: z.strictObject({
-    mode: z.enum(["live", "shadow", "off"]).default("live"),
-  }).prefault({}),
+  benchmarks: z
+    .strictObject({
+      mode: z.enum(["live", "shadow", "off"]).default("live"),
+    })
+    .prefault({}),
   resources: ResourceLimitsSchema.prefault({}),
   lifecycle: LifecycleConfigSchema.prefault({}),
-  memory: z.strictObject({
-    retention: MemoryRetentionConfigSchema.prefault({}),
-    // HiveMemory HM-3 WP6 (plan D6): the hard token ceiling for the memory
-    // delta injected over the send lane when an agent wakes (message
-    // delivery or resume). 300 is the ratified default; changes are loud —
-    // the daemon logs the effective budget at start.
-    wake_budget_tokens: z.number().int().positive().default(300),
-    // HiveMemory HM-5 (board #122, plan D4): the semantic recall leg. "local"
-    // (the default) runs a fastembed-class ONNX model in the daemon process,
-    // models cached under the Hive-owned models dir. "api" is a manual
-    // escape-hatch knob only — no API provider ships, and there is NO
-    // automatic fallback machinery: an unavailable semantic surface degrades
-    // recall to the FTS-only bundle, it never switches providers.
-    embedding_provider: z.enum(["local", "api"]).default("local"),
-    embedding_model: MemoryEmbeddingModelSchema.default("bge-small-en-v1.5"),
-  }).prefault({}),
+  memory: z
+    .strictObject({
+      retention: MemoryRetentionConfigSchema.prefault({}),
+      // HiveMemory HM-3 WP6 (plan D6): the hard token ceiling for the memory
+      // delta injected over the send lane when an agent wakes (message
+      // delivery or resume). 300 is the ratified default; changes are loud —
+      // the daemon logs the effective budget at start.
+      wake_budget_tokens: z.number().int().positive().default(300),
+      // HiveMemory HM-5 (board #122, plan D4): the semantic recall leg. "local"
+      // (the default) runs a fastembed-class ONNX model in the daemon process,
+      // models cached under the Hive-owned models dir. "api" is a manual
+      // escape-hatch knob only — no API provider ships, and there is NO
+      // automatic fallback machinery: an unavailable semantic surface degrades
+      // recall to the FTS-only bundle, it never switches providers.
+      embedding_provider: z.enum(["local", "api"]).default("local"),
+      embedding_model: MemoryEmbeddingModelSchema.default("bge-small-en-v1.5"),
+    })
+    .prefault({}),
 });
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
 export type LifecycleConfig = z.infer<typeof LifecycleConfigSchema>;
-export type MemoryRetentionConfig = z.output<typeof MemoryRetentionConfigSchema>;
+export type MemoryRetentionConfig = z.output<
+  typeof MemoryRetentionConfigSchema
+>;
 export type MemoryEmbeddingModel = z.infer<typeof MemoryEmbeddingModelSchema>;
 export type HiveConfig = z.infer<typeof HiveConfigSchema>;

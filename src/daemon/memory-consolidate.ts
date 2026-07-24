@@ -21,12 +21,13 @@
 // store are embedded on demand via the embedding service, and when the
 // service is UNAVAILABLE the pass fails with an honest error rather than
 // silently reporting an empty scan.
-import {
-  discoverMemoryFacts,
-  writeMemoryFact,
-} from "../adapters/memory";
+import { discoverMemoryFacts, writeMemoryFact } from "../adapters/memory";
 import type { MemoryFact } from "../schemas";
-import type { EpisodicFact, EpisodicStore, MemoryEmbeddingRow } from "./episodic-store";
+import type {
+  EpisodicFact,
+  EpisodicStore,
+  MemoryEmbeddingRow,
+} from "./episodic-store";
 import {
   cosineSimilarity,
   MemoryEmbeddingIndex,
@@ -98,9 +99,11 @@ function candidatePairs(rows: ScannedSource[]): ConsolidationCandidate[] {
       });
     }
   }
-  pairs.sort((x, y) =>
-    y.score - x.score || x.olderId.localeCompare(y.olderId) ||
-    x.newerId.localeCompare(y.newerId)
+  pairs.sort(
+    (x, y) =>
+      y.score - x.score ||
+      x.olderId.localeCompare(y.olderId) ||
+      x.newerId.localeCompare(y.newerId),
   );
   return pairs;
 }
@@ -126,7 +129,7 @@ export function countConsolidationCandidates(episodic: EpisodicStore): number {
         if (a.dimensions !== b.dimensions) continue;
         if (
           cosineSimilarity(a.vector, Array.from(b.vector)) >=
-            CONSOLIDATION_SIMILAR_THRESHOLD
+          CONSOLIDATION_SIMILAR_THRESHOLD
         ) {
           count += 1;
         }
@@ -210,10 +213,9 @@ export async function runMemoryConsolidation(options: {
   const articles = new Map<string, MemoryFact>();
   const facts = new Map<string, EpisodicFact>();
   const existing = new Map(
-    episodic.memoryEmbeddings().map((row) => [
-      `${row.kind}${row.scope}${row.sourceId}`,
-      row,
-    ]),
+    episodic
+      .memoryEmbeddings()
+      .map((row) => [`${row.kind}${row.scope}${row.sourceId}`, row]),
   );
   const embedMissing = async (
     kind: "article" | "fact",
@@ -249,24 +251,31 @@ export async function runMemoryConsolidation(options: {
   }
   for (const fact of episodic.currentFacts()) {
     facts.set(fact.id, fact);
-    await embedMissing("fact", "", fact.id, MemoryEmbeddingIndex.factText(fact));
+    await embedMissing(
+      "fact",
+      "",
+      fact.id,
+      MemoryEmbeddingIndex.factText(fact),
+    );
   }
 
   // Scan the rows whose source still exists (stale rows are prune's job, not
   // this pass's) grouped by kind+scope.
   const groups = new Map<string, ScannedSource[]>();
   for (const row of episodic.memoryEmbeddings()) {
-    const source = row.kind === "article"
-      ? articles.get(`${row.scope}${row.sourceId}`)
-      : facts.get(row.sourceId);
+    const source =
+      row.kind === "article"
+        ? articles.get(`${row.scope}${row.sourceId}`)
+        : facts.get(row.sourceId);
     if (source === undefined || row.model !== embedder.model) continue;
     const key = `${row.kind}${row.scope}`;
     const scanned: ScannedSource = {
       row,
       title: source.title,
-      recency: row.kind === "article"
-        ? (source as MemoryFact).date
-        : (source as EpisodicFact).createdAt,
+      recency:
+        row.kind === "article"
+          ? (source as MemoryFact).date
+          : (source as EpisodicFact).createdAt,
     };
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [scanned]);

@@ -18,7 +18,9 @@ const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -49,7 +51,10 @@ async function plantFixtureNodeModules(root: string): Promise<string> {
   const onnxBin = join(nm, "onnxruntime-node", "bin", "napi-v3", "darwin");
   for (const arch of ["arm64", "x64"]) {
     await mkdir(join(onnxBin, arch), { recursive: true });
-    await writeFile(join(onnxBin, arch, "onnxruntime_binding.node"), "native\n");
+    await writeFile(
+      join(onnxBin, arch, "onnxruntime_binding.node"),
+      "native\n",
+    );
   }
   await writeFile(
     join(nm, "onnxruntime-node", "package.json"),
@@ -79,7 +84,14 @@ describe("stageEmbeddingRuntime", () => {
     expect(await readFile(bundlePath, "utf8")).toContain("FlagEmbedding");
     expect(
       await Bun.file(
-        join(runtimeDir, "bin", "napi-v3", "darwin", "arm64", "onnxruntime_binding.node"),
+        join(
+          runtimeDir,
+          "bin",
+          "napi-v3",
+          "darwin",
+          "arm64",
+          "onnxruntime_binding.node",
+        ),
       ).exists(),
     ).toBe(true);
     const install = JSON.parse(
@@ -109,7 +121,9 @@ describe("buildEmbeddingsRuntimeArtifact", () => {
     const entries = await tarList(artifact.path);
     expect(entries).toContain("embeddings-runtime/dist/entry.js");
     expect(entries).toContain("embeddings-runtime/INSTALL.json");
-    expect(entries).toContain("embeddings-runtime/node_modules/fastembed/package.json");
+    expect(entries).toContain(
+      "embeddings-runtime/node_modules/fastembed/package.json",
+    );
     expect(entries).toContain(
       "embeddings-runtime/bin/napi-v3/darwin/arm64/onnxruntime_binding.node",
     );
@@ -118,8 +132,8 @@ describe("buildEmbeddingsRuntimeArtifact", () => {
     );
 
     // The staging dir is cleaned up: only the tarball remains in out/.
-    expect(
-      await Bun.file(join(out, "embeddings-runtime")).exists(),
-    ).toBe(false);
+    expect(await Bun.file(join(out, "embeddings-runtime")).exists()).toBe(
+      false,
+    );
   }, 30_000);
 });

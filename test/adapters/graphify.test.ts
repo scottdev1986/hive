@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
@@ -7,16 +14,16 @@ import {
   buildGraph,
   buildGraphBrief,
   buildTargetedGraphBrief,
+  type CommandRunner,
   GRAPHIFY_IGNORE_MARKER,
   graphifyPin,
   installGraphify,
   noArtifactMessage,
+  type RunResult,
   runCommand,
   scrubbedGraphifyEnv,
   selectGraphBrief,
   writeGraphifyIgnore,
-  type CommandRunner,
-  type RunResult,
 } from "../../src/adapters/graphify";
 import type { GraphifyArtifact } from "../../src/adapters/graphify-artifacts";
 
@@ -104,7 +111,11 @@ describe("scrubbedGraphifyEnv", () => {
     try {
       const env = scrubbedGraphifyEnv();
       expect(Object.keys(env).sort()).toEqual(
-        ["HOME", "PATH", ...(process.env.TMPDIR === undefined ? [] : ["TMPDIR"])].sort(),
+        [
+          "HOME",
+          "PATH",
+          ...(process.env.TMPDIR === undefined ? [] : ["TMPDIR"]),
+        ].sort(),
       );
       expect(env.PATH).toBe("/usr/bin:/bin");
       expect(env.HOME).toContain(join("tools", "graphify"));
@@ -141,7 +152,8 @@ describe("installGraphify", () => {
       },
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe(noArtifactMessage("darwin-arm64"));
+    if (!result.ok)
+      expect(result.reason).toBe(noArtifactMessage("darwin-arm64"));
     expect(fetched).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -163,8 +175,7 @@ describe("installGraphify", () => {
     }
     expect(calls).toEqual([]);
     expect(
-      await stat(join(hiveHome, "tools", "graphify"))
-        .catch(() => null),
+      await stat(join(hiveHome, "tools", "graphify")).catch(() => null),
     ).toBeNull();
   });
 
@@ -184,8 +195,9 @@ describe("installGraphify", () => {
       expect(result.ok).toBe(false);
       expect(await readFile(previous, "utf8")).toBe("working install\n");
       expect(
-        await stat(join(hiveHome, "tools", "graphify", graphifyPin()))
-          .catch(() => null),
+        await stat(join(hiveHome, "tools", "graphify", graphifyPin())).catch(
+          () => null,
+        ),
       ).toBeNull();
     } finally {
       await rm(previousDir, { recursive: true, force: true });
@@ -214,13 +226,17 @@ describe("installGraphify", () => {
     expect(untar[0]).toBe("/usr/bin/tar");
     expect(untar).toContain("--strip-components");
     // Probes run the bundle binaries by absolute path, never a PATH lookup.
-    expect(probe[0]).toContain(join("tools", "graphify", graphifyPin(), "graphify"));
+    expect(probe[0]).toContain(
+      join("tools", "graphify", graphifyPin(), "graphify"),
+    );
     expect(mcpProbe[0]).toContain(
       join("tools", "graphify", graphifyPin(), "graphify-mcp"),
     );
     // The downloaded tarball is cleaned up either way.
     expect(untar[2]).toContain(".download");
-    expect(await readFile(untar[2] as string, "utf8").catch(() => null)).toBeNull();
+    expect(
+      await readFile(untar[2] as string, "utf8").catch(() => null),
+    ).toBeNull();
   });
 
   test("a healthy existing bundle is kept: no download, probes only", async () => {
@@ -253,21 +269,28 @@ describe("installGraphify", () => {
 
 describe("buildGraph", () => {
   test("always --code-only, always scrubbed, by absolute path", async () => {
-    let seen: { argv: string[]; env: Record<string, string> | undefined } | null =
-      null;
+    let seen: {
+      argv: string[];
+      env: Record<string, string> | undefined;
+    } | null = null;
     const run: CommandRunner = async (argv, options) => {
       seen = { argv, env: options.env };
-      return ok("[graphify extract] wrote /r/graphify-out/graph.json: 5 nodes, 9 edges, 2 communities");
+      return ok(
+        "[graphify extract] wrote /r/graphify-out/graph.json: 5 nodes, 9 edges, 2 communities",
+      );
     };
     const result = await buildGraph("/repo", run);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.detail).toBe("5 nodes, 9 edges, 2 communities");
+    if (result.ok)
+      expect(result.detail).toBe("5 nodes, 9 edges, 2 communities");
     const call = seen as unknown as {
       argv: string[];
       env: Record<string, string> | undefined;
     };
     expect(call.argv).toContain("--code-only");
-    expect(call.argv[0]).toContain(join("tools", "graphify", graphifyPin(), "graphify"));
+    expect(call.argv[0]).toContain(
+      join("tools", "graphify", graphifyPin(), "graphify"),
+    );
     expect(call.env).toEqual(scrubbedGraphifyEnv());
     expect(JSON.stringify(call.argv)).not.toContain("--backend");
   });
@@ -303,17 +326,23 @@ describe("buildGraphBrief", () => {
     const root = await gitRepo();
     // Fake an installed binary and graph so the query path is reached.
     const { mkdir, writeFile: write } = await import("node:fs/promises");
-    const { graphifyBin, graphJsonPath } = await import("../../src/adapters/graphify");
+    const { graphifyBin, graphJsonPath } = await import(
+      "../../src/adapters/graphify"
+    );
     const { dirname } = await import("node:path");
     await mkdir(dirname(graphifyBin()), { recursive: true });
     await write(graphifyBin(), "");
     await mkdir(dirname(graphJsonPath(root)), { recursive: true });
     await write(graphJsonPath(root), "{}");
     let seen: { argv: string[]; timeoutMs: number } | null = null;
-    const brief = await buildGraphBrief(root, "fix the bug", async (argv, options) => {
-      seen = { argv, timeoutMs: options.timeoutMs };
-      return { exitCode: 143, stdout: "", stderr: "", timedOut: true };
-    });
+    const brief = await buildGraphBrief(
+      root,
+      "fix the bug",
+      async (argv, options) => {
+        seen = { argv, timeoutMs: options.timeoutMs };
+        return { exitCode: 143, stdout: "", stderr: "", timedOut: true };
+      },
+    );
     expect(brief).toContain("timed out");
     const call = seen as unknown as { argv: string[]; timeoutMs: number };
     // The digest is budgeted and time-boxed — the two bounds that keep the
@@ -323,22 +352,26 @@ describe("buildGraphBrief", () => {
     expect(call.argv).toContain("query");
     // The serializer emits all nodes before any edge; below ~16000 the edges
     // — the only cited, tagged content — never survive to be selected.
-    expect(Number(call.argv[call.argv.indexOf("--budget") + 1]))
-      .toBeGreaterThanOrEqual(16_000);
+    expect(
+      Number(call.argv[call.argv.indexOf("--budget") + 1]),
+    ).toBeGreaterThanOrEqual(16_000);
     await rm(root, { recursive: true, force: true });
   });
 
   test("a healthy query becomes an advisory-prefixed digest", async () => {
     const root = await gitRepo();
     const { mkdir, writeFile: write } = await import("node:fs/promises");
-    const { graphifyBin, graphJsonPath } = await import("../../src/adapters/graphify");
+    const { graphifyBin, graphJsonPath } = await import(
+      "../../src/adapters/graphify"
+    );
     const { dirname } = await import("node:path");
     await mkdir(dirname(graphifyBin()), { recursive: true });
     await write(graphifyBin(), "");
     await mkdir(dirname(graphJsonPath(root)), { recursive: true });
     await write(graphJsonPath(root), "{}");
     const brief = await buildGraphBrief(root, "fix the bug", async () =>
-      ok("NODE server.ts [src=src/daemon/server.ts]"));
+      ok("NODE server.ts [src=src/daemon/server.ts]"),
+    );
     expect(brief).toContain("advisory");
     expect(brief).toContain("verify");
     expect(brief).toContain("NODE server.ts");
@@ -347,11 +380,20 @@ describe("buildGraphBrief", () => {
 });
 
 describe("buildTargetedGraphBrief", () => {
-  const node = (
-    id: string, label: string, file: string, loc = "L1",
-  ) => ({ id, label, source_file: file, source_location: loc, community: 1 });
-  const link = (source: string, target: string, relation = "imports_from") =>
-    ({ relation, confidence: "EXTRACTED", context: "import", source, target });
+  const node = (id: string, label: string, file: string, loc = "L1") => ({
+    id,
+    label,
+    source_file: file,
+    source_location: loc,
+    community: 1,
+  });
+  const link = (source: string, target: string, relation = "imports_from") => ({
+    relation,
+    confidence: "EXTRACTED",
+    context: "import",
+    source,
+    target,
+  });
   const graph = {
     nodes: [
       node("api", "api.ts", "src/api.ts"),
@@ -374,19 +416,31 @@ describe("buildTargetedGraphBrief", () => {
   };
 
   test("surfaces the name-matched seed and the matched-symbol import target", () => {
-    const brief = buildTargetedGraphBrief(graph, "where does the api render an invoice");
+    const brief = buildTargetedGraphBrief(
+      graph,
+      "where does the api render an invoice",
+    );
     expect(brief).not.toBeNull();
     // Cited NODE lines for both files, including the symbol that matched.
     expect(brief).toContain("NODE api.ts [src=src/api.ts loc=L1 community=1]");
-    expect(brief).toContain("NODE renderInvoice() [src=src/billing.ts loc=L7 community=1]");
+    expect(brief).toContain(
+      "NODE renderInvoice() [src=src/billing.ts loc=L7 community=1]",
+    );
     // The relational skeleton rides in upstream's EDGE grammar, module↔module first.
-    const edges = (brief as string).split("\n").filter((l) => l.startsWith("EDGE "));
-    expect(edges[0]).toBe("EDGE api.ts --imports_from [EXTRACTED context=import]--> billing.ts");
+    const edges = (brief as string)
+      .split("\n")
+      .filter((l) => l.startsWith("EDGE "));
+    expect(edges[0]).toBe(
+      "EDGE api.ts --imports_from [EXTRACTED context=import]--> billing.ts",
+    );
     expect(brief).toContain("[graph brief: ");
   });
 
   test("a test file never outranks the code it tests", () => {
-    const brief = buildTargetedGraphBrief(graph, "where does the api render an invoice") as string;
+    const brief = buildTargetedGraphBrief(
+      graph,
+      "where does the api render an invoice",
+    ) as string;
     const apiIndex = brief.indexOf("NODE api.ts ");
     const testIndex = brief.indexOf("src/api.test.ts");
     expect(apiIndex).toBeGreaterThanOrEqual(0);
@@ -396,7 +450,9 @@ describe("buildTargetedGraphBrief", () => {
   test("malformed graphs and matchless tasks return null, never throw", () => {
     expect(buildTargetedGraphBrief(null, "anything")).toBeNull();
     expect(buildTargetedGraphBrief({ nodes: "nope" }, "anything")).toBeNull();
-    expect(buildTargetedGraphBrief({ nodes: [], links: [] }, "anything")).toBeNull();
+    expect(
+      buildTargetedGraphBrief({ nodes: [], links: [] }, "anything"),
+    ).toBeNull();
     expect(buildTargetedGraphBrief(graph, "zzz qqq xxx")).toBeNull();
   });
 });
@@ -405,24 +461,59 @@ describe("buildGraphBrief targeted path", () => {
   test("a parseable graph is answered by Hive's locate with no subprocess", async () => {
     const root = await gitRepo();
     const { mkdir, writeFile: write } = await import("node:fs/promises");
-    const { graphifyBin, graphJsonPath } = await import("../../src/adapters/graphify");
+    const { graphifyBin, graphJsonPath } = await import(
+      "../../src/adapters/graphify"
+    );
     const { dirname } = await import("node:path");
     await mkdir(dirname(graphifyBin()), { recursive: true });
     await write(graphifyBin(), "");
     await mkdir(dirname(graphJsonPath(root)), { recursive: true });
-    await write(graphJsonPath(root), JSON.stringify({
-      nodes: [
-        { id: "auth", label: "auth.ts", source_file: "src/auth.ts", source_location: "L1", community: 1 },
-        { id: "auth_login", label: "loginUser()", source_file: "src/auth.ts", source_location: "L9", community: 1 },
-        { id: "util", label: "util.ts", source_file: "src/util.ts", source_location: "L1", community: 2 },
-      ],
-      links: [{ relation: "imports_from", confidence: "EXTRACTED", context: "import", source: "auth", target: "util" }],
-    }));
+    await write(
+      graphJsonPath(root),
+      JSON.stringify({
+        nodes: [
+          {
+            id: "auth",
+            label: "auth.ts",
+            source_file: "src/auth.ts",
+            source_location: "L1",
+            community: 1,
+          },
+          {
+            id: "auth_login",
+            label: "loginUser()",
+            source_file: "src/auth.ts",
+            source_location: "L9",
+            community: 1,
+          },
+          {
+            id: "util",
+            label: "util.ts",
+            source_file: "src/util.ts",
+            source_location: "L1",
+            community: 2,
+          },
+        ],
+        links: [
+          {
+            relation: "imports_from",
+            confidence: "EXTRACTED",
+            context: "import",
+            source: "auth",
+            target: "util",
+          },
+        ],
+      }),
+    );
     const calls: string[][] = [];
-    const brief = await buildGraphBrief(root, "fix the login flow in auth", async (argv) => {
-      calls.push(argv);
-      return ok();
-    });
+    const brief = await buildGraphBrief(
+      root,
+      "fix the login flow in auth",
+      async (argv) => {
+        calls.push(argv);
+        return ok();
+      },
+    );
     expect(brief).toContain("advisory");
     expect(brief).toContain("Graph locate:");
     expect(brief).toContain("NODE loginUser() [src=src/auth.ts loc=L9");
@@ -437,17 +528,26 @@ describe("selectGraphBrief", () => {
   const output = [
     header,
     "",
-    ...Array.from({ length: 400 }, (_, i) => `NODE filler${i} [src=src/f${i}.ts loc=L1 community=1]`),
+    ...Array.from(
+      { length: 400 },
+      (_, i) => `NODE filler${i} [src=src/f${i}.ts loc=L1 community=1]`,
+    ),
     "NODE alpha [src=src/a.ts loc=L10 community=2]",
     "NODE beta [src=src/b.ts loc=L20 community=2]",
     "EDGE alpha --imports_from [EXTRACTED context=import]--> beta",
-    ...Array.from({ length: 300 }, (_, i) => `EDGE filler${i} --indirect_call [INFERRED context=collection]--> filler${i + 1}`),
+    ...Array.from(
+      { length: 300 },
+      (_, i) =>
+        `EDGE filler${i} --indirect_call [INFERRED context=collection]--> filler${i + 1}`,
+    ),
   ].join("\n");
 
   test("keeps the header, the edges, and cites kept edges' endpoints first", () => {
     const brief = selectGraphBrief(output);
     expect(brief).toContain("Traversal: BFS");
-    expect(brief).toContain("EDGE alpha --imports_from [EXTRACTED context=import]--> beta");
+    expect(brief).toContain(
+      "EDGE alpha --imports_from [EXTRACTED context=import]--> beta",
+    );
     // alpha/beta sit at position 401/402 of 402 — a head slice would never
     // reach them; endpoint-first selection must.
     expect(brief).toContain("NODE alpha [src=src/a.ts loc=L10");
@@ -457,7 +557,9 @@ describe("selectGraphBrief", () => {
   test("stays within the brief's context cost and says what it elided", () => {
     const brief = selectGraphBrief(output);
     expect(brief.length).toBeLessThanOrEqual(6_200);
-    expect(brief).toMatch(/\[graph brief: kept \d+\/402 nodes, \d+\/301 edges\]/);
+    expect(brief).toMatch(
+      /\[graph brief: kept \d+\/402 nodes, \d+\/301 edges\]/,
+    );
   });
 
   test("a small result passes through whole", () => {
@@ -478,7 +580,10 @@ describe("writeGraphifyIgnore", () => {
     const { mkdir } = await import("node:fs/promises");
     await mkdir(join(root, "sub", ".build", "checkouts"), { recursive: true });
     await writeFile(join(root, "sub", ".gitignore"), ".build/\n");
-    await writeFile(join(root, "sub", ".build", "checkouts", "dep.swift"), "let x = 1\n");
+    await writeFile(
+      join(root, "sub", ".build", "checkouts", "dep.swift"),
+      "let x = 1\n",
+    );
     const result = await writeGraphifyIgnore(root);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.detail).toContain("sub/.build/");
@@ -496,10 +601,11 @@ describe("writeGraphifyIgnore", () => {
     const result = await writeGraphifyIgnore(root);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.detail).toContain("user-authored");
-    expect(await readFile(join(root, ".graphifyignore"), "utf8")).toBe("my-own-rules/\n");
+    expect(await readFile(join(root, ".graphifyignore"), "utf8")).toBe(
+      "my-own-rules/\n",
+    );
     await rm(root, { recursive: true, force: true });
   });
-
 });
 
 describe("snapshotGraphForServing", () => {
@@ -524,7 +630,9 @@ describe("snapshotGraphForServing", () => {
   });
 
   test("a missing graph degrades to a reason, never a throw", async () => {
-    const { snapshotGraphForServing } = await import("../../src/adapters/graphify");
+    const { snapshotGraphForServing } = await import(
+      "../../src/adapters/graphify"
+    );
     const root = await gitRepo();
     const result = await snapshotGraphForServing(root);
     expect(result.ok).toBe(false);
@@ -545,14 +653,17 @@ describe("runCommand", () => {
     const pidFile = join(root, "child.pid");
     let childPid = 0;
     try {
-      const result = await runCommand([
-        "/bin/sh",
-        "-c",
-        "nohup /bin/sleep 30 >/dev/null 2>&1 & " +
-          "child=$!; printf '%s\\n' \"$child\" > \"$1\"; wait",
-        "sh",
-        pidFile,
-      ], { timeoutMs: 100 });
+      const result = await runCommand(
+        [
+          "/bin/sh",
+          "-c",
+          "nohup /bin/sleep 30 >/dev/null 2>&1 & " +
+            'child=$!; printf \'%s\\n\' "$child" > "$1"; wait',
+          "sh",
+          pidFile,
+        ],
+        { timeoutMs: 100 },
+      );
       expect(result.timedOut).toBe(true);
       childPid = Number((await readFile(pidFile, "utf8")).trim());
       expect(Number.isSafeInteger(childPid) && childPid > 0).toBe(true);

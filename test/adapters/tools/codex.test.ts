@@ -12,15 +12,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  discoverCodexRecoverySessionId,
-  findLatestCodexSessionId,
-  codexCapabilityTokenPath,
-  codexSessionsDirectory,
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
   CODEX_CAPABILITY_TOKEN_ENV,
   CODEX_NOTIFY_SCRIPT,
+  codexCapabilityTokenPath,
+  codexSessionsDirectory,
+  discoverCodexRecoverySessionId,
+  findLatestCodexSessionId,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../../../src/adapters/tools/codex";
@@ -68,7 +68,9 @@ describe("Codex spawn-scoped MCP surface", () => {
     expect(command).toContain("mcp_servers.idea.enabled=false");
     expect(command).toContain("mcp_servers.openaiDeveloperDocs.enabled=false");
     // Hive's own server is still attached, and by URL, not by inheritance.
-    expect(command).toContain('mcp_servers.hive.url="http://127.0.0.1:4317/mcp"');
+    expect(command).toContain(
+      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
+    );
     expect(command).not.toContain("mcp_servers.hive.enabled=false");
   });
 
@@ -99,11 +101,15 @@ describe("Codex spawn-scoped MCP surface", () => {
       graphifyUrl: "http://127.0.0.1:7799/mcp",
       excludeMcpServers: ["graphify", "idea"],
     });
-    expect(command).toContain('mcp_servers.graphify.url="http://127.0.0.1:7799/mcp"');
+    expect(command).toContain(
+      'mcp_servers.graphify.url="http://127.0.0.1:7799/mcp"',
+    );
     expect(command.join(" ")).toContain("hooks.PreToolUse=");
     expect(command.join(" ")).toContain(`${GRAPHIFY_HOOK_SCRIPT} codex`);
     // The exclusion pass must not disable the entry whose url we just claimed.
-    expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
+    expect(command.join(" ")).not.toContain(
+      "mcp_servers.graphify.enabled=false",
+    );
     expect(command).toContain("mcp_servers.idea.enabled=false");
   });
 
@@ -250,7 +256,10 @@ describe("Codex adapter", () => {
     // The resume path replays the same posture, so a crash-recovered agent
     // does not silently stall on a prompt nobody is watching.
     expect(
-      buildCodexResumeCommand({ ...base, readOnly: false, dangerous: true }, "s1"),
+      buildCodexResumeCommand(
+        { ...base, readOnly: false, dangerous: true },
+        "s1",
+      ),
     ).toContain('approval_policy="never"');
 
     // Full autonomy governs prompts for readers too, while read-only remains
@@ -265,11 +274,14 @@ describe("Codex adapter", () => {
     expect(readOnly).toContain('approval_policy="never"');
     expect(readOnly).not.toContain('approval_policy="on-request"');
 
-    const resumedReader = buildCodexResumeCommand({
-      ...base,
-      readOnly: true,
-      dangerous: true,
-    }, "reader-session");
+    const resumedReader = buildCodexResumeCommand(
+      {
+        ...base,
+        readOnly: true,
+        dangerous: true,
+      },
+      "reader-session",
+    );
     expect(resumedReader).toContain('sandbox_mode="read-only"');
     expect(resumedReader).toContain('approval_policy="never"');
   });
@@ -292,7 +304,7 @@ describe("Codex adapter", () => {
     expect(command).toContain("features.hooks=true");
     expect(command.join(" ")).not.toContain("notify=");
     const mcpOverride = command.find((argument) =>
-      argument.startsWith("mcp_servers.hive.url=")
+      argument.startsWith("mcp_servers.hive.url="),
     );
     expect(mcpOverride).toBeDefined();
     expect(Bun.TOML.parse(mcpOverride ?? "")).toEqual({
@@ -305,19 +317,22 @@ describe("Codex adapter", () => {
     // TOML addressing the notify script; codex parses it exactly like a
     // config-file hook table.
     const hookOverride = command.find((argument) =>
-      argument.startsWith("hooks.SessionStart=")
+      argument.startsWith("hooks.SessionStart="),
     );
     expect(hookOverride).toBeDefined();
     expect(Bun.TOML.parse(hookOverride ?? "")).toEqual({
       hooks: {
-        SessionStart: [{
-          hooks: [{
-            type: "command",
-            command:
-              `/tmp/work tree/.codex/${CODEX_NOTIFY_SCRIPT} session-start`,
-            timeout: 5,
-          }],
-        }],
+        SessionStart: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: `/tmp/work tree/.codex/${CODEX_NOTIFY_SCRIPT} session-start`,
+                timeout: 5,
+              },
+            ],
+          },
+        ],
       },
     });
   });
@@ -333,14 +348,19 @@ describe("Codex adapter", () => {
   });
 
   test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
-    expect(buildCodexResumeCommand({
-      name: "agent-4",
-      model: "gpt-5-codex",
-      effort: "high" as const,
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-    }, "019f-thread")).toEqual([
+    expect(
+      buildCodexResumeCommand(
+        {
+          name: "agent-4",
+          model: "gpt-5-codex",
+          effort: "high" as const,
+          worktreePath: "/tmp/worktree",
+          daemonPort: 4317,
+          readOnly: false,
+        },
+        "019f-thread",
+      ),
+    ).toEqual([
       "codex",
       "resume",
       "-c",
@@ -366,14 +386,17 @@ describe("Codex adapter", () => {
   });
 
   test("a read-only resume expresses the sandbox as a config override, not --sandbox", () => {
-    const command = buildCodexResumeCommand({
-      name: "agent-4",
-      model: "default",
-      effort: "medium" as const,
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: true,
-    }, "019f-thread");
+    const command = buildCodexResumeCommand(
+      {
+        name: "agent-4",
+        model: "default",
+        effort: "medium" as const,
+        worktreePath: "/tmp/worktree",
+        daemonPort: 4317,
+        readOnly: true,
+      },
+      "019f-thread",
+    );
     expect(command).not.toContain("--sandbox");
     expect(command).toContain('sandbox_mode="read-only"');
   });
@@ -402,10 +425,12 @@ describe("Codex adapter", () => {
       meta("newer-match", worktreePath),
     );
 
-    expect(await findLatestCodexSessionId(worktreePath, fakeHome))
-      .toEqual("newer-match");
-    expect(await findLatestCodexSessionId("/no/such/worktree", fakeHome))
-      .toBeNull();
+    expect(await findLatestCodexSessionId(worktreePath, fakeHome)).toEqual(
+      "newer-match",
+    );
+    expect(
+      await findLatestCodexSessionId("/no/such/worktree", fakeHome),
+    ).toBeNull();
     expect(
       await findLatestCodexSessionId(worktreePath, join(tempRoot, "missing")),
     ).toBeNull();
@@ -430,8 +455,9 @@ describe("Codex adapter", () => {
       `${firstLine}\n`,
     );
 
-    expect(await findLatestCodexSessionId(worktreePath, fakeHome))
-      .toEqual("large-meta-session");
+    expect(await findLatestCodexSessionId(worktreePath, fakeHome)).toEqual(
+      "large-meta-session",
+    );
   });
 
   test("refuses a session_meta record whose session id key is unknown", async () => {
@@ -466,11 +492,13 @@ describe("Codex adapter", () => {
       meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
     );
 
-    expect(await discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).toBeNull();
+    expect(
+      await discoverCodexRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).toBeNull();
     await writeFile(
       join(dayDir, "rollout-current.jsonl"),
       meta("current", "timestamp", "2026-07-13T12:00:01.000Z"),
@@ -480,32 +508,38 @@ describe("Codex adapter", () => {
       meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
     );
 
-    expect(await discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).toBe("current");
+    expect(
+      await discoverCodexRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).toBe("current");
 
     await writeFile(
       join(dayDir, "rollout-second-current.jsonl"),
       meta("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
     );
-    expect(discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    expect(
+      discoverCodexRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
     await rm(join(dayDir, "rollout-second-current.jsonl"));
 
     await writeFile(
       join(dayDir, "rollout-unknown-evidence.jsonl"),
       meta("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
     );
-    expect(discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).rejects.toMatchObject({
+    expect(
+      discoverCodexRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).rejects.toMatchObject({
       name: "RecoverySessionDiscoveryError",
       reason: "invalid-evidence",
     });
@@ -548,14 +582,10 @@ describe("Codex adapter", () => {
     // the user's own config, so a hook defined here would silently not fire —
     // and would double-fire if that file ever did load.
     expect(configSource.includes("hooks")).toEqual(false);
-    expect(config.mcp_servers.hive?.url).toEqual(
-      "http://127.0.0.1:4317/mcp",
-    );
+    expect(config.mcp_servers.hive?.url).toEqual("http://127.0.0.1:4317/mcp");
     expect(script.startsWith("#!/bin/sh\n")).toEqual(true);
     expect(
-      script.includes(
-        'exec hive event "$1" --agent agent-4 --port 4317',
-      ),
+      script.includes('exec hive event "$1" --agent agent-4 --port 4317'),
     ).toEqual(true);
   });
 
@@ -660,13 +690,12 @@ describe("Codex adapter", () => {
 
     // The launch wrapper reads the 0600 file inside the spawn shell, so `ps`
     // shows the substitution text, never the secret.
-    expect(wrapCodexSpawnWithCapabilityEnv("codex -c x=1", "/tmp/worktree"))
-      .toEqual(
-        `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat /tmp/worktree/.codex/capability-token)" codex -c x=1`,
-      );
     expect(
-      wrapCodexSpawnWithCapabilityEnv("codex", "/tmp/work tree"),
+      wrapCodexSpawnWithCapabilityEnv("codex -c x=1", "/tmp/worktree"),
     ).toEqual(
+      `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat /tmp/worktree/.codex/capability-token)" codex -c x=1`,
+    );
+    expect(wrapCodexSpawnWithCapabilityEnv("codex", "/tmp/work tree")).toEqual(
       `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat '/tmp/work tree/.codex/capability-token')" codex`,
     );
   });

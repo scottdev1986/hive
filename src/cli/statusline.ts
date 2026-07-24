@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { StatuslineReport } from "../schemas";
 import { getHiveHome } from "../daemon/db";
+import type { StatuslineReport } from "../schemas";
 import { agentFetch } from "./credential";
 
 // Claude Code invokes the configured statusLine command on every render and
@@ -61,9 +61,10 @@ function parseWindow(
   const resetsAt = value.resets_at;
   return {
     usedPct: Math.min(100, Math.max(0, usedPct)),
-    resetsAt: typeof resetsAt === "number" && Number.isFinite(resetsAt)
-      ? new Date(resetsAt * 1_000).toISOString()
-      : null,
+    resetsAt:
+      typeof resetsAt === "number" && Number.isFinite(resetsAt)
+        ? new Date(resetsAt * 1_000).toISOString()
+        : null,
   };
 }
 
@@ -90,8 +91,11 @@ export function parseStatuslineReport(
   const context = parseContextWindow(payload);
   const effort = parseEffort(payload.effort);
 
-  const measuredNothing = fiveHour === undefined && sevenDay === undefined &&
-    context.contextWindow === undefined && effort === undefined;
+  const measuredNothing =
+    fiveHour === undefined &&
+    sevenDay === undefined &&
+    context.contextWindow === undefined &&
+    effort === undefined;
   if (measuredNothing) return null;
 
   return {
@@ -133,9 +137,10 @@ function parseEffort(value: unknown): string | undefined {
  * `used_percentage` is Claude Code's own occupancy figure. It measures; we do
  * not re-derive it.
  */
-function parseContextWindow(
-  payload: Record<string, unknown>,
-): { contextWindow?: number; contextUsedPct?: number } {
+function parseContextWindow(payload: Record<string, unknown>): {
+  contextWindow?: number;
+  contextUsedPct?: number;
+} {
   const block = payload.context_window;
   if (!isRecord(block)) return {};
 
@@ -218,15 +223,13 @@ function recordStatuslineFailure(agent: string, error: unknown): void {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(
       path,
-      `${
-        JSON.stringify({
-          agent,
-          error: error instanceof Error ? error.message : String(error),
-          count: (previous.count ?? 0) + 1,
-          firstAt: previous.firstAt ?? now,
-          lastAt: now,
-        })
-      }\n`,
+      `${JSON.stringify({
+        agent,
+        error: error instanceof Error ? error.message : String(error),
+        count: (previous.count ?? 0) + 1,
+        firstAt: previous.firstAt ?? now,
+        lastAt: now,
+      })}\n`,
     );
   } catch {
     // A trace we cannot write is not a reason to break the render. This is the

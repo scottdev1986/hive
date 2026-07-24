@@ -1,44 +1,46 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { CapabilityProviderSchema } from "../schemas";
+import { domainUuidV7Schema } from "../schemas/session-protocol";
 import {
-  domainUuidV7Schema,
-} from "../schemas/session-protocol";
-import type { SessionInspection, SessionSpec } from "./session-host/contract";
-import type { HiveTerminalHostAdapter } from "./session-host/hive-terminal-host";
-import type { TerminalHostBindingStore } from "./session-host/terminal-host-binding";
-import type { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
-import {
-  RootSessiondLocatorSchema,
   mintRootSessiondLocator,
+  RootSessiondLocatorSchema,
 } from "./orchestrator-host";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
+import type { SessionInspection, SessionSpec } from "./session-host/contract";
+import type { HiveTerminalHostAdapter } from "./session-host/hive-terminal-host";
 import {
+  type ShellSessionLaunch,
   shellJoin,
   shellSessionLaunch,
-  type ShellSessionLaunch,
 } from "./session-host/shell-session";
+import type { TerminalHostBindingStore } from "./session-host/terminal-host-binding";
+import type { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
 
-export const OrchestratorSessiondLaunchSchema = z.strictObject({
-  requestId: domainUuidV7Schema("req"),
-  provider: CapabilityProviderSchema,
-  cwd: z.string().min(1).refine(isAbsolute, "cwd must be absolute"),
-  argv: z.tuple([z.string().min(1)], z.string()).readonly(),
-  environment: z.record(z.string(), z.string()).readonly(),
-  expectedExecutable: z.string().min(1),
-}).readonly();
+export const OrchestratorSessiondLaunchSchema = z
+  .strictObject({
+    requestId: domainUuidV7Schema("req"),
+    provider: CapabilityProviderSchema,
+    cwd: z.string().min(1).refine(isAbsolute, "cwd must be absolute"),
+    argv: z.tuple([z.string().min(1)], z.string()).readonly(),
+    environment: z.record(z.string(), z.string()).readonly(),
+    expectedExecutable: z.string().min(1),
+  })
+  .readonly();
 
 export type OrchestratorSessiondLaunch = z.infer<
   typeof OrchestratorSessiondLaunchSchema
 >;
 
-export const OrchestratorSessiondSnapshotSchema = z.strictObject({
-  requestId: domainUuidV7Schema("req"),
-  locator: RootSessiondLocatorSchema,
-  state: z.enum(["awaiting-visibility", "running", "exited", "failed"]),
-  exitCode: z.number().int().nullable(),
-  diagnostic: z.string().nullable(),
-}).readonly();
+export const OrchestratorSessiondSnapshotSchema = z
+  .strictObject({
+    requestId: domainUuidV7Schema("req"),
+    locator: RootSessiondLocatorSchema,
+    state: z.enum(["awaiting-visibility", "running", "exited", "failed"]),
+    exitCode: z.number().int().nullable(),
+    diagnostic: z.string().nullable(),
+  })
+  .readonly();
 
 export type OrchestratorSessiondSnapshot = z.infer<
   typeof OrchestratorSessiondSnapshotSchema
@@ -73,12 +75,16 @@ export class OrchestratorSessiondController {
   private readonly sleep: (milliseconds: number) => Promise<void>;
 
   constructor(private readonly dependencies: OrchestratorSessiondDependencies) {
-    this.sleep = dependencies.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));
+    this.sleep =
+      dependencies.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));
   }
 
-  async start(input: OrchestratorSessiondLaunch): Promise<OrchestratorSessiondSnapshot> {
+  async start(
+    input: OrchestratorSessiondLaunch,
+  ): Promise<OrchestratorSessiondSnapshot> {
     if (this.current?.requestId === input.requestId) return this.current;
-    if (this.starting?.requestId === input.requestId) return await this.starting.promise;
+    if (this.starting?.requestId === input.requestId)
+      return await this.starting.promise;
     if (this.starting !== null || this.current?.state === "running") {
       throw new Error("a queen sessiond generation is already active");
     }
@@ -144,7 +150,8 @@ export class OrchestratorSessiondController {
           this.dependencies.instanceId,
         ),
       });
-      const existing = this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
+      const existing =
+        this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       if (existing?.createEvidence === undefined) {
         const shell = shellSessionLaunch(shellJoin(input.argv));
         await this.dependencies.terminalHost.create(
@@ -169,9 +176,11 @@ export class OrchestratorSessiondController {
       this.current = ready;
       const monitorAbort = new AbortController();
       this.abort = monitorAbort;
-      void this.monitor(input.requestId, locator, monitorAbort.signal).finally(() => {
-        if (this.abort === monitorAbort) this.abort = null;
-      });
+      void this.monitor(input.requestId, locator, monitorAbort.signal).finally(
+        () => {
+          if (this.abort === monitorAbort) this.abort = null;
+        },
+      );
       return ready;
     } catch (error) {
       if (locator !== null) {
@@ -196,7 +205,10 @@ export class OrchestratorSessiondController {
         continue;
       }
       if (signal.aborted) return;
-      if (inspection.presence === "present" || inspection.presence === "unknown") {
+      if (
+        inspection.presence === "present" ||
+        inspection.presence === "unknown"
+      ) {
         await this.wait(INSPECTION_RETRY_MS, signal);
         continue;
       }
@@ -205,9 +217,10 @@ export class OrchestratorSessiondController {
         locator,
         state: "exited",
         exitCode: inspection.exit?.code ?? 1,
-        diagnostic: inspection.visibility.state === "expired"
-          ? "sessiond visibility expired; supervisor will relaunch if agents remain"
-          : null,
+        diagnostic:
+          inspection.visibility.state === "expired"
+            ? "sessiond visibility expired; supervisor will relaunch if agents remain"
+            : null,
       };
       return;
     }

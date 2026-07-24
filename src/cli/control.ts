@@ -1,27 +1,28 @@
 import { readFileSync } from "node:fs";
 import { factVerificationFlag } from "../adapters/memory";
+import { type Autonomy, isAutonomy } from "../config/autonomy";
+import { getHiveHome } from "../daemon/db";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   cleanupLifecycleFiles,
+  type DaemonInstanceLiveness,
   daemonInstanceLiveness,
   getPidFilePath,
   readDaemonPort,
-  type DaemonInstanceLiveness,
 } from "../daemon/lifecycle";
-import { getHiveHome } from "../daemon/db";
 import type {
   MemoryScope,
   MemoryWriteInput,
   QuotaObservationInput,
+  SessionLocator,
 } from "../schemas";
-import type { SessionLocator } from "../schemas";
+import { operatorFetch, operatorHeaders } from "./credential";
 import {
   captureInvokerIdentity,
   formatInvokerOrigin,
-  isTestRunnerEnv,
   type InvokerIdentity,
+  isTestRunnerEnv,
 } from "./invoker";
-import { confirmOnTty, type ConfirmFn } from "./prompt";
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   deleteMemory,
   fetchAgentStatus,
@@ -32,8 +33,7 @@ import {
   searchMemory,
   writeMemory,
 } from "./mcp";
-import { operatorFetch, operatorHeaders } from "./credential";
-import { isAutonomy, type Autonomy } from "../config/autonomy";
+import { type ConfirmFn, confirmOnTty } from "./prompt";
 import { formatQuotaStatus, formatStatusTable } from "./status";
 export function requireDaemonPort(explicitPort?: number): number {
   const port = explicitPort ?? readDaemonPort();
@@ -102,9 +102,12 @@ export async function attachGrantCli(
       }),
     },
   );
-  const body = await response.json().catch(() => null) as
-    | { state?: string; grant?: unknown; error?: string; reason?: string }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    state?: string;
+    grant?: unknown;
+    error?: string;
+    reason?: string;
+  } | null;
   if (!response.ok || body?.state !== "granted" || body.grant === undefined) {
     const reason = body?.reason === undefined ? "" : ` [${body.reason}]`;
     throw new Error(
@@ -133,9 +136,10 @@ export async function killAgentCli(
   expectedLocator?: SessionLocator,
   origin?: string,
 ): Promise<void> {
-  const locator = expectedLocator ?? (await fetchAgentStatus(port)).find(
-    (agent) => agent.name === name,
-  )?.sessionLocator;
+  const locator =
+    expectedLocator ??
+    (await fetchAgentStatus(port)).find((agent) => agent.name === name)
+      ?.sessionLocator;
   if (locator === undefined) {
     throw new Error(`Hive agent ${name} has no exact session locator`);
   }
@@ -150,15 +154,16 @@ export async function killAgentCli(
       }),
     },
   );
-  const body = await response.json().catch(() => null) as
-    | {
-      error?: string;
-      reason?: string;
-      alreadyDead?: boolean;
-      preserved?: { branch: string; ref: string } | null;
-      reaped?: { killed?: unknown[]; survivors?: { pid: number; command: string }[] };
-    }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    error?: string;
+    reason?: string;
+    alreadyDead?: boolean;
+    preserved?: { branch: string; ref: string } | null;
+    reaped?: {
+      killed?: unknown[];
+      survivors?: { pid: number; command: string }[];
+    };
+  } | null;
   if (!response.ok) {
     const reason = body?.reason === undefined ? "" : ` [${body.reason}]`;
     throw new Error(
@@ -170,9 +175,7 @@ export async function killAgentCli(
     return;
   }
   const killed = body?.reaped?.killed?.length ?? 0;
-  console.log(
-    `killed ${name} — ${killed} process(es) reaped`,
-  );
+  console.log(`killed ${name} — ${killed} process(es) reaped`);
   if (body?.preserved != null) {
     console.log(
       `  unlanded work preserved: ${body.preserved.branch} at ${body.preserved.ref}`,
@@ -184,7 +187,8 @@ export async function killAgentCli(
   if (survivors.length > 0) {
     throw new Error(
       `${survivors.length} process(es) survived SIGKILL and are still running: ` +
-        survivors.map((process) => `pid ${process.pid} (${process.command})`)
+        survivors
+          .map((process) => `pid ${process.pid} (${process.command})`)
           .join(", "),
     );
   }
@@ -196,9 +200,7 @@ export async function printStatus(): Promise<void> {
 }
 
 export async function printQuotaStatus(): Promise<void> {
-  console.log(formatQuotaStatus(
-    await fetchQuotaStatus(requireDaemonPort()),
-  ));
+  console.log(formatQuotaStatus(await fetchQuotaStatus(requireDaemonPort())));
 }
 
 const AUTONOMY_MEANING: Record<Autonomy, string> = {
@@ -220,17 +222,22 @@ export async function autonomyCli(
     throw new Error('autonomy must be "sandboxed" or "dangerous"');
   }
   const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`, {
-    ...(mode === undefined ? {} : {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ autonomy: mode }),
-    }),
+    ...(mode === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ autonomy: mode }),
+        }),
   });
-  const body = await response.json().catch(() => null) as
-    | { autonomy?: unknown; error?: string }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    autonomy?: unknown;
+    error?: string;
+  } | null;
   if (!response.ok) {
-    throw new Error(body?.error ?? `autonomy request failed (HTTP ${response.status})`);
+    throw new Error(
+      body?.error ?? `autonomy request failed (HTTP ${response.status})`,
+    );
   }
   const value = body?.autonomy;
   if (!isAutonomy(value)) {
@@ -240,8 +247,8 @@ export async function autonomyCli(
     mode === undefined
       ? `${value} — ${AUTONOMY_MEANING[value]}`
       : `autonomy is now ${value} — ${
-        AUTONOMY_MEANING[value]
-      } (persisted to config; applies to new spawns and crash resumes)`,
+          AUTONOMY_MEANING[value]
+        } (persisted to config; applies to new spawns and crash resumes)`,
   );
 }
 
@@ -274,18 +281,24 @@ export async function searchMemoryCli(
 /** The one-line CLI rendering of a write's embedding outcome (defect D2):
  * quiet on the happy path ("indexed" or a daemon too old to say), one loud
  * line otherwise. */
-export function memoryEmbeddingNotice(embedding: string | undefined): string | null {
+export function memoryEmbeddingNotice(
+  embedding: string | undefined,
+): string | null {
   if (embedding === undefined || embedding === "indexed") return null;
   if (embedding === "queued") {
-    return "embedding queued — the vector projection is running in the " +
-      "background; this write is keyword-searchable until it lands";
+    return (
+      "embedding queued — the vector projection is running in the " +
+      "background; this write is keyword-searchable until it lands"
+    );
   }
   const state = embedding.startsWith("unavailable:")
     ? embedding.slice("unavailable:".length)
     : embedding;
-  return `⚠ embedding unavailable (${state}) — this write is ` +
+  return (
+    `⚠ embedding unavailable (${state}) — this write is ` +
     "keyword-searchable only; see ~/.hive/logs/daemon.log or run " +
-    "`hive embeddings install`";
+    "`hive embeddings install`"
+  );
 }
 
 export async function writeMemoryCli(input: MemoryWriteInput): Promise<void> {
@@ -326,9 +339,10 @@ export async function readMemoryCli(
     `raw: ${fact.raw.join(", ")}`,
     `tags: ${fact.tags.join(", ")}`,
   ].join("\n");
-  const notice = flag === null
-    ? ""
-    : `\n⚠ ${flag}: reconcile this article before acting on any path, command, or flag it names.`;
+  const notice =
+    flag === null
+      ? ""
+      : `\n⚠ ${flag}: reconcile this article before acting on any path, command, or flag it names.`;
   console.log(`# ${fact.title}\n\n${provenance}${notice}\n\n${fact.body}`);
 }
 
@@ -346,7 +360,9 @@ export async function deleteMemoryCli(
 
 export async function reindexMemoryCli(): Promise<void> {
   const result = await reindexMemory(requireDaemonPort());
-  console.log(`rebuilt the memory search index from ${result.count} article(s)`);
+  console.log(
+    `rebuilt the memory search index from ${result.count} article(s)`,
+  );
   for (const backup of result.migration.backups) {
     console.log(`backed up [${backup.scope}] legacy memory to ${backup.path}`);
   }
@@ -368,7 +384,7 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
   });
   // A daemon that fails before its JSON handler (proxy page, empty body)
   // must still surface as the HTTP failure it is, not as a parse error.
-  const body = await response.json().catch(() => ({})) as {
+  const body = (await response.json().catch(() => ({}))) as {
     outcomes?: RecoveryOutcomeView[];
     error?: string;
   };
@@ -430,7 +446,7 @@ async function defaultRequestStop(
       body: JSON.stringify(body),
     },
   );
-  const parsed = await response.json().catch(() => null) as
+  const parsed = (await response.json().catch(() => null)) as
     | (Partial<StopResponseBody> & { error?: string })
     | null;
   if (parsed === null || typeof parsed.state !== "string") {
@@ -467,11 +483,14 @@ export interface StopHiveDependencies {
 }
 
 function formatUnlanded(unlanded: readonly StopUnlandedAgent[]): string {
-  return unlanded.map((agent) =>
-    `${agent.name} (branch ${agent.branch ?? "none"}: ` +
-    `${agent.unmergedCommits} unmerged commit(s), ` +
-    `${agent.dirtyFiles} uncommitted file(s))`
-  ).join("; ");
+  return unlanded
+    .map(
+      (agent) =>
+        `${agent.name} (branch ${agent.branch ?? "none"}: ` +
+        `${agent.unmergedCommits} unmerged commit(s), ` +
+        `${agent.dirtyFiles} uncommitted file(s))`,
+    )
+    .join("; ");
 }
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
@@ -488,9 +507,9 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     );
   }
   const pid = (deps.readPid ?? readDaemonPid)();
-  const liveness = deps.liveness ?? (() =>
-    daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
-  );
+  const liveness =
+    deps.liveness ??
+    (() => daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix()));
   const cleanup = deps.cleanup ?? cleanupLifecycleFiles;
   let state = await liveness();
   if (state === "unknown") {
@@ -507,7 +526,8 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     // a live instance, is the fleet-kill this command audited twice on
     // 2026-07-20 as `hive stop ppid=<gone> argv=[]`.
     if (
-      isTestRunnerEnv() && deps.requestStop === undefined &&
+      isTestRunnerEnv() &&
+      deps.requestStop === undefined &&
       deps.invokedViaCli !== true
     ) {
       throw new Error(
@@ -566,13 +586,18 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
         response.error ?? `Hive refused shutdown (${response.state})`,
       );
     }
-    const sleep = deps.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
+    const sleep =
+      deps.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
     const attempts = Math.max(
       1,
       Math.ceil((deps.timeoutMs ?? DEFAULT_DAEMON_STOP_TIMEOUT_MS) / 50),
     );
     state = await liveness();
-    for (let attempt = 0; state !== "dead" && attempt < attempts; attempt += 1) {
+    for (
+      let attempt = 0;
+      state !== "dead" && attempt < attempts;
+      attempt += 1
+    ) {
       await sleep(50);
       state = await liveness();
     }

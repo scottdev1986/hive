@@ -5,20 +5,20 @@ import {
   KimiCapabilityProbe,
   OpencodeCapabilityProbe,
 } from "../daemon/capability-discovery";
-import {
-  knownBillings,
-  readBillingWithMemory,
-  type AccountBilling,
-  type AccountBillings,
-} from "../daemon/usage-credits";
-import { forEachProvider, providersOf, ROUTING_CATEGORIES } from "../schemas";
-import type { ChainEntry, EffortTarget, RoutingPolicy } from "../schemas";
 import { HiveDatabase } from "../daemon/db";
-import { RoutingPolicyStore } from "../daemon/routing-policy-store";
 import {
   buildModelInventory,
   formatModelInventory,
 } from "../daemon/model-inventory";
+import { RoutingPolicyStore } from "../daemon/routing-policy-store";
+import {
+  type AccountBilling,
+  type AccountBillings,
+  knownBillings,
+  readBillingWithMemory,
+} from "../daemon/usage-credits";
+import type { ChainEntry, EffortTarget, RoutingPolicy } from "../schemas";
+import { forEachProvider, providersOf, ROUTING_CATEGORIES } from "../schemas";
 
 /**
  * `hive routing` — the auditability answer for the policy-era router: what
@@ -33,8 +33,8 @@ const describeEffort = (effort: EffortTarget): string =>
   effort.mode === "exact"
     ? `@${effort.value}`
     : effort.mode === "none"
-    ? "@none"
-    : "";
+      ? "@none"
+      : "";
 
 const describeEntry = (entry: ChainEntry): string =>
   `${entry.provider}/${entry.model}${describeEffort(entry.effort)}`;
@@ -42,7 +42,9 @@ const describeEntry = (entry: ChainEntry): string =>
 function formatChains(policy: RoutingPolicy): string[] {
   const lines = [
     `Routing policy — revision ${policy.revision}` +
-      (policy.provisional ? " (provisional Hive suggestions — edit anytime)" : ""),
+      (policy.provisional
+        ? " (provisional Hive suggestions — edit anytime)"
+        : ""),
   ];
   for (const category of ROUTING_CATEGORIES) {
     const chain = policy.chains[category];
@@ -57,9 +59,9 @@ function formatChains(policy: RoutingPolicy): string[] {
   const configured = Object.entries(policy.providers);
   if (configured.length > 0) {
     lines.push(
-      `  providers       ${
-        configured.map(([provider, state]) => `${provider}: ${state}`).join("; ")
-      }`,
+      `  providers       ${configured
+        .map(([provider, state]) => `${provider}: ${state}`)
+        .join("; ")}`,
     );
   }
   return lines;
@@ -74,18 +76,25 @@ function formatChains(policy: RoutingPolicy): string[] {
 function describeBilling(billings: AccountBillings | null): string {
   if (billings === null) return "not read — spend evidence is unavailable";
   return providersOf(billings)
-    .map((provider) => `${provider}: ${describeProviderBilling(billings[provider])}`)
+    .map(
+      (provider) =>
+        `${provider}: ${describeProviderBilling(billings[provider])}`,
+    )
     .join("; ");
 }
 
 function describeProviderBilling(billing: AccountBilling | undefined): string {
   if (billing === undefined) return "not measurable";
-  const credits = billing.creditsEnabled.state === "known"
-    ? billing.creditsEnabled.value ? "credits ON — spawns can cost money" : "no credits"
-    : "credits unknown";
-  const used = billing.generalUtilization.state === "known"
-    ? `${billing.generalUtilization.value}% of plan used`
-    : "plan utilization unknown";
+  const credits =
+    billing.creditsEnabled.state === "known"
+      ? billing.creditsEnabled.value
+        ? "credits ON — spawns can cost money"
+        : "no credits"
+      : "credits unknown";
+  const used =
+    billing.generalUtilization.state === "known"
+      ? `${billing.generalUtilization.value}% of plan used`
+      : "plan utilization unknown";
   return `${credits}, ${used}`;
 }
 
@@ -132,17 +141,26 @@ export async function printRouting(): Promise<void> {
     escalations.length === 0
       ? "\nEscalations — MEASURED: 0 wrong-model claims recorded."
       : `\nEscalations — MEASURED: ${escalations.length} wrong-model claim(s): ` +
-        [...escalations.reduce((counts, entry) => {
-          const key = `${entry.category} on ${entry.model}`;
-          return counts.set(key, (counts.get(key) ?? 0) + 1);
-        }, new Map<string, number>())].map(([key, count]) => `${count}× ${key}`)
-          .join(", ") + ".",
+          [
+            ...escalations.reduce((counts, entry) => {
+              const key = `${entry.category} on ${entry.model}`;
+              return counts.set(key, (counts.get(key) ?? 0) + 1);
+            }, new Map<string, number>()),
+          ]
+            .map(([key, count]) => `${count}× ${key}`)
+            .join(", ") +
+          ".",
   );
 
-  console.log("\n" + formatModelInventory(buildModelInventory({
-    discovery,
-    policy,
-    billing: billings,
-    now,
-  })));
+  console.log(
+    "\n" +
+      formatModelInventory(
+        buildModelInventory({
+          discovery,
+          policy,
+          billing: billings,
+          now,
+        }),
+      ),
+  );
 }

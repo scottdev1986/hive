@@ -1,40 +1,32 @@
 import { Database } from "bun:sqlite";
-import type { OrchestratorSignalKind } from "./orchestrator-status";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
+  type AgentMessage,
   AgentMessageSchema,
+  type AgentRecord,
   AgentRecordObjectSchema,
   AgentRecordSchema,
-  Hv1CapabilityRecordSchema,
-  HookEventSchema,
   ExecutionIdentitySchema,
-  isTerminalAgentStatus,
-  type AgentMessage,
-  type AgentRecord,
   type HookEvent,
+  HookEventSchema,
   type Hv1CapabilityRecord,
+  Hv1CapabilityRecordSchema,
+  isTerminalAgentStatus,
 } from "../schemas";
 import { VisibilityLeaseSchema } from "../schemas/session-protocol";
+import type { OrchestratorSignalKind } from "./orchestrator-status";
+import { mintSessionLocator, sessionInstanceId } from "./session-host/locators";
 import {
-  mintSessionLocator,
-  sessionInstanceId,
-} from "./session-host/locators";
-import {
+  type HiveTerminalBinding,
   HiveTerminalBindingSchema,
+  type HiveTerminalCreateEvidence,
   HiveTerminalCreateEvidenceSchema,
+  type HiveTerminalTerminationAudit,
   HiveTerminalTerminationAuditSchema,
   TerminalHostBindingConflictError,
-  type HiveTerminalBinding,
-  type HiveTerminalCreateEvidence,
-  type HiveTerminalTerminationAudit,
 } from "./session-host/terminal-host-binding";
 
 const StoredCapabilityRowSchema = z.object({
@@ -66,7 +58,9 @@ function parseCapabilityRow(row: unknown): {
       ...(stored.constraints === null
         ? {}
         : { constraints: JSON.parse(stored.constraints) }),
-      ...(stored.subjects === null ? {} : { subjects: JSON.parse(stored.subjects) }),
+      ...(stored.subjects === null
+        ? {}
+        : { subjects: JSON.parse(stored.subjects) }),
       issuedAt: stored.issuedAt,
       expiresAt: stored.expiresAt,
       revokedAt: stored.revokedAt,
@@ -202,9 +196,10 @@ function parseAgentRow(row: unknown): AgentRecord {
     toolSessionId: value.toolSessionId ?? undefined,
     sessionLocator: JSON.parse(value.sessionLocator),
     contextWindow: value.contextWindow ?? undefined,
-    executionIdentity: value.executionIdentity === null
-      ? undefined
-      : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
+    executionIdentity:
+      value.executionIdentity === null
+        ? undefined
+        : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
     readOnly: value.readOnly === true || value.readOnly === 1,
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
   });
@@ -253,15 +248,17 @@ function readDatabaseIdentityMarker(): string | null {
 }
 
 function parseEventRow(row: unknown): HookEvent {
-  const value = z.object({
-    kind: z.string(),
-    agentName: z.string(),
-    timestamp: z.string(),
-    contextPct: z.number().nullable(),
-    description: z.string().nullable(),
-    usageUnits: z.number().nullable(),
-    usageSource: z.string().nullable(),
-  }).parse(row);
+  const value = z
+    .object({
+      kind: z.string(),
+      agentName: z.string(),
+      timestamp: z.string(),
+      contextPct: z.number().nullable(),
+      description: z.string().nullable(),
+      usageUnits: z.number().nullable(),
+      usageSource: z.string().nullable(),
+    })
+    .parse(row);
 
   if (value.kind === "turn-end") {
     return HookEventSchema.parse({
@@ -398,10 +395,7 @@ export class HiveDatabase {
     return new HiveDatabase(path, { readonly: true });
   }
 
-  constructor(
-    path = getDatabasePath(),
-    options: { readonly?: boolean } = {},
-  ) {
+  constructor(path = getDatabasePath(), options: { readonly?: boolean } = {}) {
     this.path = path;
     const persistent = path === getDatabasePath();
     const expectedIdentity = persistent ? readDatabaseIdentityMarker() : null;
@@ -421,23 +415,31 @@ export class HiveDatabase {
     if (options.readonly !== true && path !== ":memory:") {
       mkdirSync(dirname(path), { recursive: true });
     }
-    this.database = options.readonly === true
-      ? new Database(path, { readonly: true })
-      : new Database(path, { create: true });
+    this.database =
+      options.readonly === true
+        ? new Database(path, { readonly: true })
+        : new Database(path, { create: true });
     // Connection-local only: this does not write the database, including on a
     // read-only connection. Honest transient contention waits instead of
     // failing immediately at bun:sqlite's zero-timeout default.
     this.database.exec("PRAGMA busy_timeout = 5000");
     if (expectedIdentity !== null) {
-      const metaExists = this.database.query(`
+      const metaExists =
+        this.database
+          .query(`
         SELECT 1 AS present FROM sqlite_master
         WHERE type = 'table' AND name = 'meta'
-      `).get() !== null;
+      `)
+          .get() !== null;
       const storedIdentity = metaExists
-        ? z.object({ value: z.string() }).nullable().parse(
-          this.database.query("SELECT value FROM meta WHERE key = ?")
-            .get(DATABASE_IDENTITY_META_KEY),
-        )?.value ?? null
+        ? (z
+            .object({ value: z.string() })
+            .nullable()
+            .parse(
+              this.database
+                .query("SELECT value FROM meta WHERE key = ?")
+                .get(DATABASE_IDENTITY_META_KEY),
+            )?.value ?? null)
         : null;
       if (storedIdentity !== expectedIdentity) {
         this.database.close();
@@ -569,11 +571,13 @@ export class HiveDatabase {
     this.rekeyTerminalHostBindingsOnLocator();
     this.addTerminalHostBindingEvidenceColumns();
     this.addMessageDeliveryDiagnosticColumns();
-    const capabilityColumns = z.array(z.object({ name: z.string() })).parse(
-      this.database.query("PRAGMA table_info(capabilities)").all(),
-    );
+    const capabilityColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.database.query("PRAGMA table_info(capabilities)").all());
     if (!capabilityColumns.some((column) => column.name === "constraints")) {
-      this.database.exec("ALTER TABLE capabilities ADD COLUMN constraints TEXT");
+      this.database.exec(
+        "ALTER TABLE capabilities ADD COLUMN constraints TEXT",
+      );
     }
     if (!capabilityColumns.some((column) => column.name === "subjects")) {
       this.database.exec("ALTER TABLE capabilities ADD COLUMN subjects TEXT");
@@ -584,9 +588,9 @@ export class HiveDatabase {
     for (const table of ["agents", "escalations", "quota_reservations"]) {
       migrateTierColumn(this.database, table);
     }
-    const agentColumns = z.array(z.object({ name: z.string() })).parse(
-      this.database.query("PRAGMA table_info(agents)").all(),
-    );
+    const agentColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.database.query("PRAGMA table_info(agents)").all());
     const agentColumnNames = new Set(agentColumns.map((column) => column.name));
     if (!agentColumnNames.has("failureReason")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN failureReason TEXT");
@@ -595,7 +599,9 @@ export class HiveDatabase {
       this.database.exec("ALTER TABLE agents ADD COLUMN failedAt TEXT");
     }
     if (!agentColumnNames.has("quotaReservationId")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN quotaReservationId TEXT");
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN quotaReservationId TEXT",
+      );
     }
     if (!agentColumnNames.has("controlQuotaReservationId")) {
       this.database.exec(
@@ -606,7 +612,9 @@ export class HiveDatabase {
       this.database.exec("ALTER TABLE agents ADD COLUMN controlMessageId TEXT");
     }
     if (!agentColumnNames.has("executionIdentity")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN executionIdentity TEXT");
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN executionIdentity TEXT",
+      );
     }
     if (!agentColumnNames.has("toolSessionId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
@@ -614,11 +622,13 @@ export class HiveDatabase {
     if (!agentColumnNames.has("sessionLocator")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN sessionLocator TEXT");
     }
-    const legacySessionRows = z.array(z.object({ id: z.string().min(1) })).parse(
-      this.database.query(
-        "SELECT id FROM agents WHERE sessionLocator IS NULL",
-      ).all(),
-    );
+    const legacySessionRows = z
+      .array(z.object({ id: z.string().min(1) }))
+      .parse(
+        this.database
+          .query("SELECT id FROM agents WHERE sessionLocator IS NULL")
+          .all(),
+      );
     if (legacySessionRows.length > 0) {
       const instanceId = sessionInstanceId(getHiveHome());
       this.database.transaction(() => {
@@ -627,15 +637,18 @@ export class HiveDatabase {
         );
         for (const row of legacySessionRows) {
           update.run(
-            JSON.stringify(mintSessionLocator(
-              instanceId,
-              { kind: "agent", agentId: row.id },
-              1,
-              "retired",
-            )),
+            JSON.stringify(
+              mintSessionLocator(
+                instanceId,
+                { kind: "agent", agentId: row.id },
+                1,
+                "retired",
+              ),
+            ),
             row.id,
           );
-          this.database.query(`
+          this.database
+            .query(`
             UPDATE agents
             SET status = 'dead',
                 failureReason = COALESCE(
@@ -643,7 +656,8 @@ export class HiveDatabase {
                   'terminal session retired during host migration'
                 )
             WHERE id = ?
-          `).run(row.id);
+          `)
+            .run(row.id);
         }
       })();
     }
@@ -655,9 +669,9 @@ export class HiveDatabase {
         "ALTER TABLE agents ADD COLUMN recoveryAttempts INTEGER NOT NULL DEFAULT 0",
       );
     }
-    const eventColumns = z.array(z.object({ name: z.string() })).parse(
-      this.database.query("PRAGMA table_info(events)").all(),
-    );
+    const eventColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.database.query("PRAGMA table_info(events)").all());
     const eventColumnNames = new Set(eventColumns.map((column) => column.name));
     if (!eventColumnNames.has("usageUnits")) {
       this.database.exec("ALTER TABLE events ADD COLUMN usageUnits REAL");
@@ -668,9 +682,9 @@ export class HiveDatabase {
     // Approvals predating the kind column are backfilled as `tool-permission`,
     // the never-truncated kind: a row Hive cannot classify must not have its
     // decision-critical tail cut off on the strength of a guess.
-    const approvalColumns = z.array(z.object({ name: z.string() })).parse(
-      this.database.query("PRAGMA table_info(approvals)").all(),
-    );
+    const approvalColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.database.query("PRAGMA table_info(approvals)").all());
     if (!approvalColumns.some((column) => column.name === "kind")) {
       this.database.exec(
         "ALTER TABLE approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'tool-permission'",
@@ -737,9 +751,9 @@ export class HiveDatabase {
       CREATE INDEX IF NOT EXISTS agents_name_history
         ON agents(name, createdAt);
     `);
-    const messageColumns = z.array(z.object({ name: z.string() })).parse(
-      this.database.query("PRAGMA table_info(messages)").all(),
-    );
+    const messageColumns = z
+      .array(z.object({ name: z.string() }))
+      .parse(this.database.query("PRAGMA table_info(messages)").all());
     const messageColumnNames = new Set(
       messageColumns.map((column) => column.name),
     );
@@ -786,12 +800,15 @@ export class HiveDatabase {
       // Older daemons incorrectly turned every informational notification
       // into a blocking approval. Preserve those rows as resolved history,
       // then release agents that have no genuine escalation outstanding.
-      this.database.query(`
+      this.database
+        .query(`
         UPDATE approvals SET status = 'approved', resolvedAt = ?
         WHERE status = 'pending'
           AND description = 'Notification from ' || agentName
-      `).run(recoveredAt);
-      this.database.query(`
+      `)
+        .run(recoveredAt);
+      this.database
+        .query(`
         UPDATE agents SET status = 'idle', lastEventAt = ?
         WHERE status = 'awaiting-approval' AND writeRevoked = 0
           AND NOT EXISTS (
@@ -799,25 +816,35 @@ export class HiveDatabase {
             WHERE approvals.agentName = agents.name
               AND approvals.status = 'pending'
           )
-      `).run(recoveredAt);
+      `)
+        .run(recoveredAt);
     })();
     if (persistent && expectedIdentity === null) {
       try {
         const proposed = crypto.randomUUID();
-        this.database.query(
-          "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
-        ).run(DATABASE_IDENTITY_META_KEY, proposed);
-        const identity = z.object({ value: z.string().uuid() }).parse(
-          this.database.query("SELECT value FROM meta WHERE key = ?")
-            .get(DATABASE_IDENTITY_META_KEY),
-        ).value;
+        this.database
+          .query("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)")
+          .run(DATABASE_IDENTITY_META_KEY, proposed);
+        const identity = z
+          .object({ value: z.string().uuid() })
+          .parse(
+            this.database
+              .query("SELECT value FROM meta WHERE key = ?")
+              .get(DATABASE_IDENTITY_META_KEY),
+          ).value;
         try {
           writeFileSync(getDatabaseIdentityPath(), `${identity}\n`, {
             flag: "wx",
             mode: 0o600,
           });
         } catch (error) {
-          if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+          if (
+            !(
+              error instanceof Error &&
+              "code" in error &&
+              error.code === "EEXIST"
+            )
+          ) {
             throw error;
           }
           if (readDatabaseIdentityMarker() !== identity) {
@@ -834,7 +861,8 @@ export class HiveDatabase {
   }
 
   quickCheck(): string[] {
-    return z.array(z.object({ quick_check: z.string() }))
+    return z
+      .array(z.object({ quick_check: z.string() }))
       .parse(this.database.query("PRAGMA quick_check").all())
       .map((row) => row.quick_check);
   }
@@ -848,14 +876,16 @@ export class HiveDatabase {
    * holder to collide.
    */
   private dropLegacyUniqueAgentName(): void {
-    const indexes = z.array(
-      z.object({ name: z.string(), unique: z.number(), origin: z.string() }),
-    ).parse(this.database.query("PRAGMA index_list(agents)").all());
+    const indexes = z
+      .array(
+        z.object({ name: z.string(), unique: z.number(), origin: z.string() }),
+      )
+      .parse(this.database.query("PRAGMA index_list(agents)").all());
     const legacy = indexes.find((index) => {
       if (index.unique !== 1 || index.origin !== "u") return false;
-      const columns = z.array(z.object({ name: z.string() })).parse(
-        this.database.query(`PRAGMA index_info(${index.name})`).all(),
-      );
+      const columns = z
+        .array(z.object({ name: z.string() }))
+        .parse(this.database.query(`PRAGMA index_info(${index.name})`).all());
       return columns.length === 1 && columns[0]!.name === "name";
     });
     if (legacy === undefined) return;
@@ -865,9 +895,9 @@ export class HiveDatabase {
 
   /** Everything the live `agents` table declares, column by column. */
   private agentColumns(): AgentColumn[] {
-    return z.array(AgentColumnSchema).parse(
-      this.database.query("PRAGMA table_info(agents)").all(),
-    );
+    return z
+      .array(AgentColumnSchema)
+      .parse(this.database.query("PRAGMA table_info(agents)").all());
   }
 
   /** The columns the live `agents` table actually has. */
@@ -897,8 +927,8 @@ export class HiveDatabase {
     contextPctExpression: string,
     droppedColumns: ReadonlySet<string> = new Set(),
   ): void {
-    const columns = this.agentColumns().filter((column) =>
-      !droppedColumns.has(column.name)
+    const columns = this.agentColumns().filter(
+      (column) => !droppedColumns.has(column.name),
     );
     const targets = columns
       .map((column) => quoteIdentifier(column.name))
@@ -907,24 +937,29 @@ export class HiveDatabase {
       .map((column) =>
         column.name === "contextPct"
           ? `${contextPctExpression} AS contextPct`
-          : quoteIdentifier(column.name)
+          : quoteIdentifier(column.name),
       )
       .join(", ");
     // Restore enforcement to whatever it was, even if the rebuild throws. A
     // connection that silently stops enforcing foreign keys for the rest of its
     // life is a worse outcome than the failed migration that caused it, and it
     // would never announce itself.
-    const enforced = z.array(z.object({ foreign_keys: z.number() })).parse(
-      this.database.query("PRAGMA foreign_keys").all(),
-    )[0]?.foreign_keys ?? 1;
+    const enforced =
+      z
+        .array(z.object({ foreign_keys: z.number() }))
+        .parse(this.database.query("PRAGMA foreign_keys").all())[0]
+        ?.foreign_keys ?? 1;
     this.database.exec("PRAGMA foreign_keys = OFF");
     try {
       this.database.transaction(() => {
         this.database.exec(agentsTableDdl("agents_rebuilt"));
         const defined = new Set(
-          z.array(z.object({ name: z.string() })).parse(
-            this.database.query("PRAGMA table_info(agents_rebuilt)").all(),
-          ).map((column) => column.name),
+          z
+            .array(z.object({ name: z.string() }))
+            .parse(
+              this.database.query("PRAGMA table_info(agents_rebuilt)").all(),
+            )
+            .map((column) => column.name),
         );
         for (const column of columns) {
           if (defined.has(column.name)) continue;
@@ -960,7 +995,8 @@ export class HiveDatabase {
    * telemetry sweep re-observes every agent it can see.
    */
   private relaxContextPctNullability(): void {
-    const notNull = z.array(z.object({ name: z.string(), notnull: z.number() }))
+    const notNull = z
+      .array(z.object({ name: z.string(), notnull: z.number() }))
       .parse(this.database.query("PRAGMA table_info(agents)").all())
       .some((column) => column.name === "contextPct" && column.notnull === 1);
     if (!notNull) return;
@@ -968,9 +1004,11 @@ export class HiveDatabase {
   }
 
   private rekeyTerminalHostBindingsOnLocator(): void {
-    const columns = z.array(z.object({ name: z.string() })).parse(
-      this.database.query("PRAGMA table_info(terminal_host_bindings)").all(),
-    );
+    const columns = z
+      .array(z.object({ name: z.string() }))
+      .parse(
+        this.database.query("PRAGMA table_info(terminal_host_bindings)").all(),
+      );
     if (!columns.some((column) => column.name === "sessionKey")) return;
     this.transaction(() => {
       this.database.exec(`
@@ -997,9 +1035,10 @@ export class HiveDatabase {
 
   private addMessageDeliveryDiagnosticColumns(): void {
     const columns = new Set(
-      z.array(z.object({ name: z.string() })).parse(
-        this.database.query("PRAGMA table_info(messages)").all(),
-      ).map((column) => column.name),
+      z
+        .array(z.object({ name: z.string() }))
+        .parse(this.database.query("PRAGMA table_info(messages)").all())
+        .map((column) => column.name),
     );
     if (!columns.has("deliveryDiagnostic")) {
       this.database.exec(
@@ -1020,9 +1059,14 @@ export class HiveDatabase {
 
   private addTerminalHostBindingEvidenceColumns(): void {
     const columns = new Set(
-      z.array(z.object({ name: z.string() })).parse(
-        this.database.query("PRAGMA table_info(terminal_host_bindings)").all(),
-      ).map((column) => column.name),
+      z
+        .array(z.object({ name: z.string() }))
+        .parse(
+          this.database
+            .query("PRAGMA table_info(terminal_host_bindings)")
+            .all(),
+        )
+        .map((column) => column.name),
     );
     if (!columns.has("createEvidenceJson")) {
       this.database.exec(
@@ -1053,22 +1097,26 @@ export class HiveDatabase {
       if (byLocator !== null) {
         if (
           JSON.stringify(byLocator.locator) === JSON.stringify(value.locator) &&
-          JSON.stringify(byLocator.visibility) === JSON.stringify(value.visibility)
-        ) return byLocator;
+          JSON.stringify(byLocator.visibility) ===
+            JSON.stringify(value.visibility)
+        )
+          return byLocator;
         throw new TerminalHostBindingConflictError();
       }
-      this.database.query(`
+      this.database
+        .query(`
         INSERT INTO terminal_host_bindings (
           locatorInstanceId, locatorSessionId, locatorGeneration,
           locatorJson, visibilityJson
         ) VALUES (?, ?, ?, ?, ?)
-      `).run(
-        value.locator.instanceId,
-        value.locator.sessionId,
-        value.locator.generation,
-        locatorJson,
-        visibilityJson,
-      );
+      `)
+        .run(
+          value.locator.instanceId,
+          value.locator.sessionId,
+          value.locator.generation,
+          locatorJson,
+          visibilityJson,
+        );
       return value;
     });
   }
@@ -1076,12 +1124,17 @@ export class HiveDatabase {
   releaseUncreatedTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
   ): boolean {
-    const value = HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
-    return this.database.query(`
+    const value =
+      HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+    return (
+      this.database
+        .query(`
       DELETE FROM terminal_host_bindings
       WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
         AND createEvidenceJson IS NULL AND terminationAuditJson IS NULL
-    `).run(value.instanceId, value.sessionId, value.generation).changes > 0;
+    `)
+        .run(value.instanceId, value.sessionId, value.generation).changes > 0
+    );
   }
 
   completeTerminalHostSession(
@@ -1100,16 +1153,18 @@ export class HiveDatabase {
         }
         throw new TerminalHostBindingConflictError();
       }
-      this.database.query(`
+      this.database
+        .query(`
         UPDATE terminal_host_bindings
         SET createEvidenceJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `).run(
-        JSON.stringify(value),
-        binding.locator.instanceId,
-        binding.locator.sessionId,
-        binding.locator.generation,
-      );
+      `)
+        .run(
+          JSON.stringify(value),
+          binding.locator.instanceId,
+          binding.locator.sessionId,
+          binding.locator.generation,
+        );
       return { ...binding, createEvidence: value };
     });
   }
@@ -1119,17 +1174,20 @@ export class HiveDatabase {
     request: HiveTerminalBinding["visibility"],
     lease: z.infer<typeof VisibilityLeaseSchema>,
   ): HiveTerminalBinding {
-    const nextVisibility = HiveTerminalBindingSchema.unwrap().shape.visibility.parse(request);
+    const nextVisibility =
+      HiveTerminalBindingSchema.unwrap().shape.visibility.parse(request);
     const parsedLease = VisibilityLeaseSchema.parse(lease);
-    const nextLease = HiveTerminalCreateEvidenceSchema.unwrap().shape.visibility.parse({
-      state: "visible",
-      workspaceSessionId: nextVisibility.workspaceSessionId,
-      openTerminalRevision: parsedLease.openTerminalRevision,
-      expiresAt: parsedLease.expiresAt,
-    });
-    const expectedLocator = HiveTerminalBindingSchema.unwrap().shape.locator.parse(
-      parsedLease.locator,
-    );
+    const nextLease =
+      HiveTerminalCreateEvidenceSchema.unwrap().shape.visibility.parse({
+        state: "visible",
+        workspaceSessionId: nextVisibility.workspaceSessionId,
+        openTerminalRevision: parsedLease.openTerminalRevision,
+        expiresAt: parsedLease.expiresAt,
+      });
+    const expectedLocator =
+      HiveTerminalBindingSchema.unwrap().shape.locator.parse(
+        parsedLease.locator,
+      );
     return this.transaction(() => {
       const binding = this.getTerminalHostBindingByLocator(locator);
       if (binding === null) {
@@ -1143,18 +1201,23 @@ export class HiveDatabase {
       ) {
         throw new TerminalHostBindingConflictError();
       }
-      const createEvidence = { ...binding.createEvidence, visibility: nextLease };
-      this.database.query(`
+      const createEvidence = {
+        ...binding.createEvidence,
+        visibility: nextLease,
+      };
+      this.database
+        .query(`
         UPDATE terminal_host_bindings
         SET visibilityJson = ?, createEvidenceJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `).run(
-        JSON.stringify(nextVisibility),
-        JSON.stringify(createEvidence),
-        binding.locator.instanceId,
-        binding.locator.sessionId,
-        binding.locator.generation,
-      );
+      `)
+        .run(
+          JSON.stringify(nextVisibility),
+          JSON.stringify(createEvidence),
+          binding.locator.instanceId,
+          binding.locator.sessionId,
+          binding.locator.generation,
+        );
       return { ...binding, visibility: nextVisibility, createEvidence };
     });
   }
@@ -1169,16 +1232,18 @@ export class HiveDatabase {
       if (binding === null) {
         throw new Error("terminal host locator binding does not exist");
       }
-      this.database.query(`
+      this.database
+        .query(`
         UPDATE terminal_host_bindings
         SET terminationAuditJson = ?
         WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-      `).run(
-        JSON.stringify(value),
-        binding.locator.instanceId,
-        binding.locator.sessionId,
-        binding.locator.generation,
-      );
+      `)
+        .run(
+          JSON.stringify(value),
+          binding.locator.instanceId,
+          binding.locator.sessionId,
+          binding.locator.generation,
+        );
       return { ...binding, terminationAudit: value };
     });
   }
@@ -1186,45 +1251,53 @@ export class HiveDatabase {
   getTerminalHostBindingByLocator(
     locator: HiveTerminalBinding["locator"],
   ): HiveTerminalBinding | null {
-    const value = HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
-    const row = this.database.query(`
+    const value =
+      HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+    const row = this.database
+      .query(`
       SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson
       FROM terminal_host_bindings
       WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-    `).get(value.instanceId, value.sessionId, value.generation);
+    `)
+      .get(value.instanceId, value.sessionId, value.generation);
     return row === null ? null : parseTerminalHostBindingRow(row);
   }
 
   listTerminalHostBindings(instanceId: string): readonly HiveTerminalBinding[] {
     const value = z.string().min(1).parse(instanceId);
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT locatorJson, visibilityJson, createEvidenceJson, terminationAuditJson
       FROM terminal_host_bindings
       WHERE locatorInstanceId = ?
       ORDER BY locatorSessionId, locatorGeneration
-    `).all(value).map(parseTerminalHostBindingRow);
+    `)
+      .all(value)
+      .map(parseTerminalHostBindingRow);
   }
 
   upsertAgent(agent: AgentRecord): AgentRecord {
     const parsed = AgentRecordSchema.parse(agent);
-    const stored = this.database.query(
-      "SELECT sessionLocator FROM agents WHERE id = ?",
-    ).get(parsed.id) as { sessionLocator: string | null } | null;
-    const value = parsed.sessionLocator === undefined
-      ? AgentRecordSchema.parse({
-        ...parsed,
-        sessionLocator: stored?.sessionLocator
-          ? JSON.parse(stored.sessionLocator)
-          : mintSessionLocator(
-            sessionInstanceId(getHiveHome()),
-            { kind: "agent", agentId: parsed.id },
-            1,
-            "unbound",
-          ),
-      })
-      : parsed;
+    const stored = this.database
+      .query("SELECT sessionLocator FROM agents WHERE id = ?")
+      .get(parsed.id) as { sessionLocator: string | null } | null;
+    const value =
+      parsed.sessionLocator === undefined
+        ? AgentRecordSchema.parse({
+            ...parsed,
+            sessionLocator: stored?.sessionLocator
+              ? JSON.parse(stored.sessionLocator)
+              : mintSessionLocator(
+                  sessionInstanceId(getHiveHome()),
+                  { kind: "agent", agentId: parsed.id },
+                  1,
+                  "unbound",
+                ),
+          })
+        : parsed;
     const closedAt = this.resolveClosedAt(value);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO agents (
         id, name, tool, model, liveModel, category, status, taskDescription,
         worktreePath, branch, sessionLocator, contextPct,
@@ -1260,37 +1333,38 @@ export class HiveDatabase {
         readOnly = excluded.readOnly,
         writeRevoked = excluded.writeRevoked,
         closedAt = excluded.closedAt
-    `).run(
-      value.id,
-      value.name,
-      value.tool,
-      value.model,
-      value.liveModel ?? null,
-      value.category,
-      value.status,
-      value.taskDescription,
-      value.worktreePath,
-      value.branch,
-      JSON.stringify(value.sessionLocator),
-      value.contextPct,
-      value.createdAt,
-      value.lastEventAt,
-      value.failureReason ?? null,
-      value.failedAt ?? null,
-      value.quotaReservationId ?? null,
-      value.controlQuotaReservationId ?? null,
-      value.controlMessageId ?? null,
-      value.executionIdentity === undefined
-        ? null
-        : JSON.stringify(value.executionIdentity),
-      value.toolSessionId ?? null,
-      value.contextWindow ?? null,
-      value.recoveryAttempts,
-      value.capabilityEpoch,
-      value.readOnly ? 1 : 0,
-      value.writeRevoked ? 1 : 0,
-      closedAt,
-    );
+    `)
+      .run(
+        value.id,
+        value.name,
+        value.tool,
+        value.model,
+        value.liveModel ?? null,
+        value.category,
+        value.status,
+        value.taskDescription,
+        value.worktreePath,
+        value.branch,
+        JSON.stringify(value.sessionLocator),
+        value.contextPct,
+        value.createdAt,
+        value.lastEventAt,
+        value.failureReason ?? null,
+        value.failedAt ?? null,
+        value.quotaReservationId ?? null,
+        value.controlQuotaReservationId ?? null,
+        value.controlMessageId ?? null,
+        value.executionIdentity === undefined
+          ? null
+          : JSON.stringify(value.executionIdentity),
+        value.toolSessionId ?? null,
+        value.contextWindow ?? null,
+        value.recoveryAttempts,
+        value.capabilityEpoch,
+        value.readOnly ? 1 : 0,
+        value.writeRevoked ? 1 : 0,
+        closedAt,
+      );
     return this.getAgentById(value.id)!;
   }
 
@@ -1304,9 +1378,9 @@ export class HiveDatabase {
   private resolveClosedAt(value: AgentRecord): string | null {
     if (!isTerminalAgentStatus(value.status)) return null;
     if (value.closedAt !== undefined) return value.closedAt;
-    const existing = this.database.query(
-      "SELECT closedAt FROM agents WHERE id = ?",
-    ).get(value.id) as { closedAt: string | null } | null;
+    const existing = this.database
+      .query("SELECT closedAt FROM agents WHERE id = ?")
+      .get(value.id) as { closedAt: string | null } | null;
     return existing?.closedAt ?? value.failedAt ?? value.lastEventAt;
   }
 
@@ -1330,16 +1404,23 @@ export class HiveDatabase {
           ...locator,
           hostKind: "sessiond",
         });
-        if (binding?.createEvidence !== undefined && terminalDisposition !== "verified-stopped") {
+        if (
+          binding?.createEvidence !== undefined &&
+          terminalDisposition !== "verified-stopped"
+        ) {
           return false;
         }
-        this.database.query(`
+        this.database
+          .query(`
           DELETE FROM terminal_host_bindings
           WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
-        `).run(locator.instanceId, locator.sessionId, locator.generation);
+        `)
+          .run(locator.instanceId, locator.sessionId, locator.generation);
       }
-      return this.database.query("DELETE FROM agents WHERE id = ?").run(agentId)
-        .changes > 0;
+      return (
+        this.database.query("DELETE FROM agents WHERE id = ?").run(agentId)
+          .changes > 0
+      );
     });
   }
 
@@ -1363,7 +1444,9 @@ export class HiveDatabase {
   }
 
   getAgentById(id: string): AgentRecord | null {
-    const row = this.database.query("SELECT * FROM agents WHERE id = ?").get(id);
+    const row = this.database
+      .query("SELECT * FROM agents WHERE id = ?")
+      .get(id);
     return row === null ? null : parseAgentRow(row);
   }
 
@@ -1374,47 +1457,67 @@ export class HiveDatabase {
    * whose holder is closed never resolves to an older ghost of itself.
    */
   getAgentByName(name: string): AgentRecord | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT * FROM agents WHERE name = ?
       ORDER BY (status IN ('done', 'dead', 'failed')) ASC, createdAt DESC
       LIMIT 1
-    `).get(name);
+    `)
+      .get(name);
     return row === null ? null : parseAgentRow(row);
   }
 
   /** The one live holder of a name, or null when the name is free. */
   getLiveAgentByName(name: string): AgentRecord | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT * FROM agents
       WHERE name = ? AND status NOT IN ('done', 'dead', 'failed')
       LIMIT 1
-    `).get(name);
+    `)
+      .get(name);
     return row === null ? null : parseAgentRow(row);
   }
 
   listAgents(): AgentRecord[] {
-    return this.database.query("SELECT * FROM agents ORDER BY createdAt, name")
+    return this.database
+      .query("SELECT * FROM agents ORDER BY createdAt, name")
       .all()
       .map(parseAgentRow);
   }
 
-  reserveAgentName(name: string, createdAt = new Date().toISOString()): boolean {
-    return this.database.query(`
+  reserveAgentName(
+    name: string,
+    createdAt = new Date().toISOString(),
+  ): boolean {
+    return (
+      this.database
+        .query(`
       INSERT OR IGNORE INTO agent_name_reservations (name, createdAt)
       VALUES (?, ?)
-    `).run(name, createdAt).changes === 1;
+    `)
+        .run(name, createdAt).changes === 1
+    );
   }
 
   isAgentNameReserved(name: string): boolean {
-    return this.database.query(`
+    return (
+      this.database
+        .query(`
       SELECT 1 FROM agent_name_reservations WHERE name = ?
-    `).get(name) !== null;
+    `)
+        .get(name) !== null
+    );
   }
 
   releaseAgentName(name: string): boolean {
-    return this.database.query(`
+    return (
+      this.database
+        .query(`
       DELETE FROM agent_name_reservations WHERE name = ?
-    `).run(name).changes === 1;
+    `)
+        .run(name).changes === 1
+    );
   }
 
   // Name reservations are transient bookkeeping for spawns in flight inside
@@ -1422,47 +1525,52 @@ export class HiveDatabase {
   // reservation makes its spawning agent look forever in-flight to crash
   // recovery, so daemon startup clears the table wholesale.
   clearAgentNameReservations(): number {
-    return this.database.query("DELETE FROM agent_name_reservations")
-      .run().changes;
+    return this.database.query("DELETE FROM agent_name_reservations").run()
+      .changes;
   }
 
   insertMessage(message: AgentMessage): AgentMessage {
     const value = AgentMessageSchema.parse(message);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO messages (
         id, "from", "to", body, createdAt, deliveredAt, priority, intent,
         state, injectedAt, acknowledgedAt, appliedAt, deadlineAt, alertAt,
         sequence, idempotencyKey, capabilityEpoch
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.id,
-      value.from,
-      value.to,
-      value.body,
-      value.createdAt,
-      value.deliveredAt,
-      value.priority,
-      value.intent,
-      value.state,
-      value.injectedAt,
-      value.acknowledgedAt,
-      value.appliedAt,
-      value.deadlineAt,
-      value.alertAt,
-      value.sequence,
-      value.idempotencyKey,
-      value.capabilityEpoch,
-    );
+    `)
+      .run(
+        value.id,
+        value.from,
+        value.to,
+        value.body,
+        value.createdAt,
+        value.deliveredAt,
+        value.priority,
+        value.intent,
+        value.state,
+        value.injectedAt,
+        value.acknowledgedAt,
+        value.appliedAt,
+        value.deadlineAt,
+        value.alertAt,
+        value.sequence,
+        value.idempotencyKey,
+        value.capabilityEpoch,
+      );
     return this.getMessage(value.id)!;
   }
 
   getMessage(id: string): AgentMessage | null {
-    const row = this.database.query("SELECT * FROM messages WHERE id = ?").get(id);
+    const row = this.database
+      .query("SELECT * FROM messages WHERE id = ?")
+      .get(id);
     return row === null ? null : AgentMessageSchema.parse(row);
   }
 
   listMessages(): AgentMessage[] {
-    return this.database.query("SELECT * FROM messages ORDER BY rowid")
+    return this.database
+      .query("SELECT * FROM messages ORDER BY rowid")
       .all()
       .map((row) => AgentMessageSchema.parse(row));
   }
@@ -1475,28 +1583,36 @@ export class HiveDatabase {
    * "injected" is blind to exactly that incident.
    */
   listQueuedMessages(): AgentMessage[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM messages
       WHERE state = 'queued'
       ORDER BY sequence, rowid
-    `).all().map((row) => AgentMessageSchema.parse(row));
+    `)
+      .all()
+      .map((row) => AgentMessageSchema.parse(row));
   }
 
   listQueuedCriticalMessages(): AgentMessage[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM messages
       WHERE priority = 'critical' AND state = 'queued'
       ORDER BY sequence, rowid
-    `).all().map((row) => AgentMessageSchema.parse(row));
+    `)
+      .all()
+      .map((row) => AgentMessageSchema.parse(row));
   }
 
   findMessageByIdempotency(
     from: string,
     idempotencyKey: string,
   ): AgentMessage | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT * FROM messages WHERE "from" = ? AND idempotencyKey = ?
-    `).get(from, idempotencyKey);
+    `)
+      .get(from, idempotencyKey);
     return row === null ? null : AgentMessageSchema.parse(row);
   }
 
@@ -1515,18 +1631,22 @@ export class HiveDatabase {
       return this.findMessageByIdempotency(senders[0]!, idempotencyKey);
     }
     const placeholders = senders.map(() => "?").join(", ");
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT * FROM messages
       WHERE "from" IN (${placeholders}) AND idempotencyKey = ?
       ORDER BY rowid ASC LIMIT 1
-    `).get(...senders, idempotencyKey);
+    `)
+      .get(...senders, idempotencyKey);
     return row === null ? null : AgentMessageSchema.parse(row);
   }
 
   nextMessageSequence(agentName: string): number {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT COALESCE(MAX(sequence), 0) AS value FROM messages WHERE "to" = ?
-    `).get(agentName) as { value: number };
+    `)
+      .get(agentName) as { value: number };
     return row.value + 1;
   }
 
@@ -1539,16 +1659,19 @@ export class HiveDatabase {
     if (current === null) return null;
     const rank = ["queued", "injected", "agent-acknowledged", "applied"];
     if (rank.indexOf(state) <= rank.indexOf(current.state)) return current;
-    const field = state === "injected"
-      ? "injectedAt"
-      : state === "agent-acknowledged"
-        ? "acknowledgedAt"
-        : "appliedAt";
-    this.database.query(`
+    const field =
+      state === "injected"
+        ? "injectedAt"
+        : state === "agent-acknowledged"
+          ? "acknowledgedAt"
+          : "appliedAt";
+    this.database
+      .query(`
       UPDATE messages SET state = ?, ${field} = ?,
         deliveredAt = CASE WHEN ? = 'injected' THEN ? ELSE deliveredAt END
       WHERE id = ?
-    `).run(state, timestamp, state, timestamp, id);
+    `)
+      .run(state, timestamp, state, timestamp, id);
     return this.getMessage(id);
   }
 
@@ -1565,10 +1688,12 @@ export class HiveDatabase {
    * decides whether a message reached a mind (see delivery.ts).
    */
   latestTurnEndAt(agentName: string): string | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ? AND kind = 'turn-end'
-    `).get(agentName) as { value: string | null };
+    `)
+      .get(agentName) as { value: string | null };
     return row.value;
   }
 
@@ -1582,10 +1707,12 @@ export class HiveDatabase {
    * there. Only turn-start and turn-end mean the model actually ran.
    */
   latestTurnBoundaryAt(agentName: string): string | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
-    `).get(agentName) as { value: string | null };
+    `)
+      .get(agentName) as { value: string | null };
     return row.value;
   }
 
@@ -1599,13 +1726,16 @@ export class HiveDatabase {
   latestTurnBoundary(
     agentName: string,
   ): { timestamp: string; kind: "turn-start" | "turn-end" } | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT timestamp, kind FROM events
       WHERE agentName = ? AND kind IN ('turn-start', 'turn-end')
       ORDER BY timestamp DESC, rowid DESC LIMIT 1
-    `).get(agentName) as
-      | { timestamp: string; kind: "turn-start" | "turn-end" }
-      | null;
+    `)
+      .get(agentName) as {
+      timestamp: string;
+      kind: "turn-start" | "turn-end";
+    } | null;
     return row;
   }
 
@@ -1622,11 +1752,13 @@ export class HiveDatabase {
     agentName: string,
     limit = 2,
   ): OrchestratorSignalKind[] {
-    const rows = this.database.query(`
+    const rows = this.database
+      .query(`
       SELECT kind FROM events
       WHERE agentName = ? AND kind IN ('session-launch', 'session-start', 'session-end', 'turn-start', 'turn-end')
       ORDER BY timestamp DESC, rowid DESC LIMIT ?
-    `).all(agentName, limit) as Array<{ kind: OrchestratorSignalKind }>;
+    `)
+      .all(agentName, limit) as Array<{ kind: OrchestratorSignalKind }>;
     return rows.map((row) => row.kind);
   }
 
@@ -1637,20 +1769,25 @@ export class HiveDatabase {
    * exist only here.
    */
   latestEventAt(agentName: string): string | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT MAX(timestamp) AS value FROM events
       WHERE agentName = ?
-    `).get(agentName) as { value: string | null };
+    `)
+      .get(agentName) as { value: string | null };
     return row.value;
   }
 
   /** Handed to a recipient, but not yet confirmed to have reached its mind. */
   listInjectedUnapplied(): AgentMessage[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM messages
       WHERE state = 'injected' AND appliedAt IS NULL AND injectedAt IS NOT NULL
       ORDER BY injectedAt, sequence, rowid
-    `).all().map((row) => AgentMessageSchema.parse(row));
+    `)
+      .all()
+      .map((row) => AgentMessageSchema.parse(row));
   }
 
   /**
@@ -1660,15 +1797,18 @@ export class HiveDatabase {
    * could expire before the agent could physically see it.
    */
   setMessageDeadline(id: string, deadlineAt: string): AgentMessage | null {
-    this.database.query(`UPDATE messages SET deadlineAt = ? WHERE id = ?`)
+    this.database
+      .query(`UPDATE messages SET deadlineAt = ? WHERE id = ?`)
       .run(deadlineAt, id);
     return this.getMessage(id);
   }
 
   markMessageAlerted(id: string, timestamp: string): AgentMessage | null {
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE messages SET alertAt = COALESCE(alertAt, ?) WHERE id = ?
-    `).run(timestamp, id);
+    `)
+      .run(timestamp, id);
     return this.getMessage(id);
   }
 
@@ -1676,10 +1816,12 @@ export class HiveDatabase {
     id: string,
     capabilityEpoch: number,
   ): AgentMessage | null {
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE messages SET capabilityEpoch = COALESCE(capabilityEpoch, ?)
       WHERE id = ?
-    `).run(capabilityEpoch, id);
+    `)
+      .run(capabilityEpoch, id);
     return this.getMessage(id);
   }
 
@@ -1687,10 +1829,12 @@ export class HiveDatabase {
     id: string,
     timestamp: string,
   ): AgentMessage | null {
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE messages SET deliveryAlertAt = COALESCE(deliveryAlertAt, ?)
       WHERE id = ?
-    `).run(timestamp, id);
+    `)
+      .run(timestamp, id);
     return this.getMessage(id);
   }
 
@@ -1699,57 +1843,72 @@ export class HiveDatabase {
    * and the `deliveryBlocked` status flag read: a delivery that silently never
    * lands is exactly a row that stays here. */
   listBlockedDeliveries(cutoff: string): AgentMessage[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM messages
       WHERE deliveredAt IS NULL AND state = 'queued'
         AND deliveryDiagnostic IS NOT NULL
         AND createdAt <= ?
       ORDER BY createdAt, sequence, rowid
-    `).all(cutoff).map((row) => AgentMessageSchema.parse(row));
+    `)
+      .all(cutoff)
+      .map((row) => AgentMessageSchema.parse(row));
   }
 
   listExpiredUnacknowledged(now: string): AgentMessage[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM messages
       WHERE priority IN ('urgent', 'critical')
         AND deadlineAt IS NOT NULL AND deadlineAt <= ?
         AND state IN ('queued', 'injected') AND alertAt IS NULL
       ORDER BY deadlineAt, sequence, rowid
-    `).all(now).map((row) => AgentMessageSchema.parse(row));
+    `)
+      .all(now)
+      .map((row) => AgentMessageSchema.parse(row));
   }
 
   revokeAgentCapabilities(name: string, timestamp: string): AgentRecord | null {
     return this.transaction(() => {
-      this.database.query(`
+      this.database
+        .query(`
         UPDATE agents SET capabilityEpoch = capabilityEpoch + 1,
           writeRevoked = 1, status = 'control-paused', lastEventAt = ?
         WHERE name = ? AND status NOT IN ('dead', 'done', 'failed')
-      `).run(timestamp, name);
-      this.database.query(`
+      `)
+        .run(timestamp, name);
+      this.database
+        .query(`
         UPDATE approvals SET status = 'denied', resolvedAt = ?
         WHERE agentName = ? AND status = 'pending'
-      `).run(timestamp, name);
+      `)
+        .run(timestamp, name);
       return this.getAgentByName(name);
     });
   }
 
   getUndeliveredMessages(agentName: string): AgentMessage[] {
-    return this.database.query(`
+    return this.database
+      .query(`
       SELECT * FROM messages
       WHERE "to" = ? AND deliveredAt IS NULL
       ORDER BY CASE priority
         WHEN 'critical' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,
         sequence, rowid
-    `).all(agentName).map((row) => AgentMessageSchema.parse(row));
+    `)
+      .all(agentName)
+      .map((row) => AgentMessageSchema.parse(row));
   }
 
   /** True while a message addressed to this agent is still queued or
    * injected-but-unconfirmed — the idle-reap sweep's "nothing pending" gate. */
   hasPendingMessages(agentName: string): boolean {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT COUNT(*) AS count FROM messages
       WHERE "to" = ? AND state IN ('queued', 'injected')
-    `).get(agentName) as { count: number };
+    `)
+      .get(agentName) as { count: number };
     return row.count > 0;
   }
 
@@ -1760,10 +1919,12 @@ export class HiveDatabase {
     return this.transaction(() => {
       const claimed: AgentMessage[] = [];
       for (const message of this.getUndeliveredMessages(agentName)) {
-        const result = this.database.query(`
+        const result = this.database
+          .query(`
           UPDATE messages SET deliveredAt = ?
           WHERE id = ? AND deliveredAt IS NULL
-        `).run(deliveredAt, message.id);
+        `)
+          .run(deliveredAt, message.id);
         if (result.changes === 1) {
           claimed.push(AgentMessageSchema.parse({ ...message, deliveredAt }));
         }
@@ -1777,11 +1938,13 @@ export class HiveDatabase {
   // so a push path cannot report a fresh delivery for a duplicate.
   markMessageDelivered(id: string, deliveredAt: string): AgentMessage | null {
     // A delivered message's last failure diagnostic is history, not state.
-    const result = this.database.query(`
+    const result = this.database
+      .query(`
       UPDATE messages SET deliveredAt = ?,
         deliveryDiagnostic = NULL, deliveryDiagnosticAt = NULL
       WHERE id = ? AND deliveredAt IS NULL
-    `).run(deliveredAt, id);
+    `)
+      .run(deliveredAt, id);
     return result.changes === 1 ? this.getMessage(id) : null;
   }
 
@@ -1794,76 +1957,88 @@ export class HiveDatabase {
     diagnostic: string,
     at: string,
   ): void {
-    this.database.query(`
+    this.database
+      .query(`
       UPDATE messages SET deliveryDiagnostic = ?, deliveryDiagnosticAt = ?
       WHERE id = ?
-    `).run(diagnostic.slice(0, 1_024), at, id);
+    `)
+      .run(diagnostic.slice(0, 1_024), at, id);
   }
 
   insertEvent(event: HookEvent): HookEvent {
     const value = HookEventSchema.parse(event);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO events (
         kind, agentName, timestamp, contextPct, description,
         usageUnits, usageSource
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.kind,
-      value.agentName,
-      value.timestamp,
-      value.kind === "turn-end" ? value.contextPct ?? null : null,
-      value.kind === "approval-request" || value.kind === "effort-drift"
-        ? value.description
-        : null,
-      value.kind === "turn-end" ? value.usageUnits ?? null : null,
-      value.kind === "turn-end" ? value.usageSource ?? null : null,
-    );
+    `)
+      .run(
+        value.kind,
+        value.agentName,
+        value.timestamp,
+        value.kind === "turn-end" ? (value.contextPct ?? null) : null,
+        value.kind === "approval-request" || value.kind === "effort-drift"
+          ? value.description
+          : null,
+        value.kind === "turn-end" ? (value.usageUnits ?? null) : null,
+        value.kind === "turn-end" ? (value.usageSource ?? null) : null,
+      );
     return value;
   }
 
   listEvents(agentName?: string): HookEvent[] {
-    const rows = agentName === undefined
-      ? this.database.query(`
+    const rows =
+      agentName === undefined
+        ? this.database
+            .query(`
           SELECT kind, agentName, timestamp, contextPct, description,
                  usageUnits, usageSource
           FROM events ORDER BY id
-        `).all()
-      : this.database.query(`
+        `)
+            .all()
+        : this.database
+            .query(`
           SELECT kind, agentName, timestamp, contextPct, description,
                  usageUnits, usageSource
           FROM events WHERE agentName = ? ORDER BY id
-        `).all(agentName);
+        `)
+            .all(agentName);
     return rows.map(parseEventRow);
   }
 
   insertCapability(capability: CapabilityRow, secretHash: string): void {
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO capabilities (
         id, subject, role, epoch, constraints, subjects, secretHash,
         issuedAt, expiresAt, revokedAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      capability.id,
-      capability.subject,
-      capability.role,
-      capability.epoch,
-      capability.constraints === undefined
-        ? null
-        : JSON.stringify(capability.constraints),
-      !("subjects" in capability) || capability.subjects === undefined
-        ? null
-        : JSON.stringify(capability.subjects),
-      secretHash,
-      capability.issuedAt,
-      capability.expiresAt,
-      capability.revokedAt,
-    );
+    `)
+      .run(
+        capability.id,
+        capability.subject,
+        capability.role,
+        capability.epoch,
+        capability.constraints === undefined
+          ? null
+          : JSON.stringify(capability.constraints),
+        !("subjects" in capability) || capability.subjects === undefined
+          ? null
+          : JSON.stringify(capability.subjects),
+        secretHash,
+        capability.issuedAt,
+        capability.expiresAt,
+        capability.revokedAt,
+      );
   }
 
   getCapability(
     id: string,
   ): { capability: CapabilityRow; secretHash: string } | null {
-    const row = this.database.query("SELECT * FROM capabilities WHERE id = ?")
+    const row = this.database
+      .query("SELECT * FROM capabilities WHERE id = ?")
       .get(id);
     if (row === null) return null;
     return parseCapabilityRow(row);
@@ -1876,66 +2051,78 @@ export class HiveDatabase {
     action: string,
     consumedAt: string,
   ): boolean {
-    const result = this.database.query(`
+    const result = this.database
+      .query(`
       INSERT OR IGNORE INTO capability_consumptions (
         capabilityId, action, consumedAt
       ) VALUES (?, ?, ?)
-    `).run(capabilityId, action, consumedAt);
+    `)
+      .run(capabilityId, action, consumedAt);
     return result.changes === 1;
   }
 
   releaseOneShot(capabilityId: string, action: string): void {
-    this.database.query(`
+    this.database
+      .query(`
       DELETE FROM capability_consumptions
       WHERE capabilityId = ? AND action = ?
-    `).run(capabilityId, action);
+    `)
+      .run(capabilityId, action);
   }
 
   // Re-arms a spent one-shot for whatever live capability the subject holds —
   // the approval path knows the agent, not the capability id the spend was
   // recorded under. Revoked capabilities stay spent forever.
   releaseOneShotForSubject(subject: string, action: string): number {
-    return this.database.query(`
+    return this.database
+      .query(`
       DELETE FROM capability_consumptions
       WHERE action = ? AND capabilityId IN (
         SELECT id FROM capabilities WHERE subject = ? AND revokedAt IS NULL
       )
-    `).run(action, subject).changes;
+    `)
+      .run(action, subject).changes;
   }
 
   isOneShotConsumed(capabilityId: string, action: string): boolean {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT 1 AS present FROM capability_consumptions
       WHERE capabilityId = ? AND action = ?
-    `).get(capabilityId, action);
+    `)
+      .get(capabilityId, action);
     return row !== null;
   }
 
   revokeCapabilitiesForSubject(subject: string, timestamp: string): number {
-    return this.database.query(`
+    return this.database
+      .query(`
       UPDATE capabilities SET revokedAt = ?
       WHERE subject = ? AND revokedAt IS NULL
-    `).run(timestamp, subject).changes;
+    `)
+      .run(timestamp, subject).changes;
   }
 
   insertAuditEntry(entry: AuditRow): void {
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO audit_log (
         at, route, action, callerSubject, callerRole, capabilityId,
         requestedSubject, epoch, decision, reason
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      entry.at,
-      entry.route,
-      entry.action,
-      entry.callerSubject,
-      entry.callerRole,
-      entry.capabilityId,
-      entry.requestedSubject,
-      entry.epoch,
-      entry.decision,
-      entry.reason,
-    );
+    `)
+      .run(
+        entry.at,
+        entry.route,
+        entry.action,
+        entry.callerSubject,
+        entry.callerRole,
+        entry.capabilityId,
+        entry.requestedSubject,
+        entry.epoch,
+        entry.decision,
+        entry.reason,
+      );
   }
 
   /** How many audit rows a subject already has for one (action, reason). The
@@ -1948,77 +2135,90 @@ export class HiveDatabase {
     reason: string,
   ): number {
     const row = z.object({ total: z.number() }).parse(
-      this.database.query(`
+      this.database
+        .query(`
         SELECT COUNT(*) AS total FROM audit_log
         WHERE callerSubject = ? AND action = ? AND reason = ?
-      `).get(callerSubject, action, reason),
+      `)
+        .get(callerSubject, action, reason),
     );
     return row.total;
   }
 
   insertApproval(approval: z.input<typeof ApprovalSchema>): Approval {
     const value = ApprovalSchema.parse(approval);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO approvals (
         id, agentName, kind, description, status, createdAt, resolvedAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.id,
-      value.agentName,
-      value.kind,
-      value.description,
-      value.status,
-      value.createdAt,
-      value.resolvedAt,
-    );
+    `)
+      .run(
+        value.id,
+        value.agentName,
+        value.kind,
+        value.description,
+        value.status,
+        value.createdAt,
+        value.resolvedAt,
+      );
     return this.getApproval(value.id)!;
   }
 
   getApproval(id: string): Approval | null {
-    const row = this.database.query("SELECT * FROM approvals WHERE id = ?").get(id);
+    const row = this.database
+      .query("SELECT * FROM approvals WHERE id = ?")
+      .get(id);
     return row === null ? null : ApprovalSchema.parse(row);
   }
 
   listApprovals(status?: Approval["status"]): Approval[] {
-    const rows = status === undefined
-      ? this.database.query("SELECT * FROM approvals ORDER BY createdAt, id").all()
-      : this.database.query(`
+    const rows =
+      status === undefined
+        ? this.database
+            .query("SELECT * FROM approvals ORDER BY createdAt, id")
+            .all()
+        : this.database
+            .query(`
           SELECT * FROM approvals WHERE status = ? ORDER BY createdAt, id
-        `).all(status);
+        `)
+            .all(status);
     return rows.map((row) => ApprovalSchema.parse(row));
   }
 
   insertEscalation(escalation: Escalation): Escalation {
     const value = EscalationSchema.parse(escalation);
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO escalations (
         id, agentId, agentName, model, category, reason, createdAt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.id,
-      value.agentId,
-      value.agentName,
-      value.model,
-      value.category,
-      value.reason,
-      value.createdAt,
-    );
+    `)
+      .run(
+        value.id,
+        value.agentId,
+        value.agentName,
+        value.model,
+        value.category,
+        value.reason,
+        value.createdAt,
+      );
     return value;
   }
 
   listEscalations(): Escalation[] {
-    const rows = this.database.query(
-      "SELECT * FROM escalations ORDER BY createdAt, id",
-    ).all();
+    const rows = this.database
+      .query("SELECT * FROM escalations ORDER BY createdAt, id")
+      .all();
     return rows.map((row) => EscalationSchema.parse(row));
   }
 
   /** Prior escalations by this exact agent (this task), for the repeat count the
    * orchestrator reads. Measured and reported, never blocked. */
   countEscalationsForAgent(agentId: string): number {
-    const row = this.database.query(
-      "SELECT COUNT(*) AS count FROM escalations WHERE agentId = ?",
-    ).get(agentId) as { count: number };
+    const row = this.database
+      .query("SELECT COUNT(*) AS count FROM escalations WHERE agentId = ?")
+      .get(agentId) as { count: number };
     return row.count;
   }
 
@@ -2027,26 +2227,32 @@ export class HiveDatabase {
     status: "approved" | "denied",
     resolvedAt: string,
   ): Approval | null {
-    const result = this.database.query(`
+    const result = this.database
+      .query(`
       UPDATE approvals SET status = ?, resolvedAt = ?
       WHERE id = ? AND status = 'pending'
-    `).run(status, resolvedAt, id);
+    `)
+      .run(status, resolvedAt, id);
     return result.changes === 0 ? null : this.getApproval(id);
   }
 
   staleApproval(id: string, resolvedAt: string): Approval | null {
-    const result = this.database.query(`
+    const result = this.database
+      .query(`
       UPDATE approvals SET status = 'stale', resolvedAt = ?
       WHERE id = ? AND status = 'pending'
-    `).run(resolvedAt, id);
+    `)
+      .run(resolvedAt, id);
     return result.changes === 0 ? null : this.getApproval(id);
   }
 
   stalePendingToolApprovals(agentName: string, resolvedAt: string): number {
-    return this.database.query(`
+    return this.database
+      .query(`
       UPDATE approvals SET status = 'stale', resolvedAt = ?
       WHERE agentName = ? AND kind = 'tool-permission' AND status = 'pending'
-    `).run(resolvedAt, agentName).changes;
+    `)
+      .run(resolvedAt, agentName).changes;
   }
 
   /**
@@ -2061,8 +2267,9 @@ export class HiveDatabase {
     now: string,
     keepDays = 14,
   ): { events: number; messages: number; approvals: number } {
-    const cutoff = new Date(Date.parse(now) - keepDays * 86_400_000)
-      .toISOString();
+    const cutoff = new Date(
+      Date.parse(now) - keepDays * 86_400_000,
+    ).toISOString();
     return this.transaction(() => ({
       events: this.database
         .query("DELETE FROM events WHERE timestamp < ?")
@@ -2071,7 +2278,9 @@ export class HiveDatabase {
         .query("DELETE FROM messages WHERE state = 'applied' AND createdAt < ?")
         .run(cutoff).changes,
       approvals: this.database
-        .query("DELETE FROM approvals WHERE status != 'pending' AND createdAt < ?")
+        .query(
+          "DELETE FROM approvals WHERE status != 'pending' AND createdAt < ?",
+        )
         .run(cutoff).changes,
     }));
   }

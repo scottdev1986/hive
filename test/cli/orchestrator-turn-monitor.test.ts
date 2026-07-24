@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
-
-import type { TurnBoundaryKind } from "../../src/daemon/orchestrator-status";
 import {
   monitorNativeOrchestratorTurns,
   type NativeTurnArtifact,
 } from "../../src/cli/orchestrator-turn-monitor";
+import type { TurnBoundaryKind } from "../../src/daemon/orchestrator-status";
 
 const oldArtifact = { sessionId: "old", path: "/old/events.jsonl" };
 const newArtifact = { sessionId: "new", path: "/new/events.jsonl" };
@@ -12,7 +11,10 @@ const newArtifact = { sessionId: "new", path: "/new/events.jsonl" };
 describe("native orchestrator turn monitor", () => {
   test("ignores the predecessor and reports a new session's open and closed turn", async () => {
     const controller = new AbortController();
-    const located: Array<NativeTurnArtifact | null> = [oldArtifact, newArtifact];
+    const located: Array<NativeTurnArtifact | null> = [
+      oldArtifact,
+      newArtifact,
+    ];
     const states = [false, true];
     const reports: Array<[TurnBoundaryKind, string]> = [];
     const identified: string[] = [];
@@ -21,8 +23,12 @@ describe("native orchestrator turn monitor", () => {
     await monitorNativeOrchestratorTurns("old", controller.signal, {
       locate: async () => located.shift() ?? newArtifact,
       read: async () => states.shift() ?? true,
-      identify: async (artifact) => { identified.push(artifact.sessionId); },
-      report: async (kind, sessionId) => { reports.push([kind, sessionId]); },
+      identify: async (artifact) => {
+        identified.push(artifact.sessionId);
+      },
+      report: async (kind, sessionId) => {
+        reports.push([kind, sessionId]);
+      },
       sleep: async () => {
         sleeps += 1;
         if (sleeps === 3) controller.abort();
@@ -43,8 +49,12 @@ describe("native orchestrator turn monitor", () => {
     await monitorNativeOrchestratorTurns(null, controller.signal, {
       locate: async () => newArtifact,
       read: async () => true,
-      report: async (kind) => { reports.push(kind); },
-      sleep: async () => { controller.abort(); },
+      report: async (kind) => {
+        reports.push(kind);
+      },
+      sleep: async () => {
+        controller.abort();
+      },
       warn: () => {},
     });
     expect(reports).toEqual(["turn-start", "turn-end"]);
@@ -56,8 +66,12 @@ describe("native orchestrator turn monitor", () => {
     await monitorNativeOrchestratorTurns(null, controller.signal, {
       locate: async () => null,
       read: async () => true,
-      report: async (kind) => { reports.push(kind); },
-      sleep: async () => { controller.abort(); },
+      report: async (kind) => {
+        reports.push(kind);
+      },
+      sleep: async () => {
+        controller.abort();
+      },
       warn: () => {},
     });
     expect(reports).toEqual([]);
@@ -79,7 +93,9 @@ describe("native orchestrator turn monitor", () => {
       sleep: async () => {
         if (attempts === 2) controller.abort();
       },
-      warn: (message) => { warnings.push(message); },
+      warn: (message) => {
+        warnings.push(message);
+      },
     });
     expect(attempts).toEqual(2);
     expect(reports).toEqual(["turn-start"]);

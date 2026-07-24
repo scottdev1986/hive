@@ -23,7 +23,13 @@ afterEach(() => {
 
 describe("instance selection", () => {
   test("a named instance selects its own HIVE_HOME", () => {
-    const selected = selectInstanceFromArgv(["bun", "hive", "--instance", "blue", "init"]);
+    const selected = selectInstanceFromArgv([
+      "bun",
+      "hive",
+      "--instance",
+      "blue",
+      "init",
+    ]);
     expect(selected).toBe(namedInstanceHome("blue"));
     expect(process.env.HIVE_HOME).toBe(namedInstanceHome("blue"));
   });
@@ -46,16 +52,26 @@ describe("instance selection", () => {
 
   test("an explicit named home is never mistaken for an ordinary runtime", () => {
     selectFreshInstance("first");
-    selectInstanceFromArgv(["bun", "hive", "--instance", "run-explicit", "init"]);
+    selectInstanceFromArgv([
+      "bun",
+      "hive",
+      "--instance",
+      "run-explicit",
+      "init",
+    ]);
     expect(process.env[ORDINARY_WORKSPACE_RUNTIME]).toBeUndefined();
   });
 
   test("automatic runtimes share machine-scoped tools from the default home", () => {
-    expect(machineHiveHome(namedInstanceHome("run-first"))).toBe(defaultHiveHome());
+    expect(machineHiveHome(namedInstanceHome("run-first"))).toBe(
+      defaultHiveHome(),
+    );
   });
 
   test("instance names cannot escape the registry directory", () => {
-    expect(() => namedInstanceHome("../other")).toThrow("Invalid Hive instance name");
+    expect(() => namedInstanceHome("../other")).toThrow(
+      "Invalid Hive instance name",
+    );
   });
 
   test("global mutation sees each live instance's own team and blocks unknown startup", async () => {
@@ -86,25 +102,34 @@ describe("instance selection", () => {
       },
     ];
     const seen: number[] = [];
-    const blockers = await instanceMutationBlockers(async (port) => {
-      seen.push(port);
-      return port === 4301 ? ["maya"] : [];
-    }, {
-      instances: async () => instances,
-      liveness: async (_home, id) => id === "starting-id" ? "unknown" : "dead",
-    });
+    const blockers = await instanceMutationBlockers(
+      async (port) => {
+        seen.push(port);
+        return port === 4301 ? ["maya"] : [];
+      },
+      {
+        instances: async () => instances,
+        liveness: async (_home, id) =>
+          id === "starting-id" ? "unknown" : "dead",
+      },
+    );
     expect(seen).toEqual([4301, 4302]);
-    expect(blockers.map(({ instance, liveAgents }) => [instance.name, liveAgents]))
-      .toEqual([
-        ["blue", ["maya"]],
-        ["starting", ["<starting-or-unreachable>"]],
-      ]);
+    expect(
+      blockers.map(({ instance, liveAgents }) => [instance.name, liveAgents]),
+    ).toEqual([
+      ["blue", ["maya"]],
+      ["starting", ["<starting-or-unreachable>"]],
+    ]);
   });
 
   test("an unreadable instance registry is never treated as an empty machine", async () => {
     const home = mkdtempSync(join(tmpdir(), "hive-instance-registry-error-"));
     const modulePath = join(import.meta.dir, "../../src/daemon/instances.ts");
-    const child = Bun.spawn([process.execPath, "-e", `
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `
       import { mkdirSync, writeFileSync } from "node:fs";
       import { dirname } from "node:path";
       const { instancesRoot, listInstances } = await import(${JSON.stringify(modulePath)});
@@ -118,10 +143,13 @@ describe("instance selection", () => {
       } catch (error) {
         if (error?.code !== "ENOTDIR") throw error;
       }
-    `], {
-      env: { ...process.env, HOME: home },
-      stderr: "pipe",
-    });
+    `,
+      ],
+      {
+        env: { ...process.env, HOME: home },
+        stderr: "pipe",
+      },
+    );
     try {
       const [exitCode, stderr] = await Promise.all([
         child.exited,

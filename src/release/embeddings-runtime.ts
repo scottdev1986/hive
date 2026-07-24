@@ -44,8 +44,9 @@ interface PackageJson {
 
 async function readPackageJson(dir: string): Promise<PackageJson | null> {
   try {
-    return JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as
-      PackageJson;
+    return JSON.parse(
+      await readFile(join(dir, "package.json"), "utf8"),
+    ) as PackageJson;
   } catch {
     return null;
   }
@@ -104,8 +105,10 @@ export async function collectFastembedClosure(
         name: dep,
         optional: false,
       })),
-      ...Object.keys(manifest.optionalDependencies ?? {})
-        .map((dep) => ({ name: dep, optional: true })),
+      ...Object.keys(manifest.optionalDependencies ?? {}).map((dep) => ({
+        name: dep,
+        optional: true,
+      })),
     );
   }
   return resolved;
@@ -148,10 +151,13 @@ export async function stageEmbeddingRuntime(
   await rm(join(runtimeDir, "dist"), { recursive: true, force: true });
   const build = Bun.spawn(
     [
-      "bun", "build", entryPath,
+      "bun",
+      "build",
+      entryPath,
       "--target=bun",
       "--packages=bundle",
-      "--outdir", join(runtimeDir, "dist"),
+      "--outdir",
+      join(runtimeDir, "dist"),
     ],
     { stdout: "inherit", stderr: "inherit" },
   );
@@ -165,7 +171,7 @@ export async function stageEmbeddingRuntime(
 
   const fastembedVersion =
     (await readPackageJson(join(targetNodeModules, "fastembed")))?.version ??
-      "unknown";
+    "unknown";
   await writeFile(
     join(runtimeDir, "INSTALL.json"),
     `${JSON.stringify(

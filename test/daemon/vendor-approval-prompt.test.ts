@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
 import { HiveDaemon } from "../../src/daemon/server";
-import { actingAs } from "../../src/daemon/testing";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
 import type {
   SessiondAgentInput,
   SessiondInjectResult,
 } from "../../src/daemon/session-host/sessiond-agent-input";
 import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-contract";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
+import { actingAs } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 /**
  * #102: a codex agent parked on its own TUI approval popup was unreachable by
@@ -129,12 +129,12 @@ async function withDaemon(
   }
 }
 
-function textValue(
-  result: Awaited<ReturnType<Client["callTool"]>>,
-): unknown {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -184,12 +184,17 @@ async function expectFailedInjectionPreserved(
     );
     expect(queued.state).toEqual("queued");
 
-    const result = textValue(await client.callTool({
-      name: "hive_approve",
-      arguments: { id: approvalId, decision: "approve" },
-    })) as { outcome: string; status: string };
+    const result = textValue(
+      await client.callTool({
+        name: "hive_approve",
+        arguments: { id: approvalId, decision: "approve" },
+      }),
+    ) as { outcome: string; status: string };
 
-    expect(result).toMatchObject({ outcome: "delivery-failed", status: "pending" });
+    expect(result).toMatchObject({
+      outcome: "delivery-failed",
+      status: "pending",
+    });
     expect(db.getApproval(approvalId)?.status).toEqual("pending");
     expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
     expect(db.getMessage(queued.id)).toMatchObject({
@@ -287,10 +292,12 @@ describe("a vendor TUI parked on an approval prompt", () => {
       const currentId = pendingApprovalId(db);
       expect(currentId).not.toEqual(staleId);
 
-      const result = textValue(await client.callTool({
-        name: "hive_approve",
-        arguments: { id: staleId, decision: "approve" },
-      })) as { outcome: string; status: string };
+      const result = textValue(
+        await client.callTool({
+          name: "hive_approve",
+          arguments: { id: staleId, decision: "approve" },
+        }),
+      ) as { outcome: string; status: string };
 
       expect(result).toMatchObject({ outcome: "stale", status: "stale" });
       expect(input.keys).toEqual([]);
@@ -317,34 +324,38 @@ describe("a vendor TUI parked on an approval prompt", () => {
         return { outcome: "injected", receipt: receipt(options.transactionId) };
       },
     };
-    await withDaemon("injection-race", input, async ({ db, daemon, client }) => {
-      db.insertAgent(blockedCodexAgent());
-      await daemon.processEvent({
-        kind: "approval-request",
-        agentName: "sam",
-        timestamp: "2026-07-21T12:01:00.000Z",
-        description: "Bash: command A",
-      });
-      const approvalId = pendingApprovalId(db);
-      const resolving = client.callTool({
-        name: "hive_approve",
-        arguments: { id: approvalId, decision: "approve" },
-      });
-      await started.promise;
+    await withDaemon(
+      "injection-race",
+      input,
+      async ({ db, daemon, client }) => {
+        db.insertAgent(blockedCodexAgent());
+        await daemon.processEvent({
+          kind: "approval-request",
+          agentName: "sam",
+          timestamp: "2026-07-21T12:01:00.000Z",
+          description: "Bash: command A",
+        });
+        const approvalId = pendingApprovalId(db);
+        const resolving = client.callTool({
+          name: "hive_approve",
+          arguments: { id: approvalId, decision: "approve" },
+        });
+        await started.promise;
 
-      // The popup is answered manually while broker/attach/input work awaits.
-      await daemon.processEvent({
-        kind: "tool-boundary",
-        agentName: "sam",
-        timestamp: "2026-07-21T12:02:00.000Z",
-      });
-      release.resolve();
-      const result = textValue(await resolving) as { outcome: string };
+        // The popup is answered manually while broker/attach/input work awaits.
+        await daemon.processEvent({
+          kind: "tool-boundary",
+          agentName: "sam",
+          timestamp: "2026-07-21T12:02:00.000Z",
+        });
+        release.resolve();
+        const result = textValue(await resolving) as { outcome: string };
 
-      expect(result.outcome).toEqual("stale");
-      expect(keys).toEqual([]);
-      expect(db.getAgentByName("sam")?.status).toEqual("working");
-    });
+        expect(result.outcome).toEqual("stale");
+        expect(keys).toEqual([]);
+        expect(db.getAgentByName("sam")?.status).toEqual("working");
+      },
+    );
   });
 
   test("an old denial completing cannot overwrite one fresh prompt or answer it again", async () => {
@@ -365,37 +376,41 @@ describe("a vendor TUI parked on an approval prompt", () => {
         return { outcome: "injected", receipt: receipt(options.transactionId) };
       },
     };
-    await withDaemon("fresh-after-denial", input, async ({ db, daemon, client }) => {
-      db.insertAgent(blockedCodexAgent());
-      await daemon.processEvent({
-        kind: "approval-request",
-        agentName: "sam",
-        timestamp: "2026-07-21T12:01:00.000Z",
-        description: "Bash: command A",
-      });
-      const oldId = pendingApprovalId(db);
-      const denying = client.callTool({
-        name: "hive_approve",
-        arguments: { id: oldId, decision: "deny" },
-      });
-      await started.promise;
+    await withDaemon(
+      "fresh-after-denial",
+      input,
+      async ({ db, daemon, client }) => {
+        db.insertAgent(blockedCodexAgent());
+        await daemon.processEvent({
+          kind: "approval-request",
+          agentName: "sam",
+          timestamp: "2026-07-21T12:01:00.000Z",
+          description: "Bash: command A",
+        });
+        const oldId = pendingApprovalId(db);
+        const denying = client.callTool({
+          name: "hive_approve",
+          arguments: { id: oldId, decision: "deny" },
+        });
+        await started.promise;
 
-      await daemon.processEvent({
-        kind: "approval-request",
-        agentName: "sam",
-        timestamp: "2026-07-21T12:02:00.000Z",
-        description: "Bash: command B",
-      });
-      release.resolve();
-      await denying;
+        await daemon.processEvent({
+          kind: "approval-request",
+          agentName: "sam",
+          timestamp: "2026-07-21T12:02:00.000Z",
+          description: "Bash: command B",
+        });
+        release.resolve();
+        await denying;
 
-      const pending = db.listApprovals("pending");
-      expect(pending).toHaveLength(1);
-      expect(pending[0]?.description).toEqual("Bash: command B");
-      expect(db.getApproval(oldId)?.status).toEqual("stale");
-      expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
-      expect(keys).toEqual([]);
-    });
+        const pending = db.listApprovals("pending");
+        expect(pending).toHaveLength(1);
+        expect(pending[0]?.description).toEqual("Bash: command B");
+        expect(db.getApproval(oldId)?.status).toEqual("stale");
+        expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
+        expect(keys).toEqual([]);
+      },
+    );
   });
 
   test("never presses a key for an approval no vendor pane is waiting on", async () => {
@@ -421,28 +436,32 @@ describe("a vendor TUI parked on an approval prompt", () => {
 
       // A Hive-authored approval (cost consent, land re-arm) has no popup
       // behind it at all.
-      db.insertAgent(blockedCodexAgent({
-        id: "agent-remy",
-        name: "remy",
-        status: "awaiting-approval",
-        sessionLocator: {
-          ...blockedCodexAgent().sessionLocator!,
-          subject: { kind: "agent" as const, agentId: "agent-remy" },
-          sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000001bb",
-        },
-      }));
+      db.insertAgent(
+        blockedCodexAgent({
+          id: "agent-remy",
+          name: "remy",
+          status: "awaiting-approval",
+          sessionLocator: {
+            ...blockedCodexAgent().sessionLocator!,
+            subject: { kind: "agent" as const, agentId: "agent-remy" },
+            sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000001bb",
+          },
+        }),
+      );
       // Answered at the pane already: the tool boundary that observed it moved
       // this agent back to working, and a key now would type into a composer.
-      db.insertAgent(blockedCodexAgent({
-        id: "agent-nina",
-        name: "nina",
-        status: "working",
-        sessionLocator: {
-          ...blockedCodexAgent().sessionLocator!,
-          subject: { kind: "agent" as const, agentId: "agent-nina" },
-          sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000001cc",
-        },
-      }));
+      db.insertAgent(
+        blockedCodexAgent({
+          id: "agent-nina",
+          name: "nina",
+          status: "working",
+          sessionLocator: {
+            ...blockedCodexAgent().sessionLocator!,
+            subject: { kind: "agent" as const, agentId: "agent-nina" },
+            sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000001cc",
+          },
+        }),
+      );
       const gated: Array<[string, string, "tool-permission" | "land-rearm"]> = [
         ["approval-remy", "remy", "land-rearm"],
         ["approval-nina", "nina", "tool-permission"],
@@ -490,10 +509,10 @@ describe("a vendor TUI parked on an approval prompt", () => {
   });
 
   test("keeps approval and queued mail when key injection is declined", async () => {
-    await expectFailedInjectionPreserved(
-      "declined-keys",
-      async () => ({ outcome: "declined", reason: "viewer claim refused" }),
-    );
+    await expectFailedInjectionPreserved("declined-keys", async () => ({
+      outcome: "declined",
+      reason: "viewer claim refused",
+    }));
   });
 
   test("keeps approval and queued mail when key injection throws", async () => {

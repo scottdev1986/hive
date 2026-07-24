@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 import { activateStagedUpdate, rollbackWhenIdle } from "../../src/cli/update";
+import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 
 const blocker = {
   instance: {
@@ -61,7 +61,10 @@ describe("machine mutation leases in update commands", () => {
         expect(held).toBe(true);
         order.push("embeddings");
         expect(version).toBe("0.0.8");
-        return { ok: true, detail: "embedding runtime from hive 0.0.8 installed" };
+        return {
+          ok: true,
+          detail: "embedding runtime from hive 0.0.8 installed",
+        };
       },
       log: (line) => lines.push(line),
     });
@@ -99,23 +102,25 @@ describe("machine mutation leases in update commands", () => {
     const landing = await landingCoordinator.beginOperation("landing");
     let mutated = false;
     try {
-      await expect(activateStagedUpdate("0.0.8", {
-        acquireLease: (purpose) => updateCoordinator.acquireLease(purpose),
-        blockers: async () => [],
-        inspectDaemon: async () => ({ state: "absent" }),
-        activate: async () => {
-          mutated = true;
-          return { activated: true, version: "0.0.8", previous: "0.0.7" };
-        },
-        ensureBinLink: async () => {
-          mutated = true;
-        },
-        stopStaleDaemon: async () => {},
-        provisionEmbeddings: async () => {
-          throw new Error("embeddings must not run");
-        },
-        log: () => {},
-      })).rejects.toThrow(/landing .* in progress/);
+      await expect(
+        activateStagedUpdate("0.0.8", {
+          acquireLease: (purpose) => updateCoordinator.acquireLease(purpose),
+          blockers: async () => [],
+          inspectDaemon: async () => ({ state: "absent" }),
+          activate: async () => {
+            mutated = true;
+            return { activated: true, version: "0.0.8", previous: "0.0.7" };
+          },
+          ensureBinLink: async () => {
+            mutated = true;
+          },
+          stopStaleDaemon: async () => {},
+          provisionEmbeddings: async () => {
+            throw new Error("embeddings must not run");
+          },
+          log: () => {},
+        }),
+      ).rejects.toThrow(/landing .* in progress/);
       expect(mutated).toBe(false);
     } finally {
       landing.release();
@@ -158,20 +163,22 @@ describe("machine mutation leases in update commands", () => {
 
   test("an activation error still releases the update lease", async () => {
     const order: string[] = [];
-    await expect(activateStagedUpdate("0.0.8", {
-      acquireLease: async () => ({ release: () => order.push("release") }),
-      blockers: async () => [],
-      inspectDaemon: async () => ({ state: "absent" }),
-      activate: async () => {
-        throw new Error("rename failed");
-      },
-      ensureBinLink: async () => {},
-      stopStaleDaemon: async () => {},
-      provisionEmbeddings: async () => {
-        throw new Error("embeddings must not run");
-      },
-      log: () => {},
-    })).rejects.toThrow("rename failed");
+    await expect(
+      activateStagedUpdate("0.0.8", {
+        acquireLease: async () => ({ release: () => order.push("release") }),
+        blockers: async () => [],
+        inspectDaemon: async () => ({ state: "absent" }),
+        activate: async () => {
+          throw new Error("rename failed");
+        },
+        ensureBinLink: async () => {},
+        stopStaleDaemon: async () => {},
+        provisionEmbeddings: async () => {
+          throw new Error("embeddings must not run");
+        },
+        log: () => {},
+      }),
+    ).rejects.toThrow("rename failed");
     expect(order).toEqual(["release"]);
   });
 
@@ -181,7 +188,11 @@ describe("machine mutation leases in update commands", () => {
       acquireLease: async () => ({ release: () => {} }),
       blockers: async () => [],
       inspectDaemon: async () => ({ state: "absent" }),
-      activate: async () => ({ activated: true, version: "0.0.8", previous: "0.0.7" }),
+      activate: async () => ({
+        activated: true,
+        version: "0.0.8",
+        previous: "0.0.7",
+      }),
       ensureBinLink: async () => {},
       stopStaleDaemon: async () => {},
       provisionEmbeddings: async () => ({
@@ -206,7 +217,11 @@ describe("machine mutation leases in update commands", () => {
       acquireLease: async () => ({ release: () => {} }),
       blockers: async () => [],
       inspectDaemon: async () => ({ state: "absent" }),
-      activate: async () => ({ activated: true, version: "0.0.8", previous: "0.0.7" }),
+      activate: async () => ({
+        activated: true,
+        version: "0.0.8",
+        previous: "0.0.7",
+      }),
       ensureBinLink: async () => {},
       stopStaleDaemon: async () => {},
       provisionEmbeddings: async () => {
@@ -265,19 +280,21 @@ describe("machine mutation leases in update commands", () => {
     const order: string[] = [];
     let rolledBack = false;
 
-    await expect(rollbackWhenIdle({
-      acquireLease: async () => {
-        order.push("acquire");
-        return { release: () => order.push("release") };
-      },
-      blockers: async () => [blocker],
-      rollback: async () => {
-        rolledBack = true;
-        return { activated: true, version: "0.0.7", previous: "0.0.8" };
-      },
-      stopStaleDaemon: async () => {},
-      log: () => {},
-    })).rejects.toThrow(/review: new-agent[\s\S]*Fix:/);
+    await expect(
+      rollbackWhenIdle({
+        acquireLease: async () => {
+          order.push("acquire");
+          return { release: () => order.push("release") };
+        },
+        blockers: async () => [blocker],
+        rollback: async () => {
+          rolledBack = true;
+          return { activated: true, version: "0.0.7", previous: "0.0.8" };
+        },
+        stopStaleDaemon: async () => {},
+        log: () => {},
+      }),
+    ).rejects.toThrow(/review: new-agent[\s\S]*Fix:/);
 
     expect(rolledBack).toBe(false);
     expect(order).toEqual(["acquire", "release"]);

@@ -10,8 +10,8 @@ import {
 } from "../src/cli/memory-self-test";
 import { liveSelfTestReport } from "../src/cli/memory-self-test-live";
 import {
-  MemoryEmbeddingService,
   type MemoryEmbedder,
+  MemoryEmbeddingService,
 } from "../src/daemon/memory-embeddings";
 import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
 
@@ -22,7 +22,9 @@ afterEach(async () => {
   if (previousHome === undefined) delete process.env.HIVE_HOME;
   else process.env.HIVE_HOME = previousHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -46,11 +48,15 @@ function mockSelfTestEmbedder(): MemoryEmbedder {
   const pairVector = unit(2);
   const hash = (text: string): number => {
     let value = 7;
-    for (const char of text) value = (value * 31 + char.charCodeAt(0)) % 2 ** 31;
+    for (const char of text)
+      value = (value * 31 + char.charCodeAt(0)) % 2 ** 31;
     return value;
   };
   const pick = (text: string): number[] => {
-    if (text.includes("free-memory floor") || text.includes("RAM is exhausted")) {
+    if (
+      text.includes("free-memory floor") ||
+      text.includes("RAM is exhausted")
+    ) {
       return semanticVector;
     }
     if (text.includes("wake-delta injection budget defaults to 300 tokens")) {
@@ -87,8 +93,8 @@ describe("hive memory self-test", () => {
       const exitCode = await memorySelfTestCli();
       expect(exitCode).toBe(0);
       const lines = log.mock.calls.map((call) => String(call[0]));
-      const assertionLines = lines.filter((line) =>
-        line.startsWith("PASS ") || line.startsWith("FAIL ")
+      const assertionLines = lines.filter(
+        (line) => line.startsWith("PASS ") || line.startsWith("FAIL "),
       );
       expect(assertionLines).toHaveLength(6);
       for (const line of assertionLines) {
@@ -194,8 +200,12 @@ describe("hive memory self-test", () => {
   });
 
   test("an injected unavailable service also yields SKIP, not failure", async () => {
-    const home = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"));
-    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"));
+    const home = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"),
+    );
+    const root = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"),
+    );
     tempRoots.push(home, root);
     process.env.HIVE_HOME = home;
     await plantMemorySelfTestFixture(root);
@@ -212,8 +222,12 @@ describe("hive memory self-test", () => {
   });
 
   test("with a mock embedder the semantic assertions PASS deterministically", async () => {
-    const home = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"));
-    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"));
+    const home = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"),
+    );
+    const root = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"),
+    );
     tempRoots.push(home, root);
     process.env.HIVE_HOME = home;
     await plantMemorySelfTestFixture(root);
@@ -233,8 +247,12 @@ describe("hive memory self-test", () => {
   });
 
   test("sabotaged fixture fails the probe: deleting canaries breaks recall@5", async () => {
-    const home = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"));
-    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"));
+    const home = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"),
+    );
+    const root = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"),
+    );
     tempRoots.push(home, root);
     process.env.HIVE_HOME = home;
     await plantMemorySelfTestFixture(root);
@@ -256,10 +274,10 @@ describe("hive memory self-test", () => {
     expect(deleted).toBe(5);
 
     const assertions = await probeMemorySelfTest(root);
-    expect(
-      assertions.some((a) => !a.passed && a.skipped !== true),
-    ).toBe(true);
-    const recall = assertions.find((assertion) => assertion.name === "recall@5");
+    expect(assertions.some((a) => !a.passed && a.skipped !== true)).toBe(true);
+    const recall = assertions.find(
+      (assertion) => assertion.name === "recall@5",
+    );
     expect(recall?.passed).toBe(false);
     expect(recall?.detail).toContain(
       `${MEMORY_SELF_TEST_CANARY_COUNT - 5}/${MEMORY_SELF_TEST_CANARY_COUNT}`,

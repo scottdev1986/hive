@@ -66,7 +66,11 @@ export function formatBytes(bytes: number): string {
 
 /** `9.6 MB/s`, or `—` before enough time has passed to divide by. */
 export function formatRate(bytesPerSecond: number | null): string {
-  if (bytesPerSecond === null || !Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) {
+  if (
+    bytesPerSecond === null ||
+    !Number.isFinite(bytesPerSecond) ||
+    bytesPerSecond <= 0
+  ) {
     return "—";
   }
   return `${formatBytes(Math.round(bytesPerSecond))}/s`;
@@ -166,7 +170,7 @@ export function startDownload(
   deps: ReporterDeps = {},
 ): ProgressReporter {
   const write = deps.write ?? ((text: string) => process.stderr.write(text));
-  const isTTY = deps.isTTY ?? (process.stderr.isTTY === true);
+  const isTTY = deps.isTTY ?? process.stderr.isTTY === true;
   const now = deps.now ?? (() => Date.now());
 
   const size = declaredSize === null ? "" : ` (${formatBytes(declaredSize)})`;
@@ -220,7 +224,8 @@ export function startDownload(
   };
 
   return {
-    onProgress: (read: number, total: number | null) => draw(read, total, false),
+    onProgress: (read: number, total: number | null) =>
+      draw(read, total, false),
     finish: (summary?: string) => {
       // Replace the bar in place rather than leaving a 99%-complete bar above
       // the result. The bar is scaffolding; the summary is the thing to keep.

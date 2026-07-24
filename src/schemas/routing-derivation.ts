@@ -1,9 +1,9 @@
 import {
   CAPABILITY_PROVIDERS,
-  splitVariant,
   type CapabilityProvider,
   type CapabilityRecord,
   type EffectiveDefault,
+  splitVariant,
 } from "./capability";
 
 /**
@@ -25,10 +25,10 @@ import {
  */
 export type ProviderDiscovery =
   | {
-    status: "ok";
-    records: CapabilityRecord[];
-    effectiveDefault: EffectiveDefault;
-  }
+      status: "ok";
+      records: CapabilityRecord[];
+      effectiveDefault: EffectiveDefault;
+    }
   | { status: "unavailable"; reason: string };
 
 /**
@@ -70,10 +70,11 @@ export function identifyModelVendor(
       unread.push(provider);
       continue;
     }
-    const claimed = entry.records.some((record) =>
-      record.launchToken.toLowerCase() === wanted ||
-      record.canonicalId.toLowerCase() === wanted ||
-      record.aliases.some((alias) => alias.toLowerCase() === wanted)
+    const claimed = entry.records.some(
+      (record) =>
+        record.launchToken.toLowerCase() === wanted ||
+        record.canonicalId.toLowerCase() === wanted ||
+        record.aliases.some((alias) => alias.toLowerCase() === wanted),
     );
     if (claimed) claims.push(provider);
   }

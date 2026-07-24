@@ -3,10 +3,12 @@ import { providerTerminalEnvironment } from "../../src/daemon/provider-terminal-
 
 describe("providerTerminalEnvironment", () => {
   test("keeps launcher NO_COLOR out of the interactive provider terminal", () => {
-    expect(providerTerminalEnvironment({
-      PATH: "/bin",
-      NO_COLOR: "1",
-      EMPTY: undefined,
-    })).toEqual({ PATH: "/bin" });
+    expect(
+      providerTerminalEnvironment({
+        PATH: "/bin",
+        NO_COLOR: "1",
+        EMPTY: undefined,
+      }),
+    ).toEqual({ PATH: "/bin" });
   });
 });

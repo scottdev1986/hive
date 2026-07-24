@@ -12,9 +12,9 @@ async function worktree(): Promise<string> {
   return root;
 }
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 describe("agent adapter factory", () => {
@@ -71,7 +71,7 @@ describe("agent adapter factory", () => {
     expect(prepared.argv.slice(1, 3)).toEqual(["--profile", "hive-session-1"]);
     // The token value never enters argv or the command: only the 0600 file
     // read does.
-    expect(prepared.command).toContain("HIVE_CAPABILITY_TOKEN=\"$(cat ");
+    expect(prepared.command).toContain('HIVE_CAPABILITY_TOKEN="$(cat ');
     expect(prepared.command).not.toContain("secret-token");
     expect(prepared.command).toContain("install -m 600 ");
   });

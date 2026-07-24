@@ -9,13 +9,13 @@
 // semantic surface being unavailable, an apply the write path refused —
 // exit nonzero.
 import { loadHiveConfig } from "../config/load";
+import { EpisodicStore } from "../daemon/episodic-store";
 import {
   type ConsolidationCandidate,
   type ConsolidationReport,
   runMemoryConsolidation,
 } from "../daemon/memory-consolidate";
 import { MemoryEmbeddingService } from "../daemon/memory-embeddings";
-import { EpisodicStore } from "../daemon/episodic-store";
 import { projectRootOrCwd } from "./project-root";
 
 function printGroup(
@@ -25,7 +25,8 @@ function printGroup(
 ): void {
   console.log(`${label} (${pairs.length}) — ${recommendation}`);
   for (const pair of pairs) {
-    const where = pair.kind === "article" ? `${pair.kind}:${pair.scope}` : pair.kind;
+    const where =
+      pair.kind === "article" ? `${pair.kind}:${pair.scope}` : pair.kind;
     console.log(
       `  ${pair.score.toFixed(3)}  [${where}] ${pair.olderId} ↔ ${pair.newerId}`,
     );

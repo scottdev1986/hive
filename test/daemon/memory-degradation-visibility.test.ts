@@ -3,21 +3,20 @@
 // (hybrid / degraded:<state> / disabled) with its unclamplable warning line,
 // the write responses' embedding outcome field, the CLI printer's quiet-
 // unless-degraded line, and the memory.embeddings status section.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
 import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { writeMemoryFact } from "../../src/adapters/memory";
 import { memoryEmbeddingNotice } from "../../src/cli/control";
+import type { Role } from "../../src/daemon/capabilities";
 import { HiveDatabase } from "../../src/daemon/db";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
-import {
-  type MemoryEmbedder,
-} from "../../src/daemon/memory-embeddings";
+import type { MemoryEmbedder } from "../../src/daemon/memory-embeddings";
 import { MemoryIndex } from "../../src/daemon/memory-index";
 import {
   buildMemoryRecallBundle,
@@ -25,9 +24,9 @@ import {
   memoryRecallDegradedWarning,
 } from "../../src/daemon/memory-triggers";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
-import type { Role } from "../../src/daemon/capabilities";
+import type { AgentRecord } from "../../src/schemas";
 
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
@@ -40,7 +39,9 @@ afterEach(async () => {
   if (previousHiveHome === undefined) delete Bun.env.HIVE_HOME;
   else Bun.env.HIVE_HOME = previousHiveHome;
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -63,7 +64,9 @@ const writeInput = (title: string, body: string, kind = "article") => ({
   supersedes: [],
 });
 
-async function makeWiki(articles: Array<{ title: string; body: string }>): Promise<{
+async function makeWiki(
+  articles: Array<{ title: string; body: string }>,
+): Promise<{
   repo: string;
   index: MemoryIndex;
 }> {
@@ -150,7 +153,11 @@ describe("recall envelope semantic discriminator (defect D2)", () => {
       },
       episodic: null,
     };
-    const context = { authority: "operator" as const, from: "operator", target: "some-agent" };
+    const context = {
+      authority: "operator" as const,
+      from: "operator",
+      target: "some-agent",
+    };
     const warning = memoryRecallDegradedWarning("embedding-runtime-missing");
     expect(warning).toBe(
       "⚠ semantic search unavailable (embedding-runtime-missing) — results are keyword-only",
@@ -178,7 +185,13 @@ describe("recall envelope semantic discriminator (defect D2)", () => {
         repoRoot: () => repo,
         memory: index,
         semantic: () =>
-          Promise.resolve([{ scope: "repo", id: "lease-renewal-blocks-overlapping-agents", score: 0.9 }]),
+          Promise.resolve([
+            {
+              scope: "repo",
+              id: "lease-renewal-blocks-overlapping-agents",
+              score: 0.9,
+            },
+          ]),
         semanticStatus: () => "ready",
         write: () => {
           throw new Error("not exercised");
@@ -210,10 +223,9 @@ function mockEmbedder(): MemoryEmbedder {
   };
 }
 
-async function makeDaemon(options: {
-  episodic?: EpisodicStore;
-  failingLoad?: boolean;
-} = {}) {
+async function makeDaemon(
+  options: { episodic?: EpisodicStore; failingLoad?: boolean } = {},
+) {
   const home = await makeTempDir("hive-d2-home-");
   Bun.env.HIVE_HOME = home;
   const repoRoot = await makeTempDir("hive-d2-repo-");
@@ -228,14 +240,17 @@ async function makeDaemon(options: {
     ...(options.episodic === undefined
       ? {}
       : {
-        memoryEmbeddings: { provider: "local" as const, model: "bge-small-en-v1.5" as const },
-        memoryEmbeddingLoad: () =>
-          options.failingLoad === true
-            ? Promise.reject(
-              new Error("embedding-runtime-missing: no bundle in the test"),
-            )
-            : Promise.resolve(mockEmbedder()),
-      }),
+          memoryEmbeddings: {
+            provider: "local" as const,
+            model: "bge-small-en-v1.5" as const,
+          },
+          memoryEmbeddingLoad: () =>
+            options.failingLoad === true
+              ? Promise.reject(
+                  new Error("embedding-runtime-missing: no bundle in the test"),
+                )
+              : Promise.resolve(mockEmbedder()),
+        }),
   });
   return { daemon, repoRoot };
 }
@@ -257,9 +272,11 @@ async function connectedClient(
 }
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): ToolValue {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -267,19 +284,21 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): ToolValue {
 }
 
 async function seedArticle(client: Client, title: string): Promise<ToolValue> {
-  return textValue(await client.callTool({
-    name: "memory_write",
-    arguments: {
-      scope: "repo",
-      topic: "testing",
-      title,
-      body: `${title} body.`,
-      source: "agent",
-      evidence: "memory-degradation-visibility.test.ts",
-      status: "unverified",
-      supersedes: [],
-    },
-  }));
+  return textValue(
+    await client.callTool({
+      name: "memory_write",
+      arguments: {
+        scope: "repo",
+        topic: "testing",
+        title,
+        body: `${title} body.`,
+        source: "agent",
+        evidence: "memory-degradation-visibility.test.ts",
+        status: "unverified",
+        supersedes: [],
+      },
+    }),
+  );
 }
 
 describe("write responses (defect D2)", () => {
@@ -320,17 +339,21 @@ describe("write responses (defect D2)", () => {
     const episodic = new EpisodicStore(":memory:");
     const { daemon } = await makeDaemon({ episodic, failingLoad: true });
     const client = await connectedClient(daemon);
-    const cold = textValue(await client.callTool({
-      name: "memory_note",
-      arguments: { topic: "deploy", title: "Cold note", body: "Body." },
-    }));
+    const cold = textValue(
+      await client.callTool({
+        name: "memory_note",
+        arguments: { topic: "deploy", title: "Cold note", body: "Body." },
+      }),
+    );
     expect(cold.state).toBe("recorded");
     expect(cold.embedding).toBe("queued");
     await daemon.embeddingIndex!.settle();
-    const second = textValue(await client.callTool({
-      name: "memory_note",
-      arguments: { topic: "deploy", title: "Warm note", body: "Body." },
-    }));
+    const second = textValue(
+      await client.callTool({
+        name: "memory_note",
+        arguments: { topic: "deploy", title: "Warm note", body: "Body." },
+      }),
+    );
     expect(second.embedding).toBe("unavailable:embedding-runtime-missing");
     episodic.close();
   });
@@ -373,9 +396,11 @@ describe("memory_recall envelope (defect D2)", () => {
     // Clamping cut the rows but not the warning: the discriminator and the
     // note block are envelope-level.
     expect(value.truncated).toBe(true);
-    const blocks = (result as {
-      content: Array<{ type: string; text?: string }>;
-    }).content;
+    const blocks = (
+      result as {
+        content: Array<{ type: string; text?: string }>;
+      }
+    ).content;
     expect(blocks).toHaveLength(2);
     expect(blocks[1]!.text).toBe(value.warning);
     episodic.close();
@@ -385,10 +410,12 @@ describe("memory_recall envelope (defect D2)", () => {
     const { daemon } = await makeDaemon();
     const client = await connectedClient(daemon);
     await seedArticle(client, "Database fixtures layout");
-    const value = textValue(await client.callTool({
-      name: "memory_recall",
-      arguments: { query: "database" },
-    }));
+    const value = textValue(
+      await client.callTool({
+        name: "memory_recall",
+        arguments: { query: "database" },
+      }),
+    );
     expect(value.semantic).toBe("disabled");
     expect(value.warning).toBeUndefined();
   });
@@ -405,9 +432,11 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
       name: "hive_status",
       arguments: {},
     });
-    const structured = (result as unknown as {
-      structuredContent: { memory: { embeddings: ToolValue } };
-    }).structuredContent;
+    const structured = (
+      result as unknown as {
+        structuredContent: { memory: { embeddings: ToolValue } };
+      }
+    ).structuredContent;
     const embeddings = structured.memory.embeddings;
     expect(embeddings.provider).toBe("local");
     expect(embeddings.model).toBe("bge-small-en-v1.5");
@@ -429,10 +458,12 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
     })) as unknown as {
       structuredContent: { memory: { embeddings: ToolValue } };
     };
-    expect(down.structuredContent.memory.embeddings.state)
-      .toBe("embedding-runtime-missing");
-    expect(down.structuredContent.memory.embeddings.detail)
-      .toContain("embedding-runtime-missing");
+    expect(down.structuredContent.memory.embeddings.state).toBe(
+      "embedding-runtime-missing",
+    );
+    expect(down.structuredContent.memory.embeddings.detail).toContain(
+      "embedding-runtime-missing",
+    );
     expect(down.structuredContent.memory.embeddings.vectors.total).toBe(0);
     episodic.close();
 

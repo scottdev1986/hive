@@ -1,83 +1,48 @@
 import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
-import { buildMemoryIndex } from "../adapters/memory";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
-import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
-import { probeGrokCliVersion } from "../adapters/tools/grok";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
-import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
-import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
+import { buildMemoryIndex } from "../adapters/memory";
 import { provisionSkills } from "../adapters/skills";
-import { readCodexTelemetry } from "./tool-telemetry";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
+import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
+import { probeGrokCliVersion } from "../adapters/tools/grok";
+import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
+import { modelVendor } from "../adapters/tools/models";
 import {
-  mintSessionLocator,
-  nextAgentSessionLocator,
-  sessionInstanceId,
-} from "./session-host/locators";
-import {
-  requireSessiondAgentLocator,
-  type HiveTerminalHostAdapter,
-  type HiveTerminalPolicy,
-} from "./session-host/hive-terminal-host";
-import { SessiondWireError } from "./session-host/sessiond-host";
-import type { SessionLocator, SessionSpec } from "./session-host/contract";
-import {
-  shellSessionLaunch,
-  type ShellSessionLaunch,
-} from "./session-host/shell-session";
-import type { WorkspaceVisibilityAdmission } from "./session-host/workspace-visibility";
-import {
-  modelVendor,
-} from "../adapters/tools/models";
-import {
+  assessStrandedWork,
+  type CreatedWorktree,
   createWorktree,
   removeWorktree,
   slugify,
   unavailableAgentNames,
   WorktreeNameCollisionError,
-  type CreatedWorktree,
-  assessStrandedWork,
 } from "../adapters/worktrees";
 import {
-  ORCHESTRATOR_NAME,
-  isOrchestratorName,
-  CapabilityProviderSchema,
-  forEachProvider,
-  identifyModelVendor,
-  isLiveAgent,
-  unknownVendor,
   type AgentMessage,
   type AgentRecord,
   type CapabilityProvider,
+  CapabilityProviderSchema,
+  type CapabilityRecord,
+  type ChainEntry,
+  type EffortTarget,
   type ExecutionIdentity,
   type FlatAssignment,
-  type CapabilityRecord,
+  forEachProvider,
   type HiveConfig,
+  identifyModelVendor,
+  isLiveAgent,
+  isOrchestratorName,
   type ModelEnablementDecision,
-  splitVariant,
-  type EffortTarget,
+  modelCategoryFit,
+  ORCHESTRATOR_NAME,
   type RoutingCategory,
   type RoutingPolicy,
   selectionModeFor,
-  modelCategoryFit,
-  type ChainEntry,
+  splitVariant,
+  unknownVendor,
 } from "../schemas";
-import type { HiveDatabase } from "./db";
-import { getHiveHome } from "./db";
-import { readinessFailureLayer } from "./launch-failure";
-import type { LaunchFailureLayer } from "./launch-failure";
-import { writeLaunchPrompt } from "./launch-prompt";
-import { waitForMcpReporting, watchForProofOfLife } from "./readiness";
-import {
-  parseProcessTable,
-  processCommandName,
-  runPs,
-  treeRunsCommand,
-  type CommandOutput,
-} from "./resources";
-import type { SpawnRequest, Spawner } from "./spawner";
-import type { QuotaService } from "./quota";
-import type { StopAgentSession } from "./teardown";
+import { IS_RELEASE_BUILD } from "../version";
 import {
   AuthorizedLaunch,
   type LaunchGateChecks,
@@ -85,15 +50,45 @@ import {
   type RawLaunchCandidate,
   requireAuthorizedLaunch,
 } from "./authorized-launch";
-import { resolveAutoEffort, validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
-import {
-  poolAvailability,
-  type AccountBilling,
-} from "./usage-credits";
+import type { HiveDatabase } from "./db";
+import { getHiveHome } from "./db";
+import { resolveAutoEffort, validateEffort } from "./effort";
+import type { LaunchFailureLayer } from "./launch-failure";
+import { readinessFailureLayer } from "./launch-failure";
+import { writeLaunchPrompt } from "./launch-prompt";
 import { hiveCliSpawnArgv } from "./lifecycle";
-import { IS_RELEASE_BUILD } from "../version";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
+import type { QuotaService } from "./quota";
+import { waitForMcpReporting, watchForProofOfLife } from "./readiness";
+import {
+  type CommandOutput,
+  parseProcessTable,
+  processCommandName,
+  runPs,
+  treeRunsCommand,
+} from "./resources";
+import type { SessionLocator, SessionSpec } from "./session-host/contract";
+import {
+  type HiveTerminalHostAdapter,
+  type HiveTerminalPolicy,
+  requireSessiondAgentLocator,
+} from "./session-host/hive-terminal-host";
+import {
+  mintSessionLocator,
+  nextAgentSessionLocator,
+  sessionInstanceId,
+} from "./session-host/locators";
+import { SessiondWireError } from "./session-host/sessiond-host";
+import {
+  type ShellSessionLaunch,
+  shellSessionLaunch,
+} from "./session-host/shell-session";
+import type { WorkspaceVisibilityAdmission } from "./session-host/workspace-visibility";
+import type { Spawner, SpawnRequest } from "./spawner";
+import type { StopAgentSession } from "./teardown";
+import { readCodexTelemetry } from "./tool-telemetry";
+import { type AccountBilling, poolAvailability } from "./usage-credits";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -107,106 +102,603 @@ import { providerTerminalEnvironment } from "./provider-terminal-environment";
  * see selectAgentName.
  */
 export const NAME_POOL = [
-  "maya", "david", "sam", "john", "sarah", "alex",
-  "nina", "leo", "anna", "james", "zoe", "omar",
-  "lena", "noah", "priya", "liam", "emma", "lucas",
-  "ava", "ethan", "mia", "henry", "isla", "jack",
-  "chloe", "ryan", "sofia", "adam", "grace", "owen",
-  "layla", "theo", "ruby", "caleb", "alice", "felix",
-  "clara", "marco", "julia", "ben", "aaron", "abel",
-  "abby", "adele", "adrian", "agnes", "ahmed", "aisha",
-  "albert", "alma", "amara", "amber", "amos", "amy",
-  "andre", "angela", "anton", "april", "arash", "archie",
-  "arjun", "arlo", "armand", "arnold", "arthur", "ashley",
-  "astrid", "atlas", "aubrey", "august", "aurora", "austin",
-  "autumn", "azra", "bailey", "barbara", "basil", "beatrix",
-  "becca", "bella", "bernard", "bertha", "bianca", "bilal",
-  "birgit", "blake", "bobby", "bonnie", "boris", "bram",
-  "brandon", "brenda", "brian", "bridget", "brock", "bruno",
-  "burt", "byron", "callum", "calvin", "camila", "candace",
-  "carl", "carmen", "casey", "cassie", "cecil", "cedric",
-  "celia", "cesar", "chad", "chandra", "charles", "chase",
-  "chester", "chiara", "chris", "cindy", "clay", "clifford",
-  "clinton", "clyde", "cole", "colin", "conrad", "cooper",
-  "cora", "cormac", "cosmo", "craig", "crystal", "curtis",
-  "cyrus", "dahlia", "daisy", "dakota", "damian", "dana",
-  "daniel", "danny", "daphne", "darius", "darren", "dawn",
-  "dean", "deborah", "declan", "denise", "dennis", "derek",
-  "desmond", "devon", "dexter", "diego", "dimitri", "dominic",
-  "donna", "dorothy", "douglas", "duncan", "dylan", "eamon",
-  "edgar", "edith", "edmund", "eduardo", "edwin", "eileen",
-  "elaine", "eleanor", "eli", "ellen", "elliot", "elmer",
-  "eloise", "elsa", "elton", "elvis", "emil", "emmett",
-  "enzo", "erica", "ernest", "esme", "esther", "eugene",
-  "evan", "evelyn", "everett", "fabian", "faith", "farid",
-  "fatima", "faye", "fenton", "fergus", "fernanda", "fiona",
-  "flora", "florence", "floyd", "forrest", "frances", "frank",
-  "fraser", "freda", "gabriel", "gail", "gareth", "gavin",
-  "gene", "geoff", "george", "gerald", "gilbert", "gloria",
-  "gordon", "graham", "greta", "gunnar", "gus", "hadley",
-  "hakim", "hannah", "harold", "harper", "harriet", "harvey",
-  "hassan", "hattie", "hazel", "heather", "hector", "heidi",
-  "helen", "herman", "hilda", "hiro", "holly", "homer",
-  "hope", "horace", "howard", "hugo", "hunter", "ian",
-  "ibrahim", "ida", "ignacio", "imani", "imogen", "ines",
-  "ingrid", "irene", "iris", "irving", "isaac", "isabel",
-  "ismael", "ivy", "jacob", "jade", "jamal", "janet",
-  "jared", "jasmine", "jasper", "javier", "jeanne", "jeffrey",
-  "jenna", "jeremy", "jerome", "jesse", "jewel", "jillian",
-  "jimmy", "joel", "jonah", "jordan", "jorge", "josef",
-  "joshua", "joyce", "juan", "judith", "juliet", "june",
-  "junior", "kalum", "kara", "karim", "kate", "katrina",
-  "keith", "kelly", "kelvin", "kendra", "kenneth", "khalid",
-  "kieran", "kim", "kirby", "kirsten", "klaus", "kyle",
-  "lachlan", "lamar", "lance", "larry", "laura", "laurel",
-  "lawrence", "lazlo", "leah", "leandro", "leigh", "leland",
-  "leroy", "leslie", "lester", "lewis", "lidia", "lila",
-  "lincoln", "lindsay", "linus", "lionel", "logan", "lorenzo",
-  "loretta", "lorna", "louis", "lowell", "lucia", "ludwig",
-  "luke", "madeline", "magnus", "maisie", "malcolm", "mallory",
-  "mandy", "manuel", "marcus", "margaret", "maria", "marilyn",
-  "marion", "marnie", "marshall", "martha", "martin", "mason",
-  "mateo", "matilda", "matthew", "maude", "maurice", "maxwell",
-  "megan", "melissa", "mercy", "meredith", "mervyn", "micah",
-  "michelle", "miguel", "mikhail", "mildred", "miles", "millie",
-  "milo", "miranda", "miriam", "mitchell", "moira", "monica",
-  "morgan", "morris", "moses", "murray", "myra", "nadia",
-  "nancy", "naomi", "natalie", "nathan", "neil", "nelson",
-  "nestor", "nicholas", "nigel", "nikolai", "nolan", "norman",
-  "nova", "octavia", "odette", "olga", "oliver", "olivia",
-  "ollie", "opal", "ophelia", "orion", "orlando", "oscar",
-  "osman", "oswald", "otis", "otto", "ozzie", "pablo",
-  "paloma", "pamela", "pascal", "patrick", "patsy", "paula",
-  "pearl", "pedro", "peggy", "penelope", "perry", "peter",
-  "petra", "phoebe", "pierce", "piper", "porter", "preston",
-  "primo", "prudence", "quentin", "quinn", "rachel", "rafael",
-  "raheem", "ralph", "ramona", "randall", "raoul", "raphael",
-  "raquel", "rashid", "raymond", "rebecca", "reginald", "reid",
-  "remy", "renee", "reuben", "rex", "rhoda", "rhys",
-  "ricardo", "richard", "rita", "robert", "robin", "rochelle",
-  "roderick", "rodney", "roger", "roland", "rolf", "roman",
-  "romeo", "ronald", "rory", "rosalind", "roscoe", "rosemary",
-  "roxana", "rudolf", "rufus", "rupert", "russell", "rusty",
-  "ruth", "ryder", "sabine", "sadie", "saeed", "salvador",
-  "sandra", "sanjay", "santiago", "sasha", "saul", "scarlett",
-  "sebastian", "selena", "selma", "sergio", "seth",
-  "shane", "shannon", "sharon", "shaun", "sheila", "shelby",
-  "sheldon", "shirley", "sidney", "siegfried", "sienna", "sigrid",
-  "silas", "simon", "sinclair", "solomon", "sonya", "spencer",
-  "stanley", "stella", "stephen", "sterling", "stuart", "sullivan",
-  "summer", "susan", "sven", "sybil", "sylvia", "tabitha",
-  "tanya", "tariq", "tatiana", "taylor", "teresa", "terrence",
-  "tessa", "thaddeus", "thelma", "thomas", "thora", "tiffany",
-  "timothy", "tobias", "toby", "todd", "tommy", "tracy",
-  "travis", "trent", "trevor", "tristan", "troy", "tucker",
-  "tyler", "tyrone", "ulrich", "ulysses", "uma", "umberto",
-  "ursula", "valentina", "valerie", "vanessa", "vaughn", "vera",
-  "vernon", "veronica", "victor", "vidal", "vijay", "vincent",
-  "viola", "virgil", "vivian", "vladimir", "walter", "wanda",
-  "wayne", "wendell", "wendy", "wesley", "wilbur", "wilfred",
-  "willa", "willow", "winston", "wyatt", "ximena", "yasmin",
-  "yolanda", "york", "yusuf", "yvette", "yvonne", "zachary",
-  "zaid", "zeke", "zelda", "zenobia",
+  "maya",
+  "david",
+  "sam",
+  "john",
+  "sarah",
+  "alex",
+  "nina",
+  "leo",
+  "anna",
+  "james",
+  "zoe",
+  "omar",
+  "lena",
+  "noah",
+  "priya",
+  "liam",
+  "emma",
+  "lucas",
+  "ava",
+  "ethan",
+  "mia",
+  "henry",
+  "isla",
+  "jack",
+  "chloe",
+  "ryan",
+  "sofia",
+  "adam",
+  "grace",
+  "owen",
+  "layla",
+  "theo",
+  "ruby",
+  "caleb",
+  "alice",
+  "felix",
+  "clara",
+  "marco",
+  "julia",
+  "ben",
+  "aaron",
+  "abel",
+  "abby",
+  "adele",
+  "adrian",
+  "agnes",
+  "ahmed",
+  "aisha",
+  "albert",
+  "alma",
+  "amara",
+  "amber",
+  "amos",
+  "amy",
+  "andre",
+  "angela",
+  "anton",
+  "april",
+  "arash",
+  "archie",
+  "arjun",
+  "arlo",
+  "armand",
+  "arnold",
+  "arthur",
+  "ashley",
+  "astrid",
+  "atlas",
+  "aubrey",
+  "august",
+  "aurora",
+  "austin",
+  "autumn",
+  "azra",
+  "bailey",
+  "barbara",
+  "basil",
+  "beatrix",
+  "becca",
+  "bella",
+  "bernard",
+  "bertha",
+  "bianca",
+  "bilal",
+  "birgit",
+  "blake",
+  "bobby",
+  "bonnie",
+  "boris",
+  "bram",
+  "brandon",
+  "brenda",
+  "brian",
+  "bridget",
+  "brock",
+  "bruno",
+  "burt",
+  "byron",
+  "callum",
+  "calvin",
+  "camila",
+  "candace",
+  "carl",
+  "carmen",
+  "casey",
+  "cassie",
+  "cecil",
+  "cedric",
+  "celia",
+  "cesar",
+  "chad",
+  "chandra",
+  "charles",
+  "chase",
+  "chester",
+  "chiara",
+  "chris",
+  "cindy",
+  "clay",
+  "clifford",
+  "clinton",
+  "clyde",
+  "cole",
+  "colin",
+  "conrad",
+  "cooper",
+  "cora",
+  "cormac",
+  "cosmo",
+  "craig",
+  "crystal",
+  "curtis",
+  "cyrus",
+  "dahlia",
+  "daisy",
+  "dakota",
+  "damian",
+  "dana",
+  "daniel",
+  "danny",
+  "daphne",
+  "darius",
+  "darren",
+  "dawn",
+  "dean",
+  "deborah",
+  "declan",
+  "denise",
+  "dennis",
+  "derek",
+  "desmond",
+  "devon",
+  "dexter",
+  "diego",
+  "dimitri",
+  "dominic",
+  "donna",
+  "dorothy",
+  "douglas",
+  "duncan",
+  "dylan",
+  "eamon",
+  "edgar",
+  "edith",
+  "edmund",
+  "eduardo",
+  "edwin",
+  "eileen",
+  "elaine",
+  "eleanor",
+  "eli",
+  "ellen",
+  "elliot",
+  "elmer",
+  "eloise",
+  "elsa",
+  "elton",
+  "elvis",
+  "emil",
+  "emmett",
+  "enzo",
+  "erica",
+  "ernest",
+  "esme",
+  "esther",
+  "eugene",
+  "evan",
+  "evelyn",
+  "everett",
+  "fabian",
+  "faith",
+  "farid",
+  "fatima",
+  "faye",
+  "fenton",
+  "fergus",
+  "fernanda",
+  "fiona",
+  "flora",
+  "florence",
+  "floyd",
+  "forrest",
+  "frances",
+  "frank",
+  "fraser",
+  "freda",
+  "gabriel",
+  "gail",
+  "gareth",
+  "gavin",
+  "gene",
+  "geoff",
+  "george",
+  "gerald",
+  "gilbert",
+  "gloria",
+  "gordon",
+  "graham",
+  "greta",
+  "gunnar",
+  "gus",
+  "hadley",
+  "hakim",
+  "hannah",
+  "harold",
+  "harper",
+  "harriet",
+  "harvey",
+  "hassan",
+  "hattie",
+  "hazel",
+  "heather",
+  "hector",
+  "heidi",
+  "helen",
+  "herman",
+  "hilda",
+  "hiro",
+  "holly",
+  "homer",
+  "hope",
+  "horace",
+  "howard",
+  "hugo",
+  "hunter",
+  "ian",
+  "ibrahim",
+  "ida",
+  "ignacio",
+  "imani",
+  "imogen",
+  "ines",
+  "ingrid",
+  "irene",
+  "iris",
+  "irving",
+  "isaac",
+  "isabel",
+  "ismael",
+  "ivy",
+  "jacob",
+  "jade",
+  "jamal",
+  "janet",
+  "jared",
+  "jasmine",
+  "jasper",
+  "javier",
+  "jeanne",
+  "jeffrey",
+  "jenna",
+  "jeremy",
+  "jerome",
+  "jesse",
+  "jewel",
+  "jillian",
+  "jimmy",
+  "joel",
+  "jonah",
+  "jordan",
+  "jorge",
+  "josef",
+  "joshua",
+  "joyce",
+  "juan",
+  "judith",
+  "juliet",
+  "june",
+  "junior",
+  "kalum",
+  "kara",
+  "karim",
+  "kate",
+  "katrina",
+  "keith",
+  "kelly",
+  "kelvin",
+  "kendra",
+  "kenneth",
+  "khalid",
+  "kieran",
+  "kim",
+  "kirby",
+  "kirsten",
+  "klaus",
+  "kyle",
+  "lachlan",
+  "lamar",
+  "lance",
+  "larry",
+  "laura",
+  "laurel",
+  "lawrence",
+  "lazlo",
+  "leah",
+  "leandro",
+  "leigh",
+  "leland",
+  "leroy",
+  "leslie",
+  "lester",
+  "lewis",
+  "lidia",
+  "lila",
+  "lincoln",
+  "lindsay",
+  "linus",
+  "lionel",
+  "logan",
+  "lorenzo",
+  "loretta",
+  "lorna",
+  "louis",
+  "lowell",
+  "lucia",
+  "ludwig",
+  "luke",
+  "madeline",
+  "magnus",
+  "maisie",
+  "malcolm",
+  "mallory",
+  "mandy",
+  "manuel",
+  "marcus",
+  "margaret",
+  "maria",
+  "marilyn",
+  "marion",
+  "marnie",
+  "marshall",
+  "martha",
+  "martin",
+  "mason",
+  "mateo",
+  "matilda",
+  "matthew",
+  "maude",
+  "maurice",
+  "maxwell",
+  "megan",
+  "melissa",
+  "mercy",
+  "meredith",
+  "mervyn",
+  "micah",
+  "michelle",
+  "miguel",
+  "mikhail",
+  "mildred",
+  "miles",
+  "millie",
+  "milo",
+  "miranda",
+  "miriam",
+  "mitchell",
+  "moira",
+  "monica",
+  "morgan",
+  "morris",
+  "moses",
+  "murray",
+  "myra",
+  "nadia",
+  "nancy",
+  "naomi",
+  "natalie",
+  "nathan",
+  "neil",
+  "nelson",
+  "nestor",
+  "nicholas",
+  "nigel",
+  "nikolai",
+  "nolan",
+  "norman",
+  "nova",
+  "octavia",
+  "odette",
+  "olga",
+  "oliver",
+  "olivia",
+  "ollie",
+  "opal",
+  "ophelia",
+  "orion",
+  "orlando",
+  "oscar",
+  "osman",
+  "oswald",
+  "otis",
+  "otto",
+  "ozzie",
+  "pablo",
+  "paloma",
+  "pamela",
+  "pascal",
+  "patrick",
+  "patsy",
+  "paula",
+  "pearl",
+  "pedro",
+  "peggy",
+  "penelope",
+  "perry",
+  "peter",
+  "petra",
+  "phoebe",
+  "pierce",
+  "piper",
+  "porter",
+  "preston",
+  "primo",
+  "prudence",
+  "quentin",
+  "quinn",
+  "rachel",
+  "rafael",
+  "raheem",
+  "ralph",
+  "ramona",
+  "randall",
+  "raoul",
+  "raphael",
+  "raquel",
+  "rashid",
+  "raymond",
+  "rebecca",
+  "reginald",
+  "reid",
+  "remy",
+  "renee",
+  "reuben",
+  "rex",
+  "rhoda",
+  "rhys",
+  "ricardo",
+  "richard",
+  "rita",
+  "robert",
+  "robin",
+  "rochelle",
+  "roderick",
+  "rodney",
+  "roger",
+  "roland",
+  "rolf",
+  "roman",
+  "romeo",
+  "ronald",
+  "rory",
+  "rosalind",
+  "roscoe",
+  "rosemary",
+  "roxana",
+  "rudolf",
+  "rufus",
+  "rupert",
+  "russell",
+  "rusty",
+  "ruth",
+  "ryder",
+  "sabine",
+  "sadie",
+  "saeed",
+  "salvador",
+  "sandra",
+  "sanjay",
+  "santiago",
+  "sasha",
+  "saul",
+  "scarlett",
+  "sebastian",
+  "selena",
+  "selma",
+  "sergio",
+  "seth",
+  "shane",
+  "shannon",
+  "sharon",
+  "shaun",
+  "sheila",
+  "shelby",
+  "sheldon",
+  "shirley",
+  "sidney",
+  "siegfried",
+  "sienna",
+  "sigrid",
+  "silas",
+  "simon",
+  "sinclair",
+  "solomon",
+  "sonya",
+  "spencer",
+  "stanley",
+  "stella",
+  "stephen",
+  "sterling",
+  "stuart",
+  "sullivan",
+  "summer",
+  "susan",
+  "sven",
+  "sybil",
+  "sylvia",
+  "tabitha",
+  "tanya",
+  "tariq",
+  "tatiana",
+  "taylor",
+  "teresa",
+  "terrence",
+  "tessa",
+  "thaddeus",
+  "thelma",
+  "thomas",
+  "thora",
+  "tiffany",
+  "timothy",
+  "tobias",
+  "toby",
+  "todd",
+  "tommy",
+  "tracy",
+  "travis",
+  "trent",
+  "trevor",
+  "tristan",
+  "troy",
+  "tucker",
+  "tyler",
+  "tyrone",
+  "ulrich",
+  "ulysses",
+  "uma",
+  "umberto",
+  "ursula",
+  "valentina",
+  "valerie",
+  "vanessa",
+  "vaughn",
+  "vera",
+  "vernon",
+  "veronica",
+  "victor",
+  "vidal",
+  "vijay",
+  "vincent",
+  "viola",
+  "virgil",
+  "vivian",
+  "vladimir",
+  "walter",
+  "wanda",
+  "wayne",
+  "wendell",
+  "wendy",
+  "wesley",
+  "wilbur",
+  "wilfred",
+  "willa",
+  "willow",
+  "winston",
+  "wyatt",
+  "ximena",
+  "yasmin",
+  "yolanda",
+  "york",
+  "yusuf",
+  "yvette",
+  "yvonne",
+  "zachary",
+  "zaid",
+  "zeke",
+  "zelda",
+  "zenobia",
 ] as const;
 
 type AgentStore = Pick<
@@ -229,9 +721,10 @@ export class SpawnFailedError extends Error {
     readonly outcome: "failed" | "stuck",
     readonly detail: string,
   ) {
-    const code = outcome === "failed"
-      ? "SPAWN_FAILED" as const
-      : "SPAWN_CLEANUP_UNVERIFIED" as const;
+    const code =
+      outcome === "failed"
+        ? ("SPAWN_FAILED" as const)
+        : ("SPAWN_CLEANUP_UNVERIFIED" as const);
     super(`${code}: Hive agent ${agentName} ${detail}`);
     this.name = "SpawnFailedError";
     this.code = code;
@@ -266,15 +759,19 @@ export interface SessiondSpawnAdmission {
   terminalHost: Pick<HiveTerminalHostAdapter, "create" | "inspect">;
   /** Creation policy from the live Workspace process, independent of whether
    * the not-yet-created terminal appears in its public pane inventory. */
-  prepareAgentCreation(candidate: Readonly<{
-    agentId: string;
-    agentName: string;
-  }>): Promise<WorkspaceVisibilityAdmission | null>;
+  prepareAgentCreation(
+    candidate: Readonly<{
+      agentId: string;
+      agentName: string;
+    }>,
+  ): Promise<WorkspaceVisibilityAdmission | null>;
   /** Resolves an already-published pane for visibility renewal. */
-  admit(candidate: Readonly<{
-    agentId: string;
-    agentName: string;
-  }>): Promise<Readonly<{
+  admit(
+    candidate: Readonly<{
+      agentId: string;
+      agentName: string;
+    }>,
+  ): Promise<Readonly<{
     engineBuildId: string;
     geometry: SessionSpec["geometry"];
     visibility: HiveTerminalPolicy["visibility"];
@@ -408,7 +905,6 @@ const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
 const sleep: Sleep = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-
 /** When this holder closed, for ordering reuse. Old rows predate closedAt. */
 const closureInstant = (agent: AgentRecord): string =>
   agent.closedAt ?? agent.failedAt ?? agent.lastEventAt;
@@ -480,9 +976,7 @@ export function resolveAgentName(
     );
   }
   if (
-    agents.some((agent) =>
-      isLiveAgent(agent) && agent.name === normalizedName
-    )
+    agents.some((agent) => isLiveAgent(agent) && agent.name === normalizedName)
   ) {
     throw new Error(
       `Agent name collision: "${normalizedName}" is already assigned to a live agent`,
@@ -509,8 +1003,7 @@ const CONCISE_CATEGORIES: readonly RoutingCategory[] = [
  * mirror image of the escalate-don't-grind tripwire (grind → escalate;
  * idle-with-work → continue). A live session is also the cheapest place to do
  * the next piece: a respawn re-reads everything from zero. */
-const CONTINUOUS_EXECUTION =
-  `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from ${ORCHESTRATOR_NAME}.`;
+const CONTINUOUS_EXECUTION = `After reporting a landing or milestone, immediately continue with the next authorized piece of your assignment in this same session. Stop only for a genuine blocker, an escalation, or an explicit hold from ${ORCHESTRATOR_NAME}.`;
 
 /** The karpathy guidelines' rules, carried in the prompt rather than left to the
  * `karpathy-guidelines` skill to be self-invoked.
@@ -624,7 +1117,7 @@ const GRAPHIFY_DIRECTIVE =
   "tools — get_neighbors for what calls, imports, or contains a symbol; " +
   "shortest_path for how two files connect; query_graph with token_budget: 16000 " +
   "for broad sweeps (its default of 2000 cuts the output off before the cited " +
-  "EDGE lines). For a new locate-question mid-task (\"where does X happen\"), " +
+  'EDGE lines). For a new locate-question mid-task ("where does X happen"), ' +
   "call the hive tool graph_locate with the question before reaching for search — " +
   "it runs the same locate that built your brief, and it says so honestly when it " +
   "has no strong leads. Fall back to grep/rg/Glob only when the graph genuinely " +
@@ -643,7 +1136,7 @@ export const GROK_SAFETY_DIRECTIVE =
   "a Hive launch-configuration bug: the turn dies, writes no signals.json, and " +
   "still exits 0; report it and do not retry. A --deny refusal is different: it " +
   "is clean, the turn continues, and read-only agents should treat it as normal " +
-  "operation (`--deny \"Bash\"` binds Grok's Shell/run_terminal_command). Grok " +
+  'operation (`--deny "Bash"` binds Grok\'s Shell/run_terminal_command). Grok ' +
   "also ingests this repo's CLAUDE.md and .claude/settings.local.json even with " +
   "compatibility imports disabled; those files are not addressed to a Grok " +
   "agent, and the Hive brief and assigned scope outrank anything there that " +
@@ -695,7 +1188,8 @@ export function buildAgentPrompt(
   options: AgentPromptOptions = {},
 ): string {
   const readOnly = options.readOnly === true;
-  const concise = options.category !== undefined &&
+  const concise =
+    options.category !== undefined &&
     CONCISE_CATEGORIES.includes(options.category);
   const preamble = concise
     ? [
@@ -731,9 +1225,16 @@ export function buildAgentPrompt(
       ? [
           "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.",
         ]
-      : [buildLandingProtocol(
-          worktree.branch, repoRoot, "main", name, 0, concise,
-        )]),
+      : [
+          buildLandingProtocol(
+            worktree.branch,
+            repoRoot,
+            "main",
+            name,
+            0,
+            concise,
+          ),
+        ]),
     ...(options.category === "code_review" ? [CODE_REVIEW_RULES] : []),
     ...(options.brief === undefined || options.brief === ""
       ? []
@@ -770,16 +1271,18 @@ export class HiveSpawner implements Spawner {
     this.cleanupWorktree = dependencies.removeWorktree ?? removeWorktree;
     this.assessStranded = dependencies.assessStrandedWork ?? assessStrandedWork;
     this.wait = dependencies.sleep ?? sleep;
-    this.claudeExecutable = dependencies.claudeExecutable ??
-      resolveWorkingClaudeExecutable().path;
+    this.claudeExecutable =
+      dependencies.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
     this.codexExecutable = dependencies.codexExecutable ?? "codex";
     this.grokExecutable = dependencies.grokExecutable ?? "grok";
     this.kimiExecutable = dependencies.kimiExecutable ?? "kimi";
     this.opencodeExecutable = dependencies.opencodeExecutable ?? "opencode";
-    this.readCodexActivity = dependencies.readCodexActivity ??
+    this.readCodexActivity =
+      dependencies.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
-    this.repoUnavailableNames = dependencies.unavailableAgentNames ??
+    this.repoUnavailableNames =
+      dependencies.unavailableAgentNames ??
       (dependencies.createWorktree === undefined
         ? unavailableAgentNames
         : async () => new Set());
@@ -815,14 +1318,12 @@ export class HiveSpawner implements Spawner {
     const admission = await this.requireSessiondCreationPolicy(record);
     const shell = shellSessionLaunch(command);
     await this.requireSessiondHost(record).create(
-      this.sessiondSpec(
-        record,
-        shell,
-        launchGrantId,
-        admission.geometry,
-      ),
+      this.sessiondSpec(record, shell, launchGrantId, admission.geometry),
       shell.initialInput,
-      { locator: requireSessiondAgentLocator(record), visibility: admission.visibility },
+      {
+        locator: requireSessiondAgentLocator(record),
+        visibility: admission.visibility,
+      },
     );
   }
 
@@ -832,7 +1333,12 @@ export class HiveSpawner implements Spawner {
     expectedExecutable: string,
     launchGrantId: string,
   ): Promise<void> {
-    await this.createSession(record, command, expectedExecutable, launchGrantId);
+    await this.createSession(
+      record,
+      command,
+      expectedExecutable,
+      launchGrantId,
+    );
   }
 
   private async sessionPresent(record: AgentRecord): Promise<boolean> {
@@ -865,10 +1371,11 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
   ): Promise<WorkspaceVisibilityAdmission> {
     const locator = requireSessiondAgentLocator(record);
-    const policy = await this.dependencies.sessiond.prepareAgentCreation({
-      agentId: record.id,
-      agentName: record.name,
-    }) ?? null;
+    const policy =
+      (await this.dependencies.sessiond.prepareAgentCreation({
+        agentId: record.id,
+        agentName: record.name,
+      })) ?? null;
     if (policy === null) {
       throw new Error(`Agent ${record.id} has no sessiond creation policy`);
     }
@@ -891,7 +1398,9 @@ export class HiveSpawner implements Spawner {
     geometry: SessionSpec["geometry"],
   ): SessionSpec {
     if (record.worktreePath === null) {
-      throw new Error(`Agent ${record.id} has no worktree for session creation`);
+      throw new Error(
+        `Agent ${record.id} has no worktree for session creation`,
+      );
     }
     return {
       schemaVersion: 1,
@@ -918,8 +1427,8 @@ export class HiveSpawner implements Spawner {
    * once per spawn, never written. A read failure means "inherit nothing to
    * exclude" — the agent keeps today's surface rather than failing to launch. */
   private async inheritedCodexMcpServers(): Promise<string[]> {
-    const list = this.dependencies.listCodexMcpServers ??
-      listInheritedCodexMcpServers;
+    const list =
+      this.dependencies.listCodexMcpServers ?? listInheritedCodexMcpServers;
     try {
       return await list();
     } catch (error) {
@@ -973,12 +1482,15 @@ export class HiveSpawner implements Spawner {
     if (billing === null) return null;
     const discovery = await this.discoverOnce(tool);
     const base = splitVariant(model).base;
-    const record = discovery?.status === "ok"
-      ? discovery.records.find((candidate) =>
-        candidate.canonicalId === base || candidate.launchToken === base ||
-        candidate.aliases.includes(model)
-      )
-      : undefined;
+    const record =
+      discovery?.status === "ok"
+        ? discovery.records.find(
+            (candidate) =>
+              candidate.canonicalId === base ||
+              candidate.launchToken === base ||
+              candidate.aliases.includes(model),
+          )
+        : undefined;
     if (record?.displayName == null) return null;
     const availability = poolAvailability(billing, record.displayName);
     return availability.state === "exhausted"
@@ -997,10 +1509,11 @@ export class HiveSpawner implements Spawner {
         if (discovery === undefined || discovery.status !== "ok") {
           return `${candidate.tool}'s model catalog is unreadable`;
         }
-        record = discovery.records.find((entry) =>
-          entry.launchToken === candidate.model ||
-          entry.canonicalId === candidate.model ||
-          entry.aliases.includes(candidate.model)
+        record = discovery.records.find(
+          (entry) =>
+            entry.launchToken === candidate.model ||
+            entry.canonicalId === candidate.model ||
+            entry.aliases.includes(candidate.model),
         );
         return record === undefined
           ? `${candidate.tool}'s readable catalog has no record for ${candidate.model}`
@@ -1009,10 +1522,11 @@ export class HiveSpawner implements Spawner {
       enablement: async (candidate) => {
         let enabled: ModelEnablementDecision;
         try {
-          enabled = await this.dependencies.isModelEnabled?.(
-            candidate.tool,
-            candidate.model,
-          ) ?? null;
+          enabled =
+            (await this.dependencies.isModelEnabled?.(
+              candidate.tool,
+              candidate.model,
+            )) ?? null;
         } catch (error) {
           return `${candidate.model} enablement policy is unreadable (${
             error instanceof Error ? error.message : String(error)
@@ -1022,8 +1536,10 @@ export class HiveSpawner implements Spawner {
           return enabled.refusal;
         }
         if (enabled !== true) {
-          return `${candidate.model} is not enabled; open the Model Control Center ` +
-            "and enable it before launching";
+          return (
+            `${candidate.model} is not enabled; open the Model Control Center ` +
+            "and enable it before launching"
+          );
         }
         if (!CapabilityProviderSchema.safeParse(candidate.tool).success) {
           return `provider ${JSON.stringify(candidate.tool)} is not enabled`;
@@ -1045,11 +1561,14 @@ export class HiveSpawner implements Spawner {
         if (candidate.effort === undefined) return { refusal: null };
         try {
           return {
-            effort: validateEffort(record, candidate.model, candidate.effort).effort,
+            effort: validateEffort(record, candidate.model, candidate.effort)
+              .effort,
             refusal: null,
           };
         } catch (error) {
-          return { refusal: error instanceof Error ? error.message : String(error) };
+          return {
+            refusal: error instanceof Error ? error.message : String(error),
+          };
         }
       },
     });
@@ -1071,8 +1590,10 @@ export class HiveSpawner implements Spawner {
     }
     const identity = agent.executionIdentity;
     if (
-      identity === undefined || identity.model === "default" ||
-      identity.tool !== agent.tool || identity.model !== agent.model ||
+      identity === undefined ||
+      identity.model === "default" ||
+      identity.tool !== agent.tool ||
+      identity.model !== agent.model ||
       (identity.tool === "claude" && identity.effort === undefined)
     ) {
       await this.failClosedControlRestart(
@@ -1111,7 +1632,9 @@ export class HiveSpawner implements Spawner {
       await this.failClosedControlRestart(
         agent,
         message,
-        error instanceof Error ? error.message : "control quota reservation failed",
+        error instanceof Error
+          ? error.message
+          : "control quota reservation failed",
       );
       throw error;
     }
@@ -1120,9 +1643,15 @@ export class HiveSpawner implements Spawner {
     // control-state write fails before the cancel-guarded launch block begins.
     let prepared: { record: AgentRecord };
     try {
-      prepared = await this.prepareControlRestart(agent, message, reservationId);
+      prepared = await this.prepareControlRestart(
+        agent,
+        message,
+        reservationId,
+      );
     } catch (error) {
-      await this.dependencies.quota.cancel(reservationId).catch(() => undefined);
+      await this.dependencies.quota
+        .cancel(reservationId)
+        .catch(() => undefined);
       throw error;
     }
     const readOnly = true;
@@ -1137,11 +1666,12 @@ export class HiveSpawner implements Spawner {
     // The replacement process only has to read the control message and
     // acknowledge it through Hive's own server; the human's servers would be
     // pure context cost on a process that must not act.
-    const excludeMcpServers = identity.tool === "codex"
-      ? await this.inheritedCodexMcpServers()
-      // Claude is scoped by --strict-mcp-config. Grok disables all inherited
-      // Claude/Cursor MCP imports through its ten process environment switches.
-      : [];
+    const excludeMcpServers =
+      identity.tool === "codex"
+        ? await this.inheritedCodexMcpServers()
+        : // Claude is scoped by --strict-mcp-config. Grok disables all inherited
+          // Claude/Cursor MCP imports through its ten process environment switches.
+          [];
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
       const adapter = getAgentAdapter(identity.tool);
@@ -1153,9 +1683,7 @@ export class HiveSpawner implements Spawner {
       );
       const controlPrompt = [
         `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
-        ...(assignment === undefined
-          ? []
-          : [assignmentPrompt(assignment)]),
+        ...(assignment === undefined ? [] : [assignmentPrompt(assignment)]),
         message.body,
         "Your prior process was stopped and its worktree was preserved.",
         "This process is read-only. Do not resume implementation or landing.",
@@ -1219,10 +1747,12 @@ export class HiveSpawner implements Spawner {
         prepared.record.id,
         new Date().toISOString(),
       );
-      const reason = error instanceof Error
-        ? error.message
-        : "control acknowledgement process failed to launch";
-      const current = this.dependencies.db.getAgentById(prepared.record.id) ??
+      const reason =
+        error instanceof Error
+          ? error.message
+          : "control acknowledgement process failed to launch";
+      const current =
+        this.dependencies.db.getAgentById(prepared.record.id) ??
         prepared.record;
       if (current.status !== "stuck") {
         await this.stopVerifiedSession(
@@ -1230,11 +1760,12 @@ export class HiveSpawner implements Spawner {
           `Critical control ${message.id} restart failed`,
         ).catch(() => undefined);
       }
-      const stopped = this.dependencies.db.getAgentById(prepared.record.id) ??
+      const stopped =
+        this.dependencies.db.getAgentById(prepared.record.id) ??
         prepared.record;
       if (stopped.status === "stuck") {
-        const teardown = stopped.failureReason ??
-          "teardown could not be verified";
+        const teardown =
+          stopped.failureReason ?? "teardown could not be verified";
         throw new Error(
           `Recorded ${identity.tool}/${identity.model} could not be launched for ${agent.name}: ` +
             (reason === teardown ? reason : `${reason}; ${teardown}`),
@@ -1243,9 +1774,10 @@ export class HiveSpawner implements Spawner {
       try {
         await this.dependencies.quota.cancel(reservationId);
       } catch (cancelError) {
-        const detail = cancelError instanceof Error
-          ? cancelError.message
-          : "quota cancellation failed";
+        const detail =
+          cancelError instanceof Error
+            ? cancelError.message
+            : "quota cancellation failed";
         const stuck = this.preserveStuck(
           stopped,
           `Critical control ${message.id} restart failed: ${reason}; ` +
@@ -1265,8 +1797,9 @@ export class HiveSpawner implements Spawner {
       );
     }
 
-    return this.dependencies.db.getAgentById(prepared.record.id) ??
-      prepared.record;
+    return (
+      this.dependencies.db.getAgentById(prepared.record.id) ?? prepared.record
+    );
   }
 
   private async prepareControlRestart(
@@ -1275,7 +1808,7 @@ export class HiveSpawner implements Spawner {
     reservationId?: string,
     failureReason?: string,
   ): Promise<{ record: AgentRecord }> {
-    let current = this.dependencies.db.getAgentById(agent.id) ?? agent;
+    const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
     const record = this.dependencies.db.insertAgent({
       ...current,
       sessionLocator: this.nextSessionLocator(current),
@@ -1337,9 +1870,11 @@ export class HiveSpawner implements Spawner {
   ): Promise<boolean | null> {
     try {
       const rootPids = [
-        (await this.requireSessiondHost(record).inspect(
-          requireSessiondAgentLocator(record),
-        )).providerRoot?.pid,
+        (
+          await this.requireSessiondHost(record).inspect(
+            requireSessiondAgentLocator(record),
+          )
+        ).providerRoot?.pid,
       ].filter((pid): pid is number => pid !== undefined && pid !== null);
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(
@@ -1352,7 +1887,9 @@ export class HiveSpawner implements Spawner {
     }
   }
 
-  private async readCodexActivityFor(record: AgentRecord): Promise<string | null> {
+  private async readCodexActivityFor(
+    record: AgentRecord,
+  ): Promise<string | null> {
     const current = this.dependencies.db.getAgentById(record.id) ?? record;
     const tool = current.executionIdentity?.tool ?? current.tool;
     if (current.worktreePath === null || current.toolSessionId === undefined) {
@@ -1403,7 +1940,10 @@ export class HiveSpawner implements Spawner {
         return await this.spawnReserved(request, name);
       } catch (error) {
         await this.settleStrandedReservation(name);
-        if (request.name === undefined && error instanceof WorktreeNameCollisionError) {
+        if (
+          request.name === undefined &&
+          error instanceof WorktreeNameCollisionError
+        ) {
           blocked.add(name);
           continue;
         }
@@ -1521,7 +2061,7 @@ export class HiveSpawner implements Spawner {
       return this.dependencies.readRoutingPolicy();
     };
     let tool: CapabilityProvider;
-    let explicitModel: string | undefined = request.model;
+    const explicitModel: string | undefined = request.model;
     if (request.model !== undefined) {
       // An explicit model is bound to its vendor before anything launches.
       // The vendor is read from the DISCOVERED CATALOG — the vendor's own
@@ -1542,9 +2082,10 @@ export class HiveSpawner implements Spawner {
       // Unreadable is not permission, and with no routed tool left to fall
       // back on it is not a route either: an explicit model whose vendor
       // cannot be verified needs an explicit tool from the caller.
-      const vendor = identified.state === "claimed"
-        ? identified.provider
-        : modelVendor(request.model);
+      const vendor =
+        identified.state === "claimed"
+          ? identified.provider
+          : modelVendor(request.model);
       if (vendor !== null) {
         if (request.tool !== undefined && request.tool !== vendor) {
           throw new Error(
@@ -1584,7 +2125,11 @@ export class HiveSpawner implements Spawner {
      * link.
      */
     const linkEffort = async (
-      entry: { provider: CapabilityProvider; model: string; effort: EffortTarget },
+      entry: {
+        provider: CapabilityProvider;
+        model: string;
+        effort: EffortTarget;
+      },
       policy: RoutingPolicy,
     ): Promise<string | undefined> => {
       if (request.effort !== undefined) return request.effort;
@@ -1597,28 +2142,35 @@ export class HiveSpawner implements Spawner {
       }
       if (entry.effort.mode === "hive-decides") {
         const discovery = await this.discoverOnce(entry.provider);
-        const record = discovery?.status === "ok"
-          ? discovery.records.find((candidate) =>
-            candidate.launchToken === entry.model ||
-            candidate.canonicalId === entry.model ||
-            candidate.aliases.includes(entry.model)
-          )
-          : undefined;
+        const record =
+          discovery?.status === "ok"
+            ? discovery.records.find(
+                (candidate) =>
+                  candidate.launchToken === entry.model ||
+                  candidate.canonicalId === entry.model ||
+                  candidate.aliases.includes(entry.model),
+              )
+            : undefined;
         return resolveAutoEffort(record, request.category).effort;
       }
       // provider-controlled: the model row's standing effort choice, if the
       // user made one, is the next-most-specific instruction.
-      const row = policy.models.find((candidate) =>
-        candidate.provider === entry.provider && candidate.model === entry.model
+      const row = policy.models.find(
+        (candidate) =>
+          candidate.provider === entry.provider &&
+          candidate.model === entry.model,
       );
       if (row?.effort.mode === "exact") return row.effort.value;
       if (row?.effort.mode === "hive-decides") {
         const discovery = await this.discoverOnce(entry.provider);
-        const record = discovery?.status === "ok"
-          ? discovery.records.find((candidate) =>
-            candidate.launchToken === entry.model || candidate.canonicalId === entry.model
-          )
-          : undefined;
+        const record =
+          discovery?.status === "ok"
+            ? discovery.records.find(
+                (candidate) =>
+                  candidate.launchToken === entry.model ||
+                  candidate.canonicalId === entry.model,
+              )
+            : undefined;
         return resolveAutoEffort(record, request.category).effort;
       }
       return undefined;
@@ -1635,10 +2187,11 @@ export class HiveSpawner implements Spawner {
           if (discovery === undefined || discovery.status !== "ok") {
             return `${candidate.tool}'s model catalog is unreadable`;
           }
-          record = discovery.records.find((entry) =>
-            entry.launchToken === candidate.model ||
-            entry.canonicalId === candidate.model ||
-            entry.aliases.includes(candidate.model)
+          record = discovery.records.find(
+            (entry) =>
+              entry.launchToken === candidate.model ||
+              entry.canonicalId === candidate.model ||
+              entry.aliases.includes(candidate.model),
           );
           return record === undefined
             ? `${candidate.tool}'s readable catalog has no record for ${candidate.model}`
@@ -1647,10 +2200,11 @@ export class HiveSpawner implements Spawner {
         enablement: async (candidate) => {
           let enabled: ModelEnablementDecision;
           try {
-            enabled = await this.dependencies.isModelEnabled?.(
-              candidate.tool,
-              candidate.model,
-            ) ?? null;
+            enabled =
+              (await this.dependencies.isModelEnabled?.(
+                candidate.tool,
+                candidate.model,
+              )) ?? null;
           } catch (error) {
             return `${candidate.model} enablement policy is unreadable (${
               error instanceof Error ? error.message : String(error)
@@ -1660,8 +2214,10 @@ export class HiveSpawner implements Spawner {
             return enabled.refusal;
           }
           if (enabled !== true) {
-            return `${candidate.model} is not enabled; open the Model Control Center ` +
-              "and enable it before launching";
+            return (
+              `${candidate.model} is not enabled; open the Model Control Center ` +
+              "and enable it before launching"
+            );
           }
           if (!CapabilityProviderSchema.safeParse(candidate.tool).success) {
             return `provider ${JSON.stringify(candidate.tool)} is not enabled`;
@@ -1683,15 +2239,18 @@ export class HiveSpawner implements Spawner {
           // does not clear a minimum, because a guessed window is how a long
           // job lands on a model that cannot hold it.
           if (request.minContextTokens === undefined) return null;
-          const window = record === undefined ? null : knownContextTokens(record);
+          const window =
+            record === undefined ? null : knownContextTokens(record);
           if (window === null) {
-            return `${candidate.model} has no measured context window; ` +
-              `minContextTokens=${request.minContextTokens} fails closed rather than guessing`;
+            return (
+              `${candidate.model} has no measured context window; ` +
+              `minContextTokens=${request.minContextTokens} fails closed rather than guessing`
+            );
           }
           return window >= request.minContextTokens
             ? null
             : `${candidate.model} context window ${window} is below the required ` +
-              `${request.minContextTokens}`;
+                `${request.minContextTokens}`;
         },
         effort: async (candidate) => {
           // The candidate's effort is the user's instruction (request.effort
@@ -1703,13 +2262,24 @@ export class HiveSpawner implements Spawner {
           try {
             const requested = candidate.effort;
             if (requested !== undefined) {
-              const validated = validateEffort(record, candidate.model, requested);
-              if (validated.warning !== undefined) console.warn(validated.warning);
-              return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+              const validated = validateEffort(
+                record,
+                candidate.model,
+                requested,
+              );
+              if (validated.warning !== undefined)
+                console.warn(validated.warning);
+              return {
+                refusal: null,
+                ...(validated.effort === undefined
+                  ? {}
+                  : { effort: validated.effort }),
+              };
             }
-            const discoveredDefault = record?.defaultEffort.state === "known"
-              ? record.defaultEffort.value
-              : undefined;
+            const discoveredDefault =
+              record?.defaultEffort.state === "known"
+                ? record.defaultEffort.value
+                : undefined;
             switch (candidate.tool) {
               case "claude":
               case "opencode":
@@ -1719,8 +2289,17 @@ export class HiveSpawner implements Spawner {
               case "grok":
               case "kimi": {
                 if (discoveredDefault === undefined) return { refusal: null };
-                const validated = validateEffort(record, candidate.model, discoveredDefault);
-                return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+                const validated = validateEffort(
+                  record,
+                  candidate.model,
+                  discoveredDefault,
+                );
+                return {
+                  refusal: null,
+                  ...(validated.effort === undefined
+                    ? {}
+                    : { effort: validated.effort }),
+                };
               }
               case "codex": {
                 const validated = validateEffort(
@@ -1728,8 +2307,14 @@ export class HiveSpawner implements Spawner {
                   candidate.model,
                   discoveredDefault ?? "medium",
                 );
-                if (validated.warning !== undefined) console.warn(validated.warning);
-                return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
+                if (validated.warning !== undefined)
+                  console.warn(validated.warning);
+                return {
+                  refusal: null,
+                  ...(validated.effort === undefined
+                    ? {}
+                    : { effort: validated.effort }),
+                };
               }
               default:
                 return unknownVendor(candidate.tool, "spawn effort");
@@ -1743,7 +2328,9 @@ export class HiveSpawner implements Spawner {
       };
       return await AuthorizedLaunch.gate(raw, checks);
     };
-    const requireGate = async (raw: RawLaunchCandidate): Promise<AuthorizedLaunch> => {
+    const requireGate = async (
+      raw: RawLaunchCandidate,
+    ): Promise<AuthorizedLaunch> => {
       const result = await authorizeCandidate(raw);
       if (result.refusal !== undefined) {
         throw new Error(
@@ -1824,7 +2411,9 @@ export class HiveSpawner implements Spawner {
           try {
             effortValue = await linkEffort(entry, policy);
           } catch (error) {
-            attempts.push(`${label} — effort: ${error instanceof Error ? error.message : String(error)}`);
+            attempts.push(
+              `${label} — effort: ${error instanceof Error ? error.message : String(error)}`,
+            );
             continue;
           }
           const gate = await authorizeCandidate({
@@ -1833,7 +2422,9 @@ export class HiveSpawner implements Spawner {
             ...(effortValue === undefined ? {} : { effort: effortValue }),
           });
           if (gate.refusal !== undefined) {
-            attempts.push(`${label} — ${gate.refusal.reason}: ${gate.refusal.detail}`);
+            attempts.push(
+              `${label} — ${gate.refusal.reason}: ${gate.refusal.detail}`,
+            );
             continue;
           }
           eligible.push(gate.authorized);
@@ -1842,8 +2433,13 @@ export class HiveSpawner implements Spawner {
       };
       const selectFrom = async (
         eligible: AuthorizedLaunch[],
-        quotaSelection = selection === "auto" ? "spread" as const : "strict" as const,
-      ): Promise<{ authorized: AuthorizedLaunch; reservationId?: string } | null> => {
+        quotaSelection = selection === "auto"
+          ? ("spread" as const)
+          : ("strict" as const),
+      ): Promise<{
+        authorized: AuthorizedLaunch;
+        reservationId?: string;
+      } | null> => {
         if (eligible.length === 0) return null;
         if (this.dependencies.quota?.config.enabled !== true) {
           // Without quota there is no headroom to spread by; rank order is
@@ -1855,7 +2451,9 @@ export class HiveSpawner implements Spawner {
             agentName: name,
             category,
             selection: quotaSelection,
-            ...(request.tool === undefined ? {} : { explicitTool: request.tool }),
+            ...(request.tool === undefined
+              ? {}
+              : { explicitTool: request.tool }),
             ...(request.reviewOfTool === undefined
               ? {}
               : { reviewOfTool: request.reviewOfTool }),
@@ -1872,20 +2470,33 @@ export class HiveSpawner implements Spawner {
           return null;
         }
       };
-      const categoryChain: ChainEntry[] = selection === "auto"
-        ? policy.models.flatMap((row) => {
-          if (row.state !== "enabled") return [];
-          const fit = modelCategoryFit(policy, row.provider, row.model, category);
-          if (!fit.fits) {
-            attempts.push(`fit: ${fit.basis}`);
-            return [];
-          }
-          return [{ provider: row.provider, model: row.model, effort: row.effort }];
-        })
-        : policy.chains[category] ?? [];
-      const defaultChain = selection === "choice" && category !== "default"
-        ? policy.chains.default ?? []
-        : [];
+      const categoryChain: ChainEntry[] =
+        selection === "auto"
+          ? policy.models.flatMap((row) => {
+              if (row.state !== "enabled") return [];
+              const fit = modelCategoryFit(
+                policy,
+                row.provider,
+                row.model,
+                category,
+              );
+              if (!fit.fits) {
+                attempts.push(`fit: ${fit.basis}`);
+                return [];
+              }
+              return [
+                {
+                  provider: row.provider,
+                  model: row.model,
+                  effort: row.effort,
+                },
+              ];
+            })
+          : (policy.chains[category] ?? []);
+      const defaultChain =
+        selection === "choice" && category !== "default"
+          ? (policy.chains.default ?? [])
+          : [];
       if (categoryChain.length === 0 && defaultChain.length === 0) {
         throw new Error(
           `Cannot spawn ${name}: category ${category} has no chain and the ` +
@@ -1893,16 +2504,26 @@ export class HiveSpawner implements Spawner {
             "Control Center.",
         );
       }
-      const fallbackChain: ChainEntry[] = selection === "choice"
-        ? policy.models.flatMap((row) =>
-          row.state === "enabled"
-            ? [{ provider: row.provider, model: row.model, effort: row.effort }]
-            : []
-        )
-        : [];
+      const fallbackChain: ChainEntry[] =
+        selection === "choice"
+          ? policy.models.flatMap((row) =>
+              row.state === "enabled"
+                ? [
+                    {
+                      provider: row.provider,
+                      model: row.model,
+                      effort: row.effort,
+                    },
+                  ]
+                : [],
+            )
+          : [];
       let chosen = await selectFrom(await gateChain(categoryChain, category));
       chosen ??= await selectFrom(await gateChain(defaultChain, "default"));
-      chosen ??= await selectFrom(await gateChain(fallbackChain, "fallback"), "spread");
+      chosen ??= await selectFrom(
+        await gateChain(fallbackChain, "fallback"),
+        "spread",
+      );
       if (chosen === null) {
         throw new Error(
           `Cannot spawn ${name}: every link of the ${category} chain` +
@@ -1933,7 +2554,8 @@ export class HiveSpawner implements Spawner {
           executionIdentity = { tool, model, effort: effort ?? "medium" };
           break;
         case "grok": {
-          const identity = this.dependencies.grokIdentity?.() ??
+          const identity =
+            this.dependencies.grokIdentity?.() ??
             probeGrokCliVersion(this.grokExecutable);
           if (identity === null) {
             throw new Error("Cannot spawn Grok: grok --version failed");
@@ -1952,10 +2574,11 @@ export class HiveSpawner implements Spawner {
       }
     }
     const agentId = crypto.randomUUID();
-    const sessiondPolicy = await this.dependencies.sessiond.prepareAgentCreation({
-      agentId,
-      agentName: name,
-    });
+    const sessiondPolicy =
+      await this.dependencies.sessiond.prepareAgentCreation({
+        agentId,
+        agentName: name,
+      });
     if (sessiondPolicy === null) {
       throw new SpawnFailedError(
         name,
@@ -2009,31 +2632,31 @@ export class HiveSpawner implements Spawner {
       }),
       this.dependencies.graphifyBrief === undefined
         ? Promise.resolve(null)
-        : this.dependencies.graphifyBrief(request.task).catch(
-          (error: unknown) => {
-            console.error(
-              `Hive could not build a graph brief for ${name}; spawning without one: ${
-                error instanceof Error ? error.message : "unknown error"
-              }`,
-            );
-            return null;
-          },
-        ),
+        : this.dependencies
+            .graphifyBrief(request.task)
+            .catch((error: unknown) => {
+              console.error(
+                `Hive could not build a graph brief for ${name}; spawning without one: ${
+                  error instanceof Error ? error.message : "unknown error"
+                }`,
+              );
+              return null;
+            }),
     ]);
     // HiveMemory HM-3 WP6: the memory index this spawn just received is the
     // agent's recall baseline — seed its wake-delta high-water mark to the
     // current end of the wiki ingest log so its first wake delta covers only
     // what changed after this moment. A seeding failure is logged, never a
     // failed spawn: the wake path re-baselines silently when no mark exists.
-    await this.dependencies.seedMemoryHighWater?.(name).catch(
-      (error: unknown) => {
+    await this.dependencies
+      .seedMemoryHighWater?.(name)
+      .catch((error: unknown) => {
         console.error(
           `Hive could not seed ${name}'s memory high-water mark: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         );
-      },
-    );
+      });
     const timestamp = new Date().toISOString();
     // Grok's session id is named by Hive, not discovered afterwards. Claude and
     // Codex report theirs on hook traffic; Grok has no lifecycle hooks, so
@@ -2050,7 +2673,7 @@ export class HiveSpawner implements Spawner {
       1,
       sessiondPolicy.engineBuildId,
     );
-    let record = this.dependencies.db.insertAgent({
+    const record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
       // its row — erasing the very closure record that lets history tell the
       // two agents apart.
@@ -2115,10 +2738,11 @@ export class HiveSpawner implements Spawner {
       // Servers the human attached to their own Codex sessions. This agent did
       // not ask for them and pays for them on every message it sends, so the
       // spawn detaches them for its process only.
-      const excludeMcpServers = tool === "codex"
-        ? await this.inheritedCodexMcpServers()
-        // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
-        : [];
+      const excludeMcpServers =
+        tool === "codex"
+          ? await this.inheritedCodexMcpServers()
+          : // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
+            [];
       // A reader carries no landing or memory-write right. A writer gets exactly
       // one landing right for its own branch.
       const capabilityToken = this.dependencies.issueCredential?.(
@@ -2153,12 +2777,16 @@ export class HiveSpawner implements Spawner {
       });
       const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
         if (quotaReservationId !== undefined) {
-          this.dependencies.quota?.requireActiveReservation?.(quotaReservationId);
+          this.dependencies.quota?.requireActiveReservation?.(
+            quotaReservationId,
+          );
         }
         const revalidated = await requireGate({
           tool: authorized.tool,
           model: authorized.model,
-          ...(authorized.effort === undefined ? {} : { effort: authorized.effort }),
+          ...(authorized.effort === undefined
+            ? {}
+            : { effort: authorized.effort }),
         });
         if (
           revalidated.tool !== authorized.tool ||
@@ -2195,7 +2823,10 @@ export class HiveSpawner implements Spawner {
         preparedLaunch.command,
         launchedCommand,
       );
-      const failureReason = await this.monitorReadiness(record, launchedCommand);
+      const failureReason = await this.monitorReadiness(
+        record,
+        launchedCommand,
+      );
       if (failureReason !== null) {
         // The command ran, so this is the model's answer — unless the pane shows
         // the binary never executed at all.
@@ -2249,15 +2880,15 @@ export class HiveSpawner implements Spawner {
       // happen on this
       // machine, before the model is contacted — so a throw is never evidence
       // about the route, and must never be recorded against it.
-      const reason = error instanceof Error
-        ? error.message
-        : "Agent launch failed";
+      const reason =
+        error instanceof Error ? error.message : "Agent launch failed";
       return await this.failSpawnIfStillSpawning(
         record,
         worktree,
         reason,
         "transport",
-        error instanceof SessiondWireError && error.code === "CAPACITY_EXCEEDED",
+        error instanceof SessiondWireError &&
+          error.code === "CAPACITY_EXCEEDED",
       );
     }
 
@@ -2273,7 +2904,7 @@ export class HiveSpawner implements Spawner {
     // against a stale snapshot would count that write as a hook event.
     const baselineEventAt =
       this.dependencies.db.getAgentById(record.id)?.lastEventAt ??
-        record.lastEventAt;
+      record.lastEventAt;
 
     const locator = requireSessiondAgentLocator(record);
     const proof = await watchForProofOfLife(locator, baselineEventAt, {
@@ -2321,9 +2952,8 @@ export class HiveSpawner implements Spawner {
         );
       }
     } catch (error) {
-      const detail = error instanceof Error
-        ? error.message
-        : "unknown process state";
+      const detail =
+        error instanceof Error ? error.message : "unknown process state";
       const reason = `${context}: teardown could not be verified: ${detail}`;
       this.preserveStuck(record, reason);
       throw new Error(reason, { cause: error });
@@ -2340,7 +2970,10 @@ export class HiveSpawner implements Spawner {
     const current = this.dependencies.db.getAgentById(record.id);
     if (current !== null && current.status !== "spawning") {
       if (current.status === "failed" || current.status === "stuck") {
-        this.dependencies.assignments?.close(record.id, new Date().toISOString());
+        this.dependencies.assignments?.close(
+          record.id,
+          new Date().toISOString(),
+        );
       }
       return current;
     }
@@ -2358,9 +2991,10 @@ export class HiveSpawner implements Spawner {
     layer: LaunchFailureLayer,
   ): SpawnFailedError {
     const outcome = record.status === "stuck" ? "stuck" : "failed";
-    const detail = outcome === "stuck"
-      ? `could not verify cleanup after spawn: ${record.failureReason ?? "unknown launch failure"}`
-      : `failed to spawn: ${record.failureReason ?? "unknown launch failure"}`;
+    const detail =
+      outcome === "stuck"
+        ? `could not verify cleanup after spawn: ${record.failureReason ?? "unknown launch failure"}`
+        : `failed to spawn: ${record.failureReason ?? "unknown launch failure"}`;
     return new SpawnFailedError(record.name, layer, outcome, detail);
   }
 
@@ -2421,9 +3055,8 @@ export class HiveSpawner implements Spawner {
           layer === "model" ? failureReason : undefined,
         );
       } catch (error) {
-        const detail = error instanceof Error
-          ? error.message
-          : "quota cancellation failed";
+        const detail =
+          error instanceof Error ? error.message : "quota cancellation failed";
         return this.preserveStuck(
           stopping,
           `${failureReason}\nQuota release could not be verified: ${detail}`,
@@ -2456,8 +3089,7 @@ export class HiveSpawner implements Spawner {
     // nothing, and leaving debris behind for every failed spawn would be its own
     // bug. Only work survives.
     if (this.dependencies.keepWorktreeOnFailure ?? false) {
-      preserved =
-        `Kept the worktree at ${worktree.path} (branch ${worktree.branch}) by configuration.`;
+      preserved = `Kept the worktree at ${worktree.path} (branch ${worktree.branch}) by configuration.`;
     } else {
       const stranded = await this.assessStranded(
         this.dependencies.repoRoot,
@@ -2468,14 +3100,17 @@ export class HiveSpawner implements Spawner {
       // A probe that could not answer is treated as "there might be work".
       // Guessing wrong in that direction costs a stale directory; guessing wrong
       // in the other costs the work itself.
-      const hasWork = stranded === null ||
-        stranded.dirtyFiles.length > 0 || stranded.unmergedCommits > 0;
+      const hasWork =
+        stranded === null ||
+        stranded.dirtyFiles.length > 0 ||
+        stranded.unmergedCommits > 0;
 
       if (hasWork) {
-        const detail = stranded === null
-          ? "its contents could not be checked"
-          : `${stranded.dirtyFiles.length} uncommitted file(s), ` +
-            `${stranded.unmergedCommits} unmerged commit(s)`;
+        const detail =
+          stranded === null
+            ? "its contents could not be checked"
+            : `${stranded.dirtyFiles.length} uncommitted file(s), ` +
+              `${stranded.unmergedCommits} unmerged commit(s)`;
         preserved =
           `Kept the worktree at ${worktree.path} (branch ${worktree.branch}): ` +
           `${detail}. Nothing was discarded.`;
@@ -2505,10 +3140,12 @@ export class HiveSpawner implements Spawner {
         ...failed,
         failureReason: `${failureReason}\n${notes.join("\n")}`,
       });
-    } else if (!this.dependencies.db.discardFailedSpawn(
-      record.id,
-      neverCreated ? "never-created" : "verified-stopped",
-    )) {
+    } else if (
+      !this.dependencies.db.discardFailedSpawn(
+        record.id,
+        neverCreated ? "never-created" : "verified-stopped",
+      )
+    ) {
       return this.preserveStuck(
         failed,
         `${failureReason}\nAtomic failed-spawn cleanup could not erase the durable generation.`,

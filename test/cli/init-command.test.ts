@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { graphifyPin } from "../../src/adapters/graphify";
@@ -9,9 +16,9 @@ const CLI = join(import.meta.dir, "../../src/cli.ts");
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 function git(root: string, args: string[]): void {
@@ -37,8 +44,8 @@ async function installFakeGraphify(home: string): Promise<void> {
     'import { mkdirSync } from "node:fs";',
     'if (process.argv[2] === "--help") process.exit(0);',
     'if (process.argv[2] !== "extract") process.exit(2);',
-    'const root = process.argv[3];',
-    'mkdirSync(`${root}/graphify-out`, { recursive: true });',
+    "const root = process.argv[3];",
+    "mkdirSync(`${root}/graphify-out`, { recursive: true });",
     'await Bun.write(`${root}/graphify-out/graph.json`, \'{"nodes":[],"links":[]}\\n\');',
     'console.log("[graphify extract] wrote graphify-out/graph.json: 0 nodes, 0 edges, 0 communities");',
     "",
@@ -67,15 +74,12 @@ describe("hive init command boundary", () => {
       HOME: home,
     };
     delete commandEnv["HIVE_HOME"];
-    const child = Bun.spawn(
-      [process.execPath, CLI, "init"],
-      {
-        cwd: repo,
-        env: commandEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
+    const child = Bun.spawn([process.execPath, CLI, "init"], {
+      cwd: repo,
+      env: commandEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const [exitCode, stderr] = await Promise.all([
       child.exited,
       new Response(child.stderr).text(),
@@ -109,14 +113,21 @@ describe("hive init command boundary", () => {
     ]);
     expect(ignored.exitCode).toBe(0);
     expect(ignored.stdout.toString().trim().split("\n")).toHaveLength(4);
-    const exclude = await readFile(join(repo, ".git", "info", "exclude"), "utf8");
+    const exclude = await readFile(
+      join(repo, ".git", "info", "exclude"),
+      "utf8",
+    );
     expect(exclude).not.toContain("graphify-out/");
     expect(exclude).not.toContain(".graphifyignore");
 
     const startModule = join(import.meta.dir, "../../src/cli/start.ts");
     const initModule = join(import.meta.dir, "../../src/cli/init.ts");
     const dbModule = join(import.meta.dir, "../../src/daemon/db.ts");
-    const launch = Bun.spawn([process.execPath, "-e", `
+    const launch = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `
       const { startSession } = await import(${JSON.stringify(startModule)});
       const { isRepoInitialized } = await import(${JSON.stringify(initModule)});
       const { getHiveHome } = await import(${JSON.stringify(dbModule)});
@@ -133,12 +144,15 @@ describe("hive init command boundary", () => {
         initialized: isRepoInitialized(${JSON.stringify(repo)}),
         session,
       }));
-    `], {
-      cwd: repo,
-      env: commandEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    `,
+      ],
+      {
+        cwd: repo,
+        env: commandEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
     const [launchExit, launchOut, launchError] = await Promise.all([
       launch.exited,
       new Response(launch.stdout).text(),
@@ -151,8 +165,9 @@ describe("hive init command boundary", () => {
       initialized: boolean;
       session: { cwd: string; port: number };
     };
-    expect(selected.home.startsWith(join(defaultHome, "instances", "run-")))
-      .toBe(true);
+    expect(
+      selected.home.startsWith(join(defaultHome, "instances", "run-")),
+    ).toBe(true);
     expect(selected.initialized).toBe(true);
     expect(selected.session).toEqual({ cwd: repo, port: 45123 });
   });

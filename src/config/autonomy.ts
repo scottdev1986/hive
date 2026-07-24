@@ -9,8 +9,9 @@
  * survive the write. The edit is proven before it is written — the new text
  * must parse back to the requested value, or nothing touches disk.
  */
-import { homedir } from "node:os";
+
 import { rename } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HiveConfig } from "../schemas";
 
@@ -65,9 +66,9 @@ export function upsertAutonomy(text: string, value: Autonomy): string {
   }
   if (parsed.autonomy !== value) {
     throw new Error(
-      `refusing to write config: the result parses autonomy as ${
-        JSON.stringify(parsed.autonomy)
-      }, not "${value}"`,
+      `refusing to write config: the result parses autonomy as ${JSON.stringify(
+        parsed.autonomy,
+      )}, not "${value}"`,
     );
   }
   return result;

@@ -82,18 +82,21 @@ export async function runGit(
   }
 }
 
-const trimmed = (result: GitResult): string =>
-  result.stdout.trim();
+const trimmed = (result: GitResult): string => result.stdout.trim();
 
 const lines = (out: string): string[] =>
-  out.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  out
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
 const plural = (n: number, one: string, many: string): string =>
   n === 1 ? one : many;
 
 async function gitPath(repoRoot: string, name: string): Promise<string> {
   const result = await runGit(repoRoot, ["rev-parse", "--git-path", name]);
-  if (result.exitCode !== 0 || trimmed(result) === "") return join(repoRoot, ".git", name);
+  if (result.exitCode !== 0 || trimmed(result) === "")
+    return join(repoRoot, ".git", name);
   const path = trimmed(result);
   return path.startsWith("/") ? path : resolve(repoRoot, path);
 }
@@ -119,12 +122,17 @@ function readLandingLease(path: string): LandingLeaseEvidence {
   }
   try {
     const value: unknown = JSON.parse(contents);
-    if (typeof value !== "object" || value === null) return { state: "unknown" };
+    if (typeof value !== "object" || value === null)
+      return { state: "unknown" };
     const lease = value as Record<string, unknown>;
     if (
-      typeof lease.pid !== "number" || !Number.isSafeInteger(lease.pid) ||
-      lease.pid <= 0 || typeof lease.token !== "string" || lease.token === ""
-    ) return { state: "unknown" };
+      typeof lease.pid !== "number" ||
+      !Number.isSafeInteger(lease.pid) ||
+      lease.pid <= 0 ||
+      typeof lease.token !== "string" ||
+      lease.token === ""
+    )
+      return { state: "unknown" };
     return { state: "valid", lease: lease as unknown as LandingLease };
   } catch {
     return { state: "unknown" };
@@ -142,8 +150,10 @@ function removeLandingLease(path: string, lease: LandingLease): boolean {
   }
   rmSync(path, { force: true });
   const remaining = readLandingLease(path);
-  return remaining.state === "absent" ||
-    (remaining.state === "valid" && !sameLandingLease(remaining.lease, lease));
+  return (
+    remaining.state === "absent" ||
+    (remaining.state === "valid" && !sameLandingLease(remaining.lease, lease))
+  );
 }
 
 function processLiveness(pid: number): "live" | "dead" | "unknown" {
@@ -160,7 +170,9 @@ function processLiveness(pid: number): "live" | "dead" | "unknown" {
 async function acquireLandingLease(repoRoot: string): Promise<() => void> {
   const common = await runGit(repoRoot, ["rev-parse", "--git-common-dir"]);
   if (common.exitCode !== 0 || trimmed(common) === "") {
-    throw new Error(`Cannot land: could not resolve git common directory for ${repoRoot}`);
+    throw new Error(
+      `Cannot land: could not resolve git common directory for ${repoRoot}`,
+    );
   }
   const commonPath = trimmed(common).startsWith("/")
     ? trimmed(common)
@@ -198,7 +210,9 @@ async function acquireLandingLease(repoRoot: string): Promise<() => void> {
     }
     await Bun.sleep(25);
   }
-  throw new Error(`Cannot land: timed out waiting for the repository landing lease at ${path}`);
+  throw new Error(
+    `Cannot land: timed out waiting for the repository landing lease at ${path}`,
+  );
 }
 
 /** `git status --porcelain` split into the tracked-but-modified paths that
@@ -264,7 +278,9 @@ export async function untrackedCollisions(
     const theirs = await runGit(repoRoot, ["rev-parse", `${branch}:${path}`]);
     collisions.push({
       path,
-      identical: ours.exitCode === 0 && theirs.exitCode === 0 &&
+      identical:
+        ours.exitCode === 0 &&
+        theirs.exitCode === 0 &&
         trimmed(ours) === trimmed(theirs),
     });
   }
@@ -296,7 +312,10 @@ export type ReadLandReadiness = (
   branch: string,
 ) => Promise<LandReadiness>;
 
-export const readLandReadiness: ReadLandReadiness = async (repoRoot, branch) => {
+export const readLandReadiness: ReadLandReadiness = async (
+  repoRoot,
+  branch,
+) => {
   const pendingResult = await runGit(repoRoot, [
     "rev-list",
     "--count",
@@ -304,10 +323,13 @@ export const readLandReadiness: ReadLandReadiness = async (repoRoot, branch) => 
   ]);
   const raw = trimmed(pendingResult);
   const count = Number(raw);
-  const pending = pendingResult.exitCode === 0 && raw !== "" &&
-      Number.isSafeInteger(count) && count >= 0
-    ? count
-    : null;
+  const pending =
+    pendingResult.exitCode === 0 &&
+    raw !== "" &&
+    Number.isSafeInteger(count) &&
+    count >= 0
+      ? count
+      : null;
 
   // `--is-ancestor` answers with its exit code: 0 yes, 1 no, anything else
   // (a missing branch, a broken repo) is an error, not a "no".
@@ -317,11 +339,8 @@ export const readLandReadiness: ReadLandReadiness = async (repoRoot, branch) => 
     "HEAD",
     branch,
   ]);
-  const rebased = ancestor.exitCode === 0
-    ? true
-    : ancestor.exitCode === 1
-    ? false
-    : null;
+  const rebased =
+    ancestor.exitCode === 0 ? true : ancestor.exitCode === 1 ? false : null;
 
   return { pending, rebased };
 };
@@ -403,9 +422,10 @@ export async function diagnoseLand(
       `${branch}..HEAD`,
     ]);
     const count = Number(trimmed(behind));
-    const moved = Number.isSafeInteger(count) && count > 0
-      ? `${targetBranch} has moved on by ${count} ${plural(count, "commit", "commits")} that ${branch} does not have`
-      : `${branch} has diverged from ${targetBranch}`;
+    const moved =
+      Number.isSafeInteger(count) && count > 0
+        ? `${targetBranch} has moved on by ${count} ${plural(count, "commit", "commits")} that ${branch} does not have`
+        : `${branch} has diverged from ${targetBranch}`;
     return blocked(
       `not a fast-forward: ${moved}`,
       `Fix: run \`git rebase ${targetBranch}\` in your worktree, re-run the tests, then land again.`,
@@ -425,13 +445,17 @@ export async function diagnoseLand(
     ]);
     if (touched.exitCode === 0) {
       const dirty = dirtyPaths(status.stdout);
-      const collisions = lines(touched.stdout).filter((path) => dirty.has(path));
+      const collisions = lines(touched.stdout).filter((path) =>
+        dirty.has(path),
+      );
       if (collisions.length > 0) {
         const list = collisions.join(", ");
         return blocked(
-          `${collisions.length} ${plural(collisions.length, "file", "files")} in the primary checkout ${
-            plural(collisions.length, "has", "have")
-          } uncommitted changes the merge would overwrite: ${list}`,
+          `${collisions.length} ${plural(collisions.length, "file", "files")} in the primary checkout ${plural(
+            collisions.length,
+            "has",
+            "have",
+          )} uncommitted changes the merge would overwrite: ${list}`,
           // Never offered as something Hive will do for them. Hive did not write
           // these changes and cannot prove they are disposable — the one time it
           // could prove it, the file was a generated cache, and that is exactly
@@ -447,17 +471,22 @@ export async function diagnoseLand(
   // blockers — landBranch removes them under the hash proof above — so only a
   // content mismatch is reported: the user's copy and the agent's committed
   // copy genuinely differ, and choosing between them is not Hive's call.
-  const differing = (await untrackedCollisions(repoRoot, branch))
-    .filter((collision) => !collision.identical);
+  const differing = (await untrackedCollisions(repoRoot, branch)).filter(
+    (collision) => !collision.identical,
+  );
   if (differing.length > 0) {
     const list = differing.map((collision) => collision.path).join(", ");
     const first = differing[0]?.path as string;
     return blocked(
-      `your ${plural(differing.length, "copy", "copies")} of ${list} in the primary checkout ${
-        plural(differing.length, "differs", "differ")
-      } from the ${plural(differing.length, "version", "versions")} ${branch} committed — the branch lands ${
-        plural(differing.length, "a file", "files")
-      } you also have untracked there, with different content`,
+      `your ${plural(differing.length, "copy", "copies")} of ${list} in the primary checkout ${plural(
+        differing.length,
+        "differs",
+        "differ",
+      )} from the ${plural(differing.length, "version", "versions")} ${branch} committed — the branch lands ${plural(
+        differing.length,
+        "a file",
+        "files",
+      )} you also have untracked there, with different content`,
       `Fix: in ${repoRoot}, move your ${plural(differing.length, "copy", "copies")} aside (e.g. \`mv ${first} ${first}.mine\`), land again, then compare and keep what you meant. Hive will not choose between two different versions of your file.`,
     );
   }
@@ -506,7 +535,9 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch) => {
     // stderr goes through verbatim. It is never discarded.
     const blockerNow = await diagnoseLand(repoRoot, branch);
     if (blockerNow !== null) throw landError(branch, blockerNow);
-    const detail = merge.stderr.trim() || merge.stdout.trim() ||
+    const detail =
+      merge.stderr.trim() ||
+      merge.stdout.trim() ||
       `git merge exited ${merge.exitCode}`;
     throw new Error(`Cannot land ${branch}: ${detail}`);
   }

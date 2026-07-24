@@ -1,16 +1,16 @@
 import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
+import { readDaemonPort } from "../daemon/lifecycle";
 import {
-  readBillingWithMemory,
   type AccountBilling,
+  readBillingWithMemory,
 } from "../daemon/usage-credits";
+import type { QuotaStatus, TokenUsageSnapshot } from "../schemas";
 import {
+  type CapabilityProvider,
   forEachProvider,
   unknownVendor,
-  type CapabilityProvider,
 } from "../schemas/capability";
-import type { QuotaStatus, TokenUsageSnapshot } from "../schemas";
-import { readDaemonPort } from "../daemon/lifecycle";
 import { fetchQuotaStatus } from "./mcp";
 import { fetchTokenUsage } from "./token-usage";
 
@@ -36,8 +36,12 @@ import { fetchTokenUsage } from "./token-usage";
  */
 
 export interface ModelControlSnapshotDependencies {
-  discover?: (provider: CapabilityProvider) => Promise<CapabilityDiscoveryResult>;
-  readBilling?: (provider: CapabilityProvider) => Promise<AccountBilling | null>;
+  discover?: (
+    provider: CapabilityProvider,
+  ) => Promise<CapabilityDiscoveryResult>;
+  readBilling?: (
+    provider: CapabilityProvider,
+  ) => Promise<AccountBilling | null>;
   daemonPort?: () => number | null;
   quota?: (port: number) => Promise<QuotaStatus[]>;
   tokenUsage?: (port: number) => Promise<TokenUsageSnapshot>;
@@ -90,16 +94,18 @@ export async function buildModelControlSnapshot(
   dependencies: ModelControlSnapshotDependencies = {},
 ): Promise<ModelControlSnapshot> {
   const discover = dependencies.discover ?? defaultDiscover;
-  const readBilling = dependencies.readBilling ??
+  const readBilling =
+    dependencies.readBilling ??
     ((provider: CapabilityProvider) => readBillingWithMemory(provider));
   const daemonPort = dependencies.daemonPort ?? readDaemonPort;
   const quota = dependencies.quota ?? fetchQuotaStatus;
   const tokenUsage = dependencies.tokenUsage ?? fetchTokenUsage;
   const now = dependencies.now ?? (() => new Date());
 
-  const readQuota = async (): Promise<
-    { quota: QuotaStatus[] | null; quotaError: string | null }
-  > => {
+  const readQuota = async (): Promise<{
+    quota: QuotaStatus[] | null;
+    quotaError: string | null;
+  }> => {
     const port = daemonPort();
     if (port === null || port <= 0 || port > 65_535) {
       return {
@@ -125,7 +131,8 @@ export async function buildModelControlSnapshot(
     if (port === null || port <= 0 || port > 65_535) {
       return {
         tokenUsage: null,
-        tokenUsageError: "no daemon is running — token readings are unavailable",
+        tokenUsageError:
+          "no daemon is running — token readings are unavailable",
       };
     }
     try {
@@ -153,12 +160,14 @@ export async function buildModelControlSnapshot(
     }
   };
 
-  const [providers, billing, quotaResult, tokenUsageResult] = await Promise.all([
-    forEachProvider(discoverSafely),
-    forEachProvider((provider) => readBilling(provider).catch(() => null)),
-    readQuota(),
-    readTokenUsage(),
-  ]);
+  const [providers, billing, quotaResult, tokenUsageResult] = await Promise.all(
+    [
+      forEachProvider(discoverSafely),
+      forEachProvider((provider) => readBilling(provider).catch(() => null)),
+      readQuota(),
+      readTokenUsage(),
+    ],
+  );
 
   return {
     generatedAt: now().toISOString(),
@@ -178,7 +187,11 @@ export async function buildModelControlSnapshot(
 }
 
 export async function printModelControlSnapshot(port?: number): Promise<void> {
-  console.log(JSON.stringify(await buildModelControlSnapshot(
-    port === undefined ? {} : { daemonPort: () => port },
-  )));
+  console.log(
+    JSON.stringify(
+      await buildModelControlSnapshot(
+        port === undefined ? {} : { daemonPort: () => port },
+      ),
+    ),
+  );
 }

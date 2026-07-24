@@ -18,11 +18,13 @@ const checks: LaunchGateChecks = {
 export async function authorizeForQuotaTest(
   candidates: readonly RawLaunchCandidate[],
 ): Promise<AuthorizedLaunch[]> {
-  return await Promise.all(candidates.map(async (candidate) => {
-    const result = await AuthorizedLaunch.gate(candidate, checks);
-    if (result.refusal !== undefined) throw new Error(result.refusal.detail);
-    return result.authorized;
-  }));
+  return await Promise.all(
+    candidates.map(async (candidate) => {
+      const result = await AuthorizedLaunch.gate(candidate, checks);
+      if (result.refusal !== undefined) throw new Error(result.refusal.detail);
+      return result.authorized;
+    }),
+  );
 }
 
 /** Test ledgers model the vendor catalogs production launch authorization reads. */
@@ -56,13 +58,18 @@ export class CatalogedQuotaLedger extends QuotaLedger {
       ],
       grok: ["grok-4.5"],
     } as const;
-    for (const provider of Object.keys(catalogs) as Array<keyof typeof catalogs>) {
-      this.replaceModelCatalog(provider, catalogs[provider].map((model) => ({
+    for (const provider of Object.keys(catalogs) as Array<
+      keyof typeof catalogs
+    >) {
+      this.replaceModelCatalog(
         provider,
-        modelId: model,
-        displayName: model,
-        discoveredAt,
-      })));
+        catalogs[provider].map((model) => ({
+          provider,
+          modelId: model,
+          displayName: model,
+          discoveredAt,
+        })),
+      );
     }
   }
 }

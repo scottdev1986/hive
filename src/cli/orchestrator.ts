@@ -1,25 +1,18 @@
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
 import {
   buildClaudeSpawnCommand,
-  resolveWorkingClaudeExecutable,
   type ResolvedClaudeExecutable,
+  resolveWorkingClaudeExecutable,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
-import { writeCredential } from "../daemon/credentials";
-import { getHiveHome } from "../daemon/db";
-import { operatorHeaders } from "./credential";
-import { orchestratorSessionKey } from "../daemon/orchestrator-lifecycle";
-import { shellJoin } from "../daemon/session-host/shell-session";
 import {
-  normalizeNulText,
-  ORCHESTRATOR_NAME,
-  unknownVendor,
-} from "../schemas";
-import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
-import { discoverBriefableDocs } from "../adapters/briefing-docs";
+  CODEX_CAPABILITY_TOKEN_ENV,
+  resolveWorkingCodexExecutable,
+} from "../adapters/tools/codex";
 import {
   buildGrokSpawnCommand,
   GROK_COMPATIBILITY_ENV,
@@ -27,15 +20,6 @@ import {
   resolveWorkingGrokExecutable,
   writeGrokAgentConfig,
 } from "../adapters/tools/grok";
-import type { CapabilityProvider } from "../schemas";
-import {
-  buildCodexMcpExclusionArgs,
-  listInheritedCodexMcpServers,
-} from "../adapters/tools/mcp-scope";
-import {
-  CODEX_CAPABILITY_TOKEN_ENV,
-  resolveWorkingCodexExecutable,
-} from "../adapters/tools/codex";
 import {
   buildKimiSpawnCommand,
   probeKimiDefaultModel,
@@ -44,21 +28,18 @@ import {
   writeKimiAgentConfig,
 } from "../adapters/tools/kimi";
 import {
+  buildCodexMcpExclusionArgs,
+  listInheritedCodexMcpServers,
+} from "../adapters/tools/mcp-scope";
+import {
   buildOpencodeSpawnCommand,
   OPENCODE_HIVE_AGENT,
   probeOpencodeDefaultModel,
   resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
 } from "../adapters/tools/opencode";
-import { hiveCliSpawnArgv } from "../daemon/lifecycle";
-import { IS_RELEASE_BUILD } from "../version";
-import { mintSessionRequestId } from "../daemon/session-host/locators";
-import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
-import {
-  daemonOrchestratorSessiondControl,
-  runOrchestratorSessiondLaunch,
-  type OrchestratorSessiondControl,
-} from "./orchestrator-sessiond";
+import { writeCredential } from "../daemon/credentials";
+import { getHiveHome } from "../daemon/db";
 import {
   codexInstructionProfileName,
   launchPromptPath,
@@ -66,6 +47,24 @@ import {
   writeCodexInstructionProfile,
   writeLaunchPrompt,
 } from "../daemon/launch-prompt";
+import { hiveCliSpawnArgv } from "../daemon/lifecycle";
+import { orchestratorSessionKey } from "../daemon/orchestrator-lifecycle";
+import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
+import { mintSessionRequestId } from "../daemon/session-host/locators";
+import { shellJoin } from "../daemon/session-host/shell-session";
+import type { CapabilityProvider } from "../schemas";
+import { normalizeNulText, ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
+import { IS_RELEASE_BUILD } from "../version";
+import { operatorHeaders } from "./credential";
+import {
+  ORCHESTRATOR_BRIEF,
+  orchestratorDocGuidance,
+} from "./orchestrator-brief";
+import {
+  daemonOrchestratorSessiondControl,
+  type OrchestratorSessiondControl,
+  runOrchestratorSessiondLaunch,
+} from "./orchestrator-sessiond";
 
 export type OrchestratorTool = CapabilityProvider;
 
@@ -90,9 +89,9 @@ export async function requestCodexRootToken(
     headers: operatorHeaders(),
   }).catch(() => null);
   if (response === null || !response.ok) return null;
-  const body = await response.json().catch(() => null) as
-    | { token?: string }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    token?: string;
+  } | null;
   return typeof body?.token === "string" && body.token.length > 0
     ? body.token
     : null;
@@ -174,7 +173,9 @@ export async function prepareOrchestratorConfig(
 /** Discover the repo's briefable docs and format the orchestrator's
  * repo-specific doc guidance. A repo whose docs cannot be walked contributes "",
  * leaving the generic brief untouched rather than teaching hive's own doc names. */
-export async function buildOrchestratorDocGuidance(cwd: string): Promise<string> {
+export async function buildOrchestratorDocGuidance(
+  cwd: string,
+): Promise<string> {
   const docs = await discoverBriefableDocs(cwd).catch(() => null);
   if (docs === null) return "";
   return orchestratorDocGuidance({
@@ -221,7 +222,11 @@ export function buildOrchestratorCommand(
           daemonPort: port,
           readOnly: true,
           executable: executable ?? "claude",
-          scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
+          scopedSettingsPath: join(
+            configRoot,
+            ".claude",
+            "settings.local.json",
+          ),
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
           appendSystemPromptFile: launchPromptPath(orchestratorSessionKey()),
         }),
@@ -252,10 +257,12 @@ export function buildOrchestratorCommand(
         // Codex's supported bearer indirection. The launch shell populates
         // this process-local variable from the 0600 capability file; neither
         // the token nor a made-up config key appears in argv.
-        ...(codexTokenFile === "" ? [] : [
-          "-c",
-          `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(CODEX_CAPABILITY_TOKEN_ENV)}`,
-        ]),
+        ...(codexTokenFile === ""
+          ? []
+          : [
+              "-c",
+              `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(CODEX_CAPABILITY_TOKEN_ENV)}`,
+            ]),
         // The queen's role (#12) needs writes for her memory and planning
         // docs. workspace-write is the finest sandbox codex offers — it
         // cannot scope subpaths of the workspace — so the
@@ -279,12 +286,17 @@ export function buildOrchestratorCommand(
         // per-tool only — no per-command gh scope, no per-path write scope —
         // so the role's grant is a full tool approval and the
         // no-implementation-code boundary rides her brief.
-        wrapGrokWithRulesFile(shellJoin(buildGrokSpawnCommand({
-          model,
-          worktreePath: process.cwd(),
-          readOnly: false,
-          executable: grokExecutable,
-        })), launchPromptPath(orchestratorSessionKey())),
+        wrapGrokWithRulesFile(
+          shellJoin(
+            buildGrokSpawnCommand({
+              model,
+              worktreePath: process.cwd(),
+              readOnly: false,
+              executable: grokExecutable,
+            }),
+          ),
+          launchPromptPath(orchestratorSessionKey()),
+        ),
       ];
     }
     case "kimi": {
@@ -300,12 +312,17 @@ export function buildOrchestratorCommand(
         // per-launch permission scoping at all (the kimi-adapter gap), so
         // --yolo auto-approves her tool calls and the
         // no-implementation-code boundary rides her brief.
-        wrapKimiWithInstructionFile(shellJoin(buildKimiSpawnCommand({
-          model,
-          readOnly: false,
-          dangerous: false,
-          executable: kimiExecutable,
-        })), launchPromptPath(orchestratorSessionKey())),
+        wrapKimiWithInstructionFile(
+          shellJoin(
+            buildKimiSpawnCommand({
+              model,
+              readOnly: false,
+              dangerous: false,
+              executable: kimiExecutable,
+            }),
+          ),
+          launchPromptPath(orchestratorSessionKey()),
+        ),
       ];
     }
     case "opencode": {
@@ -354,8 +371,9 @@ export async function launchOrchestrator(
   let providerExecutable: string;
   switch (tool) {
     case "claude": {
-      const claude = (options.resolveClaudeExecutable ??
-        resolveWorkingClaudeExecutable)();
+      const claude = (
+        options.resolveClaudeExecutable ?? resolveWorkingClaudeExecutable
+      )();
       if (claude.path === "claude" && claude.version === null) {
         throw new Error(
           "the Claude orchestrator needs a working Claude Code CLI\n" +
@@ -366,8 +384,9 @@ export async function launchOrchestrator(
       break;
     }
     case "codex": {
-      const codex = (options.resolveCodexExecutable ??
-        resolveWorkingCodexExecutable)();
+      const codex = (
+        options.resolveCodexExecutable ?? resolveWorkingCodexExecutable
+      )();
       if (codex === null) {
         throw new Error("the Codex orchestrator needs a working codex CLI");
       }
@@ -375,8 +394,9 @@ export async function launchOrchestrator(
       break;
     }
     case "grok": {
-      const grok = (options.resolveGrokExecutable ??
-        resolveWorkingGrokExecutable)();
+      const grok = (
+        options.resolveGrokExecutable ?? resolveWorkingGrokExecutable
+      )();
       if (grok === null) {
         throw new Error("the Grok orchestrator needs a working grok CLI");
       }
@@ -384,8 +404,9 @@ export async function launchOrchestrator(
       break;
     }
     case "kimi": {
-      const kimi = (options.resolveKimiExecutable ??
-        resolveWorkingKimiExecutable)();
+      const kimi = (
+        options.resolveKimiExecutable ?? resolveWorkingKimiExecutable
+      )();
       if (kimi === null) {
         throw new Error("the Kimi orchestrator needs a working kimi CLI");
       }
@@ -393,8 +414,9 @@ export async function launchOrchestrator(
       break;
     }
     case "opencode": {
-      const opencode = (options.resolveOpencodeExecutable ??
-        resolveWorkingOpencodeExecutable)();
+      const opencode = (
+        options.resolveOpencodeExecutable ?? resolveWorkingOpencodeExecutable
+      )();
       if (opencode === null) {
         throw new Error(
           "the opencode orchestrator needs a working opencode CLI",
@@ -413,11 +435,11 @@ export async function launchOrchestrator(
   switch (tool) {
     case "codex": {
       codexMcpExclusionArgs = buildCodexMcpExclusionArgs(
-        await (options.listCodexMcpServers ??
-          listInheritedCodexMcpServers)(),
+        await (options.listCodexMcpServers ?? listInheritedCodexMcpServers)(),
       ).args;
-      const provisioned = await (options.provisionCodexToken ??
-        provisionCodexRootToken)(port).catch(() => null);
+      const provisioned = await (
+        options.provisionCodexToken ?? provisionCodexRootToken
+      )(port).catch(() => null);
       if (provisioned === null) {
         throw new Error(
           "the Hive daemon could not authorize the Codex orchestrator\n" +
@@ -476,14 +498,15 @@ export async function launchOrchestrator(
     recoveryBrief,
     codexMcpExclusionArgs,
   );
-  const environment = tool === "grok"
-    ? {
-        GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
-        ...GROK_COMPATIBILITY_ENV,
-      }
-    : tool === "codex"
-    ? { [CODEX_CAPABILITY_TOKEN_ENV]: codexToken }
-    : {};
+  const environment =
+    tool === "grok"
+      ? {
+          GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
+          ...GROK_COMPATIBILITY_ENV,
+        }
+      : tool === "codex"
+        ? { [CODEX_CAPABILITY_TOKEN_ENV]: codexToken }
+        : {};
   const launch = OrchestratorSessiondLaunchSchema.parse({
     requestId: mintSessionRequestId(),
     provider: tool,

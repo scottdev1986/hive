@@ -22,12 +22,12 @@ import {
   discoverMemoryFacts,
   factVerificationFlag,
   listMemoryFacts,
-  normalizeTitle,
   type MemoryWriteFileResult,
+  normalizeTitle,
 } from "../adapters/memory";
 import {
-  isOrchestratorName,
   type AgentMessage,
+  isOrchestratorName,
   type MemorySource,
   type MemoryWriteInput,
 } from "../schemas";
@@ -92,7 +92,10 @@ export interface MemoryTriggerDeps {
   /** The semantic leg (HiveMemory HM-5, board #122): cosine top-k over the
    * vector store, or null when embeddings are unavailable. Undefined degrades
    * to the FTS-only bundle. */
-  semantic?: (query: string, limit: number) => Promise<Array<{
+  semantic?: (
+    query: string,
+    limit: number,
+  ) => Promise<Array<{
     scope: string;
     id: string;
     score: number;
@@ -185,10 +188,12 @@ export function memoryRecallDegradedWarning(state: string): string {
 }
 
 export function formatMemoryRecallRow(row: MemoryRecallRow): string {
-  return `- [${row.scope}/${row.topic}] ${row.id} (${row.date})` +
+  return (
+    `- [${row.scope}/${row.topic}] ${row.id} (${row.date})` +
     (row.flag === null ? "" : ` [${row.flag}]`) +
     (row.pitfall ? " [pitfall]" : "") +
-    `: ${row.title} — ${oneLine(row.snippet)}`;
+    `: ${row.title} — ${oneLine(row.snippet)}`
+  );
 }
 
 /**
@@ -216,7 +221,10 @@ const RECALL_RRF_K = 60;
  */
 export async function buildMemoryRecallBundle(
   query: string,
-  deps: Pick<MemoryTriggerDeps, "memory" | "repoRoot" | "semantic" | "semanticStatus">,
+  deps: Pick<
+    MemoryTriggerDeps,
+    "memory" | "repoRoot" | "semantic" | "semanticStatus"
+  >,
   limit = 8,
 ): Promise<MemoryRecallBundle> {
   // The envelope discriminator (defect D2): names what the semantic leg
@@ -238,9 +246,8 @@ export async function buildMemoryRecallBundle(
     };
   }
   const hits = deps.memory.search(query, { limit });
-  const semantic = deps.semantic === undefined
-    ? null
-    : await deps.semantic(query, limit);
+  const semantic =
+    deps.semantic === undefined ? null : await deps.semantic(query, limit);
   if (semantic === null && hits.length === 0) {
     return {
       state: "empty",
@@ -254,14 +261,15 @@ export async function buildMemoryRecallBundle(
     facts.map((fact) => [`${fact.scope}:${fact.id}`, fact]),
   );
   const statusByKey = new Map<string, string | null>(
-    facts.map((fact) =>
-      [`${fact.scope}:${fact.id}`, factVerificationFlag(fact)] as const
+    facts.map(
+      (fact) =>
+        [`${fact.scope}:${fact.id}`, factVerificationFlag(fact)] as const,
     ),
   );
   const pitfallKeys = new Set<string>(
-    facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
-      `${fact.scope}:${fact.id}`
-    ),
+    facts
+      .filter((fact) => fact.kind === "pitfall")
+      .map((fact) => `${fact.scope}:${fact.id}`),
   );
   const toRow = (hit: {
     scope: string;
@@ -279,7 +287,8 @@ export async function buildMemoryRecallBundle(
     title: hit.title,
     snippet: hit.snippet,
     status: hit.status,
-    flag: statusByKey.get(`${hit.scope}:${hit.id}`) ??
+    flag:
+      statusByKey.get(`${hit.scope}:${hit.id}`) ??
       (hit.status === "verified" ? null : hit.status),
     pitfall: pitfallKeys.has(`${hit.scope}:${hit.id}`),
   });
@@ -328,15 +337,17 @@ export async function buildMemoryRecallBundle(
     // from disk (a stale vector row not yet pruned) means no row at all.
     const fact = factByKey.get(key);
     if (fact === undefined) return [];
-    return [toRow({
-      scope: fact.scope,
-      topic: fact.topic,
-      id: fact.id,
-      date: fact.date,
-      title: fact.title,
-      snippet: oneLine(fact.body).slice(0, 160),
-      status: fact.status,
-    })];
+    return [
+      toRow({
+        scope: fact.scope,
+        topic: fact.topic,
+        id: fact.id,
+        date: fact.date,
+        title: fact.title,
+        snippet: oneLine(fact.body).slice(0, 160),
+        status: fact.status,
+      }),
+    ];
   });
   return {
     state: "ok",
@@ -379,7 +390,8 @@ async function executeRecall(
     : "";
   if (bundle.state === "absent") {
     return {
-      body: header("memory surface unavailable") +
+      body:
+        header("memory surface unavailable") +
         "\nThis daemon has no wiki search index wired, so the recall could " +
         "not run — the surface is ABSENT, which is not the same as an empty " +
         "result. Nothing was searched.",
@@ -389,12 +401,13 @@ async function executeRecall(
   }
   if (bundle.state === "empty") {
     return {
-      body: header("no matching memory") + degradedWarning +
+      body:
+        header("no matching memory") +
+        degradedWarning +
         "\nThe wiki was searched and nothing matched — an honest empty " +
         "result, not a missing index. Broaden the query with memory_search, " +
         'or record what you learn with "note this:".',
-      summary:
-        `recall trigger from ${context.from} to ${context.target}: no matches for "${query}"`,
+      summary: `recall trigger from ${context.from} to ${context.target}: no matches for "${query}"`,
       provenance: { query, outcome: "empty" },
     };
   }
@@ -411,11 +424,12 @@ async function executeRecall(
     sections.push("Articles:", ...bundle.articles.map(formatMemoryRecallRow));
   }
   return {
-    body: header(`${count} result${count === 1 ? "" : "s"}`) + degradedWarning +
+    body:
+      header(`${count} result${count === 1 ? "" : "s"}`) +
+      degradedWarning +
       `\n${MEMORY_RECALL_HINT_NOTE}\n` +
       sections.join("\n"),
-    summary:
-      `recall trigger from ${context.from} to ${context.target}: ${count} result(s) for "${query}"`,
+    summary: `recall trigger from ${context.from} to ${context.target}: ${count} result(s) for "${query}"`,
     provenance: { query, outcome: "ok", results: count },
   };
 }
@@ -438,7 +452,10 @@ async function writeTriggerArticle(
     (fact) => normalizeTitle(fact.title) === normalizeTitle(input.title),
   );
   if (duplicate === undefined) {
-    return { written: await deps.write({ ...input, supersedes: [] }), action: "created" };
+    return {
+      written: await deps.write({ ...input, supersedes: [] }),
+      action: "created",
+    };
   }
   // The update keeps the existing article's topic — writeMemoryFact rejects
   // an id that moves topics, and an update is not a move.
@@ -457,11 +474,11 @@ async function executeWrite(
   context: MemoryTriggerContext,
   deps: MemoryTriggerDeps,
 ): Promise<MemoryTriggerExecution> {
-  const source: MemorySource = context.authority === "queen"
-    ? "orchestrator"
-    : "human";
+  const source: MemorySource =
+    context.authority === "queen" ? "orchestrator" : "human";
   const trigger = kind === "note" ? "note this:" : "document this:";
-  const evidence = `${context.from} via the "${trigger}" trigger in a message to ` +
+  const evidence =
+    `${context.from} via the "${trigger}" trigger in a message to ` +
     `${context.target}, ${todayIsoDate()}`;
   const base = {
     scope: "repo" as const,
@@ -472,43 +489,45 @@ async function executeWrite(
     kind: "article" as const,
     tags: ["trigger", kind],
   };
-  const input: Omit<MemoryWriteInput, "id" | "supersedes"> = kind === "note"
-    ? { ...base, topic: "notes", body: payload }
-    : {
-      ...base,
-      topic: deriveTopic(payload),
-      body: [
-        "## Claim",
-        "",
-        payload,
-        "",
-        "## Verification",
-        "",
-        "TODO: this article is a scaffold the Hive daemon wrote from a " +
-        `"${trigger}" trigger; the claim is UNVERIFIED. Check it against ` +
-        "the repo, correct the body as needed, then promote it with " +
-        "memory_write (status: verified and a verified date) before " +
-        "treating it as authority.",
-      ].join("\n"),
-    };
+  const input: Omit<MemoryWriteInput, "id" | "supersedes"> =
+    kind === "note"
+      ? { ...base, topic: "notes", body: payload }
+      : {
+          ...base,
+          topic: deriveTopic(payload),
+          body: [
+            "## Claim",
+            "",
+            payload,
+            "",
+            "## Verification",
+            "",
+            "TODO: this article is a scaffold the Hive daemon wrote from a " +
+              `"${trigger}" trigger; the claim is UNVERIFIED. Check it against ` +
+              "the repo, correct the body as needed, then promote it with " +
+              "memory_write (status: verified and a verified date) before " +
+              "treating it as authority.",
+          ].join("\n"),
+        };
   const { written, action } = await writeTriggerArticle(input, deps);
   const verb = kind === "note" ? "Hive noted" : "Hive documented";
-  const did = action === "created"
-    ? `wrote article [${written.scope}/${written.topic}] ${written.id}`
-    : `updated existing article [${written.scope}/${written.topic}] ${written.id}`;
+  const did =
+    action === "created"
+      ? `wrote article [${written.scope}/${written.topic}] ${written.id}`
+      : `updated existing article [${written.scope}/${written.topic}] ${written.id}`;
   const embedding = written.embedding;
-  const embeddingWarning = embedding !== undefined &&
-      embedding.startsWith("unavailable:")
-    ? `\n⚠ semantic index unavailable (${embedding.slice("unavailable:".length)})` +
-      " — this write is keyword-searchable only."
-    : "";
+  const embeddingWarning =
+    embedding !== undefined && embedding.startsWith("unavailable:")
+      ? `\n⚠ semantic index unavailable (${embedding.slice("unavailable:".length)})` +
+        " — this write is keyword-searchable only."
+      : "";
   return {
-    body: `🧠 ${verb}: "${written.title}" [unverified] (${SYSTEM_NOTE(context.from, trigger)} ` +
+    body:
+      `🧠 ${verb}: "${written.title}" [unverified] (${SYSTEM_NOTE(context.from, trigger)} ` +
       `The daemon ${did}. Unverified is a claim to reconcile, not ` +
       "authority — verify with memory_read and promote before relying on it.)" +
       embeddingWarning,
-    summary:
-      `${kind} trigger from ${context.from} to ${context.target}: ${action} [repo/${written.topic}] ${written.id}`,
+    summary: `${kind} trigger from ${context.from} to ${context.target}: ${action} [repo/${written.topic}] ${written.id}`,
     provenance: {
       scope: written.scope,
       topic: written.topic,
@@ -529,9 +548,10 @@ export async function executeMemoryTrigger(
   context: MemoryTriggerContext,
   deps: MemoryTriggerDeps,
 ): Promise<MemoryTriggerExecution> {
-  const execution = trigger.kind === "recall"
-    ? await executeRecall(trigger.payload, context, deps)
-    : await executeWrite(trigger.kind, trigger.payload, context, deps);
+  const execution =
+    trigger.kind === "recall"
+      ? await executeRecall(trigger.payload, context, deps)
+      : await executeWrite(trigger.kind, trigger.payload, context, deps);
   if (deps.episodic !== null) {
     try {
       deps.episodic.appendEvent({
@@ -546,10 +566,9 @@ export async function executeMemoryTrigger(
         },
       });
     } catch (error) {
-      const message =
-        `Hive could not audit the memory trigger from ${context.from} to ${context.target}: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`;
+      const message = `Hive could not audit the memory trigger from ${context.from} to ${context.target}: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`;
       console.error(message);
       deps.log?.(message);
     }

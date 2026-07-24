@@ -1,35 +1,47 @@
-import {
-  type AttachResult,
-  type Checkpoint,
-  type ClaimResult,
-  type CreateRequest,
-  type CreateResult,
-  type ExitStatus,
-  type HostLimits,
-  type InputClaim,
-  type InputReceipt,
-  type JobControlEvidence,
-  type LaunchFailureLayer,
-  type OutputAcknowledgement,
-  type ProcessIdentity,
-  type ReapEvidence,
-  type ResizeResult,
-  type SessionInspection,
-  type SessionRef,
-  type SubscribeResult,
-  type SubscriptionCapabilities,
-  type SubscriptionCursor,
-  type SubscriptionLimits,
-  type SubscriptionStart,
-  type EventAcknowledgement,
-  type TerminalEvent,
-  type TerminalHost,
-  type TerminationResult,
-  type WindowSize,
+import type {
+  AttachResult,
+  Checkpoint,
+  ClaimResult,
+  CreateRequest,
+  CreateResult,
+  EventAcknowledgement,
+  ExitStatus,
+  HostLimits,
+  InputClaim,
+  InputReceipt,
+  JobControlEvidence,
+  LaunchFailureLayer,
+  OutputAcknowledgement,
+  ProcessIdentity,
+  ReapEvidence,
+  ResizeResult,
+  SessionInspection,
+  SessionRef,
+  SubscribeResult,
+  SubscriptionCapabilities,
+  SubscriptionCursor,
+  SubscriptionLimits,
+  SubscriptionStart,
+  TerminalEvent,
+  TerminalHost,
+  TerminationResult,
+  WindowSize,
 } from "../../src/daemon/session-host/terminal-host-contract";
 
 export const NEUTRAL_FIXTURE_VERSION = "1.0.0" as const;
-export type FreezeCase = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "U";
+export type FreezeCase =
+  | "A"
+  | "B"
+  | "C"
+  | "D"
+  | "E"
+  | "F"
+  | "G"
+  | "H"
+  | "I"
+  | "J"
+  | "K"
+  | "U";
 
 const AT = "2026-07-17T12:00:00.000Z";
 const FAR_FUTURE = "2099-01-01T00:00:00.000Z";
@@ -56,8 +68,12 @@ export const fixtureSubscriptionLimits: SubscriptionLimits = {
  * never evidence that the session itself changed — so falling out of retention
  * raises this, naming the missing range, and fabricates no event. */
 export class SubscriptionGapError extends Error {
-  constructor(readonly missing: Readonly<{ start: string; endExclusive: string }>) {
-    super(`subscription fell out of retention: ${missing.start}..${missing.endExclusive}`);
+  constructor(
+    readonly missing: Readonly<{ start: string; endExclusive: string }>,
+  ) {
+    super(
+      `subscription fell out of retention: ${missing.start}..${missing.endExclusive}`,
+    );
   }
 }
 
@@ -67,7 +83,11 @@ type SubscriptionState = {
   acknowledgedThrough: number;
 };
 
-type OutputChunk = Readonly<{ start: number; endExclusive: number; bytes: Uint8Array }>;
+type OutputChunk = Readonly<{
+  start: number;
+  endExclusive: number;
+  bytes: Uint8Array;
+}>;
 
 type RecordState = {
   ref: SessionRef;
@@ -126,7 +146,10 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     const prior = this.creates.get(retryKey);
     if (prior) return prior;
 
-    const ref = { key: request.key, incarnation: `inc-${this.nextIncarnation++}` };
+    const ref = {
+      key: request.key,
+      incarnation: `inc-${this.nextIncarnation++}`,
+    };
     const failure = this.launchFailure(request);
     if (failure) {
       const result: CreateResult = {
@@ -140,7 +163,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
         limits: this.limits,
       };
       this.creates.set(retryKey, result);
-      if (this.fault === "B") this.records.set(request.key, this.makeRecord(ref, request));
+      if (this.fault === "B")
+        this.records.set(request.key, this.makeRecord(ref, request));
       return result;
     }
 
@@ -160,16 +184,22 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return result;
   }
 
-  async claimInput(request: Readonly<{
-    session: SessionRef;
-    writer: string;
-    kind: "human" | "automation";
-    leaseMilliseconds: number;
-    idempotencyKey: string;
-  }>): Promise<ClaimResult> {
+  async claimInput(
+    request: Readonly<{
+      session: SessionRef;
+      writer: string;
+      kind: "human" | "automation";
+      leaseMilliseconds: number;
+      idempotencyKey: string;
+    }>,
+  ): Promise<ClaimResult> {
     const record = this.record(request.session);
     if (record.inputOwner && this.fault !== "I") {
-      return { state: "denied", owner: record.inputOwner, diagnostic: "input already claimed" };
+      return {
+        state: "denied",
+        owner: record.inputOwner,
+        diagnostic: "input already claimed",
+      };
     }
     const claim: InputClaim = {
       token: `claim-${request.writer}-${request.idempotencyKey}`,
@@ -181,26 +211,31 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return { state: "granted", claim };
   }
 
-  async releaseInput(request: Readonly<{
-    session: SessionRef;
-    claimToken: string;
-    idempotencyKey: string;
-  }>): Promise<void> {
+  async releaseInput(
+    request: Readonly<{
+      session: SessionRef;
+      claimToken: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<void> {
     const record = this.record(request.session);
-    if (record.inputOwner?.token !== request.claimToken) throw new Error("claim fenced");
+    if (record.inputOwner?.token !== request.claimToken)
+      throw new Error("claim fenced");
     record.inputOwner = null;
   }
 
-  async submitInput(request: Readonly<{
-    session: SessionRef;
-    claimToken: string;
-    transactionId: string;
-    idempotencyKey: string;
-    operation:
-      | Readonly<{ kind: "bytes"; bytes: Uint8Array }>
-      | Readonly<{ kind: "canonical-end-of-file" }>
-      | Readonly<{ kind: "hangup" }>;
-  }>): Promise<InputReceipt> {
+  async submitInput(
+    request: Readonly<{
+      session: SessionRef;
+      claimToken: string;
+      transactionId: string;
+      idempotencyKey: string;
+      operation:
+        | Readonly<{ kind: "bytes"; bytes: Uint8Array }>
+        | Readonly<{ kind: "canonical-end-of-file" }>
+        | Readonly<{ kind: "hangup" }>;
+    }>,
+  ): Promise<InputReceipt> {
     const record = this.record(request.session);
     const idempotency = `${request.transactionId}\0${request.idempotencyKey}`;
     const prior = record.inputReceipts.get(idempotency);
@@ -211,22 +246,29 @@ export class NeutralTerminalHostFixture implements TerminalHost {
         stage: "rejected",
         byteRange: null,
         orderedAt: null,
-        availableCreditBytes: this.limits.maxInputQueueBytes - record.inputQueueBytes,
+        availableCreditBytes:
+          this.limits.maxInputQueueBytes - record.inputQueueBytes,
         consumedByProcess: "not-claimed",
         completeness: "complete",
         diagnostic: "claim fenced",
       };
     }
 
-    const bytes = request.operation.kind === "bytes" ? request.operation.bytes.byteLength : 0;
-    if (bytes > this.limits.maxInputTransactionBytes ||
-        bytes > this.limits.maxInputQueueBytes - record.inputQueueBytes) {
+    const bytes =
+      request.operation.kind === "bytes"
+        ? request.operation.bytes.byteLength
+        : 0;
+    if (
+      bytes > this.limits.maxInputTransactionBytes ||
+      bytes > this.limits.maxInputQueueBytes - record.inputQueueBytes
+    ) {
       return {
         transactionId: request.transactionId,
         stage: "rejected",
         byteRange: null,
         orderedAt: null,
-        availableCreditBytes: this.limits.maxInputQueueBytes - record.inputQueueBytes,
+        availableCreditBytes:
+          this.limits.maxInputQueueBytes - record.inputQueueBytes,
         consumedByProcess: "not-claimed",
         completeness: "complete",
         diagnostic: "bounded input capacity exhausted",
@@ -237,9 +279,11 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     record.inputQueueBytes += bytes;
     const order = ++record.mutationSequence;
     if (request.operation.kind === "canonical-end-of-file") {
-      record.inputEffects.push(record.request.terminalProfile.inputMode === "canonical"
-        ? "canonical-eof"
-        : "literal-eof-request-rejected");
+      record.inputEffects.push(
+        record.request.terminalProfile.inputMode === "canonical"
+          ? "canonical-eof"
+          : "literal-eof-request-rejected",
+      );
     } else if (request.operation.kind === "hangup") {
       record.inputEffects.push("hangup");
       this.closeOutput(record, "terminal hangup");
@@ -248,7 +292,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       request.operation.bytes[0] === record.request.terminalProfile.eofByte
     ) {
       record.inputEffects.push(
-        record.request.terminalProfile.inputMode === "canonical" || this.fault === "K"
+        record.request.terminalProfile.inputMode === "canonical" ||
+          this.fault === "K"
           ? "canonical-eof"
           : "literal-byte",
       );
@@ -259,11 +304,13 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     const receipt: InputReceipt = {
       transactionId: request.transactionId,
       stage: "written-to-terminal",
-      byteRange: bytes === 0
-        ? null
-        : { start: String(start), endExclusive: String(start + bytes) },
+      byteRange:
+        bytes === 0
+          ? null
+          : { start: String(start), endExclusive: String(start + bytes) },
       orderedAt: String(order),
-      availableCreditBytes: this.limits.maxInputQueueBytes - record.inputQueueBytes,
+      availableCreditBytes:
+        this.limits.maxInputQueueBytes - record.inputQueueBytes,
       consumedByProcess: "not-claimed",
       completeness: "complete",
       diagnostic: null,
@@ -272,12 +319,14 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return receipt;
   }
 
-  async resize(request: Readonly<{
-    session: SessionRef;
-    window: WindowSize;
-    revision: string;
-    idempotencyKey: string;
-  }>): Promise<ResizeResult> {
+  async resize(
+    request: Readonly<{
+      session: SessionRef;
+      window: WindowSize;
+      revision: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<ResizeResult> {
     const record = this.record(request.session);
     const revision = Number(request.revision);
     if (!Number.isSafeInteger(revision) || revision <= record.windowRevision) {
@@ -288,9 +337,10 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     record.window = request.window;
     record.windowRevision = revision;
     if (this.fault !== "D") record.foregroundWindow = request.window;
-    const readback = this.fault === "D"
-      ? { ...request.window, rows: request.window.rows - 1 }
-      : request.window;
+    const readback =
+      this.fault === "D"
+        ? { ...request.window, rows: request.window.rows - 1 }
+        : request.window;
     this.pushEvent(record, {
       kind: "resize-applied",
       revision: request.revision,
@@ -305,25 +355,27 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     };
   }
 
-  async attach(request: Readonly<{
-    session: SessionRef;
-    cursor: {
-      afterEventSequence: string;
-      afterOutputOffset: string;
-      checkpoint: {
-        contentType: string;
-        schemaVersion: string;
-        hash: string;
-        throughEventSequence: string;
-        throughOutputOffset: string;
-      } | null;
-    };
-    capabilities: {
-      protocolVersions: readonly string[];
-      checkpointContentTypes: readonly string[];
-      buildId: string;
-    };
-  }>): Promise<AttachResult> {
+  async attach(
+    request: Readonly<{
+      session: SessionRef;
+      cursor: {
+        afterEventSequence: string;
+        afterOutputOffset: string;
+        checkpoint: {
+          contentType: string;
+          schemaVersion: string;
+          hash: string;
+          throughEventSequence: string;
+          throughOutputOffset: string;
+        } | null;
+      };
+      capabilities: {
+        protocolVersions: readonly string[];
+        checkpointContentTypes: readonly string[];
+        buildId: string;
+      };
+    }>,
+  ): Promise<AttachResult> {
     const record = this.record(request.session);
     const offset = Number(request.cursor.afterOutputOffset);
     if (offset < record.retainedStart) {
@@ -336,9 +388,16 @@ export class NeutralTerminalHostFixture implements TerminalHost {
         requiredCheckpoint: record.checkpoint,
       };
     }
-    if (!request.capabilities.protocolVersions.includes("1.0.0") ||
-        !request.capabilities.checkpointContentTypes.includes(record.checkpoint.contentType)) {
-      return { state: "unknown", diagnostic: "no compatible protocol/checkpoint" };
+    if (
+      !request.capabilities.protocolVersions.includes("1.0.0") ||
+      !request.capabilities.checkpointContentTypes.includes(
+        record.checkpoint.contentType,
+      )
+    ) {
+      return {
+        state: "unknown",
+        diagnostic: "no compatible protocol/checkpoint",
+      };
     }
     return {
       state: "attached",
@@ -347,19 +406,23 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       hostBuildId: "neutral-fixture-1.0.0",
       cursor: {
         ...request.cursor,
-        afterOutputOffset: String(this.fault === "H" && offset > 0 ? offset - 1 : offset),
+        afterOutputOffset: String(
+          this.fault === "H" && offset > 0 ? offset - 1 : offset,
+        ),
       },
       checkpoint: request.cursor.checkpoint ? null : record.checkpoint,
       limits: this.limits,
     };
   }
 
-  async acknowledgeOutput(_request: Readonly<{
-    session: SessionRef;
-    attachmentId: string;
-    throughEventSequence: string;
-    throughOutputOffset: string;
-  }>): Promise<OutputAcknowledgement> {
+  async acknowledgeOutput(
+    _request: Readonly<{
+      session: SessionRef;
+      attachmentId: string;
+      throughEventSequence: string;
+      throughOutputOffset: string;
+    }>,
+  ): Promise<OutputAcknowledgement> {
     return {
       throughEventSequence: _request.throughEventSequence,
       throughOutputOffset: _request.throughOutputOffset,
@@ -379,12 +442,14 @@ export class NeutralTerminalHostFixture implements TerminalHost {
    * reported by the host rather than echoed from the request, and a position
    * below what retention still holds is a gap naming the missing range — never
    * a silent jump forward. */
-  async subscribe(request: Readonly<{
-    session: SessionRef;
-    capabilities: SubscriptionCapabilities;
-    limits: SubscriptionLimits;
-    from: SubscriptionStart;
-  }>): Promise<SubscribeResult> {
+  async subscribe(
+    request: Readonly<{
+      session: SessionRef;
+      capabilities: SubscriptionCapabilities;
+      limits: SubscriptionLimits;
+      from: SubscriptionStart;
+    }>,
+  ): Promise<SubscribeResult> {
     const record = this.record(request.session);
     if (!request.capabilities.protocolVersions.includes("1.0.0")) {
       return { state: "unknown", diagnostic: "no compatible protocol" };
@@ -395,14 +460,21 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     // become one — accepting it would let a caller claim to have acknowledged
     // events that do not exist and release real ones as they arrive.
     const end = record.eventSequence + 1;
-    const from = request.from.position === "end"
-      ? end
-      : Number(request.from.cursor.eventSequence);
+    const from =
+      request.from.position === "end"
+        ? end
+        : Number(request.from.cursor.eventSequence);
     if (!Number.isSafeInteger(from) || from < 1) {
-      return { state: "unknown", diagnostic: "subscription position is not an event position" };
+      return {
+        state: "unknown",
+        diagnostic: "subscription position is not an event position",
+      };
     }
     if (from > end) {
-      return { state: "unknown", diagnostic: "subscription position is beyond the produced end" };
+      return {
+        state: "unknown",
+        diagnostic: "subscription position is beyond the produced end",
+      };
     }
     if (from < record.retainedEventStart) {
       return {
@@ -415,7 +487,11 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       };
     }
     const id = `subscription-${record.subscriptions.size + 1}-${record.ref.incarnation}`;
-    record.subscriptions.set(id, { id, nextSequence: from, acknowledgedThrough: from - 1 });
+    record.subscriptions.set(id, {
+      id,
+      nextSequence: from,
+      acknowledgedThrough: from - 1,
+    });
     return {
       state: "subscribed",
       subscriptionId: id,
@@ -433,13 +509,16 @@ export class NeutralTerminalHostFixture implements TerminalHost {
   /** §11 delivery for ONE subscription. Each subscription owns its own
    * position, so a subscription that is never drained neither delays nor
    * reorders another's events, and never stalls the session. */
-  async *events(request: Readonly<{
-    session: SessionRef;
-    subscriptionId: string;
-  }>): AsyncIterable<TerminalEvent> {
+  async *events(
+    request: Readonly<{
+      session: SessionRef;
+      subscriptionId: string;
+    }>,
+  ): AsyncIterable<TerminalEvent> {
     const record = this.record(request.session);
     const subscription = record.subscriptions.get(request.subscriptionId);
-    if (!subscription) throw new Error(`unknown subscription ${request.subscriptionId}`);
+    if (!subscription)
+      throw new Error(`unknown subscription ${request.subscriptionId}`);
     if (subscription.nextSequence < record.retainedEventStart) {
       throw new SubscriptionGapError({
         start: String(subscription.nextSequence),
@@ -447,12 +526,19 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       });
     }
     const end = record.eventSequence;
-    for (let sequence = subscription.nextSequence; sequence <= end; sequence += 1) {
+    for (
+      let sequence = subscription.nextSequence;
+      sequence <= end;
+      sequence += 1
+    ) {
       // Delivery is bounded by credit: a subscription may hold at most
       // `unacknowledgedEventHighWater` delivered-but-unacknowledged events.
       // Reaching the bound stops THIS subscription, never the session.
       const unacknowledged = sequence - 1 - subscription.acknowledgedThrough;
-      if (unacknowledged >= fixtureSubscriptionLimits.unacknowledgedEventHighWater) return;
+      if (
+        unacknowledged >= fixtureSubscriptionLimits.unacknowledgedEventHighWater
+      )
+        return;
       const event = record.events[sequence - record.retainedEventStart]!;
       // The cursor commits at the delivery boundary, BEFORE the event is handed
       // over. Committing after the consumer asks for the next item would leave
@@ -467,26 +553,35 @@ export class NeutralTerminalHostFixture implements TerminalHost {
   /** §11 retained events are released by acknowledgement on the same terms as
    * output. The release names its subscription, so one subscriber's
    * acknowledgement never releases what another has not been delivered. */
-  async acknowledgeEvents(request: Readonly<{
-    session: SessionRef;
-    subscriptionId: string;
-    through: SubscriptionCursor;
-  }>): Promise<EventAcknowledgement> {
+  async acknowledgeEvents(
+    request: Readonly<{
+      session: SessionRef;
+      subscriptionId: string;
+      through: SubscriptionCursor;
+    }>,
+  ): Promise<EventAcknowledgement> {
     const record = this.record(request.session);
     const subscription = record.subscriptions.get(request.subscriptionId);
-    if (!subscription) throw new Error(`unknown subscription ${request.subscriptionId}`);
+    if (!subscription)
+      throw new Error(`unknown subscription ${request.subscriptionId}`);
     subscription.acknowledgedThrough = Math.min(
       subscription.nextSequence - 1,
-      Math.max(subscription.acknowledgedThrough, Number(request.through.eventSequence)),
+      Math.max(
+        subscription.acknowledgedThrough,
+        Number(request.through.eventSequence),
+      ),
     );
     const through = {
       eventSequence: String(subscription.acknowledgedThrough),
-      outputOffset: String(this.outputOffsetAt(record, subscription.acknowledgedThrough + 1)),
+      outputOffset: String(
+        this.outputOffsetAt(record, subscription.acknowledgedThrough + 1),
+      ),
     };
     // Acknowledgement RELEASES retention, it does not merely score it: storage
     // an acknowledgement makes unreachable is dropped here.
     this.releaseRetention(record);
-    const unacknowledged = subscription.nextSequence - 1 - subscription.acknowledgedThrough;
+    const unacknowledged =
+      subscription.nextSequence - 1 - subscription.acknowledgedThrough;
     return {
       subscriptionId: subscription.id,
       through,
@@ -503,13 +598,15 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return this.record(session).events.length;
   }
 
-  async terminate(request: Readonly<{
-    session: SessionRef;
-    mode: "graceful" | "immediate";
-    target: "foreground-group" | "session-members" | "process-tree";
-    deadline: string;
-    idempotencyKey: string;
-  }>): Promise<TerminationResult> {
+  async terminate(
+    request: Readonly<{
+      session: SessionRef;
+      mode: "graceful" | "immediate";
+      target: "foreground-group" | "session-members" | "process-tree";
+      deadline: string;
+      idempotencyKey: string;
+    }>,
+  ): Promise<TerminationResult> {
     const record = this.record(request.session);
     const escaped = record.survivors;
     if (escaped.length > 0 && this.fault !== "J") {
@@ -522,7 +619,11 @@ export class NeutralTerminalHostFixture implements TerminalHost {
         diagnostics: ["one descendant escaped the selected containment target"],
       };
     }
-    const exit: ExitStatus = { code: null, signal: request.mode === "immediate" ? 9 : 15, observedAt: AT };
+    const exit: ExitStatus = {
+      code: null,
+      signal: request.mode === "immediate" ? 9 : 15,
+      observedAt: AT,
+    };
     record.exit = exit;
     record.lifecycle = "exited";
     record.reap = {
@@ -564,7 +665,10 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     this.pushEvent(record, { kind: "flow-control", outputPaused: paused });
   }
 
-  producePattern(session: SessionRef, byteLength: number): Readonly<{
+  producePattern(
+    session: SessionRef,
+    byteLength: number,
+  ): Readonly<{
     producedBytes: number;
     retainedBytes: number;
     checksum: number;
@@ -575,9 +679,13 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     const record = this.record(session);
     const cycles = Math.floor(byteLength / 251);
     const remainder = byteLength % 251;
-    const checksum = (cycles * 31_375 + remainder * (remainder - 1) / 2) >>> 0;
+    const checksum =
+      (cycles * 31_375 + (remainder * (remainder - 1)) / 2) >>> 0;
     record.outputEnd += byteLength;
-    const retainedBytes = Math.min(record.outputEnd, this.limits.outputRetentionBytes);
+    const retainedBytes = Math.min(
+      record.outputEnd,
+      this.limits.outputRetentionBytes,
+    );
     record.retainedStart = record.outputEnd - retainedBytes;
     record.maxBufferedBytes = Math.max(record.maxBufferedBytes, retainedBytes);
     if (record.retainedStart > 0 && this.fault !== "E") record.gapCount = 1;
@@ -595,11 +703,18 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     const record = this.record(session);
     const start = record.outputEnd;
     record.outputEnd += bytes.byteLength;
-    record.outputChunks.push({ start, endExclusive: record.outputEnd, bytes: bytes.slice() });
+    record.outputChunks.push({
+      start,
+      endExclusive: record.outputEnd,
+      bytes: bytes.slice(),
+    });
     this.pushEvent(record, {
       kind: "output",
       bytes: bytes.slice(),
-      outputRange: { start: String(start), endExclusive: String(record.outputEnd) },
+      outputRange: {
+        start: String(start),
+        endExclusive: String(record.outputEnd),
+      },
     });
   }
 
@@ -618,15 +733,25 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return Uint8Array.from(parts);
   }
 
-  completeWithTail(session: SessionRef, tail: Uint8Array, signal: number | null): readonly TerminalEvent[] {
+  completeWithTail(
+    session: SessionRef,
+    tail: Uint8Array,
+    signal: number | null,
+  ): readonly TerminalEvent[] {
     const record = this.record(session);
-    if (this.fault === "F") this.closeOutput(record, "fault: closed before tail drain");
+    if (this.fault === "F")
+      this.closeOutput(record, "fault: closed before tail drain");
     else this.appendOutput(session, tail);
-    const exit: ExitStatus = { code: signal === null ? 0 : null, signal, observedAt: AT };
+    const exit: ExitStatus = {
+      code: signal === null ? 0 : null,
+      signal,
+      observedAt: AT,
+    };
     record.exit = exit;
     record.lifecycle = "exited";
     this.pushEvent(record, { kind: "process-exited", exit });
-    if (!record.outputClosed) this.closeOutput(record, "terminal endpoint closed after drain");
+    if (!record.outputClosed)
+      this.closeOutput(record, "terminal endpoint closed after drain");
     record.reap = {
       authority: "direct-parent",
       reaped: true,
@@ -644,28 +769,37 @@ export class NeutralTerminalHostFixture implements TerminalHost {
   loseParentAuthority(session: SessionRef): SessionInspection {
     const record = this.record(session);
     record.lifecycle = this.fault === "G" ? "exited" : "lost";
-    record.exit = this.fault === "G" ? { code: 0, signal: null, observedAt: AT } : null;
-    record.reap = this.fault === "G"
-      ? {
-          authority: "durable-parent-record",
-          reaped: true,
-          status: record.exit,
-          completeness: "complete",
-        }
-      : {
-          authority: "unavailable",
-          reaped: false,
-          status: null,
-          completeness: "unavailable",
-        };
+    record.exit =
+      this.fault === "G" ? { code: 0, signal: null, observedAt: AT } : null;
+    record.reap =
+      this.fault === "G"
+        ? {
+            authority: "durable-parent-record",
+            reaped: true,
+            status: record.exit,
+            completeness: "complete",
+          }
+        : {
+            authority: "unavailable",
+            reaped: false,
+            status: null,
+            completeness: "unavailable",
+          };
     return this.inspection(record);
   }
 
   addDescendant(session: SessionRef, escaped: boolean): ProcessIdentity {
     const record = this.record(session);
-    const process = { processId: this.nextProcessId++, startToken: `start-${this.nextProcessId}` };
+    const process = {
+      processId: this.nextProcessId++,
+      startToken: `start-${this.nextProcessId}`,
+    };
     record.descendants.push(process);
-    if (escaped) record.survivors.push({ process, reason: "created a new session outside containment" });
+    if (escaped)
+      record.survivors.push({
+        process,
+        reason: "created a new session outside containment",
+      });
     return process;
   }
 
@@ -675,27 +809,53 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     diagnostic: string;
   }> | null {
     if (request.command.executable.startsWith("missing:")) {
-      return { layer: "command", osCode: "ENOENT", diagnostic: "executable not found" };
+      return {
+        layer: "command",
+        osCode: "ENOENT",
+        diagnostic: "executable not found",
+      };
     }
     if (request.command.workingDirectory.startsWith("invalid:")) {
-      return { layer: "working-directory", osCode: "ENOENT", diagnostic: "working directory unavailable" };
+      return {
+        layer: "working-directory",
+        osCode: "ENOENT",
+        diagnostic: "working directory unavailable",
+      };
     }
     const environmentBytes = request.command.completeEnvironment.reduce(
       (total, entry) => total + entry.name.length + entry.value.length + 2,
       0,
     );
     if (environmentBytes > 4096) {
-      return { layer: "environment", osCode: "E2BIG", diagnostic: "complete environment exceeds fixture limit" };
+      return {
+        layer: "environment",
+        osCode: "E2BIG",
+        diagnostic: "complete environment exceeds fixture limit",
+      };
     }
-    if (request.command.descriptorMap.some((mapping) => mapping.handle.token === "unmappable")) {
-      return { layer: "descriptor-transfer", osCode: "EBADF", diagnostic: "handle cannot be transferred" };
+    if (
+      request.command.descriptorMap.some(
+        (mapping) => mapping.handle.token === "unmappable",
+      )
+    ) {
+      return {
+        layer: "descriptor-transfer",
+        osCode: "EBADF",
+        diagnostic: "handle cannot be transferred",
+      };
     }
     return null;
   }
 
   private makeRecord(ref: SessionRef, request: CreateRequest): RecordState {
-    const host = { processId: this.nextProcessId++, startToken: `start-${this.nextProcessId}` };
-    const child = { processId: this.nextProcessId++, startToken: `start-${this.nextProcessId}` };
+    const host = {
+      processId: this.nextProcessId++,
+      startToken: `start-${this.nextProcessId}`,
+    };
+    const child = {
+      processId: this.nextProcessId++,
+      startToken: `start-${this.nextProcessId}`,
+    };
     const terminalIdentity = `terminal-${ref.incarnation}`;
     const jobControl: JobControlEvidence = {
       sessionLeader: this.fault !== "A",
@@ -703,7 +863,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       standardStreamsShareTerminal: this.fault !== "A",
       childSessionId: child.processId,
       childProcessGroupId: child.processId,
-      foregroundProcessGroupId: this.fault === "A" ? child.processId + 1 : child.processId,
+      foregroundProcessGroupId:
+        this.fault === "A" ? child.processId + 1 : child.processId,
       terminalIdentity,
       initialProfileAppliedBeforeExec: this.fault !== "A",
       initialWindowAppliedBeforeExec: this.fault !== "A",
@@ -789,7 +950,10 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       window: { value: record.window, revision: String(record.windowRevision) },
       output: {
         closed: record.outputClosed,
-        retained: { start: String(record.retainedStart), endExclusive: String(record.outputEnd) },
+        retained: {
+          start: String(record.retainedStart),
+          endExclusive: String(record.outputEnd),
+        },
       },
       checkpoints: { retained: 1, newest: record.checkpoint },
       inputOwner: record.inputOwner,
@@ -798,7 +962,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       descendants: record.descendants,
       survivors: record.survivors,
       evidenceAt: AT,
-      diagnostics: record.lifecycle === "lost" ? ["parent authority unavailable"] : [],
+      diagnostics:
+        record.lifecycle === "lost" ? ["parent authority unavailable"] : [],
     };
   }
 
@@ -825,21 +990,29 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     // acknowledged is retained for nobody.
     const live = [...record.subscriptions.values()];
     if (live.length > 0) {
-      this.evictThrough(record, Math.min(...live.map((entry) => entry.acknowledgedThrough)));
+      this.evictThrough(
+        record,
+        Math.min(...live.map((entry) => entry.acknowledgedThrough)),
+      );
     }
     // Bounded by negotiated limits: the hard cap is the backstop that stops a
     // subscriber which never acknowledges from stalling the session. It is
     // evicted past rather than blocking the producer, and loses its position
     // explicitly (SubscriptionGapError), never silently.
-    const overflow = record.events.length - fixtureSubscriptionLimits.retainedEventCount;
-    if (overflow > 0) this.evictThrough(record, record.retainedEventStart + overflow - 1);
+    const overflow =
+      record.events.length - fixtureSubscriptionLimits.retainedEventCount;
+    if (overflow > 0)
+      this.evictThrough(record, record.retainedEventStart + overflow - 1);
   }
 
   private evictThrough(record: RecordState, throughSequence: number): void {
     // Never release past what has actually been produced: a position nobody
     // could have reached must not authorize deleting real events.
     const bounded = Math.min(throughSequence, record.eventSequence);
-    const drop = Math.min(bounded - record.retainedEventStart + 1, record.events.length);
+    const drop = Math.min(
+      bounded - record.retainedEventStart + 1,
+      record.events.length,
+    );
     if (drop <= 0) return;
     // Eviction takes the events, but it must not take the output base with
     // them: the offset standing at the retained start is what pairs a later
@@ -862,7 +1035,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     let offset = record.retainedOutputOffset;
     for (const event of record.events) {
       if (Number(event.eventSequence) >= sequence) break;
-      if (event.kind === "output") offset = Number(event.outputRange.endExclusive);
+      if (event.kind === "output")
+        offset = Number(event.outputRange.endExclusive);
     }
     return offset;
   }
@@ -875,7 +1049,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
 
   private byteAt(record: RecordState, offset: number): number | null {
     for (const chunk of record.outputChunks) {
-      if (offset >= chunk.start && offset < chunk.endExclusive) return chunk.bytes[offset - chunk.start] ?? null;
+      if (offset >= chunk.start && offset < chunk.endExclusive)
+        return chunk.bytes[offset - chunk.start] ?? null;
     }
     return null;
   }

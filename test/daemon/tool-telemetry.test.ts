@@ -31,7 +31,10 @@ function claudeProjectDir(home: string): string {
   return directory;
 }
 
-function transcriptLine(usage: Record<string, unknown>, sidechain = false): string {
+function transcriptLine(
+  usage: Record<string, unknown>,
+  sidechain = false,
+): string {
   return JSON.stringify({
     type: "assistant",
     ...(sidechain ? { isSidechain: true } : {}),
@@ -102,11 +105,7 @@ describe("claude transcript telemetry", () => {
     expect(fresh).toEqual({ contextTokens: null, lastActivityAt: null });
 
     // And the reverse join: asked for the predecessor by id, it reads it.
-    const dead = await readClaudeTelemetry(
-      WORKTREE,
-      "dead-predecessor",
-      home,
-    );
+    const dead = await readClaudeTelemetry(WORKTREE, "dead-predecessor", home);
     expect(dead.contextTokens).toEqual(400_008);
   });
 
@@ -139,7 +138,6 @@ describe("claude transcript telemetry", () => {
     });
   });
 });
-
 
 describe("codex rollout telemetry", () => {
   function writeRollout(home: string, lines: string[]): string {
@@ -281,8 +279,8 @@ describe("grok session telemetry", () => {
   test("a turn still streaming is working, not idle", async () => {
     const home = makeHome();
     // The same session with its terminal record not yet written.
-    const streaming = GROK_UPDATES.trimEnd().split("\n").slice(0, -1).join("\n") +
-      "\n";
+    const streaming =
+      GROK_UPDATES.trimEnd().split("\n").slice(0, -1).join("\n") + "\n";
     writeGrokSession(home, "session-1", streaming, GROK_SIGNALS);
 
     const telemetry = await readGrokTelemetry(WORKTREE, "session-1", home);
@@ -338,22 +336,22 @@ describe("graphify call counting", () => {
     });
 
   test("counts claude graphify tool_use entries, not sidechains or other servers", () => {
-    const slice = [
-      toolUseLine("mcp__graphify__query_graph"),
-      toolUseLine("mcp__graphify__get_node"),
-      toolUseLine("mcp__graphify__god_nodes", true),
-      toolUseLine("mcp__hive__hive_send"),
-      "not json at all",
-    ].join("\n") + "\n";
+    const slice =
+      [
+        toolUseLine("mcp__graphify__query_graph"),
+        toolUseLine("mcp__graphify__get_node"),
+        toolUseLine("mcp__graphify__god_nodes", true),
+        toolUseLine("mcp__hive__hive_send"),
+        "not json at all",
+      ].join("\n") + "\n";
     expect(countGraphifyCallLines(slice, "claude")).toEqual(2);
   });
 
   test("counts codex mcp_tool_call_end events for the graphify server only", () => {
-    const slice = [
-      mcpEndLine("graphify"),
-      mcpEndLine("hive"),
-      mcpEndLine("graphify"),
-    ].join("\n") + "\n";
+    const slice =
+      [mcpEndLine("graphify"), mcpEndLine("hive"), mcpEndLine("graphify")].join(
+        "\n",
+      ) + "\n";
     expect(countGraphifyCallLines(slice, "codex")).toEqual(2);
   });
 
@@ -364,16 +362,31 @@ describe("graphify call counting", () => {
     const first = toolUseLine("mcp__graphify__query_graph") + "\n";
     // A complete line plus the torn beginning of the next write.
     writeFileSync(path, first + '{"type":"assist');
-    const one = await readGraphifyCalls("claude", WORKTREE, "session-g", undefined, home);
+    const one = await readGraphifyCalls(
+      "claude",
+      WORKTREE,
+      "session-g",
+      undefined,
+      home,
+    );
     expect(one?.count).toEqual(1);
     expect(one?.offset).toEqual(Buffer.byteLength(first, "utf8"));
 
     // The torn line completes and another call lands; only the delta is read.
     writeFileSync(
       path,
-      first + '{"type":"assistant"}\n' + toolUseLine("mcp__graphify__graph_stats") + "\n",
+      first +
+        '{"type":"assistant"}\n' +
+        toolUseLine("mcp__graphify__graph_stats") +
+        "\n",
     );
-    const two = await readGraphifyCalls("claude", WORKTREE, "session-g", one ?? undefined, home);
+    const two = await readGraphifyCalls(
+      "claude",
+      WORKTREE,
+      "session-g",
+      one ?? undefined,
+      home,
+    );
     expect(two?.count).toEqual(2);
   });
 
@@ -427,10 +440,15 @@ describe("graphify call counting", () => {
   // vendors that already counted must keep counting. An all-null column reads
   // as "nobody uses the graph" when it actually means "the reader is broken".
   test("every vendor's counter still sees its own graph calls", () => {
-    expect(countGraphifyCallLines(toolUseLine("mcp__graphify__query_graph") + "\n", "claude"))
-      .toEqual(1);
-    expect(countGraphifyCallLines(mcpEndLine("graphify") + "\n", "codex"))
-      .toEqual(1);
+    expect(
+      countGraphifyCallLines(
+        toolUseLine("mcp__graphify__query_graph") + "\n",
+        "claude",
+      ),
+    ).toEqual(1);
+    expect(
+      countGraphifyCallLines(mcpEndLine("graphify") + "\n", "codex"),
+    ).toEqual(1);
     expect(countGraphifyCallLines(GROK_UPDATES, "grok")).toBeGreaterThan(0);
   });
 });

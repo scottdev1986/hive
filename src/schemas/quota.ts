@@ -1,9 +1,9 @@
 import { z } from "zod";
 import {
-  CapabilityProviderSchema,
   type CapabilityProvider,
+  CapabilityProviderSchema,
 } from "./capability";
-import { RoutingCategorySchema, type RoutingCategory } from "./routing-policy";
+import { type RoutingCategory, RoutingCategorySchema } from "./routing-policy";
 
 export const QuotaConfidenceSchema = z.enum([
   "authoritative",
@@ -70,9 +70,7 @@ const LEGACY_TIER_CATEGORY = {
   review: "code_review",
 } as const;
 
-const legacyKeysMapped = <T>(
-  table: Record<string, T>,
-): Record<string, T> =>
+const legacyKeysMapped = <T>(table: Record<string, T>): Record<string, T> =>
   Object.fromEntries(
     Object.entries(table).map(([key, value]) => [
       LEGACY_TIER_CATEGORY[key as keyof typeof LEGACY_TIER_CATEGORY] ?? key,
@@ -99,22 +97,30 @@ const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
   summarization: 4,
 };
 
-const EstimateSchema = z.partialRecord(
-  z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
-  z.number().positive(),
-).superRefine((table, context) => {
-  const values = table as Record<string, unknown>;
-  for (const [legacy, category] of legacyKeyCollisions(values)) {
-    context.addIssue({
-      code: "custom",
-      path: [category],
-      message: `cannot set both legacy ${legacy} and ${category}`,
-    });
-  }
-}).transform((table): Record<RoutingCategory, number> => ({
-  ...DEFAULT_ESTIMATES,
-  ...legacyKeysMapped(table),
-}));
+const EstimateSchema = z
+  .partialRecord(
+    z.union([
+      RoutingCategorySchema,
+      z.enum(["deep", "standard", "cheap", "review"]),
+    ]),
+    z.number().positive(),
+  )
+  .superRefine((table, context) => {
+    const values = table as Record<string, unknown>;
+    for (const [legacy, category] of legacyKeyCollisions(values)) {
+      context.addIssue({
+        code: "custom",
+        path: [category],
+        message: `cannot set both legacy ${legacy} and ${category}`,
+      });
+    }
+  })
+  .transform(
+    (table): Record<RoutingCategory, number> => ({
+      ...DEFAULT_ESTIMATES,
+      ...legacyKeysMapped(table),
+    }),
+  );
 
 /**
  * How much of each window one run of a category is expected to consume, as a percent
@@ -152,69 +158,79 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   summarization: { fiveHour: 1.5, weekly: 0.3 },
 };
 
-const PercentEstimateTableSchema = z.partialRecord(
-  z.union([RoutingCategorySchema, z.enum(["deep", "standard", "cheap", "review"])]),
-  PercentEstimateSchema,
-).superRefine((table, context) => {
-  const values = table as Record<string, unknown>;
-  for (const [legacy, category] of legacyKeyCollisions(values)) {
-    context.addIssue({
-      code: "custom",
-      path: [category],
-      message: `cannot set both legacy ${legacy} and ${category}`,
-    });
-  }
-}).transform((table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
-  ...DEFAULT_PERCENT_ESTIMATES,
-  ...legacyKeysMapped(table),
-}));
-
-export const QuotaConfigSchema = z.strictObject({
-  enabled: z.boolean().default(true),
-  /** Read live limits from the providers at daemon start and on refresh. */
-  discovery: z.boolean().default(true),
-  /** How often the daemon re-reads provider limits, in minutes. */
-  refreshIntervalMinutes: z.number().positive().default(15),
-  estimatesPct: PercentEstimateTableSchema.default(DEFAULT_PERCENT_ESTIMATES),
-  warningRemainingPct: z.number().min(0).max(1).default(0.25),
-  criticalRemainingPct: z.number().min(0).max(1).default(0.1),
-  hysteresisPct: z.number().min(0).max(0.5).default(0.05),
-  reserveFiveHourPct: z.number().min(0).max(1).default(0.15),
-  reserveWeeklyPct: z.number().min(0).max(1).default(0.2),
-  reservationTtlMinutes: z.number().positive().default(360),
-  /**
-   * How long a route that failed to produce a working agent is passed over for
-   * automatic selection. It is a cooldown, not a ban: the route is retried when
-   * it lapses, and any successful launch clears it immediately. A permanent
-   * exclusion could never produce the success that would lift it, so the guard
-   * would silently become the outage it was meant to prevent.
-   */
-  launchQuarantineMinutes: z.number().positive().default(15),
-  estimates: EstimateSchema.default(DEFAULT_ESTIMATES),
-  limits: z.array(QuotaLimitSchema).default([]),
-}).superRefine((value, context) => {
-  if (value.criticalRemainingPct > value.warningRemainingPct) {
-    context.addIssue({
-      code: "custom",
-      path: ["criticalRemainingPct"],
-      message: "must be less than or equal to warningRemainingPct",
-    });
-  }
-  const identities = new Set<string>();
-  for (const [index, limit] of value.limits.entries()) {
-    for (const model of limit.models) {
-      const identity = `${limit.provider}\0${limit.account}\0${model}`;
-      if (identities.has(identity)) {
-        context.addIssue({
-          code: "custom",
-          path: ["limits", index, "models"],
-          message: `duplicate provider/account/model mapping for ${model}`,
-        });
-      }
-      identities.add(identity);
+const PercentEstimateTableSchema = z
+  .partialRecord(
+    z.union([
+      RoutingCategorySchema,
+      z.enum(["deep", "standard", "cheap", "review"]),
+    ]),
+    PercentEstimateSchema,
+  )
+  .superRefine((table, context) => {
+    const values = table as Record<string, unknown>;
+    for (const [legacy, category] of legacyKeyCollisions(values)) {
+      context.addIssue({
+        code: "custom",
+        path: [category],
+        message: `cannot set both legacy ${legacy} and ${category}`,
+      });
     }
-  }
-});
+  })
+  .transform(
+    (table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
+      ...DEFAULT_PERCENT_ESTIMATES,
+      ...legacyKeysMapped(table),
+    }),
+  );
+
+export const QuotaConfigSchema = z
+  .strictObject({
+    enabled: z.boolean().default(true),
+    /** Read live limits from the providers at daemon start and on refresh. */
+    discovery: z.boolean().default(true),
+    /** How often the daemon re-reads provider limits, in minutes. */
+    refreshIntervalMinutes: z.number().positive().default(15),
+    estimatesPct: PercentEstimateTableSchema.default(DEFAULT_PERCENT_ESTIMATES),
+    warningRemainingPct: z.number().min(0).max(1).default(0.25),
+    criticalRemainingPct: z.number().min(0).max(1).default(0.1),
+    hysteresisPct: z.number().min(0).max(0.5).default(0.05),
+    reserveFiveHourPct: z.number().min(0).max(1).default(0.15),
+    reserveWeeklyPct: z.number().min(0).max(1).default(0.2),
+    reservationTtlMinutes: z.number().positive().default(360),
+    /**
+     * How long a route that failed to produce a working agent is passed over for
+     * automatic selection. It is a cooldown, not a ban: the route is retried when
+     * it lapses, and any successful launch clears it immediately. A permanent
+     * exclusion could never produce the success that would lift it, so the guard
+     * would silently become the outage it was meant to prevent.
+     */
+    launchQuarantineMinutes: z.number().positive().default(15),
+    estimates: EstimateSchema.default(DEFAULT_ESTIMATES),
+    limits: z.array(QuotaLimitSchema).default([]),
+  })
+  .superRefine((value, context) => {
+    if (value.criticalRemainingPct > value.warningRemainingPct) {
+      context.addIssue({
+        code: "custom",
+        path: ["criticalRemainingPct"],
+        message: "must be less than or equal to warningRemainingPct",
+      });
+    }
+    const identities = new Set<string>();
+    for (const [index, limit] of value.limits.entries()) {
+      for (const model of limit.models) {
+        const identity = `${limit.provider}\0${limit.account}\0${model}`;
+        if (identities.has(identity)) {
+          context.addIssue({
+            code: "custom",
+            path: ["limits", index, "models"],
+            message: `duplicate provider/account/model mapping for ${model}`,
+          });
+        }
+        identities.add(identity);
+      }
+    }
+  });
 export type QuotaConfig = z.infer<typeof QuotaConfigSchema>;
 
 export const DEFAULT_QUOTA_CONFIG: QuotaConfig = QuotaConfigSchema.parse({});
@@ -267,7 +283,12 @@ export const StatuslineRateWindowSchema = z.strictObject({
 
 export const StatuslineReportSchema = z.strictObject({
   agent: z.string().min(1),
-  effort: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
+  effort: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9-]+$/)
+    .optional(),
   fiveHour: StatuslineRateWindowSchema.optional(),
   sevenDay: StatuslineRateWindowSchema.optional(),
   observedAt: z.iso.datetime({ offset: true }).optional(),

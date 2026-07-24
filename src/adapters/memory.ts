@@ -1,3 +1,4 @@
+import type { Dirent } from "node:fs";
 import {
   appendFile,
   cp,
@@ -11,20 +12,22 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import {
-  MemoryFactSchema,
-  MemorySourceSchema,
-  MemoryWriteInputSchema,
   type MemoryFact,
+  MemoryFactSchema,
   type MemoryScope,
   type MemorySource,
+  MemorySourceSchema,
   type MemoryVerificationStatus,
   type MemoryWriteInput,
+  MemoryWriteInputSchema,
 } from "../schemas";
 
 export type MemoryWriteFileInput = MemoryWriteInput;
 
 const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error &&
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
   error.code === "ENOENT";
 
 const MEMORY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
@@ -95,7 +98,10 @@ function parseList(raw: string): string[] {
   const trimmed = raw.trim().replace(/^\[/, "").replace(/\]$/, "");
   return trimmed.length === 0
     ? []
-    : trimmed.split(",").map((value) => value.trim()).filter(Boolean);
+    : trimmed
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
 }
 
 function serializeList(values: string[]): string {
@@ -120,7 +126,8 @@ export function serializeMemoryFile(
     | "raw"
     | "tags"
     | "body"
-  > & Partial<Pick<MemoryFact, "verified">>,
+  > &
+    Partial<Pick<MemoryFact, "verified">>,
 ): string {
   const lines = [
     "---",
@@ -164,7 +171,10 @@ export function parseMemoryFile(
   for (const line of lines.slice(1, closingIndex)) {
     const separator = line.indexOf(":");
     if (separator < 0) continue;
-    fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+    fields.set(
+      line.slice(0, separator).trim(),
+      line.slice(separator + 1).trim(),
+    );
   }
   const source = MemorySourceSchema.safeParse(fields.get("source"));
   return MemoryFactSchema.parse({
@@ -172,7 +182,10 @@ export function parseMemoryFile(
     scope,
     topic: fields.get("topic"),
     title: fields.get("title"),
-    body: lines.slice(closingIndex + 1).join("\n").trim(),
+    body: lines
+      .slice(closingIndex + 1)
+      .join("\n")
+      .trim(),
     tags: parseList(fields.get("tags") ?? "[]"),
     date: fields.get("updated"),
     path,
@@ -207,15 +220,19 @@ export async function discoverMemoryFacts(
   const facts: MemoryFact[] = [];
   for (const topic of await readTopicDirectories(directory)) {
     const topicDirectory = join(directory, topic);
-    for (const entry of await readdir(topicDirectory, { withFileTypes: true })) {
+    for (const entry of await readdir(topicDirectory, {
+      withFileTypes: true,
+    })) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
       const path = join(topicDirectory, entry.name);
-      facts.push(parseMemoryFile(
-        entry.name.slice(0, -3),
-        scope,
-        path,
-        await readFile(path, "utf8"),
-      ));
+      facts.push(
+        parseMemoryFile(
+          entry.name.slice(0, -3),
+          scope,
+          path,
+          await readFile(path, "utf8"),
+        ),
+      );
     }
   }
   return facts;
@@ -234,8 +251,8 @@ async function findMemoryFact(
   scope: MemoryScope,
   id: string,
 ): Promise<MemoryFact | null> {
-  const matches = (await discoverMemoryFacts(root, scope)).filter((fact) =>
-    fact.id === id
+  const matches = (await discoverMemoryFacts(root, scope)).filter(
+    (fact) => fact.id === id,
   );
   if (matches.length > 1) {
     throw new Error(`Duplicate compiled memory article id: [${scope}] ${id}`);
@@ -340,9 +357,10 @@ async function rebuildScopeIndex(
   const facts = await discoverMemoryFacts(root, scope);
   const rows = [...facts]
     .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
-    .map((fact) =>
-      `- [${scope}/${fact.topic}] ${fact.id} (${fact.date}) [${fact.status}]` +
-      `${fact.kind === "pitfall" ? " [pitfall]" : ""}: ${fact.title}`
+    .map(
+      (fact) =>
+        `- [${scope}/${fact.topic}] ${fact.id} (${fact.date}) [${fact.status}]` +
+        `${fact.kind === "pitfall" ? " [pitfall]" : ""}: ${fact.title}`,
     );
   await writeFile(
     join(directory, "index.md"),
@@ -362,17 +380,21 @@ export async function writeMemoryFact(
   input = MemoryWriteInputSchema.parse(input);
   const date = input.date ?? todayIsoDate();
   if (input.status === "verified" && input.verified! < date) {
-    throw new Error("verified date predates the article update; use status stale");
+    throw new Error(
+      "verified date predates the article update; use status stale",
+    );
   }
   if (input.status === "stale" && input.verified! >= date) {
-    throw new Error("stale status requires verified to predate the article update");
+    throw new Error(
+      "stale status requires verified to predate the article update",
+    );
   }
   let id = input.id;
   if (id === undefined) {
     const base = slugify(input.title);
     id = base;
     let suffix = 2;
-    while (await findMemoryFact(root, input.scope, id) !== null) {
+    while ((await findMemoryFact(root, input.scope, id)) !== null) {
       id = `${base}-${suffix}`;
       suffix += 1;
     }
@@ -387,7 +409,8 @@ export async function writeMemoryFact(
   const normalizedTitle = normalizeTitle(input.title);
   const collision = (await discoverMemoryFacts(root, input.scope)).find(
     (fact) =>
-      fact.id !== id && !input.supersedes.includes(fact.id) &&
+      fact.id !== id &&
+      !input.supersedes.includes(fact.id) &&
       normalizeTitle(fact.title) === normalizedTitle,
   );
   if (collision !== undefined) {
@@ -404,8 +427,11 @@ export async function writeMemoryFact(
       `Memory article [${input.scope}] ${id} already belongs to topic ${existing.topic}`,
     );
   }
-  if (existing !== null && existing.body !== input.body &&
-    !input.supersedes.includes(id)) {
+  if (
+    existing !== null &&
+    existing.body !== input.body &&
+    !input.supersedes.includes(id)
+  ) {
     throw new Error(
       `Updating memory article [${input.scope}] ${id} requires supersedes: [${id}]`,
     );
@@ -424,8 +450,14 @@ export async function writeMemoryFact(
   }
 
   const rawPath = await nextRawPath(root, input, id, date);
-  await writeFile(rawPath, serializeRawObservation(input, id, date), { flag: "wx" });
-  const articlePath = join(wikiRoot(root, input.scope), input.topic, `${id}.md`);
+  await writeFile(rawPath, serializeRawObservation(input, id, date), {
+    flag: "wx",
+  });
+  const articlePath = join(
+    wikiRoot(root, input.scope),
+    input.topic,
+    `${id}.md`,
+  );
   await mkdir(dirname(articlePath), { recursive: true });
   const rawReference = relative(dirname(articlePath), rawPath);
   const fact = MemoryFactSchema.parse({
@@ -441,12 +473,16 @@ export async function writeMemoryFact(
     evidence: oneLine(input.evidence),
     status: input.status,
     kind: input.kind,
-    supersedes: [...new Set([...(existing?.supersedes ?? []), ...input.supersedes])],
-    raw: [...new Set([
-      ...(existing?.raw ?? []),
-      ...supersededFacts.flatMap((superseded) => superseded.raw),
-      rawReference,
-    ])],
+    supersedes: [
+      ...new Set([...(existing?.supersedes ?? []), ...input.supersedes]),
+    ],
+    raw: [
+      ...new Set([
+        ...(existing?.raw ?? []),
+        ...supersededFacts.flatMap((superseded) => superseded.raw),
+        rawReference,
+      ]),
+    ],
     verified: input.verified,
   });
   await writeFile(articlePath, serializeMemoryFile(fact));
@@ -537,14 +573,20 @@ function parseLegacyFile(path: string, contents: string): LegacyFact {
     for (const line of lines.slice(1, closingIndex)) {
       const separator = line.indexOf(":");
       if (separator < 0) continue;
-      fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+      fields.set(
+        line.slice(0, separator).trim(),
+        line.slice(separator + 1).trim(),
+      );
     }
   }
   const source = MemorySourceSchema.safeParse(fields.get("source"));
   return {
     id,
     title: fields.get("title") ?? id,
-    body: lines.slice(closingIndex > 0 ? closingIndex + 1 : 0).join("\n").trim(),
+    body: lines
+      .slice(closingIndex > 0 ? closingIndex + 1 : 0)
+      .join("\n")
+      .trim(),
     tags: parseList(fields.get("tags") ?? "[]"),
     date: ISO_DATE.test(fields.get("date") ?? "")
       ? fields.get("date")!
@@ -563,7 +605,7 @@ async function discoverLegacyFacts(
   scope: MemoryScope,
 ): Promise<LegacyFact[]> {
   const directory = scopeRoot(root, scope);
-  let entries;
+  let entries: Dirent[];
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch (error) {
@@ -621,7 +663,11 @@ function legacyTopic(fact: LegacyFact): string {
 export interface MemoryMigrationReport {
   scanned: number;
   migrated: number;
-  flagged: Array<{ scope: MemoryScope; id: string; status: MemoryVerificationStatus }>;
+  flagged: Array<{
+    scope: MemoryScope;
+    id: string;
+    status: MemoryVerificationStatus;
+  }>;
   backups: Array<{ scope: MemoryScope; path: string }>;
   alreadyMigrated: MemoryScope[];
 }
@@ -634,20 +680,24 @@ async function migrationMarker(
 ): Promise<{ backup: string; completedAt: string } | null> {
   try {
     const parsed: unknown = JSON.parse(
-      await readFile(join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER), "utf8"),
+      await readFile(
+        join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER),
+        "utf8",
+      ),
     );
-    if (
-      typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-    ) throw new Error("Invalid legacy memory migration marker");
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      throw new Error("Invalid legacy memory migration marker");
     const record = parsed as Record<string, unknown>;
     if (
-      Object.keys(record).some((key) =>
-        key !== "backup" && key !== "completedAt"
+      Object.keys(record).some(
+        (key) => key !== "backup" && key !== "completedAt",
       ) ||
-      typeof record.backup !== "string" || record.backup.length === 0 ||
+      typeof record.backup !== "string" ||
+      record.backup.length === 0 ||
       typeof record.completedAt !== "string" ||
       !Number.isFinite(Date.parse(record.completedAt))
-    ) throw new Error("Invalid legacy memory migration marker");
+    )
+      throw new Error("Invalid legacy memory migration marker");
     return { backup: record.backup, completedAt: record.completedAt };
   } catch (error) {
     if (isMissingFileError(error)) return null;
@@ -674,8 +724,15 @@ async function backupLegacyMemory(
       });
       return destination;
     } catch (error) {
-      if (!(typeof error === "object" && error !== null && "code" in error &&
-        error.code === "ERR_FS_CP_EEXIST")) throw error;
+      if (
+        !(
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "ERR_FS_CP_EEXIST"
+        )
+      )
+        throw error;
       destination = join(backupRoot, `legacy-v1-${timestamp}-${suffix}`);
       suffix += 1;
     }
@@ -714,9 +771,15 @@ async function migrateLegacyScope(
 ): Promise<MemoryMigrationReport> {
   const legacy = await discoverLegacyFacts(root, scope);
   if (legacy.length === 0) {
-    return { scanned: 0, migrated: 0, flagged: [], backups: [], alreadyMigrated: [] };
+    return {
+      scanned: 0,
+      migrated: 0,
+      flagged: [],
+      backups: [],
+      alreadyMigrated: [],
+    };
   }
-  if (await migrationMarker(root, scope) !== null) {
+  if ((await migrationMarker(root, scope)) !== null) {
     return {
       scanned: legacy.length,
       migrated: 0,
@@ -736,33 +799,48 @@ async function migrateLegacyScope(
     let migrated = 0;
     for (const old of legacy) {
       const topic = legacyTopic(old);
-      const status: MemoryVerificationStatus = old.verified === undefined
-        ? "unverified"
-        : old.verified < old.date
-        ? "stale"
-        : "verified";
+      const status: MemoryVerificationStatus =
+        old.verified === undefined
+          ? "unverified"
+          : old.verified < old.date
+            ? "stale"
+            : "verified";
       if (status !== "verified") flagged.push({ scope, id: old.id, status });
-      const destination = join(rawRoot(root, scope), topic, `${old.date}-${old.id}.md`);
+      const destination = join(
+        rawRoot(root, scope),
+        topic,
+        `${old.date}-${old.id}.md`,
+      );
       await mkdir(dirname(destination), { recursive: true });
       try {
         await writeFile(destination, old.contents, { flag: "wx" });
       } catch (error) {
-        if (!(typeof error === "object" && error !== null && "code" in error &&
-          error.code === "EEXIST")) throw error;
-        if (await readFile(destination, "utf8") !== old.contents) {
-          throw new Error(`Legacy raw destination already contains different evidence: ${destination}`);
+        if (
+          !(
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "EEXIST"
+          )
+        )
+          throw error;
+        if ((await readFile(destination, "utf8")) !== old.contents) {
+          throw new Error(
+            `Legacy raw destination already contains different evidence: ${destination}`,
+          );
         }
       }
       const existing = await findMemoryFact(root, scope, old.id);
-      const articlePath = existing?.path ??
-        join(wikiRoot(root, scope), topic, `${old.id}.md`);
+      const articlePath =
+        existing?.path ?? join(wikiRoot(root, scope), topic, `${old.id}.md`);
       await mkdir(dirname(articlePath), { recursive: true });
       const rawReference = relative(dirname(articlePath), destination);
       if (existing !== null) {
         if (existing.raw.includes(rawReference)) continue;
         const conflicted = MemoryFactSchema.parse({
           ...existing,
-          body: `${existing.body}\n\n## Uncompiled legacy observation\n\n` +
+          body:
+            `${existing.body}\n\n## Uncompiled legacy observation\n\n` +
             `A newly discovered legacy source disagrees with or duplicates this article. ` +
             `Reconcile the raw observation before treating either account as current.`,
           date: todayIsoDate(),
@@ -773,7 +851,12 @@ async function migrateLegacyScope(
         await writeFile(articlePath, serializeMemoryFile(conflicted));
         flagged.push({ scope, id: old.id, status: "conflicted" });
         migrated += 1;
-        await appendLog(root, scope, todayIsoDate(), `migrate-conflict | ${existing.title}`);
+        await appendLog(
+          root,
+          scope,
+          todayIsoDate(),
+          `migrate-conflict | ${existing.title}`,
+        );
         continue;
       }
       const article = MemoryFactSchema.parse({
@@ -794,12 +877,21 @@ async function migrateLegacyScope(
       });
       await writeFile(articlePath, serializeMemoryFile(article));
       migrated += 1;
-      await appendLog(root, scope, todayIsoDate(), `migrate | ${article.title}`);
+      await appendLog(
+        root,
+        scope,
+        todayIsoDate(),
+        `migrate | ${article.title}`,
+      );
     }
     await rebuildScopeIndex(root, scope);
     await writeFile(
       join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER),
-      JSON.stringify({ completedAt: new Date().toISOString(), backup }, null, 2) + "\n",
+      JSON.stringify(
+        { completedAt: new Date().toISOString(), backup },
+        null,
+        2,
+      ) + "\n",
       { flag: "wx" },
     );
     return {
@@ -831,17 +923,25 @@ export async function migrateLegacyMemory(
   };
 }
 
-export function factVerificationFlag(
-  fact: { status?: MemoryVerificationStatus; date: string; verified?: string },
-): "unverified" | "stale" | "conflicted" | null {
-  if (fact.status === "unverified" || fact.status === "stale" ||
-    fact.status === "conflicted") return fact.status;
+export function factVerificationFlag(fact: {
+  status?: MemoryVerificationStatus;
+  date: string;
+  verified?: string;
+}): "unverified" | "stale" | "conflicted" | null {
+  if (
+    fact.status === "unverified" ||
+    fact.status === "stale" ||
+    fact.status === "conflicted"
+  )
+    return fact.status;
   if (fact.status === "verified") return null;
   if (fact.verified === undefined) return "unverified";
   return fact.verified < fact.date ? "stale" : null;
 }
 
-export async function rebuildMemoryIndexFiles(root: string): Promise<MemoryMigrationReport> {
+export async function rebuildMemoryIndexFiles(
+  root: string,
+): Promise<MemoryMigrationReport> {
   const migration = await migrateLegacyMemory(root);
   await Promise.all([
     rebuildScopeIndex(root, "repo"),
@@ -850,7 +950,10 @@ export async function rebuildMemoryIndexFiles(root: string): Promise<MemoryMigra
   return migration;
 }
 
-async function readIndexRows(root: string, scope: MemoryScope): Promise<string[]> {
+async function readIndexRows(
+  root: string,
+  scope: MemoryScope,
+): Promise<string[]> {
   try {
     return (await readFile(join(wikiRoot(root, scope), "index.md"), "utf8"))
       .split(/\r?\n/)
@@ -897,36 +1000,38 @@ export async function buildMemoryIndex(
   options: BuildMemoryIndexOptions = {},
 ): Promise<string> {
   await rebuildMemoryIndexFiles(root);
-  const briefTokens = options.brief === undefined
-    ? new Set<string>()
-    : significantTokens(options.brief);
+  const briefTokens =
+    options.brief === undefined
+      ? new Set<string>()
+      : significantTokens(options.brief);
   const rows = [
-    ...await readIndexRows(root, "repo"),
-    ...await readIndexRows(root, "global"),
-  ].map((row) => {
-    const rowTokens = briefTokens.size === 0
-      ? null
-      : significantTokens(row);
-    let matches = 0;
-    if (rowTokens !== null) {
-      for (const token of briefTokens) {
-        if (rowTokens.has(token)) matches += 1;
+    ...(await readIndexRows(root, "repo")),
+    ...(await readIndexRows(root, "global")),
+  ]
+    .map((row) => {
+      const rowTokens = briefTokens.size === 0 ? null : significantTokens(row);
+      let matches = 0;
+      if (rowTokens !== null) {
+        for (const token of briefTokens) {
+          if (rowTokens.has(token)) matches += 1;
+        }
       }
-    }
-    return {
-      row,
-      date: row.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "",
-      pitfall: row.includes("[pitfall]"),
-      matches,
-    };
-  }).sort((a, b) => {
-    // Pitfalls first, newest-first within the class; then articles sharing a
-    // significant brief token (most distinct matches, then recency); then
-    // newest fill. Each row is sorted exactly once, so no row appears twice.
-    if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
-    if (!a.pitfall && a.matches !== b.matches) return b.matches - a.matches;
-    return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
-  }).map(({ row }) => row);
+      return {
+        row,
+        date: row.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "",
+        pitfall: row.includes("[pitfall]"),
+        matches,
+      };
+    })
+    .sort((a, b) => {
+      // Pitfalls first, newest-first within the class; then articles sharing a
+      // significant brief token (most distinct matches, then recency); then
+      // newest fill. Each row is sorted exactly once, so no row appears twice.
+      if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
+      if (!a.pitfall && a.matches !== b.matches) return b.matches - a.matches;
+      return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
+    })
+    .map(({ row }) => row);
   if (rows.length === 0) return "";
   const shown = rows.slice(0, MEMORY_INDEX_MAX_ENTRIES);
   const omitted = rows.length - shown.length;
@@ -934,7 +1039,9 @@ export async function buildMemoryIndex(
     "Hive memory index — compiled durable repo knowledge. Pull the full article with memory_read(scope, id); [unverified], [stale], and [conflicted] articles are claims to reconcile before acting. Search more with memory_search.",
     ...shown,
     ...(omitted > 0
-      ? [`(${omitted} older article${omitted === 1 ? "" : "s"} omitted — use memory_search)`]
+      ? [
+          `(${omitted} older article${omitted === 1 ? "" : "s"} omitted — use memory_search)`,
+        ]
       : []),
   ].join("\n");
 }

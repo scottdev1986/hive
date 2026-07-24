@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { composerLeasePath, isComposerLeased } from "../../src/daemon/composer-lease";
+import {
+  composerLeasePath,
+  isComposerLeased,
+} from "../../src/daemon/composer-lease";
 
 describe("composer leases", () => {
   test("is scoped to one Hive home and recipient", async () => {
@@ -52,8 +55,9 @@ describe("composer leases", () => {
   });
 
   test("fails closed for a recipient that could escape the marker directory", () => {
-    expect(() => composerLeasePath("../other", "/tmp/hive"))
-      .toThrow("Invalid composer recipient");
+    expect(() => composerLeasePath("../other", "/tmp/hive")).toThrow(
+      "Invalid composer recipient",
+    );
     expect(isComposerLeased("../other", "/tmp/hive")).toBe(true);
   });
 });

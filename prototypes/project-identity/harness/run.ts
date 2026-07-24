@@ -9,10 +9,14 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { prototypeRoot } from "./helper";
-import { runScenarios } from "./scenarios";
 import type { ScenarioResult } from "./scenarios";
+import { runScenarios } from "./scenarios";
 
-const MARK: Record<ScenarioResult["status"], string> = { pass: "PASS", fail: "FAIL", skipped: "SKIP" };
+const MARK: Record<ScenarioResult["status"], string> = {
+  pass: "PASS",
+  fail: "FAIL",
+  skipped: "SKIP",
+};
 
 /**
  * Temp paths, inode numbers, and freshly minted UUIDs differ on every run, and this file
@@ -21,8 +25,10 @@ const MARK: Record<ScenarioResult["status"], string> = { pass: "PASS", fail: "FA
  * are numbered in first-seen order within a scenario, so `#1 != #2` still reads as a
  * mismatch and `#1 == #1` still reads as a match.
  */
-const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-const FIXTURE_ROOT = /(?:\/private)?\/(?:var\/folders|tmp)\/\S*?hive-identity-[A-Za-z0-9]+/g;
+const UUID =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const FIXTURE_ROOT =
+  /(?:\/private)?\/(?:var\/folders|tmp)\/\S*?hive-identity-[A-Za-z0-9]+/g;
 /** Inode and device numbers. Small counts (500 cycles) stay literal. */
 const LARGE_NUMBER = /\b\d{7,}\b/g;
 
@@ -64,10 +70,15 @@ function renderEvidence(results: ScenarioResult[]): string {
     lines.push(`## ${MARK[result.status]} — ${result.title}`, "");
     lines.push(`\`${result.id}\``, "");
     lines.push(`**Proves.** ${result.proves}`, "");
-    if (result.detail) lines.push(`**${result.status === "skipped" ? "Skipped" : "Failure"}.** ${result.detail}`, "");
+    if (result.detail)
+      lines.push(
+        `**${result.status === "skipped" ? "Skipped" : "Failure"}.** ${result.detail}`,
+        "",
+      );
     if (result.observations.length > 0) {
       lines.push("**Observed.**", "");
-      for (const observation of redact(result.observations)) lines.push(`- ${observation}`);
+      for (const observation of redact(result.observations))
+        lines.push(`- ${observation}`);
       lines.push("");
     }
   }

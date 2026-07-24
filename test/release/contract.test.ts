@@ -12,8 +12,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   rmSync,
   statSync,
@@ -23,7 +23,8 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "../..");
-const read = (path: string): string => readFileSync(join(repoRoot, path), "utf8");
+const read = (path: string): string =>
+  readFileSync(join(repoRoot, path), "utf8");
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -48,7 +49,9 @@ describe("the version has exactly one source", () => {
     const offenders = sourceFiles(join(repoRoot, "src"))
       .filter((file) => !file.endsWith("src/version.ts"))
       .filter((file) => !file.endsWith(".test.ts"))
-      .filter((file) => /\bHIVE_VERSION\s*=\s*["']/.test(readFileSync(file, "utf8")))
+      .filter((file) =>
+        /\bHIVE_VERSION\s*=\s*["']/.test(readFileSync(file, "utf8")),
+      )
       .map((file) => relative(repoRoot, file));
     expect(offenders).toEqual([]);
   });
@@ -58,7 +61,9 @@ describe("the version has exactly one source", () => {
     // Codex app-server handshake and the daemon.
     const offenders = sourceFiles(join(repoRoot, "src"))
       .filter((file) => !file.endsWith(".test.ts"))
-      .filter((file) => /version:\s*["']\d+\.\d+\.\d+["']/.test(readFileSync(file, "utf8")))
+      .filter((file) =>
+        /version:\s*["']\d+\.\d+\.\d+["']/.test(readFileSync(file, "utf8")),
+      )
       .map((file) => relative(repoRoot, file));
     expect(offenders).toEqual([]);
   });
@@ -105,7 +110,9 @@ describe("the release workflow", () => {
   });
 
   test("provisions Xcode's separately shipped Metal compiler before native preflight", () => {
-    const download = workflow.indexOf("xcodebuild -downloadComponent MetalToolchain");
+    const download = workflow.indexOf(
+      "xcodebuild -downloadComponent MetalToolchain",
+    );
     const preflight = workflow.indexOf("scripts/provision-native-toolchain.sh");
     expect(download).toBeGreaterThan(0);
     expect(preflight).toBeGreaterThan(download);
@@ -119,7 +126,9 @@ describe("the release workflow", () => {
   });
 
   test("stages the qualified native artifact where SwiftPM consumes it", () => {
-    const nativeBuild = workflow.indexOf("scripts/build-ghosttykit.sh --production");
+    const nativeBuild = workflow.indexOf(
+      "scripts/build-ghosttykit.sh --production",
+    );
     const stage = workflow.indexOf(
       '/usr/bin/ditto "$artifact/GhosttyKit.xcframework" workspace/Vendor/GhosttyKit.xcframework',
     );
@@ -138,7 +147,8 @@ describe("the release workflow", () => {
   });
 
   test("publishes every executable a fresh install requires", () => {
-    const publishList = /assets=\(\n([\s\S]*?)\n\s*\)/.exec(workflow)?.[1] ?? "";
+    const publishList =
+      /assets=\(\n([\s\S]*?)\n\s*\)/.exec(workflow)?.[1] ?? "";
     for (const asset of [
       "dist/hive-darwin-arm64",
       "dist/hive-darwin-x64",
@@ -181,13 +191,17 @@ describe("the installer", () => {
   const installer = read("install.sh");
 
   test("verifies a digest before it ever runs the binary", () => {
-    expect(installer.indexOf("verify ")).toBeLessThan(installer.indexOf("--version"));
+    expect(installer.indexOf("verify ")).toBeLessThan(
+      installer.indexOf("--version"),
+    );
   });
 
   test("activates through a verified macOS no-follow rename", () => {
     const platformGuard = installer.indexOf('"$(uname -s)" = "Darwin"');
     const rename = installer.indexOf('/bin/mv -fh "$temporary" "$link"');
-    const activation = installer.indexOf('replace_symlink "versions/$RESOLVED" "$ROOT/current"');
+    const activation = installer.indexOf(
+      'replace_symlink "versions/$RESOLVED" "$ROOT/current"',
+    );
     expect(platformGuard).toBeGreaterThan(-1);
     expect(rename).toBeGreaterThan(-1);
     expect(activation).toBeGreaterThan(platformGuard);
@@ -204,12 +218,19 @@ describe("the installer", () => {
       symlinkSync(join("versions", "old"), join(root, "current"));
       symlinkSync(join("versions", "new"), join(root, "current.tmp"));
 
-      const moved = spawnSync("/bin/mv", ["-f", join(root, "current.tmp"), join(root, "current")]);
+      const moved = spawnSync("/bin/mv", [
+        "-f",
+        join(root, "current.tmp"),
+        join(root, "current"),
+      ]);
 
       expect(moved.status).toEqual(0);
-      expect(readlinkSync(join(root, "current"))).toEqual(join("versions", "old"));
-      expect(readlinkSync(join(root, "versions", "old", "current.tmp")))
-        .toEqual(join("versions", "new"));
+      expect(readlinkSync(join(root, "current"))).toEqual(
+        join("versions", "old"),
+      );
+      expect(
+        readlinkSync(join(root, "versions", "old", "current.tmp")),
+      ).toEqual(join("versions", "new"));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -224,17 +245,27 @@ describe("the installer", () => {
       symlinkSync(join("versions", "old"), join(root, "current"));
       symlinkSync(join("versions", "new"), join(root, "current.tmp"));
 
-      const moved = spawnSync("/bin/mv", ["-fh", join(root, "current.tmp"), join(root, "current")]);
+      const moved = spawnSync("/bin/mv", [
+        "-fh",
+        join(root, "current.tmp"),
+        join(root, "current"),
+      ]);
 
       expect(moved.status).toEqual(0);
-      expect(readlinkSync(join(root, "current"))).toEqual(join("versions", "new"));
-      expect(existsSync(join(root, "versions", "old", "current.tmp"))).toEqual(false);
+      expect(readlinkSync(join(root, "current"))).toEqual(
+        join("versions", "new"),
+      );
+      expect(existsSync(join(root, "versions", "old", "current.tmp"))).toEqual(
+        false,
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });
 
   test("is executable", () => {
-    expect(statSync(join(repoRoot, "install.sh")).mode & 0o111).toBeGreaterThan(0);
+    expect(statSync(join(repoRoot, "install.sh")).mode & 0o111).toBeGreaterThan(
+      0,
+    );
   });
 });

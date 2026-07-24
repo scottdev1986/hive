@@ -1,16 +1,16 @@
-import { readFileSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { type Dirent, readFileSync } from "node:fs";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { shellQuote } from "../../daemon/session-host/shell-session";
+import { resolveProviderExecutable } from "./provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
+  type RecoverySessionArtifact,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-  type RecoverySessionArtifact,
 } from "./recovery-session";
-import { resolveProviderExecutable } from "./provider-executable";
-import { shellQuote } from "../../daemon/session-host/shell-session";
 
 export interface KimiSpawnOptions {
   model: string;
@@ -42,7 +42,7 @@ export function probeKimiDefaultModel(
       readFileSync(join(home, "config.toml"), "utf8"),
     ) as { default_model?: unknown };
     return typeof parsed.default_model === "string" &&
-        parsed.default_model.length > 0
+      parsed.default_model.length > 0
       ? parsed.default_model
       : null;
   } catch {
@@ -109,14 +109,15 @@ export function wrapKimiWithInstructionFile(
   initialPrompt?: string,
 ): string {
   const target = ".kimi-code/AGENTS.md";
-  const copy = `mkdir -p .kimi-code && install -m 600 ${
-    shellQuote(path)
-  } ${shellQuote(target)}`;
-  const kickoff = initialPrompt === undefined
-    ? ""
-    : ` && printf '\\n\\n## Opening instruction\\n\\n%s\\n' ${
-      shellQuote(initialPrompt)
-    } >> ${shellQuote(target)}`;
+  const copy = `mkdir -p .kimi-code && install -m 600 ${shellQuote(
+    path,
+  )} ${shellQuote(target)}`;
+  const kickoff =
+    initialPrompt === undefined
+      ? ""
+      : ` && printf '\\n\\n## Opening instruction\\n\\n%s\\n' ${shellQuote(
+          initialPrompt,
+        )} >> ${shellQuote(target)}`;
   // No `exec` here: the wrapped command may carry an env-assignment prefix
   // (wrapKimiSpawnWithEffort), which `exec` would try to run as a program.
   return `${copy}${kickoff} && ${command}`;
@@ -127,7 +128,10 @@ export function wrapKimiWithInstructionFile(
  * thinking effort on the wire for this process only (kimi provider models
  * only), which is the per-launch channel Hive's effort routing needs.
  */
-export function wrapKimiSpawnWithEffort(command: string, effort: string): string {
+export function wrapKimiSpawnWithEffort(
+  command: string,
+  effort: string,
+): string {
   return `KIMI_MODEL_THINKING_EFFORT=${shellQuote(effort)} ${command}`;
 }
 
@@ -161,9 +165,12 @@ export async function writeKimiAgentConfig(
     },
     (error: unknown) => {
       if (
-        typeof error === "object" && error !== null && "code" in error &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
         error.code === "ENOENT"
-      ) return {};
+      )
+        return {};
       throw error;
     },
   );
@@ -172,11 +179,12 @@ export async function writeKimiAgentConfig(
   const existingHeaders = isRecord(existingHive.headers)
     ? existingHive.headers
     : {};
-  const authorization = options.capabilityToken !== undefined
-    ? `Bearer ${options.capabilityToken}`
-    : typeof existingHeaders.Authorization === "string"
-    ? existingHeaders.Authorization
-    : undefined;
+  const authorization =
+    options.capabilityToken !== undefined
+      ? `Bearer ${options.capabilityToken}`
+      : typeof existingHeaders.Authorization === "string"
+        ? existingHeaders.Authorization
+        : undefined;
   servers.hive = {
     url: `http://127.0.0.1:${options.daemonPort}/mcp`,
     ...(authorization === undefined
@@ -219,7 +227,7 @@ async function findKimiSessions(
 ): Promise<KimiSessionLocation[]> {
   const target = resolve(worktreePath);
   const root = kimiSessionsDirectory(home);
-  let projects;
+  let projects: Dirent[];
   try {
     projects = await readdir(root, { withFileTypes: true });
   } catch (error) {
@@ -235,9 +243,11 @@ async function findKimiSessions(
   const sessions: KimiSessionLocation[] = [];
   for (const project of projects) {
     if (!project.isDirectory()) continue;
-    let entries;
+    let entries: Dirent[];
     try {
-      entries = await readdir(join(root, project.name), { withFileTypes: true });
+      entries = await readdir(join(root, project.name), {
+        withFileTypes: true,
+      });
     } catch (error) {
       if (strictEvidence && !isMissingRecoveryArtifact(error)) {
         invalidRecoveryArtifactEvidence(
@@ -265,10 +275,16 @@ async function findKimiSessions(
         continue;
       }
       if (
-        !isRecord(parsed) || typeof parsed.workDir !== "string" ||
+        !isRecord(parsed) ||
+        typeof parsed.workDir !== "string" ||
         parsed.workDir !== target
-      ) continue;
-      sessions.push({ id: entry.name, createdAt: parsed.createdAt, path: statePath });
+      )
+        continue;
+      sessions.push({
+        id: entry.name,
+        createdAt: parsed.createdAt,
+        path: statePath,
+      });
     }
   }
   return sessions;

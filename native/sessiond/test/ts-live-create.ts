@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { HiveDatabase } from "../../../src/daemon/db";
 import { stopHive } from "../../../src/cli/control";
+import { HiveDatabase } from "../../../src/daemon/db";
 import {
   expectedDaemonHandshake,
   parseDaemonHandshake,
@@ -18,21 +18,21 @@ import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "../../../src/daemon/session-host/hive-terminal-host";
+import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
 import {
   SessiondHost,
   SessiondWireError,
 } from "../../../src/daemon/session-host/sessiond-host";
+import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
 import { WorkspaceVisibilityAuthority } from "../../../src/daemon/session-host/workspace-visibility";
 import { HiveSpawner } from "../../../src/daemon/spawner-impl";
 import { stopSessiondAgentSession } from "../../../src/daemon/teardown";
-import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
-import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
 import {
-  known,
-  unknown,
   type AgentRecord,
   type CapabilityRecord,
+  known,
   type RoutingPolicy,
+  unknown,
 } from "../../../src/schemas";
 
 const observedAt = "2026-07-18T12:00:00.000Z";
@@ -63,18 +63,22 @@ function codexRoutingPolicy(): RoutingPolicy {
     updatedAt: observedAt,
     provisional: false,
     providers: { codex: "enabled" },
-    models: [{
-      provider: "codex",
-      model: "gpt-sessiond-live",
-      state: "enabled",
-      effort: { mode: "exact", value: "medium" },
-    }],
-    chains: {
-      default: [{
+    models: [
+      {
         provider: "codex",
         model: "gpt-sessiond-live",
+        state: "enabled",
         effort: { mode: "exact", value: "medium" },
-      }],
+      },
+    ],
+    chains: {
+      default: [
+        {
+          provider: "codex",
+          model: "gpt-sessiond-live",
+          effort: { mode: "exact", value: "medium" },
+        },
+      ],
     },
     selection: { global: "choice", categories: {} },
   };
@@ -99,8 +103,11 @@ async function waitForBrokerSocket(
   throw new Error("sessiond did not create broker.sock within 10 seconds");
 }
 
-async function killExactProcess(pid: number, startToken: string): Promise<void> {
-  let identity;
+async function killExactProcess(
+  pid: number,
+  startToken: string,
+): Promise<void> {
+  let identity: ReturnType<typeof macProcessIdentity>;
   try {
     identity = macProcessIdentity(pid);
   } catch {
@@ -146,6 +153,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
   process.env.HIVE_HOME = home;
   let lockAcquired = false;
   let lifecycleWritten = false;
+  let lockReleaseFailed = false;
 
   try {
     await acquireDaemonLock();
@@ -162,7 +170,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
         }
         return new Response(handshakeJson, {
           headers: {
-            "connection": "close",
+            connection: "close",
             "content-length": String(Buffer.byteLength(handshakeJson)),
             "content-type": "application/json",
           },
@@ -187,7 +195,10 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
         startToken: daemonIdentity.startToken,
         executablePath: daemonIdentity.executablePath,
       });
-      const binary = join(repoRoot, "native/sessiond/zig-out/bin/hive-sessiond");
+      const binary = join(
+        repoRoot,
+        "native/sessiond/zig-out/bin/hive-sessiond",
+      );
       const broker = Bun.spawn([binary, "serve"], {
         cwd: repoRoot,
         env: { ...process.env, HIVE_HOME: home },
@@ -218,7 +229,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             handshake: async () => handshake,
             pendingBindings: db,
           });
-          const adapter = new HiveTerminalHostAdapter(host, db, handshake.instanceId);
+          const adapter = new HiveTerminalHostAdapter(
+            host,
+            db,
+            handshake.instanceId,
+          );
           const engineBuildId = await host.discoverEngineBuildId();
           const visibility = {
             workspaceSessionId: "workspace-sessiond-live-harness",
@@ -226,7 +241,8 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             workspaceStartToken: workspace.startToken,
             openTerminalRevision: "1",
           };
-          const visibilityAuthority = () => new WorkspaceVisibilityAuthority({
+          const visibilityAuthority = () =>
+            new WorkspaceVisibilityAuthority({
               expectedInstanceId: handshake.instanceId,
               observeProcess: (pid) => {
                 try {
@@ -241,18 +257,20 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           let admittedAgentName = "maya";
           let admittedVisibility = visibility;
           const publishEmptyWorkspace = () => {
-            expect(workspaceVisibility.publish({
-              schemaVersion: 1,
-              source: {
-                sessionId: admittedVisibility.workspaceSessionId,
-                process: {
-                  processId: admittedVisibility.workspacePid,
-                  startToken: admittedVisibility.workspaceStartToken,
+            expect(
+              workspaceVisibility.publish({
+                schemaVersion: 1,
+                source: {
+                  sessionId: admittedVisibility.workspaceSessionId,
+                  process: {
+                    processId: admittedVisibility.workspacePid,
+                    startToken: admittedVisibility.workspaceStartToken,
+                  },
                 },
-              },
-              inventoryRevision: admittedVisibility.openTerminalRevision,
-              terminals: [],
-            })).toMatchObject({ state: "accepted" });
+                inventoryRevision: admittedVisibility.openTerminalRevision,
+                terminals: [],
+              }),
+            ).toMatchObject({ state: "accepted" });
           };
           publishEmptyWorkspace();
 
@@ -260,7 +278,8 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             return await stopSessiondAgentSession(agent, {
               terminalHost: adapter,
               readHostPid: async (record) =>
-                (await adapter.inspect(requireSessiondAgentLocator(record))).hostPid,
+                (await adapter.inspect(requireSessiondAgentLocator(record)))
+                  .hostPid,
             });
           };
           const spawner = new HiveSpawner({
@@ -287,8 +306,8 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               terminalHost: adapter,
               prepareAgentCreation: (candidate) =>
                 candidate.agentName === admittedAgentName
-                ? workspaceVisibility.prepareAgentCreation()
-                : Promise.resolve(null),
+                  ? workspaceVisibility.prepareAgentCreation()
+                  : Promise.resolve(null),
               admit: (candidate) => workspaceVisibility.admit(candidate),
             },
             stopSession: stopSpawnedSession,
@@ -307,29 +326,36 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
                   if (agent.sessionLocator?.hostKind === "sessiond") {
                     const locator = requireSessiondAgentLocator(agent);
                     if (
-                      !workspaceVisibility.currentSnapshot()?.terminals.some(
-                        (terminal) => terminal.agentId === agent.id,
-                      )
+                      !workspaceVisibility
+                        .currentSnapshot()
+                        ?.terminals.some(
+                          (terminal) => terminal.agentId === agent.id,
+                        )
                     ) {
-                      expect(workspaceVisibility.publish({
-                        schemaVersion: 1,
-                        source: {
-                          sessionId: admittedVisibility.workspaceSessionId,
-                          process: {
-                            processId: admittedVisibility.workspacePid,
-                            startToken: admittedVisibility.workspaceStartToken,
+                      expect(
+                        workspaceVisibility.publish({
+                          schemaVersion: 1,
+                          source: {
+                            sessionId: admittedVisibility.workspaceSessionId,
+                            process: {
+                              processId: admittedVisibility.workspacePid,
+                              startToken:
+                                admittedVisibility.workspaceStartToken,
+                            },
                           },
-                        },
-                        inventoryRevision: `${
-                          BigInt(admittedVisibility.openTerminalRevision) + 1n
-                        }`,
-                        terminals: [{
-                          agentId: agent.id,
-                          agentName: agent.name,
-                          locator,
-                          state: "pending",
-                        }],
-                      })).toEqual({
+                          inventoryRevision: `${
+                            BigInt(admittedVisibility.openTerminalRevision) + 1n
+                          }`,
+                          terminals: [
+                            {
+                              agentId: agent.id,
+                              agentName: agent.name,
+                              locator,
+                              state: "pending",
+                            },
+                          ],
+                        }),
+                      ).toEqual({
                         state: "accepted",
                         inventoryRevision: `${
                           BigInt(admittedVisibility.openTerminalRevision) + 1n
@@ -347,7 +373,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
                 "/bin/sh",
                 "-c",
                 `test "$HIVE_HOME" = ${JSON.stringify(home)} && ` +
-                "while IFS= read -r line; do :; done",
+                  "while IFS= read -r line; do :; done",
               ],
               startAgent: async () => {},
               disconnect: () => undefined,
@@ -364,25 +390,32 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           expect(sessiondAgent.sessionLocator?.hostKind).toBe("sessiond");
           expect(sessiondAgent.status).toBe("working");
           const sessiondLocator = requireSessiondAgentLocator(sessiondAgent);
-          const sessiondBinding = db.getTerminalHostBindingByLocator(
-            sessiondLocator,
-          );
+          const sessiondBinding =
+            db.getTerminalHostBindingByLocator(sessiondLocator);
           if (!sessiondBinding?.createEvidence) {
-            throw new Error("sessiond spawner omitted terminal binding evidence");
+            throw new Error(
+              "sessiond spawner omitted terminal binding evidence",
+            );
           }
           expect(sessiondBinding.locator).toEqual(sessiondLocator);
           expect(sessiondBinding.visibility).toEqual(visibility);
           expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([
             sessiondBinding,
           ]);
-          expect(db.database.query(`
+          expect(
+            db.database
+              .query(`
             SELECT locatorInstanceId, locatorSessionId, locatorGeneration
             FROM terminal_host_bindings
-          `).all()).toEqual([{
-            locatorInstanceId: sessiondLocator.instanceId,
-            locatorSessionId: sessiondLocator.sessionId,
-            locatorGeneration: sessiondLocator.generation,
-          }]);
+          `)
+              .all(),
+          ).toEqual([
+            {
+              locatorInstanceId: sessiondLocator.instanceId,
+              locatorSessionId: sessiondLocator.sessionId,
+              locatorGeneration: sessiondLocator.generation,
+            },
+          ]);
 
           const sessiondInspection = await adapter.inspect(sessiondLocator);
           expect(sessiondInspection.presence).toBe("present");
@@ -396,7 +429,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             sessiondInspection.hostStartToken === null ||
             sessiondInspection.providerRoot === null
           ) {
-            throw new Error("sessiond spawner omitted measured process identity");
+            throw new Error(
+              "sessiond spawner omitted measured process identity",
+            );
           }
           spawnedHost = {
             pid: sessiondInspection.hostPid,
@@ -408,12 +443,15 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           expect(spawnedProvider.pid).not.toBe(process.pid);
           expect(spawnedProvider.pid).not.toBe(broker.pid);
           expect(spawnedProvider.pid).not.toBe(spawnedHost.pid);
-          expect(macProcessIdentity(spawnedHost.pid).startToken)
-            .toBe(spawnedHost.startToken);
-          expect(macProcessIdentity(spawnedProvider.pid).startToken)
-            .toBe(spawnedProvider.startToken);
-          expect(sessiondInspection.expectedExecutable)
-            .toBe(sessiondBinding.createEvidence.expectedExecutable);
+          expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
+            spawnedHost.startToken,
+          );
+          expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
+            spawnedProvider.startToken,
+          );
+          expect(sessiondInspection.expectedExecutable).toBe(
+            sessiondBinding.createEvidence.expectedExecutable,
+          );
           expect(sessiondInspection.diagnosticIds).toContain(
             "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
           );
@@ -422,34 +460,46 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           );
 
           const neutralMatches = (await host.list()).filter(
-            (inspection) => inspection.session.key === sessiondLocator.sessionId,
+            (inspection) =>
+              inspection.session.key === sessiondLocator.sessionId,
           );
           expect(neutralMatches).toHaveLength(1);
           const neutralSession = neutralMatches[0]!.session;
-          expect(neutralSession.incarnation)
-            .not.toBe(String(sessiondLocator.generation));
+          expect(neutralSession.incarnation).not.toBe(
+            String(sessiondLocator.generation),
+          );
           const neutralReadback = await host.inspect(neutralSession);
           expect(neutralReadback.session).toEqual(neutralSession);
           expect(neutralReadback.lifecycle).toBe("running");
 
-          const wrongToken = adapter.renewVisibility(sessiondLocator, {
-            ...visibility,
-            workspaceStartToken: "0:0",
-            openTerminalRevision: "2",
-          }).catch((error) => error);
+          const wrongToken = adapter
+            .renewVisibility(sessiondLocator, {
+              ...visibility,
+              workspaceStartToken: "0:0",
+              openTerminalRevision: "2",
+            })
+            .catch((error) => error);
           await expect(wrongToken).resolves.toBeInstanceOf(SessiondWireError);
-          await expect(wrongToken).resolves.toMatchObject({ code: "UNAUTHENTICATED" });
-          expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility)
-            .toEqual(visibility);
+          await expect(wrongToken).resolves.toMatchObject({
+            code: "UNAUTHENTICATED",
+          });
+          expect(
+            db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
+          ).toEqual(visibility);
 
-          const stale = adapter.renewVisibility(sessiondLocator, {
-            ...visibility,
-            openTerminalRevision: "0",
-          }).catch((error) => error);
+          const stale = adapter
+            .renewVisibility(sessiondLocator, {
+              ...visibility,
+              openTerminalRevision: "0",
+            })
+            .catch((error) => error);
           await expect(stale).resolves.toBeInstanceOf(SessiondWireError);
-          await expect(stale).resolves.toMatchObject({ code: "GENERATION_MISMATCH" });
-          expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility)
-            .toEqual(visibility);
+          await expect(stale).resolves.toMatchObject({
+            code: "GENERATION_MISMATCH",
+          });
+          expect(
+            db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
+          ).toEqual(visibility);
 
           const renewedVisibility = {
             ...visibility,
@@ -465,7 +515,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             openTerminalRevision: "2",
           });
           expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.now());
-          expect(db.getTerminalHostBindingByLocator(sessiondLocator)).toMatchObject({
+          expect(
+            db.getTerminalHostBindingByLocator(sessiondLocator),
+          ).toMatchObject({
             visibility: renewedVisibility,
             createEvidence: {
               visibility: {
@@ -510,14 +562,16 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             geometry: sessiondInspection.geometry,
             viewerId: orphanViewerId,
           });
-          await (orphanViewer as unknown as {
-            request(
-              requestType: "CLAIM_ACQUIRE",
-              responseType: "CLAIM_RESULT",
-              flags: number,
-              payload: unknown,
-            ): Promise<unknown>;
-          }).request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, {
+          await (
+            orphanViewer as unknown as {
+              request(
+                requestType: "CLAIM_ACQUIRE",
+                responseType: "CLAIM_RESULT",
+                flags: number,
+                payload: unknown,
+              ): Promise<unknown>;
+            }
+          ).request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, {
             schemaVersion: 1,
             session: {
               key: sessiondLocator.sessionId,
@@ -538,14 +592,18 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               "LIVE-PROOF #85: orphan blocks automation",
               { messageId: "msg-85-orphan-blocked" },
             );
-            if (declined.outcome === "declined") orphanDecline = declined.reason;
+            if (declined.outcome === "declined")
+              orphanDecline = declined.reason;
             if (orphanDecline.includes("HumanOrphaned")) break;
             await Bun.sleep(20);
           }
           expect(orphanDecline).toContain("HumanOrphaned");
           // The viewer dropped without CLAIM_RELEASE, so the draft is abandoned
           // rather than held: `orphaned` is the non-destructive resolution.
-          const discarded = await host.discardInputOrphan(sessiondLocator, "orphaned");
+          const discarded = await host.discardInputOrphan(
+            sessiondLocator,
+            "orphaned",
+          );
           // The result is a discriminated state, not a boolean: asserting
           // `discarded` specifically is what keeps a destructive `preempted`
           // from reading as an ordinary orphan discard.
@@ -561,18 +619,17 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             { messageId: "msg-68-live-proof" },
           );
           if (injected.outcome !== "injected") {
-            throw new Error(
-              `real-engine inject declined: ${injected.reason}`,
-            );
+            throw new Error(`real-engine inject declined: ${injected.reason}`);
           }
-          expect(["accepted", "queued", "written-to-terminal"])
-            .toContain(injected.receipt.stage);
+          expect(["accepted", "queued", "written-to-terminal"]).toContain(
+            injected.receipt.stage,
+          );
           expect(injected.receipt.transactionId).toBe("msg-68-live-proof");
 
           expect(
-            db.listAgents().filter(
-              (agent) => agent.sessionLocator?.hostKind === "sessiond",
-            ),
+            db
+              .listAgents()
+              .filter((agent) => agent.sessionLocator?.hostKind === "sessiond"),
           ).toHaveLength(1);
 
           // #70 moved the sessiond fan-out from stopHive into the daemon's
@@ -607,14 +664,20 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             throw new Error("sessiond teardown did not run");
           }
           expect(stopped.survivors).toEqual([]);
-          expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit)
-            .toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
+          expect(
+            db.getTerminalHostBindingByLocator(sessiondLocator)
+              ?.terminationAudit,
+          ).toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
           await Promise.all([
             waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
-            waitForExactProcessAbsence(spawnedProvider.pid, spawnedProvider.startToken),
+            waitForExactProcessAbsence(
+              spawnedProvider.pid,
+              spawnedProvider.startToken,
+            ),
           ]);
-          expect((await adapter.inspect(sessiondLocator)).presence)
-            .not.toBe("present");
+          expect((await adapter.inspect(sessiondLocator)).presence).not.toBe(
+            "present",
+          );
           spawnedHost = null;
           spawnedProvider = null;
 
@@ -639,30 +702,39 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             expiryInspection.hostStartToken === null ||
             expiryInspection.providerRoot === null
           ) {
-            throw new Error("publisher-death session omitted measured process identity");
+            throw new Error(
+              "publisher-death session omitted measured process identity",
+            );
           }
           spawnedHost = {
             pid: expiryInspection.hostPid,
             startToken: expiryInspection.hostStartToken,
           };
           spawnedProvider = expiryInspection.providerRoot;
-          expect(macProcessIdentity(spawnedHost.pid).startToken)
-            .toBe(spawnedHost.startToken);
-          expect(macProcessIdentity(spawnedProvider.pid).startToken)
-            .toBe(spawnedProvider.startToken);
+          expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
+            spawnedHost.startToken,
+          );
+          expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
+            spawnedProvider.startToken,
+          );
 
           process.kill(workspacePublisher.pid, "SIGKILL");
           await workspacePublisher.exited;
           await Promise.all([
             waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
-            waitForExactProcessAbsence(spawnedProvider.pid, spawnedProvider.startToken),
+            waitForExactProcessAbsence(
+              spawnedProvider.pid,
+              spawnedProvider.startToken,
+            ),
           ]);
           const expired = await adapter.inspect(expiryLocator);
           expect(expired.presence).not.toBe("present");
           expect(expired.visibility.state).toBe("expired");
         } finally {
-          await killExactProcess(workspacePublisher.pid, workspace.startToken)
-            .catch(() => undefined);
+          await killExactProcess(
+            workspacePublisher.pid,
+            workspace.startToken,
+          ).catch(() => undefined);
           if (spawnedProvider !== null) {
             await killExactProcess(
               spawnedProvider.pid,
@@ -690,12 +762,15 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
     try {
       if (lifecycleWritten) cleanupLifecycleFiles();
       else if (lockAcquired && !releaseDaemonLock()) {
-        throw new Error("could not release live-harness daemon lock");
+        lockReleaseFailed = true;
       }
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
       await rm(home, { recursive: true, force: true });
     }
+  }
+  if (lockReleaseFailed) {
+    throw new Error("could not release live-harness daemon lock");
   }
 }, 45_000);

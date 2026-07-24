@@ -2,6 +2,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { HV1_CAPABILITY_WIRE_SCHEMAS } from "../../src/schemas/capability";
+import {
+  MESSAGE_TERMINAL_CONTRACT,
+  MESSAGE_TERMINAL_WIRE_SCHEMAS,
+} from "../../src/schemas/message-envelope";
 import {
   CHECKPOINT_HEADER,
   FRAME_FLAGS,
@@ -22,11 +27,6 @@ import {
   STATUS_CONTRACT,
   STATUS_WIRE_SCHEMAS,
 } from "../../src/schemas/status-envelope";
-import { HV1_CAPABILITY_WIRE_SCHEMAS } from "../../src/schemas/capability";
-import {
-  MESSAGE_TERMINAL_CONTRACT,
-  MESSAGE_TERMINAL_WIRE_SCHEMAS,
-} from "../../src/schemas/message-envelope";
 import { buildReducerCorpus, buildWireCorpus } from "./fixtures";
 
 export const FIXTURE_DIRECTORY = resolve(
@@ -61,13 +61,17 @@ const BYTE_CODEC_SCHEMA_NAMES = new Set([
   "terminalHostSessionInspection",
 ]);
 
-const prettyJson = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+const prettyJson = (value: unknown): string =>
+  `${JSON.stringify(value, null, 2)}\n`;
 
 function renderSchemaDocument(): string {
   const schemas = Object.fromEntries(
     Object.entries(WIRE_SCHEMA_CATALOG).map(([name, schema]) => [
       name,
-      z.toJSONSchema(schema, BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined),
+      z.toJSONSchema(
+        schema,
+        BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined,
+      ),
     ]),
   );
   return prettyJson({
@@ -89,7 +93,10 @@ function renderSchemaDocument(): string {
 
 const swiftDictionary = (value: Record<string, number>): string =>
   Object.entries(value)
-    .map(([name, number]) => `        "${name}": 0x${number.toString(16).padStart(4, "0")}`)
+    .map(
+      ([name, number]) =>
+        `        "${name}": 0x${number.toString(16).padStart(4, "0")}`,
+    )
     .join(",\n");
 
 const swiftIntConstants = (
@@ -583,10 +590,11 @@ print(try canonicalJSON(report))
 `;
 }
 
-const zigName = (value: string): string => value
-  .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-  .toLowerCase()
-  .replaceAll("-", "_");
+const zigName = (value: string): string =>
+  value
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .toLowerCase()
+    .replaceAll("-", "_");
 const zigIdentifier = (value: string): string => {
   const name = zigName(value);
   return name === "error" ? `@"${name}"` : name;
@@ -596,16 +604,28 @@ const zigUsizeConstants = (
   indent: string,
 ): string =>
   Object.entries(value)
-    .map(([name, number]) => `${indent}pub const ${zigName(name)}: usize = ${number};`)
+    .map(
+      ([name, number]) =>
+        `${indent}pub const ${zigName(name)}: usize = ${number};`,
+    )
     .join("\n");
 
 function renderZig(): string {
   const frameTypes = Object.entries(FRAME_TYPES)
-    .map(([name, value]) => `    pub const ${zigIdentifier(name)}: u16 = 0x${value.toString(16).padStart(4, "0")};`)
+    .map(
+      ([name, value]) =>
+        `    pub const ${zigIdentifier(name)}: u16 = 0x${value.toString(16).padStart(4, "0")};`,
+    )
     .join("\n");
-  const errors = WIRE_ERROR_CODES.map((name) => `    ${zigName(name)},`).join("\n");
-  const states = INPUT_ARBITER_STATES.map((name) => `    ${zigName(name)},`).join("\n");
-  const evidence = INPUT_EVIDENCE_LEVELS.map((name) => `    ${zigName(name)},`).join("\n");
+  const errors = WIRE_ERROR_CODES.map((name) => `    ${zigName(name)},`).join(
+    "\n",
+  );
+  const states = INPUT_ARBITER_STATES.map(
+    (name) => `    ${zigName(name)},`,
+  ).join("\n");
+  const evidence = INPUT_EVIDENCE_LEVELS.map(
+    (name) => `    ${zigName(name)},`,
+  ).join("\n");
   const bridgeEvents = Object.entries(GHOSTTY_BRIDGE_EVENTS)
     .map(([name, value]) => `    ${zigName(name)} = ${value},`)
     .join("\n");

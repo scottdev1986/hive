@@ -2,9 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-import { buildGitTopology, git, tempRoot } from "../harness/fixtures";
-import { runScenarios } from "../harness/scenarios";
+import type { VolumeBehavior } from "../../../src/daemon/project-identity-core/index";
 import {
   foldIdentityKey,
   InMemoryManagedWorktreeLedger,
@@ -13,7 +11,8 @@ import {
   sanitizedGitEnv,
   UnauthenticatedLedgerAccess,
 } from "../../../src/daemon/project-identity-core/index";
-import type { VolumeBehavior } from "../../../src/daemon/project-identity-core/index";
+import { buildGitTopology, git, tempRoot } from "../harness/fixtures";
+import { runScenarios } from "../harness/scenarios";
 
 /**
  * The motion scenarios are the real specification. Running them here means `bun test`
@@ -36,8 +35,15 @@ describe("identity under motion", () => {
   }
 
   test("at least the decisive scenarios actually ran", () => {
-    const decisive = ["move-then-impostor", "delete-recreate", "rename", "bookmark-path-first"];
-    const ran = results.filter((r) => decisive.includes(r.id) && r.status === "pass");
+    const decisive = [
+      "move-then-impostor",
+      "delete-recreate",
+      "rename",
+      "bookmark-path-first",
+    ];
+    const ran = results.filter(
+      (r) => decisive.includes(r.id) && r.status === "pass",
+    );
     expect(ran.map((r) => r.id).sort()).toEqual([...decisive].sort());
   });
 });
@@ -164,9 +170,9 @@ describe("identity key folding", () => {
 describe("managed-worktree ledger", () => {
   test("a forged capability cannot read the ledger", () => {
     const ledger = new InMemoryManagedWorktreeLedger();
-    expect(() => ledger.lookup("/x", { subject: "forged" } as unknown as LedgerCapability)).toThrow(
-      UnauthenticatedLedgerAccess,
-    );
+    expect(() =>
+      ledger.lookup("/x", { subject: "forged" } as unknown as LedgerCapability),
+    ).toThrow(UnauthenticatedLedgerAccess);
   });
 
   test("a file inside the repository grants nothing", () => {
@@ -174,10 +180,15 @@ describe("managed-worktree ledger", () => {
     try {
       const project = join(root, "project");
       mkdirSync(join(project, ".hive"), { recursive: true });
-      writeFileSync(join(project, ".hive", "owner.json"), JSON.stringify({ owningHiveUuid: "stolen" }));
+      writeFileSync(
+        join(project, ".hive", "owner.json"),
+        JSON.stringify({ owningHiveUuid: "stolen" }),
+      );
 
       const ledger = new InMemoryManagedWorktreeLedger();
-      expect(ledger.lookup(project, LedgerCapability.issue("supervisor"))).toBeNull();
+      expect(
+        ledger.lookup(project, LedgerCapability.issue("supervisor")),
+      ).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -59,31 +59,42 @@ describe("config loading", () => {
 
   test("a legacy benchmarks section still parses", async () => {
     await resetHome();
-    await writeFile(join(hiveHome, "config.toml"), '[benchmarks]\nmode = "off"\n');
+    await writeFile(
+      join(hiveHome, "config.toml"),
+      '[benchmarks]\nmode = "off"\n',
+    );
     expect((await loadHiveConfig()).benchmarks.mode).toBe("off");
   });
 
   test("parses model-specific quota pools and rejects invalid timezones", async () => {
     await resetHome();
-    await writeFile(join(hiveHome, "quota.toml"), [
-      "[[limits]]",
-      'provider = "claude"',
-      'pool = "premium"',
-      'models = ["opus", "sonnet"]',
-      "fiveHourAllowance = 100",
-      "weeklyAllowance = 500",
-      'timezone = "America/New_York"',
-    ].join("\n"));
-    expect(await loadQuotaConfig()).toMatchObject({ limits: [{ provider: "claude", pool: "premium" }] });
+    await writeFile(
+      join(hiveHome, "quota.toml"),
+      [
+        "[[limits]]",
+        'provider = "claude"',
+        'pool = "premium"',
+        'models = ["opus", "sonnet"]',
+        "fiveHourAllowance = 100",
+        "weeklyAllowance = 500",
+        'timezone = "America/New_York"',
+      ].join("\n"),
+    );
+    expect(await loadQuotaConfig()).toMatchObject({
+      limits: [{ provider: "claude", pool: "premium" }],
+    });
 
-    await writeFile(join(hiveHome, "quota.toml"), [
-      "[[limits]]",
-      'provider = "codex"',
-      'pool = "agentic"',
-      "fiveHourAllowance = 100",
-      "weeklyAllowance = 500",
-      'timezone = "Mars/Olympus"',
-    ].join("\n"));
+    await writeFile(
+      join(hiveHome, "quota.toml"),
+      [
+        "[[limits]]",
+        'provider = "codex"',
+        'pool = "agentic"',
+        "fiveHourAllowance = 100",
+        "weeklyAllowance = 500",
+        'timezone = "Mars/Olympus"',
+      ].join("\n"),
+    );
     expect(loadQuotaConfig()).rejects.toThrow("unknown timezone");
   });
 });

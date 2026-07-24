@@ -8,8 +8,9 @@
 // it downloads the ~90 MB model on first run and is not part of `bun test`.
 // Run TARGETED, not as part of a full-suite flagged run (see liveFailed):
 //   HIVE_LIVE_MEMORY_EMBEDDINGS=1 bun test test/memory-embedding-live.test.ts
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+
 import { Database } from "bun:sqlite";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -54,7 +55,8 @@ const CANARY = {
     "When available system memory drops under the configured floor, hive " +
     "refuses to launch another agent and reports resource pressure instead.",
 };
-const PARAPHRASE_QUERY = "what happens when RAM is exhausted and a new worker starts";
+const PARAPHRASE_QUERY =
+  "what happens when RAM is exhausted and a new worker starts";
 
 const DISTRACTORS = [
   {
@@ -166,8 +168,9 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
         memory: fts,
         repoRoot: () => repo,
       });
-      const ftsOnlyIds = [...ftsOnly.pitfalls, ...ftsOnly.articles]
-        .map((row) => row.id);
+      const ftsOnlyIds = [...ftsOnly.pitfalls, ...ftsOnly.articles].map(
+        (row) => row.id,
+      );
       expect(ftsOnlyIds).not.toContain(canaryId());
 
       const hybrid = await buildMemoryRecallBundle(PARAPHRASE_QUERY, {
@@ -175,8 +178,9 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
         repoRoot: () => repo,
         semantic: (query, limit) => index.searchArticles(query, limit),
       });
-      const hybridIds = [...hybrid.pitfalls, ...hybrid.articles]
-        .map((row) => row.id);
+      const hybridIds = [...hybrid.pitfalls, ...hybrid.articles].map(
+        (row) => row.id,
+      );
       expect(hybridIds).toContain(canaryId());
     });
   }, 120_000);
@@ -191,12 +195,12 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
     await gated(async () => {
       const report = await runMemorySelfTest({ service });
       const semantic = report.lines.find((line) =>
-        line.includes("semantic-recall")
+        line.includes("semantic-recall"),
       );
       expect(semantic).toBeDefined();
       expect(semantic!.startsWith("PASS ")).toBe(true);
       const dryRun = report.lines.find((line) =>
-        line.includes("consolidation-dry-run")
+        line.includes("consolidation-dry-run"),
       );
       expect(dryRun).toBeDefined();
       expect(dryRun!.startsWith("PASS ")).toBe(true);

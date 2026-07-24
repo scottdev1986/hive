@@ -1,10 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  known,
-  type CapabilityRecord,
-  unknown,
-} from "../../src/schemas";
 import { resolveAutoEffort, validateEffort } from "../../src/daemon/effort";
+import { type CapabilityRecord, known, unknown } from "../../src/schemas";
 
 const observedAt = "2026-07-11T12:00:00.000Z";
 const surface = "claude.initialize" as const;
@@ -22,7 +18,11 @@ function record(overrides: Partial<CapabilityRecord> = {}): CapabilityRecord {
     entitled: known(true, surface, observedAt),
     hidden: unknown("surface-silent", surface, observedAt),
     supportsEffort: known(true, surface, observedAt),
-    supportedEffortLevels: known(["low", "medium", "high"], surface, observedAt),
+    supportedEffortLevels: known(
+      ["low", "medium", "high"],
+      surface,
+      observedAt,
+    ),
     defaultEffort: unknown("surface-silent", surface, observedAt),
     observedAt,
     ...overrides,
@@ -37,24 +37,31 @@ describe("effort eligibility", () => {
   });
 
   test("rejects a positively excluded value and names the supported list", () => {
-    expect(() => validateEffort(record(), "claude-opus-4-8", "xhigh"))
-      .toThrow(
-        "Cannot launch claude-opus-4-8 with effort xhigh: supported effort levels are low, medium, high",
-      );
+    expect(() => validateEffort(record(), "claude-opus-4-8", "xhigh")).toThrow(
+      "Cannot launch claude-opus-4-8 with effort xhigh: supported effort levels are low, medium, high",
+    );
   });
 
   test("an explicit vendor refusal overrides a levels list", () => {
     expect(() =>
-      validateEffort(record({
-        supportsEffort: known(false, surface, observedAt),
-      }), "claude-opus-4-8", "high")
+      validateEffort(
+        record({
+          supportsEffort: known(false, surface, observedAt),
+        }),
+        "claude-opus-4-8",
+        "high",
+      ),
     ).toThrow("does not support effort");
   });
 
   test("unknown is not false and passes through with a warning", () => {
-    const result = validateEffort(record({
-      supportedEffortLevels: unknown("field-absent", surface, observedAt),
-    }), "claude-haiku-4-5", "low");
+    const result = validateEffort(
+      record({
+        supportedEffortLevels: unknown("field-absent", surface, observedAt),
+      }),
+      "claude-haiku-4-5",
+      "low",
+    );
     expect(result.effort).toBe("low");
     expect(result.warning).toContain("does not report supported effort levels");
   });
@@ -109,23 +116,32 @@ describe("Hive-decides effort", () => {
     const future = record({
       supportedEffortLevels: known(["low", "warp"], surface, observedAt),
     });
-    expect(() => resolveAutoEffort(future, "complex_coding"))
-      .toThrow("does not know the ordering semantics of claude warp");
-    expect(validateEffort(future, future.canonicalId, "warp").effort).toBe("warp");
+    expect(() => resolveAutoEffort(future, "complex_coding")).toThrow(
+      "does not know the ordering semantics of claude warp",
+    );
+    expect(validateEffort(future, future.canonicalId, "warp").effort).toBe(
+      "warp",
+    );
   });
 
   test("a model that positively has no effort axis resolves to no flag", () => {
-    expect(resolveAutoEffort(record({
-      supportsEffort: known(false, surface, observedAt),
-      supportedEffortLevels: known([], surface, observedAt),
-    }), "complex_coding")).toEqual({
+    expect(
+      resolveAutoEffort(
+        record({
+          supportsEffort: known(false, surface, observedAt),
+          supportedEffortLevels: known([], surface, observedAt),
+        }),
+        "complex_coding",
+      ),
+    ).toEqual({
       orderedLevels: [],
       basis: "claude reports that this model has no effort setting",
     });
   });
 
   test("missing capability evidence refuses instead of choosing a default", () => {
-    expect(() => resolveAutoEffort(undefined, "standard_coding"))
-      .toThrow("requires a readable model capability record");
+    expect(() => resolveAutoEffort(undefined, "standard_coding")).toThrow(
+      "requires a readable model capability record",
+    );
   });
 });

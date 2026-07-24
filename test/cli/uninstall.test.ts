@@ -7,12 +7,16 @@ import {
   GRAPHIFY_IGNORE_MARKER,
   runCommand,
 } from "../../src/adapters/graphify";
+import {
+  runUninstallMachine,
+  runUninstallRepo,
+  type UninstallDeps,
+} from "../../src/cli/uninstall";
 import { getHiveHome } from "../../src/daemon/db";
-import { projectStateDir } from "../../src/daemon/project-state";
 import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
+import { projectStateDir } from "../../src/daemon/project-state";
 import { shippedSkillsFor } from "../../src/skills/shipped";
-import { runUninstallMachine, runUninstallRepo, type UninstallDeps } from "../../src/cli/uninstall";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -58,7 +62,10 @@ interface Probe {
   leaseEvents: string[];
 }
 
-function probe(confirm: boolean | null, overrides: Partial<UninstallDeps> = {}): Probe {
+function probe(
+  confirm: boolean | null,
+  overrides: Partial<UninstallDeps> = {},
+): Probe {
   const lines: string[] = [];
   const stops: number[] = [];
   const leaseEvents: string[] = [];
@@ -148,21 +155,37 @@ describe("hive uninstall --repo", () => {
       const shipped = shippedSkillsFor("claude");
       expect(shipped.length).toBeGreaterThan(1);
       const [ours, theirs] = [shipped[0]!, shipped[1]!];
-      await mkdir(join(root, ".claude", "skills", ours.name), { recursive: true });
-      await writeFile(join(root, ".claude", "skills", ours.name, "SKILL.md"), ours.content);
-      await mkdir(join(root, ".claude", "skills", theirs.name), { recursive: true });
+      await mkdir(join(root, ".claude", "skills", ours.name), {
+        recursive: true,
+      });
+      await writeFile(
+        join(root, ".claude", "skills", ours.name, "SKILL.md"),
+        ours.content,
+      );
+      await mkdir(join(root, ".claude", "skills", theirs.name), {
+        recursive: true,
+      });
       await writeFile(
         join(root, ".claude", "skills", theirs.name, "SKILL.md"),
         `${theirs.content}\n# my edits\n`,
       );
-      git(root, ["worktree", "add", join(root, ".hive", "worktrees", "wt"), "-b", "hive/wt-task"]);
+      git(root, [
+        "worktree",
+        "add",
+        join(root, ".hive", "worktrees", "wt"),
+        "-b",
+        "hive/wt-task",
+      ]);
       git(root, [
         "update-ref",
         `refs/hive-owner/${hiveInstanceSuffix()}/hive/wt-task`,
         "hive/wt-task",
       ]);
       await mkdir(join(root, ".hive", "skills", "mine"), { recursive: true });
-      await writeFile(join(root, ".hive", "skills", "mine", "SKILL.md"), "# mine\n");
+      await writeFile(
+        join(root, ".hive", "skills", "mine", "SKILL.md"),
+        "# mine\n",
+      );
       await mkdir(join(root, "graphify-out"), { recursive: true });
       await writeFile(join(root, "graphify-out", "graph.json"), "{}");
       await writeFile(
@@ -191,18 +214,31 @@ describe("hive uninstall --repo", () => {
       expect(leaseEvents).toEqual([]);
 
       // Hive's footprint is gone…
-      expect(existsSync(join(root, ".claude", "skills", ours.name))).toBe(false);
+      expect(existsSync(join(root, ".claude", "skills", ours.name))).toBe(
+        false,
+      );
       expect(existsSync(join(root, ".hive", "worktrees"))).toBe(false);
       expect(existsSync(join(root, "graphify-out"))).toBe(false);
       expect(existsSync(projectStateDir(root))).toBe(false);
-      const branches = Bun.spawnSync(["git", "-C", root, "branch", "--list", "hive/*"]);
+      const branches = Bun.spawnSync([
+        "git",
+        "-C",
+        root,
+        "branch",
+        "--list",
+        "hive/*",
+      ]);
       expect(branches.stdout.toString().trim()).toBe("");
-      const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8")
-        .catch(() => "");
+      const exclude = await readFile(
+        join(root, ".git", "info", "exclude"),
+        "utf8",
+      ).catch(() => "");
       expect(exclude).not.toContain("graphify-out/");
       expect(exclude).not.toContain(".graphifyignore");
       expect(existsSync(join(root, ".graphifyignore"))).toBe(false);
-      const mcp = JSON.parse(await readFile(join(root, ".mcp.json"), "utf8")) as {
+      const mcp = JSON.parse(
+        await readFile(join(root, ".mcp.json"), "utf8"),
+      ) as {
         mcpServers: Record<string, unknown>;
       };
       expect(mcp.mcpServers.hive).toBeUndefined();
@@ -211,7 +247,10 @@ describe("hive uninstall --repo", () => {
       expect(mcp.mcpServers.keepers).toBeDefined();
       expect(existsSync(join(root, ".hive", "skills", "mine"))).toBe(true);
       expect(
-        await readFile(join(root, ".claude", "skills", theirs.name, "SKILL.md"), "utf8"),
+        await readFile(
+          join(root, ".claude", "skills", theirs.name, "SKILL.md"),
+          "utf8",
+        ),
       ).toContain("# my edits");
       expect(lines.join("\n")).toContain("differs from what Hive ships");
     } finally {
@@ -240,14 +279,30 @@ describe("hive uninstall --repo", () => {
       expect(await runUninstallRepo(root, {}, deps)).toBe(0);
       expect(existsSync(ownPath)).toBe(false);
       expect(existsSync(siblingPath)).toBe(true);
-      expect(Bun.spawnSync([
-        "git", "-C", root, "show-ref", "--verify", "refs/heads/hive/maya-own",
-      ]).exitCode).not.toBe(0);
-      expect(Bun.spawnSync([
-        "git", "-C", root, "show-ref", "--verify", "refs/heads/hive/david-sibling",
-      ]).exitCode).toBe(0);
+      expect(
+        Bun.spawnSync([
+          "git",
+          "-C",
+          root,
+          "show-ref",
+          "--verify",
+          "refs/heads/hive/maya-own",
+        ]).exitCode,
+      ).not.toBe(0);
+      expect(
+        Bun.spawnSync([
+          "git",
+          "-C",
+          root,
+          "show-ref",
+          "--verify",
+          "refs/heads/hive/david-sibling",
+        ]).exitCode,
+      ).toBe(0);
       expect(lines.join("\n")).toContain("Left sibling-owned worktree");
-      expect(lines.join("\n")).toContain("Left sibling-owned branch hive/david-sibling");
+      expect(lines.join("\n")).toContain(
+        "Left sibling-owned branch hive/david-sibling",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -266,13 +321,25 @@ describe("hive uninstall --repo", () => {
       const { deps, lines } = probe(true, {
         run: async (argv, options) =>
           argv[0] === "git" && argv[1] === "branch" && argv[2] === "-D"
-            ? { exitCode: 1, stdout: "", stderr: "branch is locked", timedOut: false }
+            ? {
+                exitCode: 1,
+                stdout: "",
+                stderr: "branch is locked",
+                timedOut: false,
+              }
             : runCommand(argv, options),
       });
       expect(await runUninstallRepo(root, {}, deps)).toBe(1);
-      expect(Bun.spawnSync([
-        "git", "-C", root, "show-ref", "--verify", "refs/heads/hive/maya-owned",
-      ]).exitCode).toBe(0);
+      expect(
+        Bun.spawnSync([
+          "git",
+          "-C",
+          root,
+          "show-ref",
+          "--verify",
+          "refs/heads/hive/maya-owned",
+        ]).exitCode,
+      ).toBe(0);
       expect(lines.join("\n")).toContain("branch is locked");
       expect(lines.join("\n")).not.toContain("Hive is removed from this repo");
     } finally {
@@ -337,17 +404,19 @@ describe("hive uninstall", () => {
     process.env.HIVE_HOME = home;
     try {
       const { deps, lines, stops } = probe(true, {
-        liveTeams: async () => [{
-          instance: {
-            name: "review",
-            home: join(home, "instances", "review"),
-            instanceId: "instance-review",
-            port: 4318,
-            pid: 1234,
-            running: true,
+        liveTeams: async () => [
+          {
+            instance: {
+              name: "review",
+              home: join(home, "instances", "review"),
+              instanceId: "instance-review",
+              port: 4318,
+              pid: 1234,
+              running: true,
+            },
+            liveAgents: ["maya"],
           },
-          liveAgents: ["maya"],
-        }],
+        ],
       });
       expect(await runUninstallMachine({}, deps)).toBe(1);
       expect(stops).toEqual([]);
@@ -454,17 +523,21 @@ describe("hive uninstall", () => {
       const { deps, lines, stops, leaseEvents } = probe(true, {
         liveTeams: async () => {
           checks += 1;
-          return checks === 1 ? [] : [{
-            instance: {
-              name: "review",
-              home: join(home, "instances", "review"),
-              instanceId: "instance-review",
-              port: 4318,
-              pid: 1234,
-              running: true,
-            },
-            liveAgents: ["new-agent"],
-          }];
+          return checks === 1
+            ? []
+            : [
+                {
+                  instance: {
+                    name: "review",
+                    home: join(home, "instances", "review"),
+                    instanceId: "instance-review",
+                    port: 4318,
+                    pid: 1234,
+                    running: true,
+                  },
+                  liveAgents: ["new-agent"],
+                },
+              ];
         },
       });
       expect(await runUninstallMachine({}, deps)).toBe(1);

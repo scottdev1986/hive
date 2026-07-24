@@ -25,8 +25,9 @@ describe("shell-backed terminal sessions", () => {
   });
 
   test("refuses a command that cannot be entered into a terminal", () => {
-    expect(() => shellSessionLaunch("codex\0ignored"))
-      .toThrow("terminal command contains a NUL byte");
+    expect(() => shellSessionLaunch("codex\0ignored")).toThrow(
+      "terminal command contains a NUL byte",
+    );
   });
 
   test("provider exit leaves the same terminal at a working zsh", async () => {

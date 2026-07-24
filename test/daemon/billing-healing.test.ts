@@ -3,11 +3,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type AccountBilling,
   BILLING_MEMORY_TTL_MINUTES,
   poolAvailability,
   readBillingWithMemory,
   spendRisk,
-  type AccountBilling,
 } from "../../src/daemon/usage-credits";
 import { known, unknown } from "../../src/schemas/capability";
 
@@ -73,7 +73,9 @@ describe("an exhausted pool nothing can pay for means UNAVAILABLE, not free", ()
     // ABSENCE meant "exclude", the fallthrough target would exclude itself and
     // nothing on the account could route.
     const normal = billing({ modelUtilization: { fable: 17 } });
-    expect(poolAvailability(normal, "Default (recommended)").state).toBe("available");
+    expect(poolAvailability(normal, "Default (recommended)").state).toBe(
+      "available",
+    );
     expect(poolAvailability(normal, "Sonnet").state).toBe("available");
     // And the model that DOES have a pool, with headroom, stays available: he pays
     // for that capacity and excluding it early is the harm the deleted cutoff did.
@@ -83,7 +85,9 @@ describe("an exhausted pool nothing can pay for means UNAVAILABLE, not free", ()
   test("it keys on money and metering, never on a model's name", () => {
     // The same rule, on a model that is not Fable and not even Claude.
     const spent = billing({ modelUtilization: { "some-future-model": 100 } });
-    expect(poolAvailability(spent, "Some-Future-Model").state).toBe("exhausted");
+    expect(poolAvailability(spent, "Some-Future-Model").state).toBe(
+      "exhausted",
+    );
   });
 });
 
@@ -109,7 +113,9 @@ describe("the billing reader heals itself", () => {
     expect(calls).toBe(2);
     // And it recovered the fact that decides everything: credits are OFF, so
     // nothing can be charged and there is no reason to refuse the launch.
-    expect(healed!.creditsEnabled).toEqual(known(false, "claude.get_usage", AT));
+    expect(healed!.creditsEnabled).toEqual(
+      known(false, "claude.get_usage", AT),
+    );
     expect(spendRisk(healed!, "Fable").state).toBe("no-spend");
     // Loudly, once — not silently, and not on every spawn.
     expect(warnings).toHaveLength(1);
@@ -123,9 +129,8 @@ describe("the billing reader heals itself", () => {
     });
     const stale = await readBillingWithMemory("claude", {
       read: async () => SILENT,
-      now: () => new Date(
-        Date.parse(AT) + (BILLING_MEMORY_TTL_MINUTES + 1) * 60_000,
-      ),
+      now: () =>
+        new Date(Date.parse(AT) + (BILLING_MEMORY_TTL_MINUTES + 1) * 60_000),
       warn: () => {},
     });
     // Not a confident guess dressed as a measurement: unknown, so the guard asks.
@@ -143,7 +148,8 @@ describe("the billing reader heals itself", () => {
 
   test("it climbs back up by itself when the surface answers again", async () => {
     await readBillingWithMemory("claude", {
-      read: async () => billing({ generalUtilization: known(30, "claude.get_usage", AT) }),
+      read: async () =>
+        billing({ generalUtilization: known(30, "claude.get_usage", AT) }),
       now: () => new Date(AT),
     });
     await readBillingWithMemory("claude", {
@@ -154,7 +160,8 @@ describe("the billing reader heals itself", () => {
     // The vendor comes back. Nothing is pinned to the degraded state, and no
     // restart is needed: the next read is simply live again.
     const recovered = await readBillingWithMemory("claude", {
-      read: async () => billing({ generalUtilization: known(44, "claude.get_usage", AT) }),
+      read: async () =>
+        billing({ generalUtilization: known(44, "claude.get_usage", AT) }),
       now: () => NOW,
     });
     expect(recovered!.generalUtilization).toEqual(

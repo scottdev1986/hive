@@ -17,10 +17,7 @@ describe("invoker identity (#70)", () => {
 
     expect(identity.pid).toBe(process.pid);
     expect(identity.ppid).toBe(process.ppid);
-    expect(identity.chain).toEqual([
-      `${process.ppid}:zsh`,
-      "900:zsh",
-    ]);
+    expect(identity.chain).toEqual([`${process.ppid}:zsh`, "900:zsh"]);
     expect(identity.argv).toEqual(process.argv.slice(2));
     expect(identity.cwd).toBe(process.cwd());
   });

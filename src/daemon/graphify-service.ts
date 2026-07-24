@@ -17,15 +17,15 @@
 import { existsSync } from "node:fs";
 import type { Subprocess } from "bun";
 import {
-  graphJsonPath,
-  graphifyMcpBin,
   buildGraph,
+  type CommandRunner,
+  graphifyMcpBin,
+  graphJsonPath,
   runCommand,
   scrubbedGraphifyEnv,
   servingGraphPath,
   snapshotGraphForServing,
   updateGraph,
-  type CommandRunner,
 } from "../adapters/graphify";
 
 const READINESS_TIMEOUT_MS = 15_000;
@@ -89,7 +89,9 @@ export class GraphifyService {
       const built = await buildGraph(this.repoRoot, this.run);
       if (!built.ok) {
         this.lastError = built.reason;
-        this.log(`graphify: initial build failed — agents run without graph context: ${built.reason}`);
+        this.log(
+          `graphify: initial build failed — agents run without graph context: ${built.reason}`,
+        );
         return;
       }
     }
@@ -121,7 +123,9 @@ export class GraphifyService {
         const updated = await updateGraph(this.repoRoot, this.run);
         if (!updated.ok) {
           this.lastError = updated.reason;
-          this.log(`graphify: incremental rebuild failed — serving the previous graph: ${updated.reason}`);
+          this.log(
+            `graphify: incremental rebuild failed — serving the previous graph: ${updated.reason}`,
+          );
           return;
         }
         // Only a rebuild that exited 0 earns a restart; the old process keeps
@@ -146,12 +150,14 @@ export class GraphifyService {
     if (!snapshot.ok) {
       this.log(`graphify: ${snapshot.reason}; serving the live graph file`);
     }
-    const port = this.port ?? await freeLoopbackPort();
+    const port = this.port ?? (await freeLoopbackPort());
     const child = Bun.spawn(
       [
         graphifyMcpBin(),
         "--graph",
-        snapshot.ok ? servingGraphPath(this.repoRoot) : graphJsonPath(this.repoRoot),
+        snapshot.ok
+          ? servingGraphPath(this.repoRoot)
+          : graphJsonPath(this.repoRoot),
         "--transport",
         "http",
         "--host",
@@ -180,7 +186,9 @@ export class GraphifyService {
         this.child = null;
         this.port = null;
         this.lastError = "graphify MCP server exited";
-        this.log("graphify: MCP server exited — agents spawn without graph tools until the next rebuild or daemon start");
+        this.log(
+          "graphify: MCP server exited — agents spawn without graph tools until the next rebuild or daemon start",
+        );
       }
     });
 
@@ -197,7 +205,9 @@ export class GraphifyService {
         if (this.child !== child || child.exitCode !== null) break;
         this.port = port;
         this.lastError = null;
-        this.log(`graphify: MCP server serving ${graphJsonPath(this.repoRoot)} on 127.0.0.1:${port}`);
+        this.log(
+          `graphify: MCP server serving ${graphJsonPath(this.repoRoot)} on 127.0.0.1:${port}`,
+        );
         return;
       } catch {
         await Bun.sleep(250);

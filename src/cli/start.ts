@@ -10,27 +10,32 @@
  * on a failed check, because that sentence is a claim about the world and we
  * would not have looked.
  */
-import { basename, join } from "node:path";
+
 import { cp, mkdir } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { getHiveHome } from "../daemon/db";
 import { expectedDaemonHandshake } from "../daemon/handshake";
-import { ensureStarted } from "../daemon/lifecycle";
-import { checkForUpdate, fetchLatestFromGitHub, readUpdateCache, isDismissed } from "../update/check";
+import { isDefaultHiveHome } from "../daemon/instance-identity";
+import { selectFreshInstance } from "../daemon/instances";
+import { ensureStarted, isRunning } from "../daemon/lifecycle";
+import { projectStateDir } from "../daemon/project-state";
+import type { UpdateCheck } from "../update/check";
+import {
+  checkForUpdate,
+  fetchLatestFromGitHub,
+  isDismissed,
+  readUpdateCache,
+} from "../update/check";
 import {
   explainRefusal,
   inspectDaemonForUpdate,
   restartStaleDaemon,
 } from "../update/daemon";
-import { detectInstallMethod, installRoot } from "../update/paths";
 import { isStaged, readInstallState } from "../update/install";
 import { renderStartNotice } from "../update/notice";
-import { isRunning } from "../daemon/lifecycle";
-import { liveAgentNames } from "./update";
-import type { UpdateCheck } from "../update/check";
+import { detectInstallMethod, installRoot } from "../update/paths";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
-import { selectFreshInstance } from "../daemon/instances";
-import { isDefaultHiveHome } from "../daemon/instance-identity";
-import { getHiveHome } from "../daemon/db";
-import { projectStateDir } from "../daemon/project-state";
+import { liveAgentNames } from "./update";
 
 export interface StartDeps {
   readonly checkUpdate?: () => Promise<UpdateCheck>;
@@ -54,25 +59,34 @@ function stagedVersion(latest: string | null): string | null {
 }
 
 export async function printStartNotice(deps: StartDeps = {}): Promise<void> {
-  const write = deps.write ?? ((line: string) => process.stderr.write(`${line}\n`));
-  const check = await (deps.checkUpdate ?? (() =>
-    checkForUpdate({
-      fetchLatest: () => fetchLatestFromGitHub(),
-      now: () => Date.now(),
-    })))();
+  const write =
+    deps.write ?? ((line: string) => process.stderr.write(`${line}\n`));
+  const check = await (
+    deps.checkUpdate ??
+    (() =>
+      checkForUpdate({
+        fetchLatest: () => fetchLatestFromGitHub(),
+        now: () => Date.now(),
+      }))
+  )();
 
   // `hive update skip` silences a version everywhere except a security release.
-  if (check.state === "update-available" && !check.securityCritical &&
-    isDismissed(check.latest, readUpdateCache())) {
+  if (
+    check.state === "update-available" &&
+    !check.securityCritical &&
+    isDismissed(check.latest, readUpdateCache())
+  ) {
     return;
   }
 
   const latest = check.state === "update-available" ? check.latest : null;
-  write(renderStartNotice({
-    check,
-    installMethod: detectInstallMethod(process.execPath),
-    staged: stagedVersion(latest),
-  }));
+  write(
+    renderStartNotice({
+      check,
+      installMethod: detectInstallMethod(process.execPath),
+      staged: stagedVersion(latest),
+    }),
+  );
 }
 
 /**
@@ -88,13 +102,18 @@ export async function printStartNotice(deps: StartDeps = {}): Promise<void> {
 export async function ensureDaemonForBuild(cwd = process.cwd()): Promise<void> {
   if (!(await isRunning())) return;
   const expected = await expectedDaemonHandshake(cwd);
-  const state = await inspectDaemonForUpdate({ expected, liveAgents: liveAgentNames });
+  const state = await inspectDaemonForUpdate({
+    expected,
+    liveAgents: liveAgentNames,
+  });
   if (state.state === "current" || state.state === "absent") return;
 
   const refusal = explainRefusal(state);
   if (refusal !== null) throw new Error(refusal);
 
-  const outcome = await restartStaleDaemon(state, { isRunning: () => isRunning() });
+  const outcome = await restartStaleDaemon(state, {
+    isRunning: () => isRunning(),
+  });
   if (!outcome.stopped) {
     throw new Error(`cannot start: ${outcome.reason}`);
   }
@@ -136,7 +155,9 @@ async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
  * preparation, fresh-instance selection, and daemon bring-up. `hive init`
  * deliberately does not cross this boundary.
  */
-export async function startSession(deps: StartDeps = {}): Promise<StartedSession> {
+export async function startSession(
+  deps: StartDeps = {},
+): Promise<StartedSession> {
   await printStartNotice(deps).catch(() => {
     // A broken update check must never stop a project from starting.
   });

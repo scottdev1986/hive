@@ -20,7 +20,8 @@ export function parseDaemonStartupAnnouncement(
   if (!line.startsWith(DAEMON_STARTUP_PREFIX)) return null;
   try {
     const value: unknown = JSON.parse(line.slice(DAEMON_STARTUP_PREFIX.length));
-    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return null;
     const announcement = value as Record<string, unknown>;
     if (
       typeof announcement.engineBuildId !== "string" ||
@@ -29,7 +30,8 @@ export function parseDaemonStartupAnnouncement(
       !isAbsolute(announcement.binaryPath) ||
       typeof announcement.sourceHash !== "string" ||
       !/^[0-9a-f]{64}$/.test(announcement.sourceHash)
-    ) return null;
+    )
+      return null;
     return {
       engineBuildId: announcement.engineBuildId,
       binaryPath: announcement.binaryPath,

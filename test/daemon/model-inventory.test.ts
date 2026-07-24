@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildModelInventory,
+  formatModelInventory,
+} from "../../src/daemon/model-inventory";
+import {
   CAPABILITY_PROVIDERS,
-  known,
-  unknown,
   type CapabilityRecord,
   type CapabilitySurface,
+  known,
   type RoutingPolicy,
+  unknown,
 } from "../../src/schemas";
-import { buildModelInventory, formatModelInventory } from "../../src/daemon/model-inventory";
 
 const AT = "2026-07-11T12:00:00.000Z";
 
@@ -16,7 +19,8 @@ function record(
   canonicalId: string,
   options: { hidden?: boolean; efforts?: string[] } = {},
 ): CapabilityRecord {
-  const surface = provider === "claude" ? "claude.initialize" : "codex.model/list";
+  const surface =
+    provider === "claude" ? "claude.initialize" : "codex.model/list";
   return {
     provider,
     accountFingerprint: `${provider}:test`,
@@ -29,15 +33,18 @@ function record(
     entitled: known(true, surface, AT),
     hidden: known(options.hidden ?? false, surface, AT),
     supportsEffort: unknown("surface-silent", surface, AT),
-    supportedEffortLevels: options.efforts === undefined
-      ? unknown("field-absent", surface, AT)
-      : known(options.efforts, surface, AT),
+    supportedEffortLevels:
+      options.efforts === undefined
+        ? unknown("field-absent", surface, AT)
+        : known(options.efforts, surface, AT),
     defaultEffort: unknown("surface-silent", surface, AT),
     observedAt: AT,
   };
 }
 
-const fable = record("claude", "claude-fable-5", { efforts: ["high", "xhigh"] });
+const fable = record("claude", "claude-fable-5", {
+  efforts: ["high", "xhigh"],
+});
 const hidden = record("codex", "gpt-hidden", { hidden: true });
 const spare = record("codex", "gpt-spare");
 
@@ -74,8 +81,16 @@ const policy: RoutingPolicy = {
   models: [],
   chains: {
     complex_coding: [
-      { provider: "claude", model: "claude-fable-5", effort: { mode: "exact", value: "xhigh" } },
-      { provider: "codex", model: "gpt-hidden", effort: { mode: "provider-controlled" } },
+      {
+        provider: "claude",
+        model: "claude-fable-5",
+        effort: { mode: "exact", value: "xhigh" },
+      },
+      {
+        provider: "codex",
+        model: "gpt-hidden",
+        effort: { mode: "provider-controlled" },
+      },
     ],
   },
   selection: { global: "auto", categories: {} },
@@ -83,7 +98,11 @@ const policy: RoutingPolicy = {
 
 describe("model inventory", () => {
   test("renders every discovered record, including hidden and unrouted models", () => {
-    const inventory = buildModelInventory({ discovery, policy, now: new Date(AT) });
+    const inventory = buildModelInventory({
+      discovery,
+      policy,
+      now: new Date(AT),
+    });
     expect(inventory.complete).toBe(false);
     expect(inventory.discoveredCount).toBe(3);
     expect(inventory.renderedCount).toBe(3);
@@ -92,25 +111,39 @@ describe("model inventory", () => {
       "gpt-hidden",
       "gpt-spare",
     ]);
-    expect(inventory.models.find((model) => model.canonicalId === "gpt-hidden"))
-      .toMatchObject({
-        hidden: "hidden",
-        routedCandidate: true,
-        roles: [{ category: "complex_coding", position: 1, effort: { mode: "provider-controlled" } }],
-      });
+    expect(
+      inventory.models.find((model) => model.canonicalId === "gpt-hidden"),
+    ).toMatchObject({
+      hidden: "hidden",
+      routedCandidate: true,
+      roles: [
+        {
+          category: "complex_coding",
+          position: 1,
+          effort: { mode: "provider-controlled" },
+        },
+      ],
+    });
   });
 
   test("explains primary, fallback, and unrouted use in plain words", () => {
-    const inventory = buildModelInventory({ discovery, policy, now: new Date(AT) });
+    const inventory = buildModelInventory({
+      discovery,
+      policy,
+      now: new Date(AT),
+    });
     expect(inventory.models[0]?.when).toContain("Primary for complex_coding");
-    expect(inventory.models[1]?.when).toContain("Fallback 1 for complex_coding");
+    expect(inventory.models[1]?.when).toContain(
+      "Fallback 1 for complex_coding",
+    );
     const unroutedPolicy = {
       ...policy,
       chains: { complex_coding: [policy.chains.complex_coding![0]!] },
     };
     const unrouted = buildModelInventory({ discovery, policy: unroutedPolicy });
-    expect(unrouted.models.find((model) => model.canonicalId === "gpt-hidden")?.when)
-      .toContain("Not used automatically");
+    expect(
+      unrouted.models.find((model) => model.canonicalId === "gpt-hidden")?.when,
+    ).toContain("Not used automatically");
   });
 
   test("renders the complete inventory and provenance for humans", () => {
@@ -149,7 +182,11 @@ describe("model inventory", () => {
   test("a discovered model keeps its routes and every advertised effort", () => {
     // Ruling: a discovered, entitled model — and every effort level it
     // advertises — must be routable.
-    const inventory = buildModelInventory({ discovery, policy, now: new Date(AT) });
+    const inventory = buildModelInventory({
+      discovery,
+      policy,
+      now: new Date(AT),
+    });
     const model = inventory.models.find(
       (entry) => entry.canonicalId === "claude-fable-5",
     )!;
@@ -166,15 +203,24 @@ describe("model inventory", () => {
 
 describe("provider completeness: unavailable is a legal state, absent is impossible", () => {
   test("every vendor in the union appears even when its discovery is unavailable — grok included", () => {
-    const inventory = buildModelInventory({ discovery, policy, now: new Date(AT) });
-    expect(Object.keys(inventory.providers).sort())
-      .toEqual([...CAPABILITY_PROVIDERS].sort());
-    expect(inventory.providers.grok)
-      .toEqual({ status: "unavailable", reason: "not in fixture" });
-    expect(inventory.warnings)
-      .toContain("grok discovery unavailable: not in fixture");
-    expect(formatModelInventory(inventory))
-      .toContain("grok — UNAVAILABLE: not in fixture");
+    const inventory = buildModelInventory({
+      discovery,
+      policy,
+      now: new Date(AT),
+    });
+    expect(Object.keys(inventory.providers).sort()).toEqual(
+      [...CAPABILITY_PROVIDERS].sort(),
+    );
+    expect(inventory.providers.grok).toEqual({
+      status: "unavailable",
+      reason: "not in fixture",
+    });
+    expect(inventory.warnings).toContain(
+      "grok discovery unavailable: not in fixture",
+    );
+    expect(formatModelInventory(inventory)).toContain(
+      "grok — UNAVAILABLE: not in fixture",
+    );
   });
 
   test("a fourth, fake provider appears everywhere — readable as itself, unreadable as unavailable — with no edit to any other file", () => {
@@ -195,7 +241,11 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
         effectiveDefault: {
           provider: "acme",
           model: known("acme-omega-1", "acme.models" as CapabilitySurface, AT),
-          effort: unknown<string>("surface-silent", "acme.models" as CapabilitySurface, AT),
+          effort: unknown<string>(
+            "surface-silent",
+            "acme.models" as CapabilitySurface,
+            AT,
+          ),
         },
       },
     } as unknown as typeof discovery;
@@ -205,8 +255,10 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
       policy, // the derivation knows nothing about acme; unrouted ≠ invisible
       now: new Date(AT),
     });
-    expect((inventory.providers as Record<string, unknown>).acme)
-      .toEqual({ status: "ok", count: 1 });
+    expect((inventory.providers as Record<string, unknown>).acme).toEqual({
+      status: "ok",
+      count: 1,
+    });
     const model = inventory.models.find(
       (entry) => entry.canonicalId === "acme-omega-1",
     );
@@ -226,10 +278,16 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
       policy,
       now: new Date(AT),
     });
-    expect((dark.providers as Record<string, unknown>).acme)
-      .toEqual({ status: "unavailable", reason: "no probe answered" });
-    expect(dark.warnings).toContain("acme discovery unavailable: no probe answered");
-    expect(formatModelInventory(dark)).toContain("acme — UNAVAILABLE: no probe answered");
+    expect((dark.providers as Record<string, unknown>).acme).toEqual({
+      status: "unavailable",
+      reason: "no probe answered",
+    });
+    expect(dark.warnings).toContain(
+      "acme discovery unavailable: no probe answered",
+    );
+    expect(formatModelInventory(dark)).toContain(
+      "acme — UNAVAILABLE: no probe answered",
+    );
   });
 
   test("a union vendor missing from the discovery record entirely is rendered unreadable, never dropped", () => {
@@ -243,7 +301,9 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
     });
     expect(inventory.providers.grok.status).toBe("unavailable");
     expect(inventory.complete).toBe(false);
-    expect(inventory.warnings.some((warning) => warning.startsWith("grok "))).toBeTrue();
+    expect(
+      inventory.warnings.some((warning) => warning.startsWith("grok ")),
+    ).toBeTrue();
   });
 });
 
@@ -261,7 +321,9 @@ describe("effort is three-valued at the inventory edge", () => {
       policy,
       now: new Date(AT),
     });
-    const model = inventory.models.find((entry) => entry.canonicalId === "gpt-flat")!;
+    const model = inventory.models.find(
+      (entry) => entry.canonicalId === "gpt-flat",
+    )!;
     expect(model.effortLevels).toMatchObject({ state: "known-none" });
     expect(formatModelInventory(inventory)).toContain("effort      none —");
   });
@@ -276,14 +338,22 @@ describe("effort is three-valued at the inventory edge", () => {
       policy,
       now: new Date(AT),
     });
-    const model = inventory.models.find((entry) => entry.canonicalId === "gpt-bare")!;
+    const model = inventory.models.find(
+      (entry) => entry.canonicalId === "gpt-bare",
+    )!;
     expect(model.effortLevels).toEqual({ state: "known", values: [] });
     expect(formatModelInventory(inventory)).toContain("none advertised");
   });
 
   test("an unreadable effort surface stays unknown with its reason", () => {
-    const inventory = buildModelInventory({ discovery, policy, now: new Date(AT) });
-    const model = inventory.models.find((entry) => entry.canonicalId === "gpt-spare")!;
+    const inventory = buildModelInventory({
+      discovery,
+      policy,
+      now: new Date(AT),
+    });
+    const model = inventory.models.find(
+      (entry) => entry.canonicalId === "gpt-spare",
+    )!;
     expect(model.effortLevels).toEqual({
       state: "unknown",
       reason: "field-absent",

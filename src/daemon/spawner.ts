@@ -1,10 +1,10 @@
 import { z } from "zod";
 import {
-  CapabilityProviderSchema,
-  RoutingCategorySchema,
-  type AgentRecord,
   type AgentMessage,
+  type AgentRecord,
+  CapabilityProviderSchema,
   type ExecutionIdentity,
+  RoutingCategorySchema,
 } from "../schemas";
 import type { AuthorizedLaunch } from "./authorized-launch";
 
@@ -23,7 +23,12 @@ export const SpawnRequestSchema = z.strictObject({
   model: z.string().min(1).optional(),
   // A user directive, passed verbatim after validation against the resolved
   // model's discovered capability record. No default is implied.
-  effort: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/).optional(),
+  effort: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9-]+$/)
+    .optional(),
   /**
    * The long-context requirement MODIFIER (not a category): links whose
    * measured context window is unknown or below this fail the gate. Unknown

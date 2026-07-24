@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorktree, listWorktrees } from "../../src/adapters/worktrees";
 import { loadHiveConfig } from "../../src/config/load";
-import type { AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import type { SessionSender } from "../../src/daemon/delivery";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
 import { submitPaste } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
@@ -56,12 +56,8 @@ const offlineRootProtocol = {
   },
 };
 
-const OLD_ENOUGH = new Date(
-  Date.now() - 15 * 60_000,
-).toISOString();
-const TOO_RECENT = new Date(
-  Date.now() - 2 * 60_000,
-).toISOString();
+const OLD_ENOUGH = new Date(Date.now() - 15 * 60_000).toISOString();
+const TOO_RECENT = new Date(Date.now() - 2 * 60_000).toISOString();
 
 async function git(repoRoot: string, ...args: string[]): Promise<string> {
   const child = Bun.spawn(["git", "-C", repoRoot, ...args], {
@@ -86,15 +82,17 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-function reapDaemon(overrides: {
-  idleReap?: boolean;
-  idleReapMinutes?: number;
-  assessStrandedWork?: (
-    repoRoot: string,
-    worktreePath: string | null,
-    branch: string | null,
-  ) => Promise<{ dirtyFiles: string[]; unmergedCommits: number }>;
-} = {}) {
+function reapDaemon(
+  overrides: {
+    idleReap?: boolean;
+    idleReapMinutes?: number;
+    assessStrandedWork?: (
+      repoRoot: string,
+      worktreePath: string | null,
+      branch: string | null,
+    ) => Promise<{ dirtyFiles: string[]; unmergedCommits: number }>;
+  } = {},
+) {
   const db = new HiveDatabase(":memory:");
   const removedWorktrees: Array<[string, string]> = [];
   const daemon = new HiveDaemon({
@@ -111,7 +109,8 @@ function reapDaemon(overrides: {
     removeWorktree: async (repoRoot, worktreePath) => {
       removedWorktrees.push([repoRoot, worktreePath]);
     },
-    assessStrandedWork: overrides.assessStrandedWork ??
+    assessStrandedWork:
+      overrides.assessStrandedWork ??
       (async () => ({ dirtyFiles: [], unmergedCommits: 0 })),
   });
   return { db, daemon, removedWorktrees };
@@ -125,7 +124,9 @@ describe("idle-agent reap sweep", () => {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      const warning = db.listMessages().find((message) => message.to === "maya");
+      const warning = db
+        .listMessages()
+        .find((message) => message.to === "maya");
       expect(warning?.body).toContain("Persist any findings");
       db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
@@ -162,25 +163,36 @@ describe("idle-agent reap sweep", () => {
       lifecycle: { idleReap: true, idleReapMinutes: 10 },
       resourceRunners: { orphans: null },
     });
-    db.insertAgent(agent({
-      lastEventAt: OLD_ENOUGH,
-      worktreePath: target.path,
-      branch: target.branch,
-    }));
+    db.insertAgent(
+      agent({
+        lastEventAt: OLD_ENOUGH,
+        worktreePath: target.path,
+        branch: target.branch,
+      }),
+    );
     try {
       await daemon.reapIdleAgents();
-      const warning = db.listMessages().find((message) => message.to === "maya");
+      const warning = db
+        .listMessages()
+        .find((message) => message.to === "maya");
       db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
 
       const standing = await listWorktrees(repoRoot);
-      expect(standing.some(({ branch }) => branch === target.branch)).toBe(false);
-      expect(standing.some(({ branch }) => branch === unrelated.branch)).toBe(true);
+      expect(standing.some(({ branch }) => branch === target.branch)).toBe(
+        false,
+      );
+      expect(standing.some(({ branch }) => branch === unrelated.branch)).toBe(
+        true,
+      );
       expect(await pathExists(target.path)).toBe(false);
       expect(await pathExists(unrelated.path)).toBe(true);
-      expect(await git(repoRoot, "branch", "--list", target.branch)).toEqual("");
-      expect(await git(repoRoot, "branch", "--list", unrelated.branch))
-        .toContain(unrelated.branch);
+      expect(await git(repoRoot, "branch", "--list", target.branch)).toEqual(
+        "",
+      );
+      expect(
+        await git(repoRoot, "branch", "--list", unrelated.branch),
+      ).toContain(unrelated.branch);
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "dead",
         worktreePath: null,
@@ -198,7 +210,9 @@ describe("idle-agent reap sweep", () => {
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     try {
       await daemon.reapIdleAgents();
-      const warning = db.listMessages().find((message) => message.to === "maya");
+      const warning = db
+        .listMessages()
+        .find((message) => message.to === "maya");
       db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
 
@@ -360,7 +374,7 @@ describe("idle-agent reap sweep", () => {
     await mkdir(hiveHome, { recursive: true });
     const previousHiveHome = Bun.env.HIVE_HOME;
     Bun.env.HIVE_HOME = hiveHome;
-    let config;
+    let config: Awaited<ReturnType<typeof loadHiveConfig>>;
     try {
       config = await loadHiveConfig();
     } finally {
@@ -388,7 +402,9 @@ describe("idle-agent reap sweep", () => {
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     try {
       await daemon.reapIdleAgents();
-      const warning = db.listMessages().find((message) => message.to === "maya");
+      const warning = db
+        .listMessages()
+        .find((message) => message.to === "maya");
       db.transitionMessage(warning!.id, "applied", new Date().toISOString());
       await daemon.reapIdleAgents();
 

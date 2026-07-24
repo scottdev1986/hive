@@ -92,7 +92,10 @@ export function parseDocOutline(source: string): DocSection[] {
       level: start.level,
       startLine: start.index + 1,
       endLine: endIndex + 1,
-      body: lines.slice(start.index, endIndex + 1).join("\n").trimEnd(),
+      body: lines
+        .slice(start.index, endIndex + 1)
+        .join("\n")
+        .trimEnd(),
     };
   });
 }
@@ -171,7 +174,10 @@ export function findTaskDocReferences(
   // doc simply has no such special case.
   if (config.primaryDoc !== null) {
     const bareName = basename(config.primaryDoc).replace(/\.md$/i, "");
-    const bareRule = new RegExp(`\\b${escapeRegExp(bareName)}\\s*(?:§|section)`, "i");
+    const bareRule = new RegExp(
+      `\\b${escapeRegExp(bareName)}\\s*(?:§|section)`,
+      "i",
+    );
     if (!references.has(config.primaryDoc) && bareRule.test(task)) {
       const sections: (number | string)[] = [];
       for (const selector of task.matchAll(SECTION_SELECTOR)) {
@@ -191,7 +197,10 @@ export function findTaskDocReferences(
 }
 
 const normalize = (value: string): string =>
-  value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 
 /** Match a task's selector against the doc's sections. Numeric selectors match
  * a heading's leading ordinal; string selectors match heading text loosely. */
@@ -201,13 +210,14 @@ export function selectSections(
 ): DocSection[] {
   const selected: DocSection[] = [];
   for (const selector of selectors) {
-    const match = typeof selector === "number"
-      ? outline.find((section) => section.ordinal === selector)
-      : outline.find((section) => {
-          const heading = normalize(section.heading);
-          const wanted = normalize(selector);
-          return heading === wanted || heading.includes(wanted);
-        });
+    const match =
+      typeof selector === "number"
+        ? outline.find((section) => section.ordinal === selector)
+        : outline.find((section) => {
+            const heading = normalize(section.heading);
+            const wanted = normalize(selector);
+            return heading === wanted || heading.includes(wanted);
+          });
     if (match !== undefined && !selected.includes(match)) {
       selected.push(match);
     }
@@ -237,8 +247,10 @@ function renderOutline(path: string, outline: DocSection[]): string {
     (section) =>
       `  ${path}:${section.startLine}  ${"  ".repeat(Math.max(0, section.level - 2))}${section.heading}`,
   );
-  return [`Outline of ${path} (read a section only if you need it):`, ...lines]
-    .join("\n");
+  return [
+    `Outline of ${path} (read a section only if you need it):`,
+    ...lines,
+  ].join("\n");
 }
 
 export interface BriefOptions {
@@ -249,7 +261,8 @@ export interface BriefOptions {
   config?: BriefConfig;
 }
 
-const readDocDefault = (path: string): Promise<string> => readFile(path, "utf8");
+const readDocDefault = (path: string): Promise<string> =>
+  readFile(path, "utf8");
 
 /**
  * Build the spawn-time brief for a task. Returns "" when the task names no
@@ -260,7 +273,7 @@ export async function buildScopedBrief(
   task: string,
   options: BriefOptions = {},
 ): Promise<string> {
-  const config = options.config ?? await loadBriefConfig(root);
+  const config = options.config ?? (await loadBriefConfig(root));
   const readDoc = options.readDoc ?? readDocDefault;
   const budget = options.maxChars ?? BRIEF_MAX_CHARS;
   const blocks: string[] = [];

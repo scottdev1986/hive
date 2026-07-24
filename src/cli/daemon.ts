@@ -1,20 +1,25 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
+import { buildGraphBrief } from "../adapters/graphify";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
 import { resolveWorkingCodexExecutable } from "../adapters/tools/codex";
+import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { resolveWorkingGrokExecutable } from "../adapters/tools/grok";
 import { resolveWorkingKimiExecutable } from "../adapters/tools/kimi";
 import { resolveWorkingOpencodeExecutable } from "../adapters/tools/opencode";
+import { persistAutonomy } from "../config/autonomy";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
-import { HiveDatabase } from "../daemon/db";
-import {
-  policyModelEnablement,
-  retireLegacyRoutingToml,
-  RoutingPolicyStore,
-} from "../daemon/routing-policy-store";
-import { buildGraphBrief } from "../adapters/graphify";
+import { getHiveHome, HiveDatabase } from "../daemon/db";
+import { EpisodicStore } from "../daemon/episodic-store";
 import { GraphifyService } from "../daemon/graphify-service";
+import { currentBuildHash } from "../daemon/handshake";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
+import {
+  inheritDefaultModelControlSettings,
+  inheritOrdinaryWorkspaceSelection,
+} from "../daemon/instance-settings";
+import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
@@ -22,22 +27,14 @@ import {
   readConfiguredPort,
   releaseDaemonLock,
 } from "../daemon/lifecycle";
-import { HiveDaemon } from "../daemon/server";
-import { EpisodicStore } from "../daemon/episodic-store";
 import { readWikiLog } from "../daemon/memory-delta";
-import {
-  resolveSessiondBinary,
-  SessiondBrokerSupervisor,
-} from "../daemon/sessiond-broker";
-import { HiveSpawner } from "../daemon/spawner-impl";
-import { StatusStore } from "../daemon/status-store";
-import { agentRecordStatusIncarnationGenerationSource } from "../daemon/status-generation";
+import { readModelInventory } from "../daemon/model-inventory";
+import { QuotaService } from "../daemon/quota";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
   QuotaLedger,
 } from "../daemon/quota-ledger";
-import { QuotaService } from "../daemon/quota";
 import {
   ClaudeQuotaProbe,
   ClaudeStdioProbeTransport,
@@ -47,32 +44,34 @@ import {
   GrokStdioProbeTransport,
 } from "../daemon/quota-sources";
 import {
-  CAPABILITY_PROVIDERS,
-  forEachProvider,
-  type AgentRecord,
-  type CapabilityProvider,
-} from "../schemas";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
-import { readBillingWithMemory } from "../daemon/usage-credits";
-import { persistAutonomy } from "../config/autonomy";
-import { readModelInventory } from "../daemon/model-inventory";
-import { stopSessiondAgentSession } from "../daemon/teardown";
-import {
-  inheritDefaultModelControlSettings,
-  inheritOrdinaryWorkspaceSelection,
-} from "../daemon/instance-settings";
-import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
-import { hiveInstanceSuffix } from "../daemon/instance-identity";
+  policyModelEnablement,
+  RoutingPolicyStore,
+  retireLegacyRoutingToml,
+} from "../daemon/routing-policy-store";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
-import { SessiondHost } from "../daemon/session-host/sessiond-host";
+import { HiveDaemon } from "../daemon/server";
 import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "../daemon/session-host/hive-terminal-host";
+import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
-import { getHiveHome } from "../daemon/db";
+import {
+  resolveSessiondBinary,
+  SessiondBrokerSupervisor,
+} from "../daemon/sessiond-broker";
+import { HiveSpawner } from "../daemon/spawner-impl";
 import { formatDaemonStartupAnnouncement } from "../daemon/startup-announcement";
-import { currentBuildHash } from "../daemon/handshake";
+import { agentRecordStatusIncarnationGenerationSource } from "../daemon/status-generation";
+import { StatusStore } from "../daemon/status-store";
+import { stopSessiondAgentSession } from "../daemon/teardown";
+import { readBillingWithMemory } from "../daemon/usage-credits";
+import {
+  type AgentRecord,
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  forEachProvider,
+} from "../schemas";
 import { HIVE_SOURCE_HASH } from "../version";
 
 export async function startBrokerAndDiscoverEngineBuildId(
@@ -108,9 +107,10 @@ export async function exitAfterDaemonStartupFailure(
   }>,
 ): Promise<never> {
   const message = error instanceof Error ? error.message : String(error);
-  const label = stage === "broker-start"
-    ? "sessiond broker failed to start"
-    : "sessiond engine build discovery failed";
+  const label =
+    stage === "broker-start"
+      ? "sessiond broker failed to start"
+      : "sessiond engine build discovery failed";
   console.error(`${label}: ${message}`);
   try {
     await dependencies.stopBroker();
@@ -139,9 +139,11 @@ export function stopSpawnSession(
   return stopSessiondAgentSession(agent, {
     terminalHost: dependencies.terminalHost,
     readHostPid: async (record) =>
-      (await dependencies.terminalHost.inspect(
-        requireSessiondAgentLocator(record),
-      )).hostPid,
+      (
+        await dependencies.terminalHost.inspect(
+          requireSessiondAgentLocator(record),
+        )
+      ).hostPid,
   });
 }
 
@@ -188,7 +190,9 @@ export async function runDaemon(): Promise<void> {
     hiveHome: getHiveHome(),
     repoRoot,
     onFatal: (error) => {
-      console.error(`sessiond broker supervision failed fatally: ${error.message}`);
+      console.error(
+        `sessiond broker supervision failed fatally: ${error.message}`,
+      );
     },
   });
   const config = await loadHiveConfig();
@@ -197,8 +201,8 @@ export async function runDaemon(): Promise<void> {
   const codexExecutable = resolveWorkingCodexExecutable()?.path ?? "codex";
   const grokExecutable = resolveWorkingGrokExecutable()?.path ?? "grok";
   const kimiExecutable = resolveWorkingKimiExecutable()?.path ?? "kimi";
-  const opencodeExecutable = resolveWorkingOpencodeExecutable()?.path ??
-    "opencode";
+  const opencodeExecutable =
+    resolveWorkingOpencodeExecutable()?.path ?? "opencode";
   const discoveryExecutables: Record<CapabilityProvider, string> = {
     claude: claudeExecutable,
     codex: codexExecutable,
@@ -216,7 +220,9 @@ export async function runDaemon(): Promise<void> {
     Bun.env.HIVE_HOME ?? join(homedir(), ".hive"),
   );
   if (retiredToml !== null) {
-    console.log(`routing.toml is no longer read as policy; preserved at ${retiredToml}`);
+    console.log(
+      `routing.toml is no longer read as policy; preserved at ${retiredToml}`,
+    );
   }
   // First boot only: seed the provisional baseline. Chain entries are EXACT
   // model ids frozen from the vendors' live catalogs right now (an unreadable
@@ -230,7 +236,10 @@ export async function runDaemon(): Promise<void> {
       const vendorDefaults: Partial<Record<CapabilityProvider, string>> = {};
       for (const provider of CAPABILITY_PROVIDERS) {
         const probed = discovery[provider];
-        if (probed.status === "ok" && probed.effectiveDefault.model.state === "known") {
+        if (
+          probed.status === "ok" &&
+          probed.effectiveDefault.model.state === "known"
+        ) {
           vendorDefaults[provider] = probed.effectiveDefault.model.value;
         }
       }
@@ -238,11 +247,14 @@ export async function runDaemon(): Promise<void> {
     })().catch(() => ({ vendorDefaults: {} }));
     routingPolicy.seedProvisionalBaseline(facts);
   }
-  const ordinarySelection = process.env[ORDINARY_WORKSPACE_RUNTIME] === "1"
-    ? new SelectionPreferenceStore()
-    : undefined;
+  const ordinarySelection =
+    process.env[ORDINARY_WORKSPACE_RUNTIME] === "1"
+      ? new SelectionPreferenceStore()
+      : undefined;
   inheritOrdinaryWorkspaceSelection(routingPolicy, {
-    ...(ordinarySelection === undefined ? {} : { preferences: ordinarySelection }),
+    ...(ordinarySelection === undefined
+      ? {}
+      : { preferences: ordinarySelection }),
   });
   // Live limits come from the providers themselves. All three probes are
   // read-only and start no model turn, so a startup refresh costs nothing but
@@ -250,17 +262,12 @@ export async function runDaemon(): Promise<void> {
   const quotaDb = new QuotaDatabase();
   const quotaLedger = new QuotaLedger(quotaDb);
   migrateDefaultQuotaLedger(quotaDb);
-  const quota = new QuotaService(
-    quotaLedger,
-    quotaConfig,
-    () => new Date(),
-    [
-      new CodexQuotaProbe(new CodexStdioProbeTransport([
-        codexExecutable,
-        "app-server",
-        "--stdio",
-      ])),
-      new ClaudeQuotaProbe(new ClaudeStdioProbeTransport([
+  const quota = new QuotaService(quotaLedger, quotaConfig, () => new Date(), [
+    new CodexQuotaProbe(
+      new CodexStdioProbeTransport([codexExecutable, "app-server", "--stdio"]),
+    ),
+    new ClaudeQuotaProbe(
+      new ClaudeStdioProbeTransport([
         claudeExecutable,
         "-p",
         "--input-format",
@@ -268,14 +275,12 @@ export async function runDaemon(): Promise<void> {
         "--output-format",
         "stream-json",
         "--verbose",
-      ])),
-      new GrokQuotaProbe(new GrokStdioProbeTransport([
-        grokExecutable,
-        "agent",
-        "stdio",
-      ])),
-    ],
-  );
+      ]),
+    ),
+    new GrokQuotaProbe(
+      new GrokStdioProbeTransport([grokExecutable, "agent", "stdio"]),
+    ),
+  ]);
   const terminalComposition = createProductionTerminalComposition({
     repoRoot,
     pendingBindings: db,
@@ -338,8 +343,10 @@ export async function runDaemon(): Promise<void> {
     // #57: a spawn whose hive MCP never answers is refused, not recorded.
     mcpClientSeen: (subject, since) => daemon.mcpClientSeen(subject, since),
     assignments: {
-      open: (agentId, openedAt) => statusStore.openAssignment(agentId, openedAt),
-      close: (agentId, closedAt) => statusStore.closeAssignment(agentId, closedAt),
+      open: (agentId, openedAt) =>
+        statusStore.openAssignment(agentId, openedAt),
+      close: (agentId, closedAt) =>
+        statusStore.closeAssignment(agentId, closedAt),
     },
     config,
     // Every live spawn is governed by the user's routing policy: the spawn's
@@ -352,15 +359,18 @@ export async function runDaemon(): Promise<void> {
     isModelEnabled: policyModelEnablement(routingPolicy),
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
-    stopSession: (agent) => stopSpawnSession(agent, {
-      terminalHost: daemon.sessiondTerminalHost,
-    }),
+    stopSession: (agent) =>
+      stopSpawnSession(agent, {
+        terminalHost: daemon.sessiondTerminalHost,
+      }),
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,
     codexAppServer,
     sessiond: {
-      get terminalHost() { return daemon.sessiondTerminalHost; },
+      get terminalHost() {
+        return daemon.sessiondTerminalHost;
+      },
       prepareAgentCreation: () => daemon.prepareAgentSessiondSpawn(),
       admit: (candidate) => daemon.admitSessiondSpawn(candidate),
     },
@@ -377,7 +387,7 @@ export async function runDaemon(): Promise<void> {
     ...terminalComposition.daemonDependencies,
     statusIncarnationGenerationSource:
       agentRecordStatusIncarnationGenerationSource((agentId) =>
-        db.getAgentById(agentId)
+        db.getAgentById(agentId),
       ),
     db,
     spawner,
@@ -441,7 +451,9 @@ export async function runDaemon(): Promise<void> {
     } catch {
       // ignore
     }
-    throw new Error("daemon failed to bind a listening port before sessiond broker start");
+    throw new Error(
+      "daemon failed to bind a listening port before sessiond broker start",
+    );
   }
   const engineBuildId = await startBrokerAndDiscoverEngineBuildId({
     startBroker: () => sessiondBroker.start(),
@@ -455,11 +467,13 @@ export async function runDaemon(): Promise<void> {
         exit: (code) => process.exit(code),
       }),
   });
-  console.log(formatDaemonStartupAnnouncement({
-    engineBuildId,
-    binaryPath: resolve(process.execPath),
-    sourceHash: HIVE_SOURCE_HASH ?? await currentBuildHash(),
-  }));
+  console.log(
+    formatDaemonStartupAnnouncement({
+      engineBuildId,
+      binaryPath: resolve(process.execPath),
+      sourceHash: HIVE_SOURCE_HASH ?? (await currentBuildHash()),
+    }),
+  );
 
   let stopping = false;
   const stop = async (): Promise<void> => {

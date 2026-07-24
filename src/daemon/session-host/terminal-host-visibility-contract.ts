@@ -33,15 +33,17 @@ type VisibilityLeaseBase = Readonly<{
   expiresAt: string;
 }>;
 
-export type ActiveVisibilityLease = VisibilityLeaseBase & Readonly<{
-  state: "active";
-}>;
+export type ActiveVisibilityLease = VisibilityLeaseBase &
+  Readonly<{
+    state: "active";
+  }>;
 
-export type ExpiredVisibilityLease = VisibilityLeaseBase & Readonly<{
-  state: "expired";
-  expiredAt: string;
-  teardown: TerminationResult;
-}>;
+export type ExpiredVisibilityLease = VisibilityLeaseBase &
+  Readonly<{
+    state: "expired";
+    expiredAt: string;
+    teardown: TerminationResult;
+  }>;
 
 export type VisibilityLease = ActiveVisibilityLease | ExpiredVisibilityLease;
 
@@ -88,7 +90,8 @@ export type VisibilityCreateResult =
       result: CreateResult;
       lease: VisibilityLease;
     }>
-  | ((VisibilityRejected | VisibilityUnknown) & VisibilityCreateFailurePostconditions);
+  | ((VisibilityRejected | VisibilityUnknown) &
+      VisibilityCreateFailurePostconditions);
 
 export type VisibilityRenewalRequest = Readonly<{
   session: SessionRef;
@@ -101,16 +104,19 @@ type VisibilityRenewalFailurePostconditions = Readonly<{
 
 export type VisibilityRenewalResult =
   | Readonly<{ state: "active"; lease: ActiveVisibilityLease }>
-  | ((VisibilityRejected | VisibilityUnknown) & VisibilityRenewalFailurePostconditions);
+  | ((VisibilityRejected | VisibilityUnknown) &
+      VisibilityRenewalFailurePostconditions);
 
 export interface VisibilityAdmissionHost {
   create(request: VisibilityCreateRequest): Promise<VisibilityCreateResult>;
-  renewVisibility(request: VisibilityRenewalRequest): Promise<VisibilityRenewalResult>;
+  renewVisibility(
+    request: VisibilityRenewalRequest,
+  ): Promise<VisibilityRenewalResult>;
 }
 
 /**
  * Required host profile for visibility-backed creation. Its `create` replaces
  * the unguarded base operation; all other A0 operations retain their shape.
  */
-export type VisibilityTerminalHost =
-  Omit<TerminalHost, "create"> & VisibilityAdmissionHost;
+export type VisibilityTerminalHost = Omit<TerminalHost, "create"> &
+  VisibilityAdmissionHost;

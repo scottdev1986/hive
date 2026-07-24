@@ -2,8 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { writeGrokAgentConfig } from "../../src/adapters/tools/grok";
 import {
   assessStrandedWork,
@@ -15,6 +13,8 @@ import {
   removeWorktree,
   slugify,
 } from "../../src/adapters/worktrees";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
+import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 let tempRoot = "";
 let repoRoot = "";
@@ -76,7 +76,9 @@ describe("git worktree manager", () => {
     expect(slugify("ABCDEFGHIJKLMNOPQRSTUVWXYZ 1234567890")).toEqual(
       "abcdefghijklmnopqrstuvwxyz-123",
     );
-    expect(slugify("Ends----------------After Limit").length <= 30).toEqual(true);
+    expect(slugify("Ends----------------After Limit").length <= 30).toEqual(
+      true,
+    );
   });
 
   test("creates, lists, and force-removes a worktree with untracked config", async () => {
@@ -98,7 +100,10 @@ describe("git worktree manager", () => {
     ).toEqual(true);
 
     await mkdir(join(created.path, ".claude"), { recursive: true });
-    await writeFile(join(created.path, ".claude", "settings.local.json"), "{}\n");
+    await writeFile(
+      join(created.path, ".claude", "settings.local.json"),
+      "{}\n",
+    );
 
     await removeWorktree(repoRoot, created.path, { deleteBranch: true });
     expect(
@@ -119,7 +124,9 @@ describe("git worktree manager", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message.includes("uncommitted changes to tracked files")).toEqual(true);
+    expect(message.includes("uncommitted changes to tracked files")).toEqual(
+      true,
+    );
     expect(message.includes("README.md")).toEqual(true);
     expect(
       (await listWorktrees(repoRoot)).some(
@@ -173,8 +180,9 @@ describe("git worktree manager", () => {
   test("reports no stranded work for a clean, fully merged branch", async () => {
     const created = await createWorktree(repoRoot, "agent-7", "clean-landing");
 
-    expect(await assessStrandedWork(repoRoot, created.path, created.branch))
-      .toEqual({ dirtyFiles: [], unmergedCommits: 0 });
+    expect(
+      await assessStrandedWork(repoRoot, created.path, created.branch),
+    ).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
 
     await removeWorktree(repoRoot, created.path, { deleteBranch: true });
   });
@@ -237,8 +245,9 @@ describe("git worktree manager", () => {
       "README.md",
       "uncommitted.txt",
     ]);
-    expect(await observedWorktreeFiles(repoRoot, created.path, created.branch))
-      .toEqual(["README.md", "committed.txt", "uncommitted.txt"]);
+    expect(
+      await observedWorktreeFiles(repoRoot, created.path, created.branch),
+    ).toEqual(["README.md", "committed.txt", "uncommitted.txt"]);
 
     await removeWorktree(repoRoot, created.path, {
       deleteBranch: true,
@@ -252,11 +261,16 @@ describe("git worktree manager", () => {
     await git("-C", created.path, "add", "design.md");
     await git("-C", created.path, "commit", "-m", "preserved design");
     await markBranchPreserved(repoRoot, created.branch, true);
-    expect((await listUnmergedHiveBranches(repoRoot)).find((entry) =>
-      entry.branch === created.branch
-    )?.preserved).toEqual(true);
+    expect(
+      (await listUnmergedHiveBranches(repoRoot)).find(
+        (entry) => entry.branch === created.branch,
+      )?.preserved,
+    ).toEqual(true);
     await markBranchPreserved(repoRoot, created.branch, false);
-    await removeWorktree(repoRoot, created.path, { deleteBranch: true, discardTracked: true });
+    await removeWorktree(repoRoot, created.path, {
+      deleteBranch: true,
+      discardTracked: true,
+    });
   });
 
   // Measured on the real agent dominic: its worktree directory was already
@@ -295,12 +309,15 @@ describe("git worktree manager", () => {
     await git("update-ref", siblingRef, created.branch);
 
     try {
-      expect(removeWorktree(repoRoot, created.path, {
-        deleteBranch: true,
-        branch: created.branch,
-      })).rejects.toThrow("another Hive instance");
-      expect((await git("branch", "--list", created.branch)).trim())
-        .toContain(created.branch);
+      expect(
+        removeWorktree(repoRoot, created.path, {
+          deleteBranch: true,
+          branch: created.branch,
+        }),
+      ).rejects.toThrow("another Hive instance");
+      expect((await git("branch", "--list", created.branch)).trim()).toContain(
+        created.branch,
+      );
     } finally {
       await git("update-ref", "-d", siblingRef);
       if ((await git("branch", "--list", created.branch)).trim() !== "") {
@@ -319,10 +336,12 @@ describe("git worktree manager", () => {
     const ownRef = `refs/hive-owner/${hiveInstanceSuffix()}/${created.branch}`;
     await git("update-ref", "-d", ownRef);
 
-    expect(removeWorktree(repoRoot, created.path, {
-      deleteBranch: true,
-      branch: created.branch,
-    })).rejects.toThrow("ownerless legacy branch outside the default");
+    expect(
+      removeWorktree(repoRoot, created.path, {
+        deleteBranch: true,
+        branch: created.branch,
+      }),
+    ).rejects.toThrow("ownerless legacy branch outside the default");
 
     const namedHome = Bun.env.HIVE_HOME;
     Bun.env.HIVE_HOME = join(homedir(), ".hive");
@@ -339,11 +358,13 @@ describe("git worktree manager", () => {
   });
 
   test("treats a deleted worktree directory and missing branch as nothing stranded", async () => {
-    expect(await assessStrandedWork(
-      repoRoot,
-      join(repoRoot, ".hive", "worktrees", "gone"),
-      "hive/gone-task",
-    )).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
+    expect(
+      await assessStrandedWork(
+        repoRoot,
+        join(repoRoot, ".hive", "worktrees", "gone"),
+        "hive/gone-task",
+      ),
+    ).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
   });
 
   test("surfaces git stderr", async () => {

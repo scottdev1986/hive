@@ -9,12 +9,7 @@
 import type { MemoryFact } from "../schemas";
 
 export interface PromotionFinding {
-  kind:
-    | "repo-path"
-    | "home-path"
-    | "absolute-path"
-    | "hostname"
-    | "token-like";
+  kind: "repo-path" | "home-path" | "absolute-path" | "hostname" | "token-like";
   /** The offending text, verbatim, so the operator can find and edit it. */
   match: string;
 }
@@ -85,15 +80,17 @@ export function scanPromotionRedaction(
  * global article always names the project and article it was generalized
  * from.
  */
-export function promotionProvenanceBlock(
-  origin: { hiveUuid: string; id: string; date: string },
-): string {
+export function promotionProvenanceBlock(origin: {
+  hiveUuid: string;
+  id: string;
+  date: string;
+}): string {
   return [
     "",
     "## Origin",
     "",
     `Promoted to global scope from project ${origin.hiveUuid}, repo-scope ` +
-    `article \`${origin.id}\`, on ${origin.date}.`,
+      `article \`${origin.id}\`, on ${origin.date}.`,
   ].join("\n");
 }
 

@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { getHiveHome } from "../daemon/db";
-import { CapabilityProviderSchema, type CapabilityProvider } from "../schemas";
+import { type CapabilityProvider, CapabilityProviderSchema } from "../schemas";
 
 const OrchestratorRuntimeSchema = z.strictObject({
   version: z.literal(1),

@@ -17,34 +17,37 @@
  *   HIVE_INSTALL_ROOT default .dev/root
  */
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   realpathSync,
   writeFileSync,
-  appendFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { operatorFetch } from "../src/cli/credential";
+import { hiveInstanceSuffix } from "../src/daemon/instance-identity";
+import { macProcessIdentity } from "../src/daemon/lifecycle";
 import {
   connectUnixSocket,
   readLocalPeerPid,
   socketFileDescriptor,
 } from "../src/daemon/sessiond-broker";
-import { hiveInstanceSuffix } from "../src/daemon/instance-identity";
-import { macProcessIdentity } from "../src/daemon/lifecycle";
-import { operatorFetch } from "../src/cli/credential";
 
 const repoRoot = resolve(import.meta.dir, "..");
-const installRoot = process.env.HIVE_INSTALL_ROOT ?? join(repoRoot, ".dev/root");
+const installRoot =
+  process.env.HIVE_INSTALL_ROOT ?? join(repoRoot, ".dev/root");
 const stagedHive = join(installRoot, "current", "hive");
 const stagedSessiond = join(installRoot, "current", "hive-sessiond");
 const stagedSessiondReal = existsSync(stagedSessiond)
   ? realpathSync(stagedSessiond)
   : stagedSessiond;
 
-const home = process.env.HIVE_B25_HOME ??
+const home =
+  process.env.HIVE_B25_HOME ??
   `/tmp/hb25-${Math.random().toString(16).slice(2, 8)}`;
 const port = Number(process.env.HIVE_B25_PORT ?? "43140");
-const evidence = process.env.HIVE_B25_EVIDENCE ??
+const evidence =
+  process.env.HIVE_B25_EVIDENCE ??
   join(repoRoot, "raw/qualification/hive-b25-production-pane");
 const outPath = join(evidence, "matrix/production-wiring.txt");
 
@@ -135,7 +138,8 @@ async function sessiondChildPidsOf(daemonPid: number): Promise<number[]> {
     const ppid = Number(m[2]);
     const command = m[3] ?? "";
     if (ppid !== daemonPid) continue;
-    if (!command.includes("hive-sessiond") || !command.includes("serve")) continue;
+    if (!command.includes("hive-sessiond") || !command.includes("serve"))
+      continue;
     out.push(pid);
   }
   return out;
@@ -178,11 +182,17 @@ while (Date.now() < startDeadline) {
   await Bun.sleep(50);
 }
 
-if (!existsSync(brokerSocket)) fail(`broker.sock never appeared at ${brokerSocket}`);
-if (boundPort === null || boundPort <= 0) fail("daemon.port never became a positive port");
+if (!existsSync(brokerSocket))
+  fail(`broker.sock never appeared at ${brokerSocket}`);
+if (boundPort === null || boundPort <= 0)
+  fail("daemon.port never became a positive port");
 if (peerPid === null) fail("broker never kernel-owned by a daemon child");
-log(`GREEN daemon+broker: port=${boundPort} peerPid=${peerPid} (daemon pid ${daemon.pid})`);
-log(`no SocketPathTooLong (broker listening at ${brokerSocket.length}-byte path)`);
+log(
+  `GREEN daemon+broker: port=${boundPort} peerPid=${peerPid} (daemon pid ${daemon.pid})`,
+);
+log(
+  `no SocketPathTooLong (broker listening at ${brokerSocket.length}-byte path)`,
+);
 
 // Production-shaped create: visibility inventory (Workspace contract) + adapter.create.
 // In-process against the live broker via a second Node process would re-fight the
@@ -204,7 +214,8 @@ log(`publisher pid=${process.pid} startToken=${identity.startToken}`);
 // Operator credential is under HIVE_HOME/credentials after daemon start.
 const credDir = join(home, "credentials");
 for (let i = 0; i < 50 && !existsSync(credDir); i += 1) await Bun.sleep(100);
-if (!existsSync(credDir)) fail("operator credentials never appeared under HIVE_HOME");
+if (!existsSync(credDir))
+  fail("operator credentials never appeared under HIVE_HOME");
 
 // POST an empty inventory as the live source so the authority accepts a publisher.
 // Empty terminals: proves operator can publish (Workspace does this continuously).
@@ -238,15 +249,24 @@ try {
   );
 }
 const visBody = await visResponse.text();
-log(`workspace-visibility status=${visResponse.status} body=${visBody.slice(0, 200)}`);
+log(
+  `workspace-visibility status=${visResponse.status} body=${visBody.slice(0, 200)}`,
+);
 if (!visResponse.ok) {
-  fail(`workspace-visibility refused empty inventory (Workspace could not publish)`);
+  fail(
+    `workspace-visibility refused empty inventory (Workspace could not publish)`,
+  );
 }
-log("GREEN workspace-visibility: operator publish accepted (Workspace contract)");
+log(
+  "GREEN workspace-visibility: operator publish accepted (Workspace contract)",
+);
 
 // Handshake proves daemon identity for the pane's attach path.
 const hs = await fetch(`http://127.0.0.1:${boundPort}/handshake`);
-const hsJson = await hs.json() as { instanceId?: string; productVersion?: string };
+const hsJson = (await hs.json()) as {
+  instanceId?: string;
+  productVersion?: string;
+};
 log(
   `handshake status=${hs.status} instanceId=${hsJson.instanceId} version=${hsJson.productVersion}`,
 );
@@ -261,7 +281,9 @@ log("RESULT: production wiring substrate GREEN");
 log("  - make-run-shaped short home + staged binaries");
 log("  - daemon-owned broker (kernel peer pid == sessiond child)");
 log("  - workspace-visibility operator path open");
-log("  - next cell: sessiond agent spawn + HiveTerminalView attach under real Workspace");
+log(
+  "  - next cell: sessiond agent spawn + HiveTerminalView attach under real Workspace",
+);
 flush(true);
 cleanup();
 process.exit(0);

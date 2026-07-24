@@ -4,27 +4,28 @@
 // cross-agent shared-knowledge loop: agent A's harvested pitfall, once
 // verified, surfaces for agent B via pitfall-check and ranks first in the
 // spawn-injected memory index.
-import { afterEach, describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
 import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   buildMemoryIndex,
   discoverMemoryFacts,
   writeMemoryFact,
 } from "../../src/adapters/memory";
-import type { AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
 import { compileDigest } from "../../src/daemon/episodic-digest";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { MemoryIndex } from "../../src/daemon/memory-index";
 import { harvestPitfalls } from "../../src/daemon/pitfall-harvest";
 import { HiveDaemon } from "../../src/daemon/server";
-import type { SpawnRequest, Spawner } from "../../src/daemon/spawner";
-import { actingAs, type AuthorizedFetch } from "../../src/daemon/testing";
+import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
+import { type AuthorizedFetch, actingAs } from "../../src/daemon/testing";
+import type { AgentRecord } from "../../src/schemas";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T10:05:00.000Z";
@@ -41,7 +42,9 @@ afterEach(async () => {
     await daemon.stop().catch(() => undefined);
   }
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
@@ -133,12 +136,12 @@ describe("harvestPitfalls", () => {
     expect(report.errors).toEqual([]);
     expect(report.candidates).toHaveLength(2);
     const typeError = report.candidates.find((candidate) =>
-      candidate.title.includes("TypeError")
+      candidate.title.includes("TypeError"),
     )!;
     expect(typeError.action).toBe("created");
     expect(typeError.eventIds).toEqual([first.id, repeat.id]);
     const exitCode = report.candidates.find((candidate) =>
-      candidate.title.includes("exit code 1")
+      candidate.title.includes("exit code 1"),
     )!;
     expect(exitCode.eventIds).toEqual([second.id]);
 
@@ -158,14 +161,14 @@ describe("harvestPitfalls", () => {
       expect(article.body).toContain("UNVERIFIED");
     }
     const typeErrorArticle = articles.find((article) =>
-      article.title.includes("TypeError")
+      article.title.includes("TypeError"),
     )!;
     expect(typeErrorArticle.body).toContain(`[e${first.id}]`);
     expect(typeErrorArticle.body).toContain(`[e${repeat.id}]`);
     // The exact-values side table rides along.
     expect(typeErrorArticle.body).toContain("src/config/loader.ts");
     const exitArticle = articles.find((article) =>
-      article.title.includes("exit code 1")
+      article.title.includes("exit code 1"),
     )!;
     expect(exitArticle.body).toContain("| exit-code | `1` |");
     store.close();
@@ -279,7 +282,9 @@ describe("harvestPitfalls", () => {
       `Possibly related: [repo] ${seeded.id} — ${seeded.title}`,
     );
     const untouched = articles.find((article) => article.id === seeded.id)!;
-    expect(untouched.body).toBe("A rebase retried mid-conflict silently drops commits.");
+    expect(untouched.body).toBe(
+      "A rebase retried mid-conflict silently drops commits.",
+    );
     store.close();
   });
 
@@ -328,9 +333,11 @@ interface PitfallSearchEnvelope {
 }
 
 function parseToolJson<T>(result: Awaited<ReturnType<Client["callTool"]>>): T {
-  const content = (result as {
-    content: Array<{ type: string; text?: string }>;
-  }).content[0];
+  const content = (
+    result as {
+      content: Array<{ type: string; text?: string }>;
+    }
+  ).content[0];
   if (content?.type !== "text" || content.text === undefined) {
     throw new Error("Expected text tool content");
   }
@@ -342,7 +349,10 @@ async function connectedClient(fetch: AuthorizedFetch): Promise<Client> {
     new URL("http://hive/mcp"),
     { fetch },
   );
-  const client = new Client({ name: "hive-pitfall-harvest-test", version: "1.0.0" });
+  const client = new Client({
+    name: "hive-pitfall-harvest-test",
+    version: "1.0.0",
+  });
   await client.connect(transport);
   return client;
 }
@@ -476,7 +486,8 @@ describe("memory_pitfall MCP tool", () => {
       ts: T0,
       agent: "agent-ada",
       type: "agent.tool-failed",
-      summary: "RangeError: protolog sequence overflow in native/sessiond broker",
+      summary:
+        "RangeError: protolog sequence overflow in native/sessiond broker",
     });
     compileDigest(episodic, {
       agent: "agent-ada",
@@ -519,8 +530,7 @@ describe("memory_pitfall MCP tool", () => {
             topic: "pitfalls",
             kind: "pitfall",
             title: harvest.candidates[0]!.title,
-            body:
-              "VERIFIED against the cited events: the sessiond broker dies on protolog sequence overflow; restart the broker before reattaching.",
+            body: "VERIFIED against the cited events: the sessiond broker dies on protolog sequence overflow; restart the broker before reattaching.",
             source: "human",
             evidence: `Verified against ${harvest.candidates[0]!.title} provenance events`,
             status: "verified",
@@ -554,7 +564,9 @@ describe("memory_pitfall MCP tool", () => {
 
     // And the spawn-injected memory index ranks the pitfall class first.
     const injected = await buildMemoryIndex(repoRoot);
-    const firstRow = injected.split("\n").find((line) => line.startsWith("- ["))!;
+    const firstRow = injected
+      .split("\n")
+      .find((line) => line.startsWith("- ["))!;
     expect(firstRow).toContain("[pitfall]");
     expect(firstRow).toContain(candidateId);
   });

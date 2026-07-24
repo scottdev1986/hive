@@ -6,7 +6,7 @@
 #   make clean   stop the dev instance, then delete all dev artifacts
 #   make build   build + stage the standalone dev release under .dev/
 #   make run     run the staged dev build (defaults to this checkout)
-#   make test    bun suites + sessiond (Zig) + Workspace (Swift)
+#   make test    lint + format + typecheck + bun suites + sessiond (Zig) + Workspace (Swift)
 #
 # Everything else here is internal structure, never a command to run by hand:
 # heals and remediation run inside these four. No fifth command. build is
@@ -288,6 +288,7 @@ run:
 # `HIVE_E2E=1 bun test test/cli/e2e-real.test.ts`, which is what CI runs.
 test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 	bun install --frozen-lockfile
+	bun run check
 	bun run test
 	cd workspace && swift test
 

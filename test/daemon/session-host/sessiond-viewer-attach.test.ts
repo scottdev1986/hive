@@ -1,16 +1,22 @@
 import { afterEach, expect, test } from "bun:test";
-import { createServer, type Server, type Socket } from "node:net";
 import { rmSync } from "node:fs";
+import { createServer, type Server, type Socket } from "node:net";
+import type {
+  AttachGrant,
+  SessionLocator,
+} from "../../../src/daemon/session-host/contract";
 import {
   encodeSessiondFrame,
+  type SessiondFrame,
   SessiondFrameDecoder,
   SessiondWireError,
-  type SessiondFrame,
 } from "../../../src/daemon/session-host/sessiond-host";
-import { FRAME_FLAGS, FRAME_TYPES } from "../../../src/schemas/session-protocol";
 import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
-import type { SessionLocator, AttachGrant } from "../../../src/daemon/session-host/contract";
 import type { TerminalGeometry } from "../../../src/schemas/session-protocol";
+import {
+  FRAME_FLAGS,
+  type FRAME_TYPES,
+} from "../../../src/schemas/session-protocol";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -51,64 +57,71 @@ function grantFor(endpoint: string): AttachGrant {
 }
 
 function welcomePayload(): Uint8Array {
-  return textEncoder.encode(JSON.stringify({
-    schemaVersion: 1,
-    protocol: { major: 1, minor: 0 },
-    instanceId: locator.instanceId,
-    endpointRole: "host",
-    buildId: "engine-fixture",
-    engineBuildId: "engine-fixture",
-    connectionId: "1",
-    serverEpoch: "1",
-    limits: {
-      controlFrameMaxBytes: 262144,
-      maxInputTransactionBytes: 131072,
-      streamChunkMaxBytes: 65536,
-      automatedMessageMaxBytes: 1048576,
-      viewerQueueMaxBytes: 8388608,
-    },
-  }));
+  return textEncoder.encode(
+    JSON.stringify({
+      schemaVersion: 1,
+      protocol: { major: 1, minor: 0 },
+      instanceId: locator.instanceId,
+      endpointRole: "host",
+      buildId: "engine-fixture",
+      engineBuildId: "engine-fixture",
+      connectionId: "1",
+      serverEpoch: "1",
+      limits: {
+        controlFrameMaxBytes: 262144,
+        maxInputTransactionBytes: 131072,
+        streamChunkMaxBytes: 65536,
+        automatedMessageMaxBytes: 1048576,
+        viewerQueueMaxBytes: 8388608,
+      },
+    }),
+  );
 }
 
 function claimResult(state: "granted" | "denied"): Uint8Array {
-  const result = state === "granted"
-    ? {
-      state: "granted",
-      claim: {
-        token: "claim-token-1",
-        writer: "hive-daemon:fixture",
-        kind: "automation",
-        leaseExpiresAt: "2026-07-20T21:01:00.000Z",
-      },
-    }
-    : { state: "denied", owner: null, diagnostic: "input already claimed" };
+  const result =
+    state === "granted"
+      ? {
+          state: "granted",
+          claim: {
+            token: "claim-token-1",
+            writer: "hive-daemon:fixture",
+            kind: "automation",
+            leaseExpiresAt: "2026-07-20T21:01:00.000Z",
+          },
+        }
+      : { state: "denied", owner: null, diagnostic: "input already claimed" };
   return textEncoder.encode(JSON.stringify({ schemaVersion: 1, result }));
 }
 
 function inputReceipt(): Uint8Array {
-  return textEncoder.encode(JSON.stringify({
-    schemaVersion: 1,
-    resultKind: "input",
-    receipt: {
-      transactionId: "msg-1",
-      stage: "written-to-terminal",
-      byteRange: { start: "0", endExclusive: "12" },
-      orderedAt: "12",
-      availableCreditBytes: 4096,
-      consumedByProcess: "not-claimed",
-      completeness: "complete",
-      diagnostic: null,
-    },
-  }));
+  return textEncoder.encode(
+    JSON.stringify({
+      schemaVersion: 1,
+      resultKind: "input",
+      receipt: {
+        transactionId: "msg-1",
+        stage: "written-to-terminal",
+        byteRange: { start: "0", endExclusive: "12" },
+        orderedAt: "12",
+        availableCreditBytes: 4096,
+        consumedByProcess: "not-claimed",
+        completeness: "complete",
+        diagnostic: null,
+      },
+    }),
+  );
 }
 
 function errorPayload(): Uint8Array {
-  return textEncoder.encode(JSON.stringify({
-    schemaVersion: 1,
-    code: "INPUT_BUSY",
-    message: "input already claimed",
-    diagnosticId: null,
-  }));
+  return textEncoder.encode(
+    JSON.stringify({
+      schemaVersion: 1,
+      code: "INPUT_BUSY",
+      message: "input already claimed",
+      diagnosticId: null,
+    }),
+  );
 }
 
 type FakeHostOptions = Readonly<{
@@ -132,7 +145,9 @@ async function startFakeHost(options: FakeHostOptions = {}): Promise<FakeHost> {
     socket.on("data", (chunk) => {
       let frames: SessiondFrame[];
       try {
-        frames = decoder.push(chunk instanceof Uint8Array ? chunk : Buffer.from(chunk));
+        frames = decoder.push(
+          chunk instanceof Uint8Array ? chunk : Buffer.from(chunk),
+        );
       } catch {
         socket.destroy();
         return;
@@ -147,12 +162,13 @@ async function startFakeHost(options: FakeHostOptions = {}): Promise<FakeHost> {
   return {
     endpoint,
     received,
-    close: () => new Promise<void>((resolve) => {
-      server.close(() => {
-        rmSync(endpoint, { force: true });
-        resolve();
-      });
-    }),
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => {
+          rmSync(endpoint, { force: true });
+          resolve();
+        });
+      }),
   };
 }
 
@@ -162,43 +178,58 @@ function respondFrame(
   requestId: bigint,
   payload: Uint8Array,
 ): void {
-  socket.write(encodeSessiondFrame({
-    type,
-    flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-    requestId,
-    streamSeq: 0n,
-    payload,
-  }));
+  socket.write(
+    encodeSessiondFrame({
+      type,
+      flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+      requestId,
+      streamSeq: 0n,
+      payload,
+    }),
+  );
 }
 
-function respond(socket: Socket, frame: SessiondFrame, options: FakeHostOptions): void {
+function respond(
+  socket: Socket,
+  frame: SessiondFrame,
+  options: FakeHostOptions,
+): void {
   switch (frame.type) {
     case "HELLO":
       respondFrame(socket, "WELCOME", frame.requestId, welcomePayload());
       return;
     case "HOST_ATTACH":
       if (options.streamOutput !== undefined) {
-        socket.write(encodeSessiondFrame({
-          type: "OUTPUT",
-          flags: 0,
-          requestId: 1000n,
-          streamSeq: 0n,
-          payload: options.streamOutput,
-        }));
+        socket.write(
+          encodeSessiondFrame({
+            type: "OUTPUT",
+            flags: 0,
+            requestId: 1000n,
+            streamSeq: 0n,
+            payload: options.streamOutput,
+          }),
+        );
       }
       return;
     case "CLAIM_ACQUIRE":
-      respondFrame(socket, "CLAIM_RESULT", frame.requestId, claimResult(options.claim ?? "granted"));
+      respondFrame(
+        socket,
+        "CLAIM_RESULT",
+        frame.requestId,
+        claimResult(options.claim ?? "granted"),
+      );
       return;
     case "INPUT_SUBMIT":
       if (options.errorOnInput === true) {
-        socket.write(encodeSessiondFrame({
-          type: "ERROR",
-          flags: FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error,
-          requestId: frame.requestId,
-          streamSeq: 0n,
-          payload: errorPayload(),
-        }));
+        socket.write(
+          encodeSessiondFrame({
+            type: "ERROR",
+            flags: FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error,
+            requestId: frame.requestId,
+            streamSeq: 0n,
+            payload: errorPayload(),
+          }),
+        );
         return;
       }
       respondFrame(socket, "APPLIED", frame.requestId, inputReceipt());
@@ -262,7 +293,9 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   expect(submit.flags).toBe(FRAME_FLAGS.contentSensitive);
   const submitBody = JSON.parse(textDecoder.decode(submit.payload));
   expect(submitBody.operation.encoding).toBe("base64");
-  expect(Buffer.from(submitBody.operation.bytes, "base64").toString()).toBe("hello agent\n");
+  expect(Buffer.from(submitBody.operation.bytes, "base64").toString()).toBe(
+    "hello agent\n",
+  );
   expect(submitBody.claimToken).toBe("claim-token-1");
 });
 
@@ -332,21 +365,28 @@ test("acknowledges a streamed OUTPUT frame with the APPLIED high-water so the ho
   client.close();
   await settle();
 
-  const acks = host.received.filter((f) =>
-    f.type === "APPLIED" && JSON.parse(textDecoder.decode(f.payload)).resultKind === "output");
+  const acks = host.received.filter(
+    (f) =>
+      f.type === "APPLIED" &&
+      JSON.parse(textDecoder.decode(f.payload)).resultKind === "output",
+  );
   expect(acks.length).toBeGreaterThanOrEqual(1);
-  expect(JSON.parse(textDecoder.decode(acks[0]!.payload)).throughSeq).toBe(String(output.byteLength));
+  expect(JSON.parse(textDecoder.decode(acks[0]!.payload)).throughSeq).toBe(
+    String(output.byteLength),
+  );
 });
 
 test("rejects the inject when the host returns a typed ERROR for INPUT_SUBMIT", async () => {
   const { client } = await attachTo({ errorOnInput: true });
-  await expect(client.injectAutomated({
-    session: { key: locator.sessionId, incarnation: "1" },
-    writer: "hive-daemon:fixture",
-    transactionId: "msg-1",
-    idempotencyKey: "msg-1",
-    bytes: textEncoder.encode("hi\n"),
-    leaseMilliseconds: 60_000,
-  })).rejects.toBeInstanceOf(SessiondWireError);
+  await expect(
+    client.injectAutomated({
+      session: { key: locator.sessionId, incarnation: "1" },
+      writer: "hive-daemon:fixture",
+      transactionId: "msg-1",
+      idempotencyKey: "msg-1",
+      bytes: textEncoder.encode("hi\n"),
+      leaseMilliseconds: 60_000,
+    }),
+  ).rejects.toBeInstanceOf(SessiondWireError);
   client.close();
 });

@@ -2,9 +2,9 @@ import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { selectRecoverySessionId } from "./recovery-session";
-import { resolveProviderExecutable } from "./provider-executable";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./orchestrator-role";
+import { resolveProviderExecutable } from "./provider-executable";
+import { selectRecoverySessionId } from "./recovery-session";
 
 /** The agent Hive writes into the worktree's opencode.json: it carries the
  * launch brief as its {file:} system prompt and the read-only barrier as its
@@ -136,9 +136,12 @@ export async function writeOpencodeAgentConfig(
     },
     (error: unknown) => {
       if (
-        typeof error === "object" && error !== null && "code" in error &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
         error.code === "ENOENT"
-      ) return {};
+      )
+        return {};
       throw error;
     },
   );
@@ -147,11 +150,12 @@ export async function writeOpencodeAgentConfig(
   const existingHeaders = isRecord(existingHive.headers)
     ? existingHive.headers
     : {};
-  const authorization = options.capabilityToken !== undefined
-    ? `Bearer ${options.capabilityToken}`
-    : typeof existingHeaders.Authorization === "string"
-    ? existingHeaders.Authorization
-    : undefined;
+  const authorization =
+    options.capabilityToken !== undefined
+      ? `Bearer ${options.capabilityToken}`
+      : typeof existingHeaders.Authorization === "string"
+        ? existingHeaders.Authorization
+        : undefined;
   mcp.hive = {
     type: "remote",
     url: `http://127.0.0.1:${options.daemonPort}/mcp`,
@@ -182,8 +186,8 @@ export async function writeOpencodeAgentConfig(
       ...(options.orchestrator === true
         ? { permission: ORCHESTRATOR_OPENCODE_PERMISSION }
         : options.readOnly === true
-        ? { permission: { edit: "deny", bash: "deny" } }
-        : {}),
+          ? { permission: { edit: "deny", bash: "deny" } }
+          : {}),
     };
     existing.agent = agents;
   }
@@ -228,9 +232,12 @@ async function listOpencodeSessions(
     if (result.exitCode !== 0) return [];
     const parsed: unknown = JSON.parse(result.stdout.toString());
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((entry): entry is OpencodeSessionEntry =>
-      isRecord(entry) && typeof entry.id === "string" &&
-      typeof entry.created === "number" && typeof entry.directory === "string"
+    return parsed.filter(
+      (entry): entry is OpencodeSessionEntry =>
+        isRecord(entry) &&
+        typeof entry.id === "string" &&
+        typeof entry.created === "number" &&
+        typeof entry.directory === "string",
     );
   } catch {
     return [];

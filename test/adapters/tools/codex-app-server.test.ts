@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import type { AgentRecord, HookEvent } from "../../../src/schemas";
 import { basename, join } from "node:path";
-import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 import {
-  CodexAppServerManager,
   buildCodexAppServerCommand,
   CodexAppServerClient,
+  CodexAppServerManager,
   type CodexAppServerTransport,
   codexAgentHostPidfile,
   codexAgentSocketPath,
@@ -15,6 +13,8 @@ import {
   reapOrphanCodexHosts,
   renderCodexHostMessage,
 } from "../../../src/adapters/tools/codex-app-server";
+import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
+import type { AgentRecord, HookEvent } from "../../../src/schemas";
 
 class FakeTransport implements CodexAppServerTransport {
   readonly sent: any[] = [];
@@ -96,17 +96,22 @@ function agent(): AgentRecord {
 
 describe("Codex app-server adapter", () => {
   test("scopes Apps and inherited MCPs while attaching Graphify", () => {
-    const command = buildCodexAppServerCommand({
-      socket: "/tmp/agent.sock",
-      worktree: "/tmp/maya",
-      daemonPort: 4317,
-      agentName: "maya",
-      graphifyUrl: "http://127.0.0.1:7799/mcp",
-    }, ["idea", "hive", "graphify"]);
+    const command = buildCodexAppServerCommand(
+      {
+        socket: "/tmp/agent.sock",
+        worktree: "/tmp/maya",
+        daemonPort: 4317,
+        agentName: "maya",
+        graphifyUrl: "http://127.0.0.1:7799/mcp",
+      },
+      ["idea", "hive", "graphify"],
+    );
     expect(command).toContain("features.apps=false");
     expect(command).toContain("mcp_servers.idea.enabled=false");
     expect(command.join(" ")).not.toContain("mcp_servers.hive.enabled=false");
-    expect(command.join(" ")).not.toContain("mcp_servers.graphify.enabled=false");
+    expect(command.join(" ")).not.toContain(
+      "mcp_servers.graphify.enabled=false",
+    );
     expect(command).toContain(
       'mcp_servers.graphify.url="http://127.0.0.1:7799/mcp"',
     );
@@ -119,8 +124,9 @@ describe("Codex app-server adapter", () => {
       queueApproval: async () => "approval-1",
       observeRateLimits: async () => null,
     });
-    expect(manager.buildHostCommand(agent(), 4317, "http://127.0.0.1:7799/mcp"))
-      .toContain("--graphify-url");
+    expect(
+      manager.buildHostCommand(agent(), 4317, "http://127.0.0.1:7799/mcp"),
+    ).toContain("--graphify-url");
   });
 
   test("initializes, starts a thread and turn, steers with the active turn precondition, and interrupts", async () => {
@@ -250,18 +256,24 @@ describe("Codex app-server adapter", () => {
   });
 
   test("renders a readable host feed instead of raw protocol JSON", () => {
-    expect(renderCodexHostMessage({
-      method: "item/agentMessage/delta",
-      params: { delta: "Tests are green." },
-    })).toEqual("Tests are green.");
-    expect(renderCodexHostMessage({
-      method: "item/started",
-      params: { item: { type: "commandExecution", command: "bun test" } },
-    })).toEqual("\n$ bun test\n");
-    expect(renderCodexHostMessage({
-      method: "account/rateLimits/updated",
-      params: {},
-    })).toEqual(null);
+    expect(
+      renderCodexHostMessage({
+        method: "item/agentMessage/delta",
+        params: { delta: "Tests are green." },
+      }),
+    ).toEqual("Tests are green.");
+    expect(
+      renderCodexHostMessage({
+        method: "item/started",
+        params: { item: { type: "commandExecution", command: "bun test" } },
+      }),
+    ).toEqual("\n$ bun test\n");
+    expect(
+      renderCodexHostMessage({
+        method: "account/rateLimits/updated",
+        params: {},
+      }),
+    ).toEqual(null);
   });
 });
 
@@ -289,7 +301,9 @@ describe("codexAgentSocketPath", () => {
     expect(path).toContain("hive-codex-");
     expect(path).toContain("agent-test");
     expect(path).toContain(".sock");
-    expect(path).toMatch(new RegExp(`^${tmpdir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    expect(path).toMatch(
+      new RegExp(`^${tmpdir().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+    );
   });
 
   test("replaces non-alphanumeric characters in agent ID", () => {
@@ -413,19 +427,20 @@ describe("reapOrphanCodexHosts", () => {
       world.files.delete(name);
     },
     fileState: async (name: string) =>
-      world.files.has(name) ? "present" as const : "absent" as const,
+      world.files.has(name) ? ("present" as const) : ("absent" as const),
     processCommand: async (pid: number) => world.commands.get(pid) ?? null,
     processState: async (pid: number) =>
       world.processStates?.get(pid) ??
-        (world.commands.has(pid) ? "live" as const : "dead" as const),
+      (world.commands.has(pid) ? ("live" as const) : ("dead" as const)),
     kill: (pid: number) => {
       world.killed.push(pid);
       world.commands.delete(Math.abs(pid));
     },
   });
 
-  const status = (map: Record<string, "live" | "dead" | "unknown">) =>
-  (id: string) => map[id] ?? "unknown";
+  const status =
+    (map: Record<string, "live" | "dead" | "unknown">) => (id: string) =>
+      map[id] ?? "unknown";
 
   // Generate fixtures through the production writer so instance-qualified
   // pidfile parsing cannot drift from its producer.
@@ -475,11 +490,13 @@ describe("reapOrphanCodexHosts", () => {
     expect(world.killed).toEqual([-4242]);
     // Dead agents' pidfiles and sockets are cleared even when the pid was
     // recycled by another program; live and unknown agents keep theirs.
-    expect([...world.files.keys()].sort()).toEqual([
-      pidfileFor("foreign-agent"),
-      pidfileFor("live-agent"),
-      "unrelated.txt",
-    ].sort());
+    expect([...world.files.keys()].sort()).toEqual(
+      [
+        pidfileFor("foreign-agent"),
+        pidfileFor("live-agent"),
+        "unrelated.txt",
+      ].sort(),
+    );
   });
 
   test("does not report a no-op kill as a successful reap", async () => {
@@ -489,31 +506,32 @@ describe("reapOrphanCodexHosts", () => {
       killed: [],
     };
 
-    expect(reapOrphanCodexHosts(
-      status({ unkillable: "dead" }),
-      {
+    expect(
+      reapOrphanCodexHosts(status({ unkillable: "dead" }), {
         ...dependencies(world),
         kill: (pid) => {
           world.killed.push(pid);
         },
-      },
-    )).rejects.toThrow("still running after reap");
+      }),
+    ).rejects.toThrow("still running after reap");
   });
 
   test("preserves host files when process identity is unreadable", async () => {
     const name = pidfileFor("unreadable");
     const socket = socketFor("unreadable");
     const world: FakeWorld = {
-      files: new Map([[name, "7474\n"], [socket, ""]]),
+      files: new Map([
+        [name, "7474\n"],
+        [socket, ""],
+      ]),
       commands: new Map(),
       processStates: new Map([[7474, "unknown"]]),
       killed: [],
     };
 
-    await expect(reapOrphanCodexHosts(
-      status({ unreadable: "dead" }),
-      dependencies(world),
-    )).rejects.toThrow("cannot verify process 7474");
+    await expect(
+      reapOrphanCodexHosts(status({ unreadable: "dead" }), dependencies(world)),
+    ).rejects.toThrow("cannot verify process 7474");
     expect(world.killed).toEqual([]);
     expect([...world.files.keys()].sort()).toEqual([name, socket].sort());
   });
@@ -522,22 +540,24 @@ describe("reapOrphanCodexHosts", () => {
     const name = pidfileFor("unverified-exit");
     const socket = socketFor("unverified-exit");
     const world: FakeWorld = {
-      files: new Map([[name, "7575\n"], [socket, ""]]),
+      files: new Map([
+        [name, "7575\n"],
+        [socket, ""],
+      ]),
       commands: new Map([[7575, "codex app-server --stdio"]]),
       processStates: new Map([[7575, "unknown"]]),
       killed: [],
     };
 
-    await expect(reapOrphanCodexHosts(
-      status({ "unverified-exit": "dead" }),
-      {
+    await expect(
+      reapOrphanCodexHosts(status({ "unverified-exit": "dead" }), {
         ...dependencies(world),
         kill: (pid) => {
           world.killed.push(pid);
           world.commands.delete(Math.abs(pid));
         },
-      },
-    )).rejects.toThrow("cannot verify exit of Codex app-server 7575");
+      }),
+    ).rejects.toThrow("cannot verify exit of Codex app-server 7575");
     expect(world.killed).toEqual([-7575]);
     expect([...world.files.keys()].sort()).toEqual([name, socket].sort());
   });
@@ -546,18 +566,20 @@ describe("reapOrphanCodexHosts", () => {
     const name = pidfileFor("stale-files");
     const socket = socketFor("stale-files");
     const world: FakeWorld = {
-      files: new Map([[name, "7676\n"], [socket, ""]]),
+      files: new Map([
+        [name, "7676\n"],
+        [socket, ""],
+      ]),
       commands: new Map(),
       killed: [],
     };
 
-    await expect(reapOrphanCodexHosts(
-      status({ "stale-files": "dead" }),
-      {
+    await expect(
+      reapOrphanCodexHosts(status({ "stale-files": "dead" }), {
         ...dependencies(world),
         removeFile: async () => {},
-      },
-    )).rejects.toThrow(`Codex app-server cleanup left ${socket} behind`);
+      }),
+    ).rejects.toThrow(`Codex app-server cleanup left ${socket} behind`);
     expect([...world.files.keys()].sort()).toEqual([name, socket].sort());
   });
 
@@ -600,7 +622,7 @@ describe("reapOrphanCodexHosts", () => {
       await writeFile(
         join(root, "app-server"),
         "nohup /bin/sleep 30 >/dev/null 2>&1 & " +
-          "child=$!; printf '%s\\n' \"$child\" > \"$1\"; wait\n",
+          'child=$!; printf \'%s\\n\' "$child" > "$1"; wait\n',
       );
       appServer = Bun.spawn([executable, "app-server", childPidPath], {
         cwd: root,
@@ -652,21 +674,19 @@ describe("reapOrphanCodexHosts", () => {
       expect(await processState(unrelated.pid)).toBe("live");
       const name = pidfileFor("real-orphan");
       const files = new Map([[name, `${appServer.pid}\n`]]);
-      expect(await reapOrphanCodexHosts(
-        status({ "real-orphan": "dead" }),
-        {
+      expect(
+        await reapOrphanCodexHosts(status({ "real-orphan": "dead" }), {
           listSocketDir: async () => [...files.keys()],
           readPidFile: async (file) => files.get(file) ?? "",
           removeFile: async (file) => {
             files.delete(file);
           },
-          fileState: async (file) =>
-            files.has(file) ? "present" : "absent",
+          fileState: async (file) => (files.has(file) ? "present" : "absent"),
           processCommand,
           processState,
           kill: (pid) => process.kill(pid, "SIGKILL"),
-        },
-      )).toEqual([appServer.pid]);
+        }),
+      ).toEqual([appServer.pid]);
       await appServer.exited;
       expect(await processState(appServer.pid)).toBe("dead");
       expect(await processState(unrelated.pid)).toBe("live");

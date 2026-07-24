@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { SHIPPED_SKILLS } from "../../src/skills/shipped";
@@ -73,7 +80,14 @@ beforeAll(async () => {
   workspace = await mkdtemp(join(tmpdir(), "hive-packaging-"));
   const outfile = join(workspace, "hive");
   const build = Bun.spawnSync(
-    ["bun", "build", "--compile", join(repoRoot, "src", "cli.ts"), "--outfile", outfile],
+    [
+      "bun",
+      "build",
+      "--compile",
+      join(repoRoot, "src", "cli.ts"),
+      "--outfile",
+      outfile,
+    ],
     { cwd: repoRoot },
   );
   if (build.exitCode !== 0) {
@@ -84,7 +98,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await rm(workspace, { recursive: true, force: true });
-  if (synthesizedMemory) await rm(synthesizedMemory, { recursive: true, force: true });
+  if (synthesizedMemory)
+    await rm(synthesizedMemory, { recursive: true, force: true });
 });
 
 /** Is this text inside the shipped binary, byte for byte? */
@@ -110,14 +125,18 @@ function shipped(text: string): boolean {
  * if — the content really is in there.
  */
 function fingerprint(contents: string): string {
-  return contents
-    .split(/[^\x20-\x7E]|["'`\\$]/)
-    .map((run) => run.trim())
-    .sort((a, b) => b.length - a.length)[0] ?? "";
+  return (
+    contents
+      .split(/[^\x20-\x7E]|["'`\\$]/)
+      .map((run) => run.trim())
+      .sort((a, b) => b.length - a.length)[0] ?? ""
+  );
 }
 
 test("the shipped skills directory matches the declared list exactly", async () => {
-  const entries = await readdir(join(repoRoot, "skills"), { withFileTypes: true });
+  const entries = await readdir(join(repoRoot, "skills"), {
+    withFileTypes: true,
+  });
   const directories = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -129,8 +148,9 @@ test("the shipped skills directory matches the declared list exactly", async () 
   );
 
   for (const name of directories) {
-    expect(await Bun.file(join(repoRoot, "skills", name, "SKILL.md")).exists())
-      .toEqual(true);
+    expect(
+      await Bun.file(join(repoRoot, "skills", name, "SKILL.md")).exists(),
+    ).toEqual(true);
   }
 });
 
@@ -172,7 +192,10 @@ test("the compiled binary carries no Hive memory and no dev-only skill", async (
       // canonical skills/ source; a diverged copy still counts as dev-only.
       const topLevel = relative(root, entry.parentPath).split(sep)[0] ?? "";
       const canonical = shippedContent.get(topLevel);
-      if (canonical !== undefined && (await readFile(path, "utf8")) === canonical) {
+      if (
+        canonical !== undefined &&
+        (await readFile(path, "utf8")) === canonical
+      ) {
         continue;
       }
       devOnly.push(path);

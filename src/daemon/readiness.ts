@@ -192,7 +192,8 @@ function tailLines(value: string, count: number): string {
 }
 
 export function quietReason(quietMs: number, paneTail: string): string {
-  const base = `no sign of life for ${Math.round(quietMs / 1000)}s ` +
+  const base =
+    `no sign of life for ${Math.round(quietMs / 1000)}s ` +
     "(screen never redrew, no hook event, no tool activity)";
   return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
 }
@@ -206,7 +207,8 @@ export function quietReason(quietMs: number, paneTail: string): string {
  * doing it.
  */
 export function orphanedPaneReason(command: string, paneTail: string): string {
-  const base = `the pane is redrawing but no \`${command}\` process is ` +
+  const base =
+    `the pane is redrawing but no \`${command}\` process is ` +
     "running in it: the launch died behind a live wrapper";
   return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
 }
@@ -346,9 +348,10 @@ export async function watchForProofOfLife<Target = string>(
         alive: false,
         // A frozen pane without a proven launched process and a pane animated by
         // a wrapper are both death; an operator needs to know which is visible.
-        reason: orphanedRedraws > 0
-          ? orphanedPaneReason(deps.launchedCommand, lastPaneTail)
-          : quietReason(quietLimit * pollMs, lastPaneTail),
+        reason:
+          orphanedRedraws > 0
+            ? orphanedPaneReason(deps.launchedCommand, lastPaneTail)
+            : quietReason(quietLimit * pollMs, lastPaneTail),
       };
     }
   }
@@ -389,9 +392,9 @@ export async function waitForMcpReporting(
   const deadline = Date.now() + timeoutMs;
   while (!seen(subject, since)) {
     if (Date.now() >= deadline) {
-      return `hive MCP unreachable: no authenticated request from ${
-        JSON.stringify(subject)
-      }'s credential within ${Math.round(timeoutMs / 1000)}s of launch`;
+      return `hive MCP unreachable: no authenticated request from ${JSON.stringify(
+        subject,
+      )}'s credential within ${Math.round(timeoutMs / 1000)}s of launch`;
     }
     await wait(200);
   }

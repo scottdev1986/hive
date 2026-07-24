@@ -4,13 +4,16 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { withFileLock } from "../adapters/file-lock";
 import {
-  SelectionPolicySchema,
   type RoutingPolicyMutation,
   type SelectionPolicy,
+  SelectionPolicySchema,
 } from "../schemas";
 import { machineHiveHome } from "./instances";
 
-type SelectionMutation = Extract<RoutingPolicyMutation, { op: "set-selection" }>;
+type SelectionMutation = Extract<
+  RoutingPolicyMutation,
+  { op: "set-selection" }
+>;
 
 const StoredSelectionPreferenceSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -76,7 +79,8 @@ export class SelectionPreferenceStore implements SelectionPreferenceControl {
   read(): SelectionPolicy | null {
     try {
       const source = readFileSync(this.path, "utf8");
-      return StoredSelectionPreferenceSchema.parse(JSON.parse(source)).selection;
+      return StoredSelectionPreferenceSchema.parse(JSON.parse(source))
+        .selection;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw error;
@@ -90,9 +94,10 @@ export class SelectionPreferenceStore implements SelectionPreferenceControl {
     await mkdir(dirname(this.path), { recursive: true });
     return withFileLock(`${this.path}.lock`, async () => {
       const current = await readSelectionPreferenceAsync(this.path);
-      const next = current === null
-        ? SelectionPolicySchema.parse(fallback)
-        : applySelectionMutation(current, mutation);
+      const next =
+        current === null
+          ? SelectionPolicySchema.parse(fallback)
+          : applySelectionMutation(current, mutation);
       await writeSelectionPreference(this.path, next);
       return next;
     });

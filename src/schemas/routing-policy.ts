@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { CapabilityProviderSchema, type CapabilityProvider } from "./capability";
+import {
+  type CapabilityProvider,
+  CapabilityProviderSchema,
+} from "./capability";
 
 /**
  * The user's routing policy — the store behind the Model Control Center and,
@@ -57,13 +60,13 @@ export type EffortTarget = z.infer<typeof EffortTargetSchema>;
 
 /** A model id that could be mistaken for a routing instruction is refused
  * outright: quiet defaults return the moment "default" parses as a model. */
-const ExactModelIdSchema = z.string().min(1).refine(
-  (model) => model !== "default",
-  {
+const ExactModelIdSchema = z
+  .string()
+  .min(1)
+  .refine((model) => model !== "default", {
     message:
       'a chain names the specific model that will run; "default" is not a model',
-  },
-);
+  });
 
 /**
  * One link of a fallback chain: a specific (provider, model, effort). There
@@ -87,10 +90,12 @@ const chainTargetKey = (entry: ChainEntry): string =>
 /** An ordered fallback chain: index 0 is the primary. Duplicate targets are
  * rejected — a chain that names the same model twice is a reorder bug, not a
  * preference. */
-export const RoutingChainSchema = z.array(ChainEntrySchema).refine(
-  (entries) => new Set(entries.map(chainTargetKey)).size === entries.length,
-  { message: "a chain must not name the same target twice" },
-);
+export const RoutingChainSchema = z
+  .array(ChainEntrySchema)
+  .refine(
+    (entries) => new Set(entries.map(chainTargetKey)).size === entries.length,
+    { message: "a chain must not name the same target twice" },
+  );
 
 export const ModelPolicySchema = z.strictObject({
   provider: CapabilityProviderSchema,
@@ -130,40 +135,41 @@ export type SelectionPolicy = z.infer<typeof SelectionPolicySchema>;
  * is unconfigured; under an enabled provider, an absent model state inherits
  * that provider until the user explicitly disables the model.
  */
-export const RoutingPolicySchema = z.strictObject({
-  schemaVersion: z.literal(2),
-  /** Monotonic; every accepted mutation increments it. Writers must present
-   * the revision they read (compare-and-set) so concurrent edits conflict
-   * loudly instead of clobbering silently. */
-  revision: z.number().int().nonnegative(),
-  updatedAt: z.iso.datetime({ offset: true }),
-  /** True while the document is still the seeded baseline no human has
-   * edited. Any accepted mutation clears it permanently — it is the UI's
-   * "provisional Hive suggestions, edit anytime" banner flag. */
-  provisional: z.boolean(),
-  providers: z.partialRecord(
-    CapabilityProviderSchema,
-    z.enum(["enabled", "disabled"]),
-  ),
-  models: z.array(ModelPolicySchema),
-  chains: z.partialRecord(RoutingCategorySchema, RoutingChainSchema),
-  selection: SelectionPolicySchema,
-}).superRefine((policy, context) => {
-  const targets = new Set<string>();
-  for (const [index, model] of policy.models.entries()) {
-    const target = chainTargetKey(model);
-    if (targets.has(target)) {
-      context.addIssue({
-        code: "custom",
-        path: ["models", index],
-        message: `duplicate model policy for ${model.provider}/${model.model}`,
-      });
+export const RoutingPolicySchema = z
+  .strictObject({
+    schemaVersion: z.literal(2),
+    /** Monotonic; every accepted mutation increments it. Writers must present
+     * the revision they read (compare-and-set) so concurrent edits conflict
+     * loudly instead of clobbering silently. */
+    revision: z.number().int().nonnegative(),
+    updatedAt: z.iso.datetime({ offset: true }),
+    /** True while the document is still the seeded baseline no human has
+     * edited. Any accepted mutation clears it permanently — it is the UI's
+     * "provisional Hive suggestions, edit anytime" banner flag. */
+    provisional: z.boolean(),
+    providers: z.partialRecord(
+      CapabilityProviderSchema,
+      z.enum(["enabled", "disabled"]),
+    ),
+    models: z.array(ModelPolicySchema),
+    chains: z.partialRecord(RoutingCategorySchema, RoutingChainSchema),
+    selection: SelectionPolicySchema,
+  })
+  .superRefine((policy, context) => {
+    const targets = new Set<string>();
+    for (const [index, model] of policy.models.entries()) {
+      const target = chainTargetKey(model);
+      if (targets.has(target)) {
+        context.addIssue({
+          code: "custom",
+          path: ["models", index],
+          message: `duplicate model policy for ${model.provider}/${model.model}`,
+        });
+      }
+      targets.add(target);
     }
-    targets.add(target);
-  }
-});
+  });
 export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
-
 
 /** The document an empty store reads as: revision 0, nothing configured —
  * and "nothing configured" is not "everything permitted". */
@@ -206,21 +212,28 @@ export function modelCategoryFit(
   category: RoutingCategory,
 ): CategoryFitDecision {
   const has = (candidate: RoutingCategory): boolean =>
-    (policy.chains[candidate] ?? []).some((entry) =>
-      entry.provider === provider && entry.model === model
+    (policy.chains[candidate] ?? []).some(
+      (entry) => entry.provider === provider && entry.model === model,
     );
   const label = `${provider}/${model}`;
   if (category === "simple_coding") {
-    const evidence = (["complex_coding", "standard_coding", "simple_coding"] as const)
-      .find(has);
+    const evidence = (
+      ["complex_coding", "standard_coding", "simple_coding"] as const
+    ).find(has);
     return evidence === undefined
-      ? { fits: false, basis: `${label} has no explicit coding-tier fit evidence` }
+      ? {
+          fits: false,
+          basis: `${label} has no explicit coding-tier fit evidence`,
+        }
       : { fits: true, basis: `${label} is explicitly placed in ${evidence}` };
   }
   if (category === "standard_coding") {
     const evidence = (["complex_coding", "standard_coding"] as const).find(has);
     return evidence === undefined
-      ? { fits: false, basis: `${label} has no standard-or-complex fit evidence` }
+      ? {
+          fits: false,
+          basis: `${label} has no standard-or-complex fit evidence`,
+        }
       : { fits: true, basis: `${label} is explicitly placed in ${evidence}` };
   }
   if (category === "complex_coding") {
@@ -230,7 +243,10 @@ export function modelCategoryFit(
   }
   return has(category)
     ? { fits: true, basis: `${label} is explicitly placed in ${category}` }
-    : { fits: false, basis: `${label} has no explicit ${category} fit evidence` };
+    : {
+        fits: false,
+        basis: `${label} has no explicit ${category} fit evidence`,
+      };
 }
 
 /**
@@ -266,17 +282,23 @@ export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
     category: RoutingCategorySchema,
     entries: RoutingChainSchema,
   }),
-  z.strictObject({
-    op: z.literal("set-selection"),
-    expectedRevision: z.number().int().nonnegative(),
-    /** Absent category sets the global mode; "unset" (category only) removes
-     * the override so the category follows the global setting again. */
-    category: RoutingCategorySchema.optional(),
-    mode: z.union([SelectionModeSchema, z.literal("unset")]),
-  }).refine((mutation) => !(mutation.category === undefined && mutation.mode === "unset"), {
-    message:
-      'the global selection mode is always explicit; choose "never-configured", "auto", or "choice"',
-  }),
+  z
+    .strictObject({
+      op: z.literal("set-selection"),
+      expectedRevision: z.number().int().nonnegative(),
+      /** Absent category sets the global mode; "unset" (category only) removes
+       * the override so the category follows the global setting again. */
+      category: RoutingCategorySchema.optional(),
+      mode: z.union([SelectionModeSchema, z.literal("unset")]),
+    })
+    .refine(
+      (mutation) =>
+        !(mutation.category === undefined && mutation.mode === "unset"),
+      {
+        message:
+          'the global selection mode is always explicit; choose "never-configured", "auto", or "choice"',
+      },
+    ),
 ]);
 export type RoutingPolicyMutation = z.infer<typeof RoutingPolicyMutationSchema>;
 

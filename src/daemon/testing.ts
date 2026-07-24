@@ -6,7 +6,7 @@
 // would: an `Authorization: Bearer` header on every request.
 import type { AgentRecord } from "../schemas";
 import type { Role } from "./capabilities";
-import { AuditRowSchema, type AuditRow, type HiveDatabase } from "./db";
+import { type AuditRow, AuditRowSchema, type HiveDatabase } from "./db";
 import type { HiveDaemon } from "./server";
 
 export type AuthorizedFetch = (
@@ -24,42 +24,46 @@ export type AuthorizedFetch = (
 // public `database` handle directly.
 
 export function deleteAgentRow(db: HiveDatabase, id: string): boolean {
-  return db.database.query("DELETE FROM agents WHERE id = ?").run(id)
-    .changes > 0;
+  return (
+    db.database.query("DELETE FROM agents WHERE id = ?").run(id).changes > 0
+  );
 }
 
 export function deleteMessageRow(db: HiveDatabase, id: string): boolean {
-  return db.database.query("DELETE FROM messages WHERE id = ?").run(id)
-    .changes > 0;
+  return (
+    db.database.query("DELETE FROM messages WHERE id = ?").run(id).changes > 0
+  );
 }
 
 export function deleteApprovalRow(db: HiveDatabase, id: string): boolean {
-  return db.database.query("DELETE FROM approvals WHERE id = ?").run(id)
-    .changes > 0;
+  return (
+    db.database.query("DELETE FROM approvals WHERE id = ?").run(id).changes > 0
+  );
 }
 
 export function deleteEventRows(db: HiveDatabase, agentName?: string): number {
   if (agentName === undefined) {
     return db.database.query("DELETE FROM events").run().changes;
   }
-  return db.database.query("DELETE FROM events WHERE agentName = ?")
+  return db.database
+    .query("DELETE FROM events WHERE agentName = ?")
     .run(agentName).changes;
 }
 
 /** Every holder a name has ever had, oldest first. */
-export function listAgentsNamed(
-  db: HiveDatabase,
-  name: string,
-): AgentRecord[] {
+export function listAgentsNamed(db: HiveDatabase, name: string): AgentRecord[] {
   return db.listAgents().filter((agent) => agent.name === name);
 }
 
 export function listAuditEntries(db: HiveDatabase, limit = 100): AuditRow[] {
-  return db.database.query(`
+  return db.database
+    .query(`
     SELECT at, route, action, callerSubject, callerRole, capabilityId,
            requestedSubject, epoch, decision, reason
     FROM audit_log ORDER BY id DESC LIMIT ?
-  `).all(limit).map((row) => AuditRowSchema.parse(row));
+  `)
+    .all(limit)
+    .map((row) => AuditRowSchema.parse(row));
 }
 
 /**
@@ -80,9 +84,9 @@ export function listAuditEntries(db: HiveDatabase, limit = 100): AuditRow[] {
 let turnClock = Date.parse("2026-07-09T12:30:00.000Z");
 
 export function submitPaste(db: HiveDatabase, sessionId: string): void {
-  const agent = db.listAgents().find(
-    (record) => record.sessionLocator?.sessionId === sessionId,
-  );
+  const agent = db
+    .listAgents()
+    .find((record) => record.sessionLocator?.sessionId === sessionId);
   if (agent === undefined) return;
   turnClock += 1_000;
   db.insertEvent({

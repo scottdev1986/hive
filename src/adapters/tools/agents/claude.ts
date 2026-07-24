@@ -7,10 +7,10 @@ import { shellJoin } from "../../../daemon/session-host/shell-session";
 import {
   buildClaudeResumeCommand,
   buildClaudeSpawnCommand,
+  type ClaudeSpawnOptions,
   resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
-  type ClaudeSpawnOptions,
 } from "../claude";
 import type { AgentAdapter } from "./agent-adapter";
 
@@ -23,7 +23,9 @@ export const claudeAgentAdapter: AgentAdapter = {
       name: context.name,
       readOnly: context.readOnly,
       dangerous: context.dangerous,
-      ...(context.boardTools === undefined ? {} : { boardTools: context.boardTools }),
+      ...(context.boardTools === undefined
+        ? {}
+        : { boardTools: context.boardTools }),
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
@@ -47,9 +49,10 @@ export const claudeAgentAdapter: AgentAdapter = {
         ? {}
         : { appendSystemPromptFile: context.instructionPath }),
     };
-    const argv = context.resumeSessionId === undefined
-      ? buildClaudeSpawnCommand(options)
-      : buildClaudeResumeCommand(options, context.resumeSessionId);
+    const argv =
+      context.resumeSessionId === undefined
+        ? buildClaudeSpawnCommand(options)
+        : buildClaudeResumeCommand(options, context.resumeSessionId);
     return {
       argv,
       command: shellJoin(

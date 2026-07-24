@@ -36,7 +36,10 @@ function git(root: string, args: string[]): void {
 async function repoWithSpec(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "hive-start-"));
   git(root, ["init"]);
-  await writeFile(join(root, "package.json"), JSON.stringify({ scripts: { test: "bun test" } }));
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ scripts: { test: "bun test" } }),
+  );
   await writeFile(join(root, "SPEC.md"), "# Spec\n\nv1\n");
   git(root, ["add", "-A"]);
   git(root, ["commit", "-m", "init", "--no-gpg-sign"]);

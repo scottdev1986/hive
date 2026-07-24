@@ -1,5 +1,6 @@
 import { connect, type Socket } from "node:net";
 import type { z } from "zod";
+import type { TerminalGeometry } from "../../schemas/session-protocol";
 import {
   AppliedPayloadSchema,
   ClaimAcquirePayloadSchema,
@@ -8,6 +9,7 @@ import {
   FRAME_FLAGS,
   FRAME_HEADER,
   FRAME_TYPES,
+  type FrameTypeName,
   HelloPayloadSchema,
   HostAttachPayloadSchema,
   InputSubmitPayloadSchema,
@@ -16,23 +18,24 @@ import {
   SESSION_PROTOCOL_VERSION,
   TERMINAL_LIMITS,
   WelcomePayloadSchema,
-  type FrameTypeName,
 } from "../../schemas/session-protocol";
+import type { AttachGrant, SessionLocator } from "./contract";
 import {
   encodeSessiondFrame,
+  type SessiondFrame,
   SessiondProtocolError,
   SessiondWireError,
-  type SessiondFrame,
 } from "./sessiond-host";
-import type { TerminalGeometry } from "../../schemas/session-protocol";
-import type { SessionLocator, AttachGrant } from "./contract";
-import type { SessionRef, InputReceipt } from "./terminal-host-contract";
+import type { InputReceipt, SessionRef } from "./terminal-host-contract";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
 const frameNames = new Map<number, FrameTypeName>(
-  Object.entries(FRAME_TYPES).map(([name, code]) => [code, name as FrameTypeName]),
+  Object.entries(FRAME_TYPES).map(([name, code]) => [
+    code,
+    name as FrameTypeName,
+  ]),
 );
 
 /**
@@ -46,14 +49,18 @@ const frameNames = new Map<number, FrameTypeName>(
 class ViewerFrameDecoder {
   private buffered = new Uint8Array();
 
-  constructor(private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame) {}
+  constructor(
+    private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame,
+  ) {}
 
   setControlFrameMaxBytes(value: number): void {
     this.controlFrameMaxBytes = value;
   }
 
   push(chunk: Uint8Array): SessiondFrame[] {
-    const combined = new Uint8Array(this.buffered.byteLength + chunk.byteLength);
+    const combined = new Uint8Array(
+      this.buffered.byteLength + chunk.byteLength,
+    );
     combined.set(this.buffered);
     combined.set(chunk, this.buffered.byteLength);
     this.buffered = combined;
@@ -71,23 +78,32 @@ class ViewerFrameDecoder {
         }
       }
       if (
-        view.getUint8(FRAME_HEADER.offsets.major) !== SESSION_PROTOCOL_VERSION.major ||
-        view.getUint8(FRAME_HEADER.offsets.minor) < SESSION_PROTOCOL_MINOR_RANGE.min ||
-        view.getUint8(FRAME_HEADER.offsets.minor) > SESSION_PROTOCOL_MINOR_RANGE.max
+        view.getUint8(FRAME_HEADER.offsets.major) !==
+          SESSION_PROTOCOL_VERSION.major ||
+        view.getUint8(FRAME_HEADER.offsets.minor) <
+          SESSION_PROTOCOL_MINOR_RANGE.min ||
+        view.getUint8(FRAME_HEADER.offsets.minor) >
+          SESSION_PROTOCOL_MINOR_RANGE.max
       ) {
-        throw new SessiondProtocolError("sessiond frame has an unsupported protocol version");
+        throw new SessiondProtocolError(
+          "sessiond frame has an unsupported protocol version",
+        );
       }
       const flags = view.getUint16(FRAME_HEADER.offsets.flags);
       if (
         (flags & ~FRAME_FLAGS.allowedMask) !== 0 ||
         view.getUint16(FRAME_HEADER.offsets.reserved) !== 0
       ) {
-        throw new SessiondProtocolError("sessiond frame has invalid flags or reserved bits");
+        throw new SessiondProtocolError(
+          "sessiond frame has invalid flags or reserved bits",
+        );
       }
       const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
       const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
       if (payloadLength > this.controlFrameMaxBytes) {
-        throw new SessiondProtocolError("sessiond frame exceeds the negotiated v1 cap");
+        throw new SessiondProtocolError(
+          "sessiond frame exceeds the negotiated v1 cap",
+        );
       }
       const frameLength = FRAME_HEADER.bytes + payloadLength;
       if (this.buffered.byteLength < frameLength) break;
@@ -97,7 +113,9 @@ class ViewerFrameDecoder {
           this.buffered = this.buffered.slice(frameLength);
           continue;
         }
-        throw new SessiondProtocolError(`sessiond returned unsupported frame type ${typeCode}`);
+        throw new SessiondProtocolError(
+          `sessiond returned unsupported frame type ${typeCode}`,
+        );
       }
       frames.push({
         type,
@@ -162,9 +180,12 @@ export class SessiondViewerAttachClient {
     private readonly deps: ViewerAttachDependencies,
   ) {
     socket.on("data", (chunk) =>
-      this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
+      this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk),
+    );
     socket.on("error", (error) => this.fail(error));
-    socket.on("close", () => this.fail(new Error("sessiond viewer connection closed")));
+    socket.on("close", () =>
+      this.fail(new Error("sessiond viewer connection closed")),
+    );
   }
 
   /** Connect, complete the viewer handshake, and return an attached client. */
@@ -205,7 +226,9 @@ export class SessiondViewerAttachClient {
       welcome.protocol.minor < SESSION_PROTOCOL_MINOR_RANGE.min ||
       welcome.protocol.minor > SESSION_PROTOCOL_MINOR_RANGE.max
     ) {
-      throw new SessiondProtocolError("sessiond host WELCOME does not match this attach");
+      throw new SessiondProtocolError(
+        "sessiond host WELCOME does not match this attach",
+      );
     }
     this.maxInputTransactionBytes = welcome.limits.maxInputTransactionBytes;
     this.decoder.setControlFrameMaxBytes(welcome.limits.controlFrameMaxBytes);
@@ -220,7 +243,12 @@ export class SessiondViewerAttachClient {
       afterSeq: this.deps.grant.outputSeq,
     });
     this.outputHighWater = BigInt(this.deps.grant.outputSeq);
-    this.writeFrame("HOST_ATTACH", 0, 0n, textEncoder.encode(JSON.stringify(hostAttach)));
+    this.writeFrame(
+      "HOST_ATTACH",
+      0,
+      0n,
+      textEncoder.encode(JSON.stringify(hostAttach)),
+    );
   }
 
   /**
@@ -232,15 +260,17 @@ export class SessiondViewerAttachClient {
    * live proof died guessing between three silent causes: every refusal on
    * this wire must carry its reason out.
    */
-  async injectAutomated(request: Readonly<{
-    session: SessionRef;
-    writer: string;
-    transactionId: string;
-    idempotencyKey: string;
-    bytes: Uint8Array;
-    leaseMilliseconds: number;
-    isPromptPending?: () => boolean;
-  }>): Promise<
+  async injectAutomated(
+    request: Readonly<{
+      session: SessionRef;
+      writer: string;
+      transactionId: string;
+      idempotencyKey: string;
+      bytes: Uint8Array;
+      leaseMilliseconds: number;
+      isPromptPending?: () => boolean;
+    }>,
+  ): Promise<
     | Readonly<{ kind: "receipt"; receipt: InputReceipt }>
     | Readonly<{ kind: "claim-declined"; detail: string }>
     | Readonly<{ kind: "stale" }>
@@ -267,10 +297,11 @@ export class SessiondViewerAttachClient {
     if (claimResult.state !== "granted") {
       // Denied/unknown — a human owns the arbiter or it is unavailable. Leave the
       // envelope queued; the arbiter, not this client, is the never-steal truth.
-      const owner = claimResult.state === "denied" && claimResult.owner !== null
-        ? ` (held by ${claimResult.owner.kind} writer ${claimResult.owner.writer}, ` +
-          `lease expires ${claimResult.owner.leaseExpiresAt})`
-        : "";
+      const owner =
+        claimResult.state === "denied" && claimResult.owner !== null
+          ? ` (held by ${claimResult.owner.kind} writer ${claimResult.owner.writer}, ` +
+            `lease expires ${claimResult.owner.leaseExpiresAt})`
+          : "";
       return {
         kind: "claim-declined",
         detail: `claim ${claimResult.state}: ${claimResult.diagnostic}${owner}`,
@@ -306,7 +337,9 @@ export class SessiondViewerAttachClient {
       AppliedPayloadSchema,
     );
     if (applied.resultKind !== "input") {
-      throw new SessiondProtocolError("sessiond returned a non-input result for INPUT_SUBMIT");
+      throw new SessiondProtocolError(
+        "sessiond returned a non-input result for INPUT_SUBMIT",
+      );
     }
     return { kind: "receipt", receipt: applied.receipt };
   }
@@ -316,7 +349,8 @@ export class SessiondViewerAttachClient {
     if (this.closed) return;
     this.closed = true;
     if (
-      this.activeClaimToken !== null && this.activeClaimSession !== null &&
+      this.activeClaimToken !== null &&
+      this.activeClaimSession !== null &&
       this.failure === null
     ) {
       const release = {
@@ -326,7 +360,12 @@ export class SessiondViewerAttachClient {
         kind: "submit",
       };
       try {
-        this.writeFrame("CLAIM_RELEASE", 0, 0n, textEncoder.encode(JSON.stringify(release)));
+        this.writeFrame(
+          "CLAIM_RELEASE",
+          0,
+          0n,
+          textEncoder.encode(JSON.stringify(release)),
+        );
       } catch {
         // The host also frees the claim on our disconnect; a failed release is
         // not worth surfacing over the receipt we already have.
@@ -339,7 +378,9 @@ export class SessiondViewerAttachClient {
     this.socket.end();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(this.failure ?? new Error("sessiond viewer connection closed"));
+      pending.reject(
+        this.failure ?? new Error("sessiond viewer connection closed"),
+      );
     }
     this.pending.clear();
   }
@@ -350,14 +391,18 @@ export class SessiondViewerAttachClient {
     flags: number,
     payload: unknown,
   ): Promise<SessiondFrame> {
-    if (this.closed) return Promise.reject(this.failure ?? new Error("viewer connection is closed"));
+    if (this.closed)
+      return Promise.reject(
+        this.failure ?? new Error("viewer connection is closed"),
+      );
     const requestId = this.nextRequestId++;
     const bytes = textEncoder.encode(JSON.stringify(payload));
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error(`sessiond ${requestType} request timed out`));
-      }, this.deps.handshakeTimeoutMs ?? TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
+      }, this.deps.handshakeTimeoutMs ??
+        TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
       timeout.unref?.();
       this.pending.set(requestId, { responseType, resolve, reject, timeout });
       try {
@@ -377,7 +422,13 @@ export class SessiondViewerAttachClient {
     payload: Uint8Array,
     requestId = this.nextRequestId++,
   ): void {
-    const frame = encodeSessiondFrame({ type, flags, requestId, streamSeq, payload });
+    const frame = encodeSessiondFrame({
+      type,
+      flags,
+      requestId,
+      streamSeq,
+      payload,
+    });
     this.socket.write(frame);
   }
 
@@ -390,7 +441,9 @@ export class SessiondViewerAttachClient {
     }
     const result = schema.safeParse(decoded);
     if (!result.success) {
-      throw new SessiondProtocolError("sessiond returned a response outside the frozen schema");
+      throw new SessiondProtocolError(
+        "sessiond returned a response outside the frozen schema",
+      );
     }
     return result.data;
   }
@@ -400,7 +453,9 @@ export class SessiondViewerAttachClient {
     try {
       frames = this.decoder.push(chunk);
     } catch (error) {
-      this.fail(error instanceof Error ? error : new Error("invalid sessiond frame"));
+      this.fail(
+        error instanceof Error ? error : new Error("invalid sessiond frame"),
+      );
       return;
     }
     for (const frame of frames) this.dispatch(frame);
@@ -427,17 +482,24 @@ export class SessiondViewerAttachClient {
   }
 
   private answerPing(frame: SessiondFrame): void {
-    if (frame.flags !== 0 || !PingPongPayloadSchema.safeParse(safeJson(frame.payload)).success) {
-      this.fail(new SessiondProtocolError("sessiond returned an invalid PING frame"));
+    if (
+      frame.flags !== 0 ||
+      !PingPongPayloadSchema.safeParse(safeJson(frame.payload)).success
+    ) {
+      this.fail(
+        new SessiondProtocolError("sessiond returned an invalid PING frame"),
+      );
       return;
     }
-    this.socket.write(encodeSessiondFrame({
-      type: "PONG",
-      flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-      requestId: frame.requestId,
-      streamSeq: 0n,
-      payload: frame.payload,
-    }));
+    this.socket.write(
+      encodeSessiondFrame({
+        type: "PONG",
+        flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+        requestId: frame.requestId,
+        streamSeq: 0n,
+        payload: frame.payload,
+      }),
+    );
   }
 
   private acknowledgeOutput(frame: SessiondFrame): void {
@@ -450,7 +512,12 @@ export class SessiondViewerAttachClient {
       throughSeq: throughSeq.toString(),
     };
     try {
-      this.writeFrame("APPLIED", 0, 0n, textEncoder.encode(JSON.stringify(ack)));
+      this.writeFrame(
+        "APPLIED",
+        0,
+        0n,
+        textEncoder.encode(JSON.stringify(ack)),
+      );
     } catch {
       // A failed ack only risks backpressure; the inflight request will still
       // resolve or time out on its own.
@@ -461,7 +528,9 @@ export class SessiondViewerAttachClient {
     const pending = this.pending.get(frame.requestId);
     if (pending === undefined) {
       // An uncorrelated control frame on the viewer wire is a protocol break.
-      this.fail(new SessiondProtocolError("sessiond returned an uncorrelated response"));
+      this.fail(
+        new SessiondProtocolError("sessiond returned an uncorrelated response"),
+      );
       return;
     }
     clearTimeout(pending.timeout);
@@ -474,19 +543,30 @@ export class SessiondViewerAttachClient {
       frame.type !== pending.responseType ||
       frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final)
     ) {
-      pending.reject(new SessiondProtocolError("sessiond returned the wrong response frame"));
+      pending.reject(
+        new SessiondProtocolError("sessiond returned the wrong response frame"),
+      );
       return;
     }
     pending.resolve(frame);
   }
 
   private errorFromFrame(frame: SessiondFrame): Error {
-    if (frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)) {
-      return new SessiondProtocolError("sessiond returned a malformed error frame");
+    if (
+      frame.flags !==
+      (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)
+    ) {
+      return new SessiondProtocolError(
+        "sessiond returned a malformed error frame",
+      );
     }
     const parsed = ErrorPayloadSchema.safeParse(safeJson(frame.payload));
     return parsed.success
-      ? new SessiondWireError(parsed.data.code, parsed.data.message, parsed.data.diagnosticId)
+      ? new SessiondWireError(
+          parsed.data.code,
+          parsed.data.message,
+          parsed.data.diagnosticId,
+        )
       : new SessiondProtocolError("sessiond returned an invalid error payload");
   }
 

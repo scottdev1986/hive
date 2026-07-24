@@ -54,7 +54,12 @@ export type WalRecord =
   | { kind: "CHILD"; at: string; child: ChildIdentity }
   | { kind: "ACCEPTED"; at: string; command: Omit<CommandEnvelope, "prompt"> }
   | { kind: "COMMAND_WRITTEN"; at: string; commandId: string }
-  | { kind: "APPROVAL_WRITTEN"; at: string; approvalId: string; decision: "approve" | "deny" }
+  | {
+      kind: "APPROVAL_WRITTEN";
+      at: string;
+      approvalId: string;
+      decision: "approve" | "deny";
+    }
   | { kind: "EVENT"; at: string; event: SemanticEvent }
   | { kind: "ACK"; at: string; highWaterMark: number };
 

@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
   checkBuildFreshness,
-  runningBuildProvenance,
   type GitRunner,
+  runningBuildProvenance,
 } from "../../src/daemon/build-freshness";
 
 const RELEASE = { isRelease: true, commit: "abc1234", version: "0.0.7" };
 
 /** A git that answers from a table; anything unasked-for is an error, so a
  * test cannot accidentally pass on a command this module never ran. */
-function fakeGit(answers: Record<string, { exitCode: number; stdout: string }>): GitRunner {
+function fakeGit(
+  answers: Record<string, { exitCode: number; stdout: string }>,
+): GitRunner {
   return async (args) => {
     const key = args.join(" ");
     const answer = answers[key];
@@ -55,11 +57,11 @@ describe("build freshness", () => {
   });
 
   test("a build with no commit provenance is unknown, never current", async () => {
-    const freshness = await checkBuildFreshness(
-      "/repo",
-      fakeGit({}),
-      { isRelease: false, commit: "unknown", version: "0.0.0-dev" },
-    );
+    const freshness = await checkBuildFreshness("/repo", fakeGit({}), {
+      isRelease: false,
+      commit: "unknown",
+      version: "0.0.0-dev",
+    });
     expect(freshness.state).toBe("unknown");
     expect(freshness.buildCommit).toBeNull();
     expect(freshness.message).toContain("cannot tell");

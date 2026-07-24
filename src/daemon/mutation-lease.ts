@@ -3,11 +3,11 @@ import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import {
-  daemonInstanceLiveness,
-  type DaemonInstanceLiveness,
-} from "./lifecycle";
 import { hiveInstanceSuffix, resolveHiveHome } from "./instance-identity";
+import {
+  type DaemonInstanceLiveness,
+  daemonInstanceLiveness,
+} from "./lifecycle";
 
 const MachineMutationPurposeSchema = z.enum([
   "update",
@@ -56,9 +56,7 @@ const OperationRowSchema = z.object({
 
 type OperationRow = z.infer<typeof OperationRowSchema>;
 
-export function getMachineMutationDatabasePath(
-  runtimeRoot = tmpdir(),
-): string {
+export function getMachineMutationDatabasePath(runtimeRoot = tmpdir()): string {
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
   const runtimeDirectory = join(runtimeRoot, `hive-${uid ?? "user"}`);
   mkdirSync(runtimeDirectory, { recursive: true, mode: 0o700 });
@@ -213,27 +211,31 @@ export class MachineMutationCoordinator {
 
       const token = crypto.randomUUID();
       const acquiredAt = new Date().toISOString();
-      const result = this.immediate(():
-        | { acquired: true }
-        | { acquired: false; lease: LeaseRow | null } => {
-        const lease = this.readLease();
-        if (lease !== null) return { acquired: false, lease };
-        if (this.readOperations().length > 0) {
-          return { acquired: false, lease: null };
-        }
-        this.database.query(`
+      const result = this.immediate(
+        ():
+          | { acquired: true }
+          | { acquired: false; lease: LeaseRow | null } => {
+          const lease = this.readLease();
+          if (lease !== null) return { acquired: false, lease };
+          if (this.readOperations().length > 0) {
+            return { acquired: false, lease: null };
+          }
+          this.database
+            .query(`
           INSERT INTO machine_mutation_lease (
             id, token, purpose, holderPid, holderStartedAt, acquiredAt
           ) VALUES (1, ?, ?, ?, ?, ?)
-        `).run(
-          token,
-          parsedPurpose,
-          this.processPid,
-          owner.startedAt,
-          acquiredAt,
-        );
-        return { acquired: true };
-      });
+        `)
+            .run(
+              token,
+              parsedPurpose,
+              this.processPid,
+              owner.startedAt,
+              acquiredAt,
+            );
+          return { acquired: true };
+        },
+      );
       if (result.acquired) return this.leaseHandle(token);
       if (result.lease === null) continue;
 
@@ -268,20 +270,22 @@ export class MachineMutationCoordinator {
       const lease = this.immediate(() => {
         const current = this.readLease();
         if (current !== null) return current;
-        this.database.query(`
+        this.database
+          .query(`
           INSERT INTO machine_operations (
             token, kind, instanceId, instanceHome, holderPid,
             holderStartedAt, startedAt
           ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          token,
-          kind,
-          this.instanceId,
-          this.instanceHome,
-          this.processPid,
-          owner.startedAt,
-          new Date().toISOString(),
-        );
+        `)
+          .run(
+            token,
+            kind,
+            this.instanceId,
+            this.instanceHome,
+            this.processPid,
+            owner.startedAt,
+            new Date().toISOString(),
+          );
         return null;
       });
       if (lease === null) return this.operationHandle(token);
@@ -311,10 +315,12 @@ export class MachineMutationCoordinator {
   }
 
   private readLease(): LeaseRow | null {
-    const row = this.database.query(`
+    const row = this.database
+      .query(`
       SELECT token, purpose, holderPid, holderStartedAt, acquiredAt
       FROM machine_mutation_lease WHERE id = 1
-    `).get();
+    `)
+      .get();
     if (row === null) return null;
     const parsed = LeaseRowSchema.safeParse(row);
     if (!parsed.success) {
@@ -326,11 +332,13 @@ export class MachineMutationCoordinator {
   }
 
   private readOperations(): OperationRow[] {
-    const rows = this.database.query(`
+    const rows = this.database
+      .query(`
       SELECT token, kind, instanceId, instanceHome, holderPid, holderStartedAt,
              startedAt
       FROM machine_operations ORDER BY startedAt, token
-    `).all();
+    `)
+      .all();
     const parsed = z.array(OperationRowSchema).safeParse(rows);
     if (!parsed.success) {
       throw new Error(
@@ -375,19 +383,23 @@ export class MachineMutationCoordinator {
       return "unknown";
     }
     if (processState.state !== "live") return processState.state;
-    return processState.startedAt === operation.holderStartedAt ? "live" : "dead";
+    return processState.startedAt === operation.holderStartedAt
+      ? "live"
+      : "dead";
   }
 
   private deleteLease(token: string): void {
     this.immediate(() => {
-      this.database.query(
-        "DELETE FROM machine_mutation_lease WHERE token = ?",
-      ).run(token);
-      const standing = this.database.query(
-        "SELECT 1 FROM machine_mutation_lease WHERE token = ?",
-      ).get(token);
+      this.database
+        .query("DELETE FROM machine_mutation_lease WHERE token = ?")
+        .run(token);
+      const standing = this.database
+        .query("SELECT 1 FROM machine_mutation_lease WHERE token = ?")
+        .get(token);
       if (standing !== null) {
-        throw new Error(`Dead machine mutation lease ${token} was not reclaimed`);
+        throw new Error(
+          `Dead machine mutation lease ${token} was not reclaimed`,
+        );
       }
     });
   }
@@ -396,12 +408,12 @@ export class MachineMutationCoordinator {
     return {
       release: () => {
         this.immediate(() => {
-          this.database.query(
-            "DELETE FROM machine_mutation_lease WHERE token = ?",
-          ).run(token);
-          const standing = this.database.query(
-            "SELECT 1 FROM machine_mutation_lease WHERE token = ?",
-          ).get(token);
+          this.database
+            .query("DELETE FROM machine_mutation_lease WHERE token = ?")
+            .run(token);
+          const standing = this.database
+            .query("SELECT 1 FROM machine_mutation_lease WHERE token = ?")
+            .get(token);
           if (standing !== null) {
             throw new Error(`Machine mutation lease ${token} was not released`);
           }
@@ -414,12 +426,12 @@ export class MachineMutationCoordinator {
     return {
       release: () => {
         this.immediate(() => {
-          this.database.query(
-            "DELETE FROM machine_operations WHERE token = ?",
-          ).run(token);
-          const standing = this.database.query(
-            "SELECT 1 FROM machine_operations WHERE token = ?",
-          ).get(token);
+          this.database
+            .query("DELETE FROM machine_operations WHERE token = ?")
+            .run(token);
+          const standing = this.database
+            .query("SELECT 1 FROM machine_operations WHERE token = ?")
+            .get(token);
           if (standing !== null) {
             throw new Error(`Machine operation ${token} was not released`);
           }

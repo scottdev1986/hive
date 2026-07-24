@@ -1,5 +1,5 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -49,7 +49,11 @@ function processExists(pid: number): boolean {
   }
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>, label: string, timeoutMs = 8_000): Promise<void> {
+async function waitUntil(
+  predicate: () => boolean | Promise<boolean>,
+  label: string,
+  timeoutMs = 8_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
@@ -72,7 +76,10 @@ function startActor(role: "ui" | "broker"): ChildProcess {
   });
 }
 
-function kill(child: ChildProcess | null, signal: NodeJS.Signals = "SIGKILL"): void {
+function kill(
+  child: ChildProcess | null,
+  signal: NodeJS.Signals = "SIGKILL",
+): void {
   if (child?.pid === undefined || !processExists(child.pid)) return;
   try {
     process.kill(child.pid, signal);
@@ -81,8 +88,11 @@ function kill(child: ChildProcess | null, signal: NodeJS.Signals = "SIGKILL"): v
   }
 }
 
-async function rpc<T>(config: HostConfig, request: Omit<RpcRequest, "tenantId" | "authToken">,
-  credentials: Partial<Pick<RpcRequest, "tenantId" | "authToken">> = {}): Promise<T> {
+async function rpc<T>(
+  config: HostConfig,
+  request: Omit<RpcRequest, "tenantId" | "authToken">,
+  credentials: Partial<Pick<RpcRequest, "tenantId" | "authToken">> = {},
+): Promise<T> {
   return await new Promise<T>((resolveRpc, rejectRpc) => {
     const socket = connect(config.socketPath);
     let buffer = "";
@@ -95,11 +105,15 @@ async function rpc<T>(config: HostConfig, request: Omit<RpcRequest, "tenantId" |
       clearTimeout(timer);
       rejectRpc(error);
     });
-    socket.once("connect", () => socket.write(`${JSON.stringify({
-      tenantId: credentials.tenantId ?? config.tenantId,
-      authToken: credentials.authToken ?? config.authToken,
-      ...request,
-    })}\n`));
+    socket.once("connect", () =>
+      socket.write(
+        `${JSON.stringify({
+          tenantId: credentials.tenantId ?? config.tenantId,
+          authToken: credentials.authToken ?? config.authToken,
+          ...request,
+        })}\n`,
+      ),
+    );
     socket.on("data", (chunk: string) => {
       buffer += chunk;
       const newline = buffer.indexOf("\n");
@@ -142,8 +156,14 @@ async function killProvider(report: ReconnectReport): Promise<void> {
   await Bun.sleep(30);
 }
 
-async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Boundary): Promise<MatrixRow> {
-  const runDir = mkdtempSync(join(tmpdir(), `hive-agenthost-${vendor}-${boundary}-`));
+async function runRow(
+  vendor: Vendor,
+  crashTarget: CrashTarget,
+  boundary: Boundary,
+): Promise<MatrixRow> {
+  const runDir = mkdtempSync(
+    join(tmpdir(), `hive-agenthost-${vendor}-${boundary}-`),
+  );
   const config: HostConfig = {
     tenantId: `tenant-${vendor}`,
     authToken: randomBytes(24).toString("hex"),
@@ -155,7 +175,9 @@ async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Bounda
   };
   mkdirSync(config.stateDir, { recursive: true });
   const configPath = join(runDir, "config.json");
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+    mode: 0o600,
+  });
   let host = startHost(configPath);
   let ui = startActor("ui");
   let broker = startActor("broker");
@@ -169,14 +191,17 @@ async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Bounda
         commandId: `cmd-${vendor}-${crashTarget}-${boundary}`,
         brokerGeneration: 1,
         sessionEpoch: 0,
-        prompt: "Run the fixture tool once, wait for explicit approval, and report completion.",
+        prompt:
+          "Run the fixture tool once, wait for explicit approval, and report completion.",
       },
     });
     let preCrashApprovalAnswered = false;
     await waitUntil(async () => {
       if (existsSync(join(config.stateDir, "boundary.json"))) return true;
       if (boundary !== "during_tool_approval") {
-        const progress = await rpc<ReconnectReport>(config, { action: "snapshot" });
+        const progress = await rpc<ReconnectReport>(config, {
+          action: "snapshot",
+        });
         if (progress.pendingApprovalId !== null && !preCrashApprovalAnswered) {
           preCrashApprovalAnswered = true;
           await rpc(config, {
@@ -188,8 +213,11 @@ async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Bounda
       }
       return false;
     }, boundary);
-    const atBoundary = await rpc<ReconnectReport>(config, { action: "snapshot" });
-    if (atBoundary.childIdentity !== null) childPids.add(atBoundary.childIdentity.pid);
+    const atBoundary = await rpc<ReconnectReport>(config, {
+      action: "snapshot",
+    });
+    if (atBoundary.childIdentity !== null)
+      childPids.add(atBoundary.childIdentity.pid);
 
     if (crashTarget === "ui") {
       kill(ui);
@@ -198,40 +226,53 @@ async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Bounda
     } else if (crashTarget === "broker") {
       kill(broker);
       broker = startActor("broker");
-      notes = "Broker generation replaced and reconnected from durable high-water state.";
+      notes =
+        "Broker generation replaced and reconnected from durable high-water state.";
     } else if (crashTarget === "host") {
       kill(host);
       await Bun.sleep(40);
       host = startHost(configPath);
       await waitUntil(() => hostReady(config), "replacement AgentHost");
-      notes = "Replacement host reconciled the pinned child and vendor session without prompt replay.";
+      notes =
+        "Replacement host reconciled the pinned child and vendor session without prompt replay.";
     } else {
       await killProvider(atBoundary);
-      notes = "Provider process group killed independently; host used vendor-session state or surfaced ambiguity.";
+      notes =
+        "Provider process group killed independently; host used vendor-session state or surfaced ambiguity.";
     }
 
     let report = await rpc<ReconnectReport>(config, { action: "snapshot" });
-    if (crashTarget === "host" && boundary === "before_accept" && report.lastAcceptedCommand === null) {
+    if (
+      crashTarget === "host" &&
+      boundary === "before_accept" &&
+      report.lastAcceptedCommand === null
+    ) {
       await rpc(config, {
         action: "start",
         command: {
           commandId: `cmd-${vendor}-${crashTarget}-${boundary}-explicit-reconcile`,
           brokerGeneration: 2,
           sessionEpoch: 0,
-          prompt: "Run the fixture tool once, wait for explicit approval, and report completion.",
+          prompt:
+            "Run the fixture tool once, wait for explicit approval, and report completion.",
           explicitReconcile: true,
         },
       });
-      notes += " The broker issued a new command only after proving the first was never accepted.";
+      notes +=
+        " The broker issued a new command only after proving the first was never accepted.";
     }
     await rpc(config, { action: "release" });
 
     let approvalAnswered = preCrashApprovalAnswered;
     await waitUntil(async () => {
       report = await rpc<ReconnectReport>(config, { action: "snapshot" });
-      if (report.childIdentity !== null) childPids.add(report.childIdentity.pid);
-      if (report.pendingApprovalId !== null && !approvalAnswered &&
-          report.inFlightPhase !== "unknown_outcome") {
+      if (report.childIdentity !== null)
+        childPids.add(report.childIdentity.pid);
+      if (
+        report.pendingApprovalId !== null &&
+        !approvalAnswered &&
+        report.inFlightPhase !== "unknown_outcome"
+      ) {
         approvalAnswered = true;
         await rpc(config, {
           action: "approve",
@@ -239,19 +280,29 @@ async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Bounda
           decision: "approve",
         });
       }
-      return report.inFlightPhase === "terminal_durable" || report.inFlightPhase === "unknown_outcome";
+      return (
+        report.inFlightPhase === "terminal_durable" ||
+        report.inFlightPhase === "unknown_outcome"
+      );
     }, "terminal or UNKNOWN_OUTCOME");
 
     report = await rpc<ReconnectReport>(config, { action: "snapshot" });
     let crossTenantAdoption = false;
     try {
-      await rpc(config, { action: "snapshot" }, { tenantId: "different-tenant" });
+      await rpc(
+        config,
+        { action: "snapshot" },
+        { tenantId: "different-tenant" },
+      );
       crossTenantAdoption = true;
     } catch {
       // Required rejection.
     }
     if (report.lastEventSequence > 0) {
-      await rpc(config, { action: "ack", highWaterMark: report.lastEventSequence });
+      await rpc(config, {
+        action: "ack",
+        highWaterMark: report.lastEventSequence,
+      });
       report = await rpc<ReconnectReport>(config, { action: "snapshot" });
     }
     const ledgerPath = join(config.stateDir, "provider-ledger.json");
@@ -273,7 +324,10 @@ async function runRow(vendor: Vendor, crashTarget: CrashTarget, boundary: Bounda
       .filter(Boolean)
       .map((line) => JSON.parse(line))
       .filter((record) => record.kind === "EVENT")
-      .map((record) => record.event) as Array<{ type: string; payload: Record<string, unknown> }>;
+      .map((record) => record.event) as Array<{
+      type: string;
+      payload: Record<string, unknown>;
+    }>;
     const unknown = events.some((event) => event.type === "UNKNOWN_OUTCOME");
     const resumed = events.some((event) => event.type === "provider_resumed");
     const completed = events.some((event) => event.type === "turn_completed");
@@ -323,14 +377,27 @@ function render(rows: MatrixRow[]): string {
     "|---|---|---|---|---:|---|",
   ];
   for (const row of rows) {
-    const forbidden = row.duplicatePrompt || row.duplicateApproval || row.duplicateTool ||
-        row.falseCompletion || row.crossTenantAdoption || row.orphanedProcesses
-      ? "FAIL"
-      : "none";
-    lines.push(`| ${row.vendor} | ${row.crashTarget} | ${row.boundary} | ${row.outcome} | ${row.promptExecutions} / ${row.approvalExecutions} / ${row.toolExecutions} | ${forbidden} |`);
+    const forbidden =
+      row.duplicatePrompt ||
+      row.duplicateApproval ||
+      row.duplicateTool ||
+      row.falseCompletion ||
+      row.crossTenantAdoption ||
+      row.orphanedProcesses
+        ? "FAIL"
+        : "none";
+    lines.push(
+      `| ${row.vendor} | ${row.crashTarget} | ${row.boundary} | ${row.outcome} | ${row.promptExecutions} / ${row.approvalExecutions} / ${row.toolExecutions} | ${forbidden} |`,
+    );
   }
-  const counts = Object.fromEntries(["replayed_known_state", "clean_vendor_resume", "UNKNOWN_OUTCOME"]
-    .map((outcome) => [outcome, rows.filter((row) => row.outcome === outcome).length]));
+  const counts = Object.fromEntries(
+    ["replayed_known_state", "clean_vendor_resume", "UNKNOWN_OUTCOME"].map(
+      (outcome) => [
+        outcome,
+        rows.filter((row) => row.outcome === outcome).length,
+      ],
+    ),
+  );
   lines.push(
     "",
     `Result: ${rows.length} rows; ${counts.replayed_known_state} replayed known state, ${counts.clean_vendor_resume} clean vendor resumes, ${counts.UNKNOWN_OUTCOME} explicit unknown outcomes. No forbidden result occurred.`,
@@ -350,12 +417,31 @@ for (const vendor of vendors) {
     }
   }
 }
-const forbidden = rows.filter((row) => row.duplicatePrompt || row.duplicateApproval ||
-  row.duplicateTool || row.falseCompletion || row.crossTenantAdoption || row.orphanedProcesses);
-writeFileSync(join(evidenceDir, "matrix.json"), `${JSON.stringify({
-  generatedAt: new Date().toISOString(),
-  rows,
-}, null, 2)}\n`);
+const forbidden = rows.filter(
+  (row) =>
+    row.duplicatePrompt ||
+    row.duplicateApproval ||
+    row.duplicateTool ||
+    row.falseCompletion ||
+    row.crossTenantAdoption ||
+    row.orphanedProcesses,
+);
+writeFileSync(
+  join(evidenceDir, "matrix.json"),
+  `${JSON.stringify(
+    {
+      generatedAt: new Date().toISOString(),
+      rows,
+    },
+    null,
+    2,
+  )}\n`,
+);
 writeFileSync(join(evidenceDir, "matrix.md"), render(rows));
-if (forbidden.length > 0) throw new Error(`${forbidden.length} matrix rows produced forbidden outcomes`);
-process.stdout.write(`wrote ${rows.length} green rows to evidence/matrix.{json,md}\n`);
+if (forbidden.length > 0)
+  throw new Error(
+    `${forbidden.length} matrix rows produced forbidden outcomes`,
+  );
+process.stdout.write(
+  `wrote ${rows.length} green rows to evidence/matrix.{json,md}\n`,
+);

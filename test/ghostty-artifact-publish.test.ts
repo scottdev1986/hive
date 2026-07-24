@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -58,11 +64,23 @@ const newIdentity: SourceIdentity = {
   patchSeriesSha256: NEW_PATCH_SHA,
 };
 
-function writeArtifact(dir: string, source: SourceIdentity, marker: string): void {
+function writeArtifact(
+  dir: string,
+  source: SourceIdentity,
+  marker: string,
+): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "artifact-manifest.json"),
-    JSON.stringify({ schemaVersion: 1, source, buildEnvironment: { optimizeMode: "ReleaseFast" } }, null, 2),
+    JSON.stringify(
+      {
+        schemaVersion: 1,
+        source,
+        buildEnvironment: { optimizeMode: "ReleaseFast" },
+      },
+      null,
+      2,
+    ),
   );
   writeFileSync(join(dir, "engine-marker.txt"), marker);
 }
@@ -79,7 +97,11 @@ function manifestPatchSha(dir: string): string {
 }
 
 function run(cmd: string[]): { exitCode: number; stderr: string } {
-  const result = Bun.spawnSync(cmd, { cwd: root, stdout: "pipe", stderr: "pipe" });
+  const result = Bun.spawnSync(cmd, {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   return { exitCode: result.exitCode, stderr: result.stderr.toString() };
 }
 
@@ -102,7 +124,9 @@ test("publish replaces a same-key incumbent built from a different patch series 
   // The fresh build must win: keeping the stale incumbent here is the exact
   // failure that shipped a Workspace renderer refusing every attach.
   expect(manifestPatchSha(finalOut)).toBe(NEW_PATCH_SHA);
-  expect(readFileSync(join(finalOut, "engine-marker.txt"), "utf8")).toBe("fresh-engine");
+  expect(readFileSync(join(finalOut, "engine-marker.txt"), "utf8")).toBe(
+    "fresh-engine",
+  );
   expect(existsSync(out)).toBe(false);
 });
 
@@ -119,7 +143,9 @@ test("publish keeps a same-key incumbent built from the same locked inputs (#46 
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
   // The concurrent consumer's copy survives untouched; the duplicate is gone.
-  expect(readFileSync(join(finalOut, "engine-marker.txt"), "utf8")).toBe("incumbent-engine");
+  expect(readFileSync(join(finalOut, "engine-marker.txt"), "utf8")).toBe(
+    "incumbent-engine",
+  );
   expect(existsSync(out)).toBe(false);
 });
 
@@ -159,8 +185,10 @@ test("lock check accepts a matching artifact and refuses every drifted field", (
   ] as const) {
     const drifted = join(base, `drift-${field}`);
     writeArtifact(drifted, { ...newIdentity, [field]: value }, "engine");
-    expect({ field, exitCode: run([lockCheck, drifted, lock]).exitCode })
-      .toEqual({ field, exitCode: 1 });
+    expect({
+      field,
+      exitCode: run([lockCheck, drifted, lock]).exitCode,
+    }).toEqual({ field, exitCode: 1 });
   }
 });
 
@@ -194,7 +222,9 @@ test("lock check refuses a source-matching Debug artifact", () => {
   writeLock(lock, newIdentity);
   writeArtifact(artifact, newIdentity, "debug-engine");
   const manifest = join(artifact, "artifact-manifest.json");
-  const parsed = JSON.parse(readFileSync(manifest, "utf8")) as { buildEnvironment: { optimizeMode: string } };
+  const parsed = JSON.parse(readFileSync(manifest, "utf8")) as {
+    buildEnvironment: { optimizeMode: string };
+  };
   parsed.buildEnvironment.optimizeMode = "Debug";
   writeFileSync(manifest, JSON.stringify(parsed));
 

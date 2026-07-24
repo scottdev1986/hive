@@ -1,19 +1,22 @@
 import {
-  AgentMessageSchema,
-  ORCHESTRATOR_NAME,
-  canonicalOrchestratorName,
-  isOrchestratorName,
-  orchestratorRecipientNames,
-  unknownVendor,
   type AgentMessage,
+  AgentMessageSchema,
   type AgentRecord,
   type ControlIntent,
+  canonicalOrchestratorName,
+  isOrchestratorName,
   type MessagePriority,
+  ORCHESTRATOR_NAME,
   type OrchestratorMessageEnvelope,
+  orchestratorRecipientNames,
+  unknownVendor,
 } from "../schemas";
 import type { InputReceipt } from "./session-host/contract";
 import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
-import type { SessiondAgentInput } from "./session-host/sessiond-agent-input";
+import type {
+  SessiondAgentInput,
+  SessiondInjectResult,
+} from "./session-host/sessiond-agent-input";
 
 /** Senders to probe for idempotency: root aliases during the rename window. */
 function idempotencySenders(from: string): readonly string[] {
@@ -30,19 +33,17 @@ function agentSessionLockKey(agent: AgentRecord): string {
     locator.sessionId,
   ].join(":");
 }
-import type { PaneProcessState } from "./resources";
-import { HiveDatabase } from "./db";
-import type {
-  ComposedMemoryDelta,
-  WakeDeltaProvider,
-} from "./memory-delta";
+
+import { isComposerLeased } from "./composer-lease";
+import type { HiveDatabase } from "./db";
+import type { ComposedMemoryDelta, WakeDeltaProvider } from "./memory-delta";
 import type { MemoryTriggerExecutor } from "./memory-triggers";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
   orchestratorSessionKey,
 } from "./orchestrator-lifecycle";
-import { isComposerLeased } from "./composer-lease";
+import type { PaneProcessState } from "./resources";
 
 export interface SessionSender {
   sendSessionMessage(
@@ -54,7 +55,10 @@ export interface SessionSender {
 
 export interface RootProtocolDeliverer {
   isLive(): boolean;
-  deliverMessage(content: string, meta: Record<string, string>): Promise<boolean>;
+  deliverMessage(
+    content: string,
+    meta: Record<string, string>,
+  ): Promise<boolean>;
 }
 
 export interface SendOptions {
@@ -86,11 +90,13 @@ export function queuedDeliveryNote(
   // james retry his ack on 2026-07-21: say what queued means for the root and
   // where the wake's failure cause is recorded.
   if (recipient === null && isOrchestratorName(message.to)) {
-    return "NOT received: queen was not woken. The daemon injects a wake " +
+    return (
+      "NOT received: queen was not woken. The daemon injects a wake " +
       "envelope into the root session on every send and on the root's turn " +
       "boundaries; if this stays queued, the message row's deliveryDiagnostic " +
       "records why the last wake attempt did not deliver. Do not re-send — " +
-      "the message is durable and retried.";
+      "the message is durable and retried."
+    );
   }
   if (recipient === null) return undefined;
   // A critical control left queued has already raised its own loud alert
@@ -111,43 +117,46 @@ export function queuedDeliveryNote(
       // exist — say what actually happens and where the cause of a stuck row
       // is recorded.
       if (recipient.sessionLocator?.hostKind === "sessiond") {
-        return `NOT received yet: ${name} is idle in a sessiond-hosted terminal; the daemon ` +
+        return (
+          `NOT received yet: ${name} is idle in a sessiond-hosted terminal; the daemon ` +
           "injects queued mail over the viewer wire on its next maintenance tick (the idle " +
           "wake) and at any turn boundary. If it stays queued, the message row's " +
           "deliveryDiagnostic records why the last attempt did not deliver " +
           "(e.g. a human holds the input claim — never stolen). " +
-          "Treat it as unheard until a turn confirms it.";
+          "Treat it as unheard until a turn confirms it."
+        );
       }
-      return `NOT received: the paste into ${name}'s pane was never submitted (no turn started), ` +
+      return (
+        `NOT received: the paste into ${name}'s pane was never submitted (no turn started), ` +
         `so the message stays queued and the daemon retries it on its next maintenance tick ` +
         `(the idle wake), as well as at any turn boundary ${name} reaches. ` +
-        "Treat it as unheard until a turn confirms it.";
+        "Treat it as unheard until a turn confirms it."
+      );
     case "awaiting-approval":
-      return `NOT received yet: ${name} is blocked on a pending approval and hears nothing until it resolves; ` +
-        "the message is delivered at the next turn boundary after that.";
+      return (
+        `NOT received yet: ${name} is blocked on a pending approval and hears nothing until it resolves; ` +
+        "the message is delivered at the next turn boundary after that."
+      );
     default:
       // working, control-paused, stuck: mid-turn shapes.
       return message.priority === "urgent"
         ? `NOT received yet: ${name} is mid-turn; urgent traffic is injected at its next tool call, ` +
-          "and the acknowledgement deadline alerts if that never happens."
+            "and the acknowledgement deadline alerts if that never happens."
         : message.priority === "steer"
           ? reportsTurnEvents(recipient.tool)
             ? `NOT received yet: ${name} is mid-turn; steer traffic is injected without cancellation ` +
               "at its next tool call, then confirmed by the following tool boundary."
             : `NOT received yet: ${name}'s ${recipient.tool} session exposes no non-destructive ` +
               "mid-turn injection boundary, so steer degrades to normal and arrives when the current turn ends."
-        : `NOT received yet: ${name} is mid-turn, and a normal message is delivered only when the ` +
-          "current turn ends — for a deep task that can be after the work this message means to " +
-          "steer has already shipped. Use priority=steer for non-destructive mid-turn guidance, or `urgent` " +
-          "only when the current work must stop because urgent cancels the in-flight turn.";
+          : `NOT received yet: ${name} is mid-turn, and a normal message is delivered only when the ` +
+            "current turn ends — for a deep task that can be after the work this message means to " +
+            "steer has already shipped. Use priority=steer for non-destructive mid-turn guidance, or `urgent` " +
+            "only when the current work must stop because urgent cancels the in-flight turn.";
   }
 }
 
 export interface CriticalControlRuntime {
-  interruptAndRestart(
-    agent: AgentRecord,
-    message: AgentMessage,
-  ): Promise<void>;
+  interruptAndRestart(agent: AgentRecord, message: AgentMessage): Promise<void>;
 }
 
 export interface NativeAgentControl {
@@ -253,7 +262,6 @@ export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
   }
 }
 
-
 export class MessageDelivery {
   private readonly sessionLocks = new Map<string, Promise<void>>();
 
@@ -273,8 +281,9 @@ export class MessageDelivery {
     private readonly processState?: (
       agent: AgentRecord,
     ) => Promise<PaneProcessState | "unknown">,
-    private readonly composerActive: (recipient: string) => boolean =
-      isComposerLeased,
+    private readonly composerActive: (
+      recipient: string,
+    ) => boolean = isComposerLeased,
     /** Daemon→idle-sessiond-agent input over the neutral viewer wire (#16
      * interim, #68). Absent → sessiond recipients stay durably queued, the
      * pre-wire behaviour. */
@@ -322,11 +331,11 @@ export class MessageDelivery {
       );
       if (existing !== null) return existing;
     }
-    const recipient = to === ORCHESTRATOR_NAME
-      ? null
-      : this.db.getAgentByName(to);
+    const recipient =
+      to === ORCHESTRATOR_NAME ? null : this.db.getAgentByName(to);
     if (
-      to !== ORCHESTRATOR_NAME && recipient === null &&
+      to !== ORCHESTRATOR_NAME &&
+      recipient === null &&
       !this.db.isAgentNameReserved(to)
     ) {
       throw new Error(`Recipient agent not found: ${to}`);
@@ -340,10 +349,12 @@ export class MessageDelivery {
       priority = "critical";
     }
     const now = new Date();
-    let capabilityEpoch = priority === "critical" && recipient !== null
-      ? recipient.capabilityEpoch + 1
-      : null;
-    const deadlineMs = options.deadlineMs ??
+    let capabilityEpoch =
+      priority === "critical" && recipient !== null
+        ? recipient.capabilityEpoch + 1
+        : null;
+    const deadlineMs =
+      options.deadlineMs ??
       (priority === "critical"
         ? DEFAULT_CRITICAL_DEADLINE_MS
         : priority === "urgent"
@@ -358,7 +369,8 @@ export class MessageDelivery {
             to,
             now.toISOString(),
           );
-          capabilityEpoch = currentRecipient?.capabilityEpoch ?? capabilityEpoch;
+          capabilityEpoch =
+            currentRecipient?.capabilityEpoch ?? capabilityEpoch;
         }
         const value = AgentMessageSchema.parse({
           id: crypto.randomUUID(),
@@ -370,9 +382,10 @@ export class MessageDelivery {
           priority,
           intent,
           state: "queued",
-          deadlineAt: deadlineMs === null
-            ? null
-            : new Date(now.getTime() + deadlineMs).toISOString(),
+          deadlineAt:
+            deadlineMs === null
+              ? null
+              : new Date(now.getTime() + deadlineMs).toISOString(),
           sequence: this.db.nextMessageSequence(to),
           idempotencyKey: options.idempotencyKey ?? null,
           capabilityEpoch,
@@ -380,12 +393,13 @@ export class MessageDelivery {
         return this.db.insertMessage(value);
       });
     } catch (error) {
-      const existing = options.idempotencyKey === undefined
-        ? null
-        : this.db.findMessageByIdempotencyAmongSenders(
-          sendersForIdempotency,
-          options.idempotencyKey,
-        );
+      const existing =
+        options.idempotencyKey === undefined
+          ? null
+          : this.db.findMessageByIdempotencyAmongSenders(
+              sendersForIdempotency,
+              options.idempotencyKey,
+            );
       if (existing !== null) return existing;
       throw error;
     }
@@ -398,13 +412,16 @@ export class MessageDelivery {
       if (currentRecipient === null || this.controls === undefined) {
         return this.getStoredMessage(message.id);
       }
-      return this.withSessionLock(agentSessionLockKey(currentRecipient), async () => {
-        if (this.composerActive(to)) return this.getStoredMessage(message.id);
-        return this.deliverCritical(
-          this.getStoredMessage(message.id),
-          this.requireLiveRecipient(to),
-        );
-      });
+      return this.withSessionLock(
+        agentSessionLockKey(currentRecipient),
+        async () => {
+          if (this.composerActive(to)) return this.getStoredMessage(message.id);
+          return this.deliverCritical(
+            this.getStoredMessage(message.id),
+            this.requireLiveRecipient(to),
+          );
+        },
+      );
     }
 
     if (recipient === null) {
@@ -414,7 +431,8 @@ export class MessageDelivery {
     if (this.nativeControl?.hasAgent(recipient.name)) {
       return this.withSessionLock(agentSessionLockKey(recipient), async () => {
         const current = this.getStoredMessage(message.id);
-        if (current.deliveredAt !== null || this.composerActive(to)) return current;
+        if (current.deliveredAt !== null || this.composerActive(to))
+          return current;
         const currentRecipient = this.requireLiveRecipient(to);
         try {
           return await this.deliverNative(current, currentRecipient);
@@ -458,8 +476,12 @@ export class MessageDelivery {
   private isDeliverable(
     recipient: AgentRecord | null,
   ): recipient is AgentRecord {
-    return recipient !== null && recipient.status !== "dead" &&
-      recipient.status !== "done" && recipient.status !== "failed";
+    return (
+      recipient !== null &&
+      recipient.status !== "dead" &&
+      recipient.status !== "done" &&
+      recipient.status !== "failed"
+    );
   }
 
   async flushQueued(agentName: string): Promise<AgentMessage[]> {
@@ -469,23 +491,29 @@ export class MessageDelivery {
     if (this.composerActive(agentName)) return [];
     const recipient = this.db.getAgentByName(agentName);
     if (
-      recipient === null || recipient.status === "dead" ||
-      recipient.status === "done" || recipient.status === "failed"
+      recipient === null ||
+      recipient.status === "dead" ||
+      recipient.status === "done" ||
+      recipient.status === "failed"
     ) {
       return [];
     }
 
     return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
-      if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
+      if (
+        !this.isDeliverable(currentRecipient) ||
+        this.composerActive(agentName)
+      ) {
         return [];
       }
       const queuedMessages = this.db.getUndeliveredMessages(agentName);
-      const hasCritical = queuedMessages.some((message) =>
-        message.priority === "critical"
+      const hasCritical = queuedMessages.some(
+        (message) => message.priority === "critical",
       );
       if (
-        !hasCritical && currentRecipient.status !== "idle" &&
+        !hasCritical &&
+        currentRecipient.status !== "idle" &&
         !this.nativeControl?.hasAgent(currentRecipient.name)
       ) {
         return [];
@@ -551,12 +579,16 @@ export class MessageDelivery {
     if (this.composerActive(agentName)) return [];
     const recipient = this.db.getAgentByName(agentName);
     if (!this.isDeliverable(recipient)) return [];
-    const queuedUrgent = this.db.getUndeliveredMessages(agentName)
+    const queuedUrgent = this.db
+      .getUndeliveredMessages(agentName)
       .filter((message) => message.priority === "urgent");
     if (queuedUrgent.length === 0) return [];
     return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
-      if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
+      if (
+        !this.isDeliverable(currentRecipient) ||
+        this.composerActive(agentName)
+      ) {
         return [];
       }
       const delivered: AgentMessage[] = [];
@@ -587,13 +619,18 @@ export class MessageDelivery {
   async flushSteer(agentName: string): Promise<AgentMessage[]> {
     if (this.composerActive(agentName)) return [];
     const recipient = this.db.getAgentByName(agentName);
-    if (!this.isDeliverable(recipient) || !reportsTurnEvents(recipient.tool)) return [];
-    const queued = this.db.getUndeliveredMessages(agentName)
+    if (!this.isDeliverable(recipient) || !reportsTurnEvents(recipient.tool))
+      return [];
+    const queued = this.db
+      .getUndeliveredMessages(agentName)
       .filter((message) => message.priority === "steer");
     if (queued.length === 0) return [];
     return this.withSessionLock(agentSessionLockKey(recipient), async () => {
       const currentRecipient = this.db.getAgentByName(agentName);
-      if (!this.isDeliverable(currentRecipient) || this.composerActive(agentName)) {
+      if (
+        !this.isDeliverable(currentRecipient) ||
+        this.composerActive(agentName)
+      ) {
         return [];
       }
       const delivered: AgentMessage[] = [];
@@ -627,8 +664,10 @@ export class MessageDelivery {
     let confirmed = 0;
     for (const message of this.db.listInjectedUnapplied()) {
       if (
-        message.to === agentName && message.priority === "steer" &&
-        message.injectedAt !== null && message.injectedAt < boundaryAt
+        message.to === agentName &&
+        message.priority === "steer" &&
+        message.injectedAt !== null &&
+        message.injectedAt < boundaryAt
       ) {
         this.db.transitionMessage(message.id, "applied", boundaryAt);
         confirmed += 1;
@@ -665,8 +704,9 @@ export class MessageDelivery {
       if (
         agent.status !== "idle" &&
         !queued.some((message) => message.priority === "critical")
-      ) continue;
-      woken.push(...await this.flushQueued(agent.name));
+      )
+        continue;
+      woken.push(...(await this.flushQueued(agent.name)));
     }
     // The root has no agents row, so this sweep used to skip it entirely: a
     // root wake that failed at send time was retried by NOTHING until the
@@ -674,11 +714,11 @@ export class MessageDelivery {
     // zoe's report sat queued behind a transient terminal failure with no
     // ticker). A failed wake now self-heals on the next maintenance tick.
     if (
-      orchestratorRecipientNames().some((name) =>
-        this.db.getUndeliveredMessages(name).length > 0
+      orchestratorRecipientNames().some(
+        (name) => this.db.getUndeliveredMessages(name).length > 0,
       )
     ) {
-      woken.push(...await this.wakeOrchestrator());
+      woken.push(...(await this.wakeOrchestrator()));
     }
     return woken;
   }
@@ -691,14 +731,18 @@ export class MessageDelivery {
     const recipient = this.db.getAgentByName(agentName);
     const claim = () => {
       const deliveredAt = new Date().toISOString();
-      return this.db.claimUndeliveredMessages(agentName, deliveredAt).map(
-        (message) => message.priority === "normal"
-          ? this.db.transitionMessage(message.id, "applied", deliveredAt)!
-          : this.db.transitionMessage(message.id, "injected", deliveredAt)!,
-      );
+      return this.db
+        .claimUndeliveredMessages(agentName, deliveredAt)
+        .map((message) =>
+          message.priority === "normal"
+            ? this.db.transitionMessage(message.id, "applied", deliveredAt)!
+            : this.db.transitionMessage(message.id, "injected", deliveredAt)!,
+        );
     };
     if (recipient === null) return claim();
-    return this.withSessionLock(agentSessionLockKey(recipient), async () => claim());
+    return this.withSessionLock(agentSessionLockKey(recipient), async () =>
+      claim(),
+    );
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
@@ -706,7 +750,7 @@ export class MessageDelivery {
       const deliveredAt = new Date().toISOString();
       // Drain preferred and synonym keys so pre-rename messages still surface.
       const claimed = orchestratorRecipientNames().flatMap((name) =>
-        this.db.claimUndeliveredMessages(name, deliveredAt)
+        this.db.claimUndeliveredMessages(name, deliveredAt),
       );
       return claimed.map((message) => {
         const applied = this.db.transitionMessage(
@@ -760,7 +804,9 @@ export class MessageDelivery {
   /** Preferred or synonym lease blocks root injection — Workspace may still
    * write either marker during the rename window. */
   private rootComposerActive(): boolean {
-    return orchestratorRecipientNames().some((name) => this.composerActive(name));
+    return orchestratorRecipientNames().some((name) =>
+      this.composerActive(name),
+    );
   }
 
   private async deliverRoot(
@@ -817,7 +863,9 @@ export class MessageDelivery {
     const now = new Date().toISOString();
     const injected = this.db.markMessageDelivered(message.id, now);
     if (injected === null) {
-      throw new Error(`Message disappeared during root delivery: ${message.id}`);
+      throw new Error(
+        `Message disappeared during root delivery: ${message.id}`,
+      );
     }
     return this.db.transitionMessage(message.id, "injected", now)!;
   }
@@ -871,9 +919,11 @@ export class MessageDelivery {
         `failed; delivering the original text: ${detail}`;
       console.error(line);
       this.log?.(line);
-      return `${this.formatAgentMessage(message)}\n\n` +
+      return (
+        `${this.formatAgentMessage(message)}\n\n` +
         `⚠️ Hive memory trigger failed (${detail}); ` +
-        "the original message is delivered unmodified.";
+        "the original message is delivered unmodified."
+      );
     }
   }
 
@@ -923,14 +973,14 @@ export class MessageDelivery {
     message: AgentMessage,
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
-    if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
+    if (this.composerActive(message.to))
+      return this.getStoredMessage(message.id);
     // Trigger protocol (HiveMemory HM-3 WP7): an authorized queen/operator
     // trigger executes at the daemon and its labeled result REPLACES the
     // message body — the trigger is a command, not content for the agent.
     const replacement = await this.composeTriggerReplacement(message);
-    const base = replacement === null
-      ? this.formatAgentMessage(message)
-      : replacement;
+    const base =
+      replacement === null ? this.formatAgentMessage(message) : replacement;
     // Wake-delta injection (HiveMemory HM-3 WP6): the delta rides whatever
     // text this delivery sends, visibly labeled as system-injected memory so
     // it can never be mistaken for the sender's words. Composed once per
@@ -942,8 +992,9 @@ export class MessageDelivery {
     if (this.sessiondInput !== undefined) {
       requireSessiondAgentLocator(recipient);
       if (this.processState !== undefined) {
-        const state = await this.processState(recipient)
-          .catch(() => "unknown" as const);
+        const state = await this.processState(recipient).catch(
+          () => "unknown" as const,
+        );
         if (state !== "running") {
           this.db.recordMessageDeliveryDiagnostic(
             message.id,
@@ -957,13 +1008,11 @@ export class MessageDelivery {
       // The #68 live proof failed with the only diagnostic on a /dev/null
       // stderr: ~24 silent retries, three indistinguishable causes. A row
       // that stays queued must carry its own explanation.
-      let result;
+      let result: SessiondInjectResult;
       try {
-        result = await this.sessiondInput.injectIdle(
-          recipient,
-          text,
-          { messageId: message.id },
-        );
+        result = await this.sessiondInput.injectIdle(recipient, text, {
+          messageId: message.id,
+        });
       } catch (error) {
         const detail = error instanceof Error ? error.message : "unknown error";
         console.error(
@@ -1073,8 +1122,8 @@ export class MessageDelivery {
     agentName: string,
     before: string | null,
   ): Promise<boolean> {
-    const deadline = Date.now() +
-      (this.timing.submitConfirmMs ?? SUBMIT_CONFIRM_MS);
+    const deadline =
+      Date.now() + (this.timing.submitConfirmMs ?? SUBMIT_CONFIRM_MS);
     for (;;) {
       const boundary = this.turnBoundaryAt(agentName);
       if (boundary !== null && (before === null || boundary > before)) {
@@ -1089,11 +1138,11 @@ export class MessageDelivery {
     message: AgentMessage,
     agent: AgentRecord,
   ): Promise<AgentMessage> {
-    if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
+    if (this.composerActive(message.to))
+      return this.getStoredMessage(message.id);
     const replacement = await this.composeTriggerReplacement(message);
-    const base = replacement === null
-      ? this.formatAgentMessage(message)
-      : replacement;
+    const base =
+      replacement === null ? this.formatAgentMessage(message) : replacement;
     const delta = await this.composeWakeDelta(agent);
     const text = delta === null ? base : `${base}\n\n${delta.block}`;
     await this.nativeControl!.deliver(agent, text, {
@@ -1101,7 +1150,9 @@ export class MessageDelivery {
     });
     const delivered = this.markInjected(message);
     if (delivered === null) {
-      throw new Error(`Message disappeared during native delivery: ${message.id}`);
+      throw new Error(
+        `Message disappeared during native delivery: ${message.id}`,
+      );
     }
     this.advanceWakeDelta(agent, delta);
     return delivered;
@@ -1185,8 +1236,9 @@ export class MessageDelivery {
     let confirmed = 0;
     // Anchored to the caller's `now`, not the wall clock, so the deadline means
     // the same thing to a test as it does to the daemon.
-    const cutoff = new Date(Date.parse(now) - DELIVERY_CONFIRM_DEADLINE_MS)
-      .toISOString();
+    const cutoff = new Date(
+      Date.parse(now) - DELIVERY_CONFIRM_DEADLINE_MS,
+    ).toISOString();
     const stalled: Array<{ message: AgentMessage; reason: string }> = [];
 
     for (const message of this.db.listInjectedUnapplied()) {
@@ -1230,7 +1282,7 @@ export class MessageDelivery {
     for (const message of this.db.listQueuedMessages()) {
       if (isOrchestratorName(message.to)) continue;
       if (message.createdAt < cutoff && message.alertAt === null) {
-        if (await this.stalledReason(message.to, now, "queued") === null) {
+        if ((await this.stalledReason(message.to, now, "queued")) === null) {
           continue;
         }
         // The sweep runs on its own timer, and twice in one day (aubrey
@@ -1271,9 +1323,10 @@ export class MessageDelivery {
         reasons.set(message.to, reason);
         this.db.markMessageAlerted(message.id, now);
       }
-      const detail = [...reasons.entries()].sort(([a], [b]) =>
-        a.localeCompare(b)
-      ).map(([, reason]) => reason).join("; ");
+      const detail = [...reasons.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([, reason]) => reason)
+        .join("; ");
       const alert = await this.send(
         "hive-control",
         ORCHESTRATOR_NAME,
@@ -1361,19 +1414,22 @@ export class MessageDelivery {
     const agent = isOrchestratorName(recipient)
       ? null
       : this.db.getAgentByName(recipient);
-    if (agent !== null && (agent.status === "dead" || agent.status === "failed")) {
+    if (
+      agent !== null &&
+      (agent.status === "dead" || agent.status === "failed")
+    ) {
       return `${recipient} is ${agent.status} and will never reach a boundary`;
     }
     // Root events may be keyed under queen (preferred) or orchestrator (legacy).
     const boundary = isOrchestratorName(recipient)
       ? orchestratorRecipientNames().reduce<
-        ReturnType<HiveDatabase["latestTurnBoundary"]>
-      >((best, name) => {
-        const next = this.db.latestTurnBoundary(name);
-        if (next === null) return best;
-        if (best === null || next.timestamp > best.timestamp) return next;
-        return best;
-      }, null)
+          ReturnType<HiveDatabase["latestTurnBoundary"]>
+        >((best, name) => {
+          const next = this.db.latestTurnBoundary(name);
+          if (next === null) return best;
+          if (best === null || next.timestamp > best.timestamp) return next;
+          return best;
+        }, null)
       : this.db.latestTurnBoundary(recipient);
     if (boundary === null) {
       // "No turn events at all" is a diagnosis about a vendor that HAS a hook
@@ -1386,9 +1442,11 @@ export class MessageDelivery {
       // waiting, not a deaf one.
       if (agent !== null && !reportsTurnEvents(agent.tool)) {
         const silentMs = Date.parse(now) - Date.parse(agent.lastEventAt);
-        return silentMs < OPEN_TURN_SILENCE_CAP_MS ? null : `${recipient} (${agent.tool}) has shown no session activity for ${
-          Math.round(silentMs / 60_000)
-        }m — it may be unable to hear`;
+        return silentMs < OPEN_TURN_SILENCE_CAP_MS
+          ? null
+          : `${recipient} (${agent.tool}) has shown no session activity for ${Math.round(
+              silentMs / 60_000,
+            )}m — it may be unable to hear`;
       }
       return `${recipient} has emitted no turn events at all — it may be unable to hear`;
     }
@@ -1407,8 +1465,9 @@ export class MessageDelivery {
     // make); the silence cap below remains the honest last resort for the one
     // wedge the kernel cannot see, a process alive but internally hung.
     if (agent !== null && this.processState !== undefined) {
-      const state = await this.processState(agent)
-        .catch(() => "unknown" as const);
+      const state = await this.processState(agent).catch(
+        () => "unknown" as const,
+      );
       if (state === "stopped") {
         return `${recipient}'s process is stopped (suspended mid-turn, ps state T) — it cannot hear anything`;
       }
@@ -1418,26 +1477,28 @@ export class MessageDelivery {
     }
     const life = isOrchestratorName(recipient)
       ? orchestratorRecipientNames().reduce<string | null>((best, name) => {
-        const at = this.db.latestEventAt(name);
-        if (at === null) return best;
-        return best === null || at > best ? at : best;
-      }, null)
-      : agent?.lastEventAt ?? null;
-    const quietMs = life === null
-      ? Number.POSITIVE_INFINITY
-      : Date.parse(now) - Date.parse(life);
+          const at = this.db.latestEventAt(name);
+          if (at === null) return best;
+          return best === null || at > best ? at : best;
+        }, null)
+      : (agent?.lastEventAt ?? null);
+    const quietMs =
+      life === null
+        ? Number.POSITIVE_INFINITY
+        : Date.parse(now) - Date.parse(life);
     if (quietMs < OPEN_TURN_SILENCE_CAP_MS) {
       return null; // Mid-turn and demonstrably alive: busy, not deaf.
     }
-    return `${recipient} is mid-turn but has shown no sign of life for ${
-      Math.round(quietMs / 60_000)
-    }m`;
+    return `${recipient} is mid-turn but has shown no sign of life for ${Math.round(
+      quietMs / 60_000,
+    )}m`;
   }
 
   async alertExpiredControls(now = new Date().toISOString()): Promise<number> {
     let count = 0;
     for (const message of this.db.listExpiredUnacknowledged(now)) {
-      if (this.db.markMessageAlerted(message.id, now)?.alertAt !== now) continue;
+      if (this.db.markMessageAlerted(message.id, now)?.alertAt !== now)
+        continue;
       await this.send(
         "hive-control",
         ORCHESTRATOR_NAME,
@@ -1469,8 +1530,9 @@ export class MessageDelivery {
       if (["dead", "done", "failed"].includes(recipient.status)) continue;
       if (
         this.db.markMessageDeliveryAlerted(message.id, now)?.deliveryAlertAt !==
-          now
-      ) continue;
+        now
+      )
+        continue;
       const ageMinutes = Math.round(
         (Date.parse(now) - Date.parse(message.createdAt)) / 60_000,
       );
@@ -1494,7 +1556,10 @@ export class MessageDelivery {
    */
   blockedDeliveries(
     now = new Date().toISOString(),
-  ): Map<string, Readonly<{ messageId: string; queuedMinutes: number; diagnostic: string }>> {
+  ): Map<
+    string,
+    Readonly<{ messageId: string; queuedMinutes: number; diagnostic: string }>
+  > {
     const cutoff = new Date(Date.parse(now) - STUCK_DELIVERY_MS).toISOString();
     const blocked = new Map<
       string,
@@ -1533,20 +1598,23 @@ export class MessageDelivery {
         )!;
       }
       try {
-        const acted = await this.withSessionLock(agentSessionLockKey(recipient), async () => {
-          // Re-check under the lock: this method runs from both the
-          // maintenance tick and the session-start hook, and the queued-state
-          // check above happened outside the lock. Without this, two
-          // overlapping sweeps both see "queued" and interrupt-and-restart
-          // the same agent twice.
-          const current = this.db.getMessage(message.id);
-          if (current === null || current.state !== "queued") return false;
-          const latest = this.db.getAgentByName(message.to);
-          if (latest === null) return false;
-          await this.controls!.interruptAndRestart(latest, current);
-          this.markInjected(current);
-          return true;
-        });
+        const acted = await this.withSessionLock(
+          agentSessionLockKey(recipient),
+          async () => {
+            // Re-check under the lock: this method runs from both the
+            // maintenance tick and the session-start hook, and the queued-state
+            // check above happened outside the lock. Without this, two
+            // overlapping sweeps both see "queued" and interrupt-and-restart
+            // the same agent twice.
+            const current = this.db.getMessage(message.id);
+            if (current === null || current.state !== "queued") return false;
+            const latest = this.db.getAgentByName(message.to);
+            if (latest === null) return false;
+            await this.controls!.interruptAndRestart(latest, current);
+            this.markInjected(current);
+            return true;
+          },
+        );
         if (acted) recovered += 1;
       } catch (error) {
         const alertedAt = new Date().toISOString();
@@ -1614,15 +1682,16 @@ export class MessageDelivery {
     return message;
   }
 
-  private requireLiveRecipient(name: string): NonNullable<
-    ReturnType<HiveDatabase["getAgentByName"]>
-  > {
+  private requireLiveRecipient(
+    name: string,
+  ): NonNullable<ReturnType<HiveDatabase["getAgentByName"]>> {
     const recipient = this.db.getAgentByName(name);
     if (recipient === null) {
       throw new Error(`Recipient agent not found: ${name}`);
     }
     if (
-      recipient.status === "dead" || recipient.status === "done" ||
+      recipient.status === "dead" ||
+      recipient.status === "done" ||
       recipient.status === "failed"
     ) {
       throw new Error(`Recipient agent is ${recipient.status}: ${name}`);

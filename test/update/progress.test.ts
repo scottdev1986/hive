@@ -112,7 +112,9 @@ describe("startDownload", () => {
     });
     // The size comes from the already-verified manifest, so it costs no round
     // trip and is on screen at the moment the user is asked to wait.
-    expect(written.join("")).toContain("downloading hive-darwin-arm64 (65.2 MB)");
+    expect(written.join("")).toContain(
+      "downloading hive-darwin-arm64 (65.2 MB)",
+    );
   });
 
   test("redraws one line on a TTY rather than scrolling a wall of output", () => {

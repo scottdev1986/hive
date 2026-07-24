@@ -7,9 +7,9 @@ import { withFileLock } from "../../src/adapters/file-lock";
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 describe("withFileLock", () => {
@@ -21,10 +21,13 @@ describe("withFileLock", () => {
     let releasedAt = 0;
     const writer = (async () => {
       await Bun.sleep(30);
-      await writeFile(path, JSON.stringify({
-        pid: process.pid,
-        token: "existing-owner",
-      }));
+      await writeFile(
+        path,
+        JSON.stringify({
+          pid: process.pid,
+          token: "existing-owner",
+        }),
+      );
       await Bun.sleep(30);
       releasedAt = Date.now();
       await unlink(path);
@@ -39,10 +42,13 @@ describe("withFileLock", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-file-lock-wire-"));
     roots.push(root);
     const path = join(root, "state.lock");
-    await writeFile(path, JSON.stringify({
-      pdi: process.pid,
-      token: "misspelled-owner",
-    }));
+    await writeFile(
+      path,
+      JSON.stringify({
+        pdi: process.pid,
+        token: "misspelled-owner",
+      }),
+    );
 
     expect(withFileLock(path, async () => undefined)).rejects.toThrow(
       "Invalid lock owner",
@@ -101,10 +107,13 @@ describe("withFileLock", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-file-lock-stale-"));
     roots.push(root);
     const path = join(root, "state.lock");
-    await writeFile(path, JSON.stringify({
-      pid: Number.MAX_SAFE_INTEGER,
-      token: "stale-owner",
-    }));
+    await writeFile(
+      path,
+      JSON.stringify({
+        pid: Number.MAX_SAFE_INTEGER,
+        token: "stale-owner",
+      }),
+    );
 
     expect(await withFileLock(path, async () => "acquired")).toBe("acquired");
   });

@@ -18,10 +18,7 @@
  * grok, and kimi have no path- or command-scoped grant channel, so their
  * mapping is chosen at the launch arm in cli/orchestrator.ts.
  */
-export const ORCHESTRATOR_WRITABLE_GLOBS = [
-  ".hive/**",
-  "planning/**",
-] as const;
+export const ORCHESTRATOR_WRITABLE_GLOBS = [".hive/**", "planning/**"] as const;
 
 /** Claude's scoped grant for the queen's edit tools, built from the globs. */
 export const ORCHESTRATOR_CLAUDE_WRITE_RULES: readonly string[] =

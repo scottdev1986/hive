@@ -1,19 +1,19 @@
-import { createServer, connect, type Socket } from "node:net";
 import { chmod, unlink } from "node:fs/promises";
+import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import type {
+  CodexQuotaReading,
+  CodexRateLimitsResponse,
+} from "../../daemon/quota";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
-import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import {
   buildCodexMcpExclusionArgs,
   HIVE_MCP_SERVERS,
   listInheritedCodexMcpServers,
 } from "./mcp-scope";
-import type {
-  CodexQuotaReading,
-  CodexRateLimitsResponse,
-} from "../../daemon/quota";
 
 type JsonObject = Record<string, unknown>;
 type RpcId = string | number;
@@ -46,11 +46,14 @@ export interface CodexAppServerHandlers {
 
 export class CodexAppServerClient {
   private requestId = 0;
-  private readonly pending = new Map<RpcId, {
-    resolve: (result: unknown) => void;
-    reject: (error: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }>();
+  private readonly pending = new Map<
+    RpcId,
+    {
+      resolve: (result: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   constructor(
     private readonly transport: CodexAppServerTransport,
@@ -60,7 +63,11 @@ export class CodexAppServerClient {
     transport.onClose((error) => this.closed(error));
   }
 
-  request(method: string, params?: JsonObject, timeoutMs = 20_000): Promise<unknown> {
+  request(
+    method: string,
+    params?: JsonObject,
+    timeoutMs = 20_000,
+  ): Promise<unknown> {
     const id = this.requestId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -69,12 +76,19 @@ export class CodexAppServerClient {
       }, timeoutMs);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
-      this.transport.send({ method, id, ...(params === undefined ? {} : { params }) });
+      this.transport.send({
+        method,
+        id,
+        ...(params === undefined ? {} : { params }),
+      });
     });
   }
 
   notify(method: string, params?: JsonObject): void {
-    this.transport.send({ method, ...(params === undefined ? {} : { params }) });
+    this.transport.send({
+      method,
+      ...(params === undefined ? {} : { params }),
+    });
   }
 
   respond(id: RpcId, result: unknown): void {
@@ -92,9 +106,11 @@ export class CodexAppServerClient {
       clearTimeout(pending.timer);
       this.pending.delete(message.id);
       if (message.error !== undefined) {
-        pending.reject(new Error(
-          `Codex app-server error ${message.error.code}: ${message.error.message}`,
-        ));
+        pending.reject(
+          new Error(
+            `Codex app-server error ${message.error.code}: ${message.error.message}`,
+          ),
+        );
       } else {
         pending.resolve(message.result);
       }
@@ -102,24 +118,30 @@ export class CodexAppServerClient {
     }
     if (message.method === undefined) return;
     if (message.id === undefined) {
-      void Promise.resolve(this.handlers.notification(message)).catch((error) => {
-        console.error(
-          `Hive Codex notification handler failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
+      void Promise.resolve(this.handlers.notification(message)).catch(
+        (error) => {
+          console.error(
+            `Hive Codex notification handler failed: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+        },
+      );
       return;
     }
     void this.handlers.request(message).then(
       (result) => this.transport.send({ id: message.id!, result }),
-      (error) => this.transport.send({
-        id: message.id!,
-        error: {
-          code: -32603,
-          message: error instanceof Error ? error.message : "Hive request handler failed",
-        },
-      }),
+      (error) =>
+        this.transport.send({
+          id: message.id!,
+          error: {
+            code: -32603,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Hive request handler failed",
+          },
+        }),
     );
   }
 
@@ -303,28 +325,38 @@ export class CodexAppServerManager {
   private readonly approvals = new Map<string, PendingApproval>();
   private availability: Promise<boolean> | null = null;
   private readonly socketPath: (agent: AgentRecord) => string;
-  private readonly transport: (path: string) => Promise<CodexAppServerTransport>;
+  private readonly transport: (
+    path: string,
+  ) => Promise<CodexAppServerTransport>;
   private readonly commandRunner: (argv: string[]) => Promise<number>;
   private readonly sleep: (milliseconds: number) => Promise<void>;
 
   constructor(private readonly options: CodexAppServerManagerOptions) {
     this.socketPath = options.socketPath ?? defaultSocketPath;
     this.transport = options.transport ?? SocketTransport.connect;
-    this.commandRunner = options.commandRunner ?? (async (argv) => {
-      const child = Bun.spawn(argv, {
-        stdout: "ignore",
-        stderr: "ignore",
-        timeout: AVAILABILITY_PROBE_TIMEOUT_MS,
-        killSignal: "SIGKILL",
+    this.commandRunner =
+      options.commandRunner ??
+      (async (argv) => {
+        const child = Bun.spawn(argv, {
+          stdout: "ignore",
+          stderr: "ignore",
+          timeout: AVAILABILITY_PROBE_TIMEOUT_MS,
+          killSignal: "SIGKILL",
+        });
+        return child.exited;
       });
-      return child.exited;
-    });
     this.sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));
   }
 
   isAvailable(): Promise<boolean> {
-    this.availability ??= this.commandRunner(["codex", "app-server", "--help"])
-      .then((exitCode) => exitCode === 0, () => false);
+    this.availability ??= this.commandRunner([
+      "codex",
+      "app-server",
+      "--help",
+    ]).then(
+      (exitCode) => exitCode === 0,
+      () => false,
+    );
     return this.availability;
   }
 
@@ -334,7 +366,9 @@ export class CodexAppServerManager {
     graphifyUrl?: string,
   ): string[] {
     if (agent.worktreePath === null) {
-      throw new Error(`Cannot host Codex app-server without a worktree: ${agent.name}`);
+      throw new Error(
+        `Cannot host Codex app-server without a worktree: ${agent.name}`,
+      );
     }
     return [
       "hive",
@@ -349,9 +383,7 @@ export class CodexAppServerManager {
       hiveInstanceSuffix(),
       "--agent",
       agent.name,
-      ...(graphifyUrl === undefined
-        ? []
-        : ["--graphify-url", graphifyUrl]),
+      ...(graphifyUrl === undefined ? [] : ["--graphify-url", graphifyUrl]),
     ];
   }
 
@@ -385,13 +417,16 @@ export class CodexAppServerManager {
         },
       });
       client.notify("initialized");
-      const threadResult = asObject(await client.request("thread/start", {
-        ...(agent.model === "default" ? {} : { model: agent.model }),
-        cwd: agent.worktreePath,
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
-        sandbox: readOnly ? "read-only" : "workspace-write",
-      }), "thread/start response");
+      const threadResult = asObject(
+        await client.request("thread/start", {
+          ...(agent.model === "default" ? {} : { model: agent.model }),
+          cwd: agent.worktreePath,
+          approvalPolicy: "on-request",
+          approvalsReviewer: "user",
+          sandbox: readOnly ? "read-only" : "workspace-write",
+        }),
+        "thread/start response",
+      );
       const thread = asObject(threadResult.thread, "thread");
       const session: CodexSession = {
         agent,
@@ -415,16 +450,23 @@ export class CodexAppServerManager {
     }
   }
 
-  async startTurn(agent: AgentRecord, text: string, effort?: string): Promise<void> {
+  async startTurn(
+    agent: AgentRecord,
+    text: string,
+    effort?: string,
+  ): Promise<void> {
     const session = this.requireSession(agent.name);
     session.agent = agent;
-    const quotaBaseline = (await this.readRateLimits(session).catch(() => null))
-      ?.reading ?? null;
-    const response = asObject(await session.client.request("turn/start", {
-      threadId: session.threadId,
-      input: [{ type: "text", text }],
-      ...(effort === undefined ? {} : { effort }),
-    }), "turn/start response");
+    const quotaBaseline =
+      (await this.readRateLimits(session).catch(() => null))?.reading ?? null;
+    const response = asObject(
+      await session.client.request("turn/start", {
+        threadId: session.threadId,
+        input: [{ type: "text", text }],
+        ...(effort === undefined ? {} : { effort }),
+      }),
+      "turn/start response",
+    );
     const turn = asObject(response.turn, "turn");
     session.activeTurnId = stringField(turn, "id");
     session.quotaBaselines.set(session.activeTurnId, quotaBaseline);
@@ -470,7 +512,11 @@ export class CodexAppServerManager {
   async interruptAndStart(agent: AgentRecord, text: string): Promise<void> {
     const session = this.requireSession(agent.name);
     await this.interrupt(agent);
-    for (let attempt = 0; attempt < 50 && session.activeTurnId !== null; attempt += 1) {
+    for (
+      let attempt = 0;
+      attempt < 50 && session.activeTurnId !== null;
+      attempt += 1
+    ) {
       await this.sleep(100);
     }
     if (session.activeTurnId !== null) {
@@ -503,10 +549,13 @@ export class CodexAppServerManager {
   }
 
   close(): void {
-    for (const agentName of [...this.sessions.keys()]) this.disconnect(agentName);
+    for (const agentName of [...this.sessions.keys()])
+      this.disconnect(agentName);
   }
 
-  private async connectWithRetry(path: string): Promise<CodexAppServerTransport> {
+  private async connectWithRetry(
+    path: string,
+  ): Promise<CodexAppServerTransport> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 50; attempt += 1) {
       try {
@@ -531,9 +580,15 @@ export class CodexAppServerManager {
     return session;
   }
 
-  private async readRateLimits(session: CodexSession): Promise<CodexQuotaSample> {
+  private async readRateLimits(
+    session: CodexSession,
+  ): Promise<CodexQuotaSample> {
     const response = asObject(
-      await session.client.request("account/rateLimits/read", undefined, 10_000),
+      await session.client.request(
+        "account/rateLimits/read",
+        undefined,
+        10_000,
+      ),
       "rate-limits response",
     ) as unknown as CodexRateLimitsResponse;
     const observedAt = timestamp();
@@ -547,7 +602,10 @@ export class CodexAppServerManager {
     };
   }
 
-  private async handleNotification(agentName: string, message: RpcMessage): Promise<void> {
+  private async handleNotification(
+    agentName: string,
+    message: RpcMessage,
+  ): Promise<void> {
     const session = this.sessions.get(agentName);
     if (session === undefined || message.method === undefined) return;
     const params = message.params ?? {};
@@ -566,8 +624,15 @@ export class CodexAppServerManager {
       const total = asObject(usage.total, "total token usage");
       const totalTokens = total.totalTokens;
       const window = usage.modelContextWindow;
-      if (typeof totalTokens === "number" && typeof window === "number" && window > 0) {
-        session.contextPct = Math.max(0, Math.min(100, totalTokens / window * 100));
+      if (
+        typeof totalTokens === "number" &&
+        typeof window === "number" &&
+        window > 0
+      ) {
+        session.contextPct = Math.max(
+          0,
+          Math.min(100, (totalTokens / window) * 100),
+        );
       }
       return;
     }
@@ -582,14 +647,16 @@ export class CodexAppServerManager {
       const current = await this.readRateLimits(session).catch(() => null);
       const quotaBaseline = session.quotaBaselines.get(completedTurnId) ?? null;
       session.quotaBaselines.delete(completedTurnId);
-      const usageUnits = current?.reading !== null &&
-          current?.reading !== undefined && quotaBaseline !== null
-        ? Math.max(
-            0,
-            current.reading.fiveHourUsed - quotaBaseline.fiveHourUsed,
-            current.reading.weeklyUsed - quotaBaseline.weeklyUsed,
-          )
-        : undefined;
+      const usageUnits =
+        current?.reading !== null &&
+        current?.reading !== undefined &&
+        quotaBaseline !== null
+          ? Math.max(
+              0,
+              current.reading.fiveHourUsed - quotaBaseline.fiveHourUsed,
+              current.reading.weeklyUsed - quotaBaseline.weeklyUsed,
+            )
+          : undefined;
       await this.options.onEvent({
         kind: "turn-end",
         agentName,
@@ -602,7 +669,10 @@ export class CodexAppServerManager {
     }
   }
 
-  private async handleRequest(agentName: string, message: RpcMessage): Promise<unknown> {
+  private async handleRequest(
+    agentName: string,
+    message: RpcMessage,
+  ): Promise<unknown> {
     const method = message.method!;
     const params = message.params ?? {};
     const description = describeApproval(method, params);
@@ -612,7 +682,10 @@ export class CodexAppServerManager {
       }
       throw new Error(`Unsupported Codex app-server request: ${method}`);
     }
-    const approvalId = await this.options.queueApproval({ agentName, description });
+    const approvalId = await this.options.queueApproval({
+      agentName,
+      description,
+    });
     const approved = await new Promise<boolean>((resolve) => {
       this.approvals.set(approvalId, { agentName, method, params, resolve });
     });
@@ -623,21 +696,25 @@ export class CodexAppServerManager {
 function describeApproval(method: string, params: JsonObject): string | null {
   const reason = typeof params.reason === "string" ? ` — ${params.reason}` : "";
   if (method === "item/commandExecution/requestApproval") {
-    const command = typeof params.command === "string"
-      ? params.command
-      : "command requiring additional permissions";
+    const command =
+      typeof params.command === "string"
+        ? params.command
+        : "command requiring additional permissions";
     const cwd = typeof params.cwd === "string" ? ` in ${params.cwd}` : "";
     return `Codex wants to run ${command}${cwd}${reason}`;
   }
   if (method === "item/fileChange/requestApproval") {
-    const root = typeof params.grantRoot === "string" ? ` under ${params.grantRoot}` : "";
+    const root =
+      typeof params.grantRoot === "string" ? ` under ${params.grantRoot}` : "";
     return `Codex wants to modify files${root}${reason}`;
   }
   if (method === "item/permissions/requestApproval") {
     return `Codex requests additional permissions: ${JSON.stringify(params.permissions)}${reason}`;
   }
   if (method === "execCommandApproval") {
-    const command = Array.isArray(params.command) ? params.command.join(" ") : "command";
+    const command = Array.isArray(params.command)
+      ? params.command.join(" ")
+      : "command";
     return `Codex wants to run ${command}${reason}`;
   }
   if (method === "applyPatchApproval") {
@@ -655,7 +732,9 @@ function approvalResponse(
     const requested = asObject(params.permissions, "requested permissions");
     return {
       permissions: approved
-        ? Object.fromEntries(Object.entries(requested).filter(([, value]) => value !== null))
+        ? Object.fromEntries(
+            Object.entries(requested).filter(([, value]) => value !== null),
+          )
         : {},
       scope: "turn",
     };
@@ -670,15 +749,17 @@ export function renderCodexHostMessage(message: RpcMessage): string | null {
   const method = message.method;
   const params = message.params ?? {};
   if (method === "turn/started") {
-    const turn = typeof params.turn === "object" && params.turn !== null
-      ? params.turn as JsonObject
-      : {};
+    const turn =
+      typeof params.turn === "object" && params.turn !== null
+        ? (params.turn as JsonObject)
+        : {};
     return `\n▶ turn ${String(turn.id ?? "started")}\n`;
   }
   if (method === "turn/completed") {
-    const turn = typeof params.turn === "object" && params.turn !== null
-      ? params.turn as JsonObject
-      : {};
+    const turn =
+      typeof params.turn === "object" && params.turn !== null
+        ? (params.turn as JsonObject)
+        : {};
     return `\n✓ turn ${String(turn.status ?? "completed")}\n`;
   }
   if (
@@ -689,10 +770,12 @@ export function renderCodexHostMessage(message: RpcMessage): string | null {
     return typeof params.delta === "string" ? params.delta : null;
   }
   if (method === "item/started") {
-    const item = typeof params.item === "object" && params.item !== null
-      ? params.item as JsonObject
-      : {};
-    if (item.type === "commandExecution") return `\n$ ${String(item.command ?? "command")}\n`;
+    const item =
+      typeof params.item === "object" && params.item !== null
+        ? (params.item as JsonObject)
+        : {};
+    if (item.type === "commandExecution")
+      return `\n$ ${String(item.command ?? "command")}\n`;
     if (item.type === "fileChange") return "\n✎ applying file changes\n";
     if (item.type === "mcpToolCall") {
       return `\n↗ ${String(item.server ?? "mcp")}/${String(item.tool ?? "tool")}\n`;
@@ -723,13 +806,11 @@ export function buildCodexAppServerCommand(
   options: CodexAppServerHostOptions,
   inheritedMcpServers: readonly string[] = [],
 ): string[] {
-  const keep = options.graphifyUrl === undefined
-    ? HIVE_MCP_SERVERS
-    : [...HIVE_MCP_SERVERS, "graphify"];
-  const exclusions = buildCodexMcpExclusionArgs(
-    inheritedMcpServers,
-    keep,
-  ).args;
+  const keep =
+    options.graphifyUrl === undefined
+      ? HIVE_MCP_SERVERS
+      : [...HIVE_MCP_SERVERS, "graphify"];
+  const exclusions = buildCodexMcpExclusionArgs(inheritedMcpServers, keep).args;
   return [
     "codex",
     "app-server",
@@ -738,7 +819,7 @@ export function buildCodexAppServerCommand(
     "features.apps=false",
     ...exclusions,
     "-c",
-    `projects.${JSON.stringify(options.worktree)}.trust_level=\"trusted\"`,
+    `projects.${JSON.stringify(options.worktree)}.trust_level="trusted"`,
     "-c",
     `mcp_servers.hive.url=${JSON.stringify(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     ...(options.graphifyUrl === undefined
@@ -755,16 +836,16 @@ export async function runCodexAppServerHost(
 ): Promise<number> {
   await unlink(options.socket).catch(() => undefined);
   await unlink(`${options.socket}.pid`).catch(() => undefined);
-  const child = Bun.spawn(buildCodexAppServerCommand(
-    options,
-    await listInheritedCodexMcpServers(),
-  ), {
-    cwd: options.worktree,
-    detached: true,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const child = Bun.spawn(
+    buildCodexAppServerCommand(options, await listInheritedCodexMcpServers()),
+    {
+      cwd: options.worktree,
+      detached: true,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   // The child's pid is recorded beside the socket so the daemon can reap a
   // codex app-server whose host died without cleanup (SIGKILL, OOM, crash) —
   // orphans from exactly that path were found still running days later.
@@ -788,7 +869,9 @@ export async function runCodexAppServerHost(
   let childBuffer = "";
   const server = createServer((socket) => {
     if (client !== null) {
-      socket.destroy(new Error("Hive Codex app-server host already has a client"));
+      socket.destroy(
+        new Error("Hive Codex app-server host already has a client"),
+      );
       return;
     }
     client = socket;
@@ -805,9 +888,7 @@ export async function runCodexAppServerHost(
     });
   });
   await chmod(options.socket, 0o600);
-  process.stdout.write(
-    `Hive Codex app-server for ${options.agentName}\n`,
-  );
+  process.stdout.write(`Hive Codex app-server for ${options.agentName}\n`);
   const stdout = new Response(child.stdout).body!.getReader();
   const stderr = new Response(child.stderr).body!.getReader();
   const decode = new TextDecoder();
@@ -816,9 +897,7 @@ export async function runCodexAppServerHost(
       const { done, value } = await stdout.read();
       if (done) break;
       const text = decode.decode(value, { stream: true });
-      if (
-        client !== null && client.writableLength > MAX_FRAME_BUFFER_BYTES
-      ) {
+      if (client !== null && client.writableLength > MAX_FRAME_BUFFER_BYTES) {
         // The daemon stopped draining its socket. Dropping the connection
         // (it re-establishes on the next agent start) beats buffering the
         // codex stream in this process until the machine runs out of memory.
@@ -838,7 +917,9 @@ export async function runCodexAppServerHost(
         childBuffer = childBuffer.slice(newline + 1);
         if (line.length === 0) continue;
         try {
-          const rendered = renderCodexHostMessage(JSON.parse(line) as RpcMessage);
+          const rendered = renderCodexHostMessage(
+            JSON.parse(line) as RpcMessage,
+          );
           if (rendered !== null) process.stdout.write(rendered);
         } catch {
           // The daemon receives the original frame; host rendering never

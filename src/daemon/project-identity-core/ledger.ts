@@ -41,7 +41,10 @@ export class UnauthenticatedLedgerAccess extends Error {
 }
 
 export interface ManagedWorktreeLedger {
-  lookup(canonicalPath: string, capability: LedgerCapability): ManagedWorktree | null;
+  lookup(
+    canonicalPath: string,
+    capability: LedgerCapability,
+  ): ManagedWorktree | null;
 }
 
 export class InMemoryManagedWorktreeLedger implements ManagedWorktreeLedger {
@@ -56,8 +59,12 @@ export class InMemoryManagedWorktreeLedger implements ManagedWorktreeLedger {
     this.entries.delete(canonicalPath);
   }
 
-  lookup(canonicalPath: string, capability: LedgerCapability): ManagedWorktree | null {
-    if (!(capability instanceof LedgerCapability)) throw new UnauthenticatedLedgerAccess();
+  lookup(
+    canonicalPath: string,
+    capability: LedgerCapability,
+  ): ManagedWorktree | null {
+    if (!(capability instanceof LedgerCapability))
+      throw new UnauthenticatedLedgerAccess();
     return this.entries.get(canonicalPath) ?? null;
   }
 }

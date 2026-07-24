@@ -1,28 +1,27 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type AgentMessage,
   AgentMessageSchema,
+  type AgentRecord,
   AgentRecordSchema,
+  canonicalOrchestratorName,
+  emptyRoutingPolicy,
   HandoffSchema,
   HiveConfigSchema,
+  type HookEvent,
   HookEventSchema,
+  isOrchestratorName,
   ORCHESTRATOR_NAME,
   ORCHESTRATOR_NAME_ALIASES,
+  orchestratorRecipientNames,
   QuotaConfigSchema,
   RoutingPolicySchema,
   StatuslineReportSchema,
-  canonicalOrchestratorName,
-  isOrchestratorName,
-  orchestratorRecipientNames,
-  type AgentRecord,
-  type AgentMessage,
-  type HookEvent,
-  emptyRoutingPolicy,
 } from "../../src/schemas";
 
 const timestamp = "2026-07-09T12:00:00.000Z";
 
-const roundTrip = <T>(value: T): T =>
-  JSON.parse(JSON.stringify(value)) as T;
+const roundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 describe("HiveConfigSchema", () => {
   test("parses a valid round-trip", () => {
@@ -62,12 +61,16 @@ describe("HiveConfigSchema", () => {
     expect(() => HiveConfigSchema.parse({ headless: true })).toThrow();
     expect(() => HiveConfigSchema.parse({ layout: "auto" })).toThrow();
     expect(() =>
-      HiveConfigSchema.parse({ codex: { driver: "exec" } })
+      HiveConfigSchema.parse({ codex: { driver: "exec" } }),
     ).toThrow();
     expect(() => HiveConfigSchema.parse({ autonomy: "yolo" })).toThrow();
     expect(() => HiveConfigSchema.parse({ terminl: "auto" })).toThrow();
-    expect(() => HiveConfigSchema.parse({ codex: { driver: "tui", typo: true } })).toThrow();
-    expect(() => HiveConfigSchema.parse({ resources: { typo: true } })).toThrow();
+    expect(() =>
+      HiveConfigSchema.parse({ codex: { driver: "tui", typo: true } }),
+    ).toThrow();
+    expect(() =>
+      HiveConfigSchema.parse({ resources: { typo: true } }),
+    ).toThrow();
   });
 });
 
@@ -97,16 +100,22 @@ describe("AgentRecordSchema", () => {
   });
 
   test("rejects an invalid agent", () => {
-    expect(() => AgentRecordSchema.parse({ ...agent, contextPct: 101 })).toThrow();
+    expect(() =>
+      AgentRecordSchema.parse({ ...agent, contextPct: 101 }),
+    ).toThrow();
   });
 
   test("a misspelled safety field cannot fall through to its default", () => {
-    expect(AgentRecordSchema.parse({ ...agent, readOnly: true }).readOnly).toBe(true);
-    expect(() => AgentRecordSchema.parse({
-      ...agent,
-      readOnly: undefined,
-      readonly: true,
-    })).toThrow();
+    expect(AgentRecordSchema.parse({ ...agent, readOnly: true }).readOnly).toBe(
+      true,
+    );
+    expect(() =>
+      AgentRecordSchema.parse({
+        ...agent,
+        readOnly: undefined,
+        readonly: true,
+      }),
+    ).toThrow();
   });
 
   test("parses persisted spawn failure details", () => {
@@ -121,10 +130,12 @@ describe("AgentRecordSchema", () => {
 
   test("rejects retired external-viewer state", () => {
     const retiredViewerState = ["terminal", "Handle"].join("");
-    expect(() => AgentRecordSchema.parse({
-      ...agent,
-      [retiredViewerState]: { app: "external", sessionId: "session-uuid" },
-    })).toThrow();
+    expect(() =>
+      AgentRecordSchema.parse({
+        ...agent,
+        [retiredViewerState]: { app: "external", sessionId: "session-uuid" },
+      }),
+    ).toThrow();
   });
 });
 
@@ -161,11 +172,13 @@ describe("AgentMessageSchema", () => {
     expect(() =>
       AgentMessageSchema.parse({ ...message, deliveredAt: 123 }),
     ).toThrow();
-    expect(() => AgentMessageSchema.parse({
-      ...message,
-      priority: undefined,
-      priorty: "critical",
-    })).toThrow();
+    expect(() =>
+      AgentMessageSchema.parse({
+        ...message,
+        priority: undefined,
+        priorty: "critical",
+      }),
+    ).toThrow();
   });
 });
 
@@ -239,10 +252,12 @@ describe("HookEventSchema", () => {
     } satisfies HookEvent;
     expect(HookEventSchema.parse(event)).toEqual(event);
     const { usageUnits: _, ...withoutUsage } = event;
-    expect(() => HookEventSchema.parse({
-      ...withoutUsage,
-      usage_units: 12,
-    })).toThrow();
+    expect(() =>
+      HookEventSchema.parse({
+        ...withoutUsage,
+        usage_units: 12,
+      }),
+    ).toThrow();
   });
 });
 
@@ -264,7 +279,9 @@ describe("HandoffSchema", () => {
   });
 
   test("rejects an invalid handoff", () => {
-    expect(() => HandoffSchema.parse({ ...handoff, remaining: "tests" })).toThrow();
+    expect(() =>
+      HandoffSchema.parse({ ...handoff, remaining: "tests" }),
+    ).toThrow();
   });
 });
 
@@ -279,31 +296,41 @@ describe("StatuslineReportSchema", () => {
 
   test("preserves measured fields and rejects renamed ones", () => {
     expect(StatuslineReportSchema.parse(report)).toEqual(report);
-    expect(() => StatuslineReportSchema.parse({
-      ...report,
-      contextWindow: undefined,
-      context_window: 1_000_000,
-    })).toThrow();
-    expect(() => StatuslineReportSchema.parse({
-      ...report,
-      fiveHour: { usedPct: 37, resetsAt: undefined, resets_at: timestamp },
-    })).toThrow();
+    expect(() =>
+      StatuslineReportSchema.parse({
+        ...report,
+        contextWindow: undefined,
+        context_window: 1_000_000,
+      }),
+    ).toThrow();
+    expect(() =>
+      StatuslineReportSchema.parse({
+        ...report,
+        fiveHour: { usedPct: 37, resetsAt: undefined, resets_at: timestamp },
+      }),
+    ).toThrow();
   });
 });
 
 describe("QuotaConfigSchema", () => {
   test("migrates one legacy estimate key but rejects competing old and new keys", () => {
-    expect(QuotaConfigSchema.parse({ estimates: { deep: 17 } })
-      .estimates.complex_coding).toBe(17);
-    expect(() => QuotaConfigSchema.parse({
-      estimates: { deep: 17, complex_coding: 19 },
-    })).toThrow();
-    expect(() => QuotaConfigSchema.parse({
-      estimatesPct: {
-        deep: { fiveHour: 8, weekly: 1.5 },
-        complex_coding: { fiveHour: 9, weekly: 2 },
-      },
-    })).toThrow();
+    expect(
+      QuotaConfigSchema.parse({ estimates: { deep: 17 } }).estimates
+        .complex_coding,
+    ).toBe(17);
+    expect(() =>
+      QuotaConfigSchema.parse({
+        estimates: { deep: 17, complex_coding: 19 },
+      }),
+    ).toThrow();
+    expect(() =>
+      QuotaConfigSchema.parse({
+        estimatesPct: {
+          deep: { fiveHour: 8, weekly: 1.5 },
+          complex_coding: { fiveHour: 9, weekly: 2 },
+        },
+      }),
+    ).toThrow();
   });
 });
 
@@ -317,10 +344,12 @@ describe("RoutingPolicySchema", () => {
     };
     const policy = { ...emptyRoutingPolicy(timestamp), models: [row] };
     expect(RoutingPolicySchema.parse(policy)).toEqual(policy);
-    expect(() => RoutingPolicySchema.parse({
-      ...policy,
-      models: [row, { ...row, state: "disabled" }],
-    })).toThrow();
+    expect(() =>
+      RoutingPolicySchema.parse({
+        ...policy,
+        models: [row, { ...row, state: "disabled" }],
+      }),
+    ).toThrow();
   });
 });
 

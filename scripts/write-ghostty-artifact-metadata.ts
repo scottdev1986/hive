@@ -1,7 +1,18 @@
-import { copyFileSync, lstatSync, mkdirSync, readdirSync, readlinkSync } from "node:fs";
+import {
+  copyFileSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+} from "node:fs";
 import { relative, resolve } from "node:path";
 
-type FileRecord = { path: string; sha256: string; size: number; type: "file" | "symlink" };
+type FileRecord = {
+  path: string;
+  sha256: string;
+  size: number;
+  type: "file" | "symlink";
+};
 type MachORecord = {
   archive: string;
   member: string;
@@ -21,10 +32,9 @@ if (!outputArg) {
 const root = resolve(import.meta.dir, "..");
 const output = resolve(outputArg);
 const lock = await Bun.file(resolve(root, "native/toolchain-lock.json")).json();
-const dependencyMap = (await Bun.file(resolve(root, "vendor/ghostty/build.zig.zon.json")).json()) as Record<
-  string,
-  Dependency
->;
+const dependencyMap = (await Bun.file(
+  resolve(root, "vendor/ghostty/build.zig.zon.json"),
+).json()) as Record<string, Dependency>;
 const excluded = new Set(["artifact-manifest.json", "sbom.cdx.json"]);
 
 function sha256(data: string | ArrayBuffer): string {
@@ -38,7 +48,10 @@ function collectNotices(source: string, destination: string): number {
     const outputPath = resolve(destination, relative(source, path));
     if (entry.isDirectory()) {
       count += collectNotices(path, outputPath);
-    } else if (entry.isFile() && /^(?:license|copying|notice|copyright)/i.test(entry.name)) {
+    } else if (
+      entry.isFile() &&
+      /^(?:license|copying|notice|copyright)/i.test(entry.name)
+    ) {
       mkdirSync(resolve(outputPath, ".."), { recursive: true });
       copyFileSync(path, outputPath);
       count += 1;
@@ -49,7 +62,9 @@ function collectNotices(source: string, destination: string): number {
 
 async function walk(directory: string): Promise<FileRecord[]> {
   const records: FileRecord[] = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+  for (const entry of readdirSync(directory, { withFileTypes: true }).sort(
+    (a, b) => a.name.localeCompare(b.name),
+  )) {
     const path = resolve(directory, entry.name);
     const artifactPath = relative(output, path);
     if (excluded.has(artifactPath)) continue;
@@ -57,19 +72,35 @@ async function walk(directory: string): Promise<FileRecord[]> {
       records.push(...(await walk(path)));
     } else if (entry.isSymbolicLink()) {
       const target = readlinkSync(path);
-      records.push({ path: artifactPath, sha256: sha256(target), size: target.length, type: "symlink" });
+      records.push({
+        path: artifactPath,
+        sha256: sha256(target),
+        size: target.length,
+        type: "symlink",
+      });
     } else if (entry.isFile()) {
       const data = await Bun.file(path).arrayBuffer();
-      records.push({ path: artifactPath, sha256: sha256(data), size: lstatSync(path).size, type: "file" });
+      records.push({
+        path: artifactPath,
+        sha256: sha256(data),
+        size: lstatSync(path).size,
+        type: "file",
+      });
     }
   }
   return records;
 }
 
 function run(command: string[]): string {
-  const result = Bun.spawnSync({ cmd: command, stdout: "pipe", stderr: "pipe" });
+  const result = Bun.spawnSync({
+    cmd: command,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
   if (result.exitCode !== 0) {
-    throw new Error(`${command.join(" ")} failed: ${result.stderr.toString().trim()}`);
+    throw new Error(
+      `${command.join(" ")} failed: ${result.stderr.toString().trim()}`,
+    );
   }
   return result.stdout.toString();
 }
@@ -83,18 +114,29 @@ function inspectArchive(path: string): MachORecord[] {
   const defaultArchitectures = archiveArchitectures(path);
   const text = run(["/usr/bin/xcrun", "otool", "-arch", "all", "-l", path]);
   const lines = text.split("\n");
-  const expectedCommands = lines.filter((line) => line.trim() === "cmd LC_BUILD_VERSION").length;
+  const expectedCommands = lines.filter(
+    (line) => line.trim() === "cmd LC_BUILD_VERSION",
+  ).length;
   const records: MachORecord[] = [];
   let member = archive;
-  let architecture = defaultArchitectures.length === 1 ? (defaultArchitectures[0] ?? "unknown") : "unknown";
+  let architecture =
+    defaultArchitectures.length === 1
+      ? (defaultArchitectures[0] ?? "unknown")
+      : "unknown";
   let platform = "unknown";
   let pending: MachORecord | undefined;
 
   for (const line of lines) {
     if (line.endsWith(":")) {
       const archMatch = line.match(/\(architecture ([^)]+)\)/);
-      const memberMatch = line.match(/\(([^()]+\.(?:o|a))\)(?: \(architecture [^)]+\))?:$/);
-      architecture = archMatch?.[1] ?? (defaultArchitectures.length === 1 ? (defaultArchitectures[0] ?? "unknown") : "unknown");
+      const memberMatch = line.match(
+        /\(([^()]+\.(?:o|a))\)(?: \(architecture [^)]+\))?:$/,
+      );
+      architecture =
+        archMatch?.[1] ??
+        (defaultArchitectures.length === 1
+          ? (defaultArchitectures[0] ?? "unknown")
+          : "unknown");
       // `otool` prints its input path before every archive member. That input
       // is an absolute, per-build scratch path, not artifact metadata. Record
       // only the stable archive-member name; when there is no member heading,
@@ -106,7 +148,14 @@ function inspectArchive(path: string): MachORecord[] {
     if (platformMatch?.[1]) platform = platformMatch[1].trim();
     const minOSMatch = line.match(/^\s*minos\s+(.+)$/);
     if (minOSMatch?.[1]) {
-      pending = { archive, member, architecture, platform, minOS: minOSMatch[1].trim(), sdk: "unknown" };
+      pending = {
+        archive,
+        member,
+        architecture,
+        platform,
+        minOS: minOSMatch[1].trim(),
+        sdk: "unknown",
+      };
       records.push(pending);
     }
     const sdkMatch = line.match(/^\s*sdk\s+(.+)$/);
@@ -114,7 +163,9 @@ function inspectArchive(path: string): MachORecord[] {
   }
 
   if (records.length !== expectedCommands) {
-    throw new Error(`${archive}: found ${expectedCommands} LC_BUILD_VERSION commands but ${records.length} minOS values`);
+    throw new Error(
+      `${archive}: found ${expectedCommands} LC_BUILD_VERSION commands but ${records.length} minOS values`,
+    );
   }
   return records;
 }
@@ -140,21 +191,34 @@ const expectedArchitectures: Array<[string, string[]]> = [
 for (const [artifact, expected] of expectedArchitectures) {
   const actual = archiveArchitectures(resolve(output, artifact));
   if (actual.join(" ") !== [...expected].sort().join(" ")) {
-    throw new Error(`${artifact}: expected architectures ${expected.join(" ")}, found ${actual.join(" ")}`);
+    throw new Error(
+      `${artifact}: expected architectures ${expected.join(" ")}, found ${actual.join(" ")}`,
+    );
   }
 }
 
 const dependencyCache = process.env.HIVE_ZIG_GLOBAL_CACHE;
-if (!dependencyCache) throw new Error("build did not provide the verified Zig dependency-cache path");
+if (!dependencyCache)
+  throw new Error(
+    "build did not provide the verified Zig dependency-cache path",
+  );
 const dependencyNoticeCounts = Object.fromEntries(
   Object.keys(dependencyMap)
     .sort()
     .map((dependency) => [
       dependency,
-      collectNotices(resolve(dependencyCache, "p", dependency), resolve(output, "notices/dependencies", dependency)),
+      collectNotices(
+        resolve(dependencyCache, "p", dependency),
+        resolve(output, "notices/dependencies", dependency),
+      ),
     ]),
 );
-if (Object.values(dependencyNoticeCounts).reduce((sum, count) => sum + count, 0) === 0) {
+if (
+  Object.values(dependencyNoticeCounts).reduce(
+    (sum, count) => sum + count,
+    0,
+  ) === 0
+) {
   throw new Error("no transitive dependency notices were collected");
 }
 
@@ -162,30 +226,51 @@ const files = await walk(output);
 if (files.some((file) => file.path.endsWith(".dylib"))) {
   throw new Error("artifact set unexpectedly contains a dynamic library");
 }
-const archives = files.filter((file) => file.type === "file" && file.path.endsWith(".a"));
-const machO = archives.flatMap((archive) => inspectArchive(resolve(output, archive.path)));
+const archives = files.filter(
+  (file) => file.type === "file" && file.path.endsWith(".a"),
+);
+const machO = archives.flatMap((archive) =>
+  inspectArchive(resolve(output, archive.path)),
+);
 const productFloor = String(lock.deploymentTarget);
 for (const member of machO) {
-  if ((member.platform === "1" || member.platform === "MACOS") && versionNumber(member.minOS) > versionNumber(productFloor)) {
-    throw new Error(`${member.archive}(${member.member}) minOS ${member.minOS} exceeds product floor ${productFloor}`);
+  if (
+    (member.platform === "1" || member.platform === "MACOS") &&
+    versionNumber(member.minOS) > versionNumber(productFloor)
+  ) {
+    throw new Error(
+      `${member.archive}(${member.member}) minOS ${member.minOS} exceeds product floor ${productFloor}`,
+    );
   }
 }
 
 const bundledStub = process.env.HIVE_ZIG_BUNDLED_STUB;
 const xcodeStub = process.env.HIVE_XCODE_LIBSYSTEM_STUB;
-if (!bundledStub || !xcodeStub) throw new Error("build did not provide Darwin stub provenance paths");
+if (!bundledStub || !xcodeStub)
+  throw new Error("build did not provide Darwin stub provenance paths");
 const patchSeriesSha256 = process.env.HIVE_PATCH_SERIES_SHA256;
 const metalToolchain = process.env.HIVE_METAL_TOOLCHAIN;
-const upstreamPublicHeaderSha256 = process.env.HIVE_UPSTREAM_PUBLIC_HEADER_SHA256;
+const upstreamPublicHeaderSha256 =
+  process.env.HIVE_UPSTREAM_PUBLIC_HEADER_SHA256;
 const bridgeHeaderSha256 = process.env.HIVE_BRIDGE_HEADER_SHA256;
 const symbolListSha256 = process.env.HIVE_SYMBOL_LIST_SHA256;
 const metalBuild = process.env.HIVE_METAL_BUILD;
 const zigVersion = process.env.HIVE_ZIG_VERSION;
 const optimizeMode = process.env.HIVE_OPTIMIZE_MODE;
-if (!patchSeriesSha256 || !upstreamPublicHeaderSha256 || !bridgeHeaderSha256 || !symbolListSha256) {
+if (
+  !patchSeriesSha256 ||
+  !upstreamPublicHeaderSha256 ||
+  !bridgeHeaderSha256 ||
+  !symbolListSha256
+) {
   throw new Error("build did not provide source/ABI provenance hashes");
 }
-if (!metalToolchain || !metalBuild || !zigVersion || optimizeMode !== "ReleaseFast") {
+if (
+  !metalToolchain ||
+  !metalBuild ||
+  !zigVersion ||
+  optimizeMode !== "ReleaseFast"
+) {
   throw new Error("build did not provide ReleaseFast Zig/Metal provenance");
 }
 
@@ -209,8 +294,10 @@ const artifactManifest = {
     zigVersion,
     optimizeMode,
     networkPolicy: "offline; dependency cache verified before build",
-    runnerLink: "Zig bundled Darwin stubs selected by scripts/zig-runner-tools/xcrun",
-    sdkOverlay: "locked Xcode SDKs with only macOS libSystem.tbd replaced by Zig's bundled stub",
+    runnerLink:
+      "Zig bundled Darwin stubs selected by scripts/zig-runner-tools/xcrun",
+    sdkOverlay:
+      "locked Xcode SDKs with only macOS libSystem.tbd replaced by Zig's bundled stub",
     bundledLibSystemSha256: sha256(await Bun.file(bundledStub).arrayBuffer()),
     xcodeLibSystemSha256: sha256(await Bun.file(xcodeStub).arrayBuffer()),
     dependencyNoticeCounts,
@@ -222,7 +309,10 @@ const artifactManifest = {
   },
   files,
 };
-await Bun.write(resolve(output, "artifact-manifest.json"), `${JSON.stringify(artifactManifest, null, 2)}\n`);
+await Bun.write(
+  resolve(output, "artifact-manifest.json"),
+  `${JSON.stringify(artifactManifest, null, 2)}\n`,
+);
 
 const dependencyComponents = Object.entries(dependencyMap)
   .sort(([a], [b]) => a.localeCompare(b))
@@ -230,7 +320,15 @@ const dependencyComponents = Object.entries(dependencyMap)
     type: "library",
     "bom-ref": bomRef,
     name: dependency.name,
-    hashes: [{ alg: "SHA-256", content: Buffer.from(dependency.hash.slice("sha256-".length), "base64").toString("hex") }],
+    hashes: [
+      {
+        alg: "SHA-256",
+        content: Buffer.from(
+          dependency.hash.slice("sha256-".length),
+          "base64",
+        ).toString("hex"),
+      },
+    ],
     externalReferences: [{ type: "distribution", url: dependency.url }],
   }));
 const sbom = {
@@ -244,13 +342,32 @@ const sbom = {
       name: "GhosttyKit",
       version: lock.ghostty.declaredVersion,
       licenses: [{ license: { id: "MIT" } }],
-      externalReferences: [{ type: "vcs", url: `https://github.com/ghostty-org/ghostty/tree/${lock.ghostty.commit}` }],
+      externalReferences: [
+        {
+          type: "vcs",
+          url: `https://github.com/ghostty-org/ghostty/tree/${lock.ghostty.commit}`,
+        },
+      ],
     },
-    tools: { components: [{ type: "application", name: "Zig", version: lock.zig.version }] },
+    tools: {
+      components: [
+        { type: "application", name: "Zig", version: lock.zig.version },
+      ],
+    },
   },
   components: dependencyComponents,
-  dependencies: [{ ref: "ghostty", dependsOn: dependencyComponents.map((component) => component["bom-ref"]) }],
+  dependencies: [
+    {
+      ref: "ghostty",
+      dependsOn: dependencyComponents.map((component) => component["bom-ref"]),
+    },
+  ],
 };
-await Bun.write(resolve(output, "sbom.cdx.json"), `${JSON.stringify(sbom, null, 2)}\n`);
+await Bun.write(
+  resolve(output, "sbom.cdx.json"),
+  `${JSON.stringify(sbom, null, 2)}\n`,
+);
 
-console.log(`artifact metadata written: ${files.length} files, ${machO.length} Mach-O members`);
+console.log(
+  `artifact metadata written: ${files.length} files, ${machO.length} Mach-O members`,
+);

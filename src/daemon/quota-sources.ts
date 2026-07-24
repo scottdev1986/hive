@@ -1,8 +1,8 @@
 import { tmpdir } from "node:os";
-import type { CodexRateLimitsResponse, CodexRateLimitSnapshot } from "./quota";
+import { z } from "zod";
 import type { QuotaMeterState } from "../schemas";
 import { HIVE_VERSION } from "../version";
-import { z } from "zod";
+import type { CodexRateLimitSnapshot, CodexRateLimitsResponse } from "./quota";
 
 /**
  * Live quota discovery.
@@ -106,17 +106,17 @@ export interface ModelCatalogEntry {
 
 export type QuotaProbeResult =
   | {
-    status: "ok";
-    pools: DiscoveredPoolReading[];
-    /** The provider's model catalog, when the probe could read it. */
-    catalog: ModelCatalogEntry[];
-    /**
-     * Unspent usage-limit reset grants the account is holding. Hive surfaces
-     * this in a refusal and never redeems one itself: spending a human's finite
-     * credit to admit a spawn is the human's decision to make.
-     */
-    resetCredits?: number;
-  }
+      status: "ok";
+      pools: DiscoveredPoolReading[];
+      /** The provider's model catalog, when the probe could read it. */
+      catalog: ModelCatalogEntry[];
+      /**
+       * Unspent usage-limit reset grants the account is holding. Hive surfaces
+       * this in a refusal and never redeems one itself: spending a human's finite
+       * credit to admit a spawn is the human's decision to make.
+       */
+      resetCredits?: number;
+    }
   | { status: "unavailable"; reason: string };
 
 export interface QuotaProbe {
@@ -139,20 +139,23 @@ const unixSecondsToIso = (value: number | null | undefined): string | null => {
  * five-hour and weekly numbers. A snapshot with fewer than two usable windows
  * yields whatever it did report; nothing is fabricated for the missing one.
  */
-export function orderRateLimitWindows(
-  snapshot: CodexRateLimitSnapshot,
-): { fiveHour: DiscoveredWindow | null; weekly: DiscoveredWindow | null } {
+export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot): {
+  fiveHour: DiscoveredWindow | null;
+  weekly: DiscoveredWindow | null;
+} {
   // An undated window cannot be placed at all: its duration is the only thing
   // that says which bucket it describes. Dropping it is the whole point — a
   // window sorted by a guessed duration lands in the wrong bucket silently.
   const windows = [snapshot.primary, snapshot.secondary]
     .filter((window) => window !== null && window !== undefined)
-    .filter((window) =>
-      Number.isFinite(window!.usedPercent) && window!.usedPercent >= 0 &&
-      window!.usedPercent <= 100 &&
-      typeof window!.windowDurationMins === "number" &&
-      Number.isFinite(window!.windowDurationMins) &&
-      window!.windowDurationMins > 0
+    .filter(
+      (window) =>
+        Number.isFinite(window!.usedPercent) &&
+        window!.usedPercent >= 0 &&
+        window!.usedPercent <= 100 &&
+        typeof window!.windowDurationMins === "number" &&
+        Number.isFinite(window!.windowDurationMins) &&
+        window!.windowDurationMins > 0,
     )
     .map((window) => ({
       usedPct: window!.usedPercent,
@@ -196,16 +199,16 @@ export function readingsFromCodexResponse(
     models: string[],
   ): DiscoveredPoolReading => {
     const windows = orderRateLimitWindows(snapshot);
-    const reported = [snapshot.primary, snapshot.secondary]
-      .filter((window) => window !== null && window !== undefined).length;
-    const parsed = Number(windows.fiveHour !== null) +
-      Number(windows.weekly !== null);
+    const reported = [snapshot.primary, snapshot.secondary].filter(
+      (window) => window !== null && window !== undefined,
+    ).length;
+    const parsed =
+      Number(windows.fiveHour !== null) + Number(windows.weekly !== null);
     // A null slot in this authoritative response is a positive statement that
     // the plan has no second meter. A non-null slot we could not parse is not:
     // malformed data is unknown, never confident absence.
-    const absent: QuotaMeterState = reported > parsed
-      ? "unknown"
-      : "not-metered";
+    const absent: QuotaMeterState =
+      reported > parsed ? "unknown" : "not-metered";
     return {
       provider: "codex",
       account,
@@ -247,7 +250,9 @@ export interface CodexProbeTransport {
 }
 
 /** `model/list` → catalog entries. Verified against codex-cli 0.144.1. */
-export function catalogFromCodexModelList(result: unknown): ModelCatalogEntry[] {
+export function catalogFromCodexModelList(
+  result: unknown,
+): ModelCatalogEntry[] {
   const parsed = CodexModelListSchema.safeParse(result);
   if (!parsed.success) return [];
   const entries: ModelCatalogEntry[] = [];
@@ -255,8 +260,10 @@ export function catalogFromCodexModelList(result: unknown): ModelCatalogEntry[] 
     const id = model.id ?? model.model;
     const displayName = model.displayName;
     if (
-      id === null || id === undefined ||
-      displayName === null || displayName === undefined
+      id === null ||
+      id === undefined ||
+      displayName === null ||
+      displayName === undefined
     ) {
       continue;
     }
@@ -282,7 +289,9 @@ export class CodexQuotaProbe implements QuotaProbe {
         this.account,
         this.clock().toISOString(),
       );
-      if (pools.every((pool) => pool.fiveHour === null && pool.weekly === null)) {
+      if (
+        pools.every((pool) => pool.fiveHour === null && pool.weekly === null)
+      ) {
         return {
           status: "unavailable",
           reason:
@@ -309,9 +318,11 @@ export class CodexQuotaProbe implements QuotaProbe {
   }
 }
 
-const CodexResetCreditsSchema = z.object({
-  availableCount: z.number().int().nonnegative().optional(),
-}).passthrough();
+const CodexResetCreditsSchema = z
+  .object({
+    availableCount: z.number().int().nonnegative().optional(),
+  })
+  .passthrough();
 
 /**
  * Drive a throwaway `codex app-server` over stdio. The handshake is mandatory —
@@ -368,14 +379,16 @@ export class CodexStdioProbeTransport implements CodexProbeTransport {
       send({ jsonrpc: "2.0", id: 3, method: "model/list", params: {} });
       const result = await responses.await("2");
       if (
-        typeof result !== "object" || result === null ||
+        typeof result !== "object" ||
+        result === null ||
         !("rateLimits" in result)
       ) {
         throw new Error("codex app-server returned no rateLimits field");
       }
       // A catalog we cannot read costs us the sub-pool bindings, not the limits:
       // the pools still report, they just stay unbound and say so.
-      const catalog = await responses.await("3")
+      const catalog = await responses
+        .await("3")
         .then(catalogFromCodexModelList)
         .catch(() => [] as ModelCatalogEntry[]);
       return {
@@ -472,29 +485,40 @@ function responseCollector(
 
 /** JSON-RPC 2.0 replies, as the Codex app-server speaks them. */
 export const pendingResponses = (stream: ReadableStream<Uint8Array>) =>
-  responseCollector(stream, (message) => {
-    if (typeof message.id !== "number") return null;
-    const id = String(message.id);
-    return message.error === undefined
-      ? { id, result: message.result }
-      : { id, error: `codex app-server error: ${JSON.stringify(message.error)}` };
-  }, "codex app-server closed before answering");
+  responseCollector(
+    stream,
+    (message) => {
+      if (typeof message.id !== "number") return null;
+      const id = String(message.id);
+      return message.error === undefined
+        ? { id, result: message.result }
+        : {
+            id,
+            error: `codex app-server error: ${JSON.stringify(message.error)}`,
+          };
+    },
+    "codex app-server closed before answering",
+  );
 
 /** `control_response` envelopes, as Claude Code's stream-json protocol speaks them. */
 export const pendingControlResponses = (stream: ReadableStream<Uint8Array>) =>
-  responseCollector(stream, (message) => {
-    if (message.type !== "control_response") return null;
-    const response = message.response;
-    if (typeof response !== "object" || response === null) return null;
-    const record = response as Record<string, unknown>;
-    if (typeof record.request_id !== "string") return null;
-    return record.subtype === "error"
-      ? {
-        id: record.request_id,
-        error: `claude control error: ${String(record.error ?? "unknown")}`,
-      }
-      : { id: record.request_id, result: record.response };
-  }, "claude closed before answering");
+  responseCollector(
+    stream,
+    (message) => {
+      if (message.type !== "control_response") return null;
+      const response = message.response;
+      if (typeof response !== "object" || response === null) return null;
+      const record = response as Record<string, unknown>;
+      if (typeof record.request_id !== "string") return null;
+      return record.subtype === "error"
+        ? {
+            id: record.request_id,
+            error: `claude control error: ${String(record.error ?? "unknown")}`,
+          }
+        : { id: record.request_id, result: record.response };
+    },
+    "claude closed before answering",
+  );
 
 /**
  * The `get_usage` control response, as verified by driving claude 2.1.206.
@@ -523,59 +547,92 @@ export interface ClaudeModelScopedLimit {
   resets_at: string | null;
 }
 
-const CodexRateLimitWindowSchema = z.object({
-  usedPercent: z.number(),
-  windowDurationMins: z.number().positive().nullable(),
-  resetsAt: z.number().nonnegative().nullable(),
-}).passthrough();
+const CodexRateLimitWindowSchema = z
+  .object({
+    usedPercent: z.number(),
+    windowDurationMins: z.number().positive().nullable(),
+    resetsAt: z.number().nonnegative().nullable(),
+  })
+  .passthrough();
 
-const CodexRateLimitSnapshotSchema = z.object({
-  limitId: z.string().nullable().optional(),
-  limitName: z.string().nullable().optional(),
-  planType: z.string().nullable().optional(),
-  primary: CodexRateLimitWindowSchema.nullable(),
-  secondary: CodexRateLimitWindowSchema.nullable(),
-}).passthrough();
+const CodexRateLimitSnapshotSchema = z
+  .object({
+    limitId: z.string().nullable().optional(),
+    limitName: z.string().nullable().optional(),
+    planType: z.string().nullable().optional(),
+    primary: CodexRateLimitWindowSchema.nullable(),
+    secondary: CodexRateLimitWindowSchema.nullable(),
+  })
+  .passthrough();
 
-const CodexRateLimitsResponseSchema = z.object({
-  rateLimits: CodexRateLimitSnapshotSchema,
-  rateLimitsByLimitId: z.record(z.string(), CodexRateLimitSnapshotSchema).nullable().optional(),
-}).passthrough();
+const CodexRateLimitsResponseSchema = z
+  .object({
+    rateLimits: CodexRateLimitSnapshotSchema,
+    rateLimitsByLimitId: z
+      .record(z.string(), CodexRateLimitSnapshotSchema)
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 /** `model/list` on the Codex app-server. Only the join keys are required. */
-const CodexModelListSchema = z.object({
-  data: z.array(z.object({
-    id: z.string().nullable().optional(),
-    model: z.string().nullable().optional(),
-    displayName: z.string().nullable().optional(),
-  }).passthrough()),
-}).passthrough();
+const CodexModelListSchema = z
+  .object({
+    data: z.array(
+      z
+        .object({
+          id: z.string().nullable().optional(),
+          model: z.string().nullable().optional(),
+          displayName: z.string().nullable().optional(),
+        })
+        .passthrough(),
+    ),
+  })
+  .passthrough();
 
 /** The `models[]` block of a Claude `initialize` control response. */
-const ClaudeModelListSchema = z.array(z.object({
-  value: z.string().nullable().optional(),
-  resolvedModel: z.string().nullable().optional(),
-  displayName: z.string().nullable().optional(),
-}).passthrough());
+const ClaudeModelListSchema = z.array(
+  z
+    .object({
+      value: z.string().nullable().optional(),
+      resolvedModel: z.string().nullable().optional(),
+      displayName: z.string().nullable().optional(),
+    })
+    .passthrough(),
+);
 
-const ClaudeUsageWindowSchema = z.object({
-  utilization: z.number().nullable(),
-  resets_at: z.string().nullable(),
-}).passthrough();
+const ClaudeUsageWindowSchema = z
+  .object({
+    utilization: z.number().nullable(),
+    resets_at: z.string().nullable(),
+  })
+  .passthrough();
 
-const ClaudeUsageResponseSchema = z.object({
-  subscription_type: z.string().nullable(),
-  rate_limits_available: z.boolean(),
-  rate_limits: z.object({
-    five_hour: ClaudeUsageWindowSchema.nullable().optional(),
-    seven_day: ClaudeUsageWindowSchema.nullable().optional(),
-    model_scoped: z.array(z.object({
-      display_name: z.string().nullable(),
-      utilization: z.number().nullable(),
-      resets_at: z.string().nullable(),
-    }).passthrough()).nullable().optional(),
-  }).passthrough().nullable(),
-}).passthrough();
+const ClaudeUsageResponseSchema = z
+  .object({
+    subscription_type: z.string().nullable(),
+    rate_limits_available: z.boolean(),
+    rate_limits: z
+      .object({
+        five_hour: ClaudeUsageWindowSchema.nullable().optional(),
+        seven_day: ClaudeUsageWindowSchema.nullable().optional(),
+        model_scoped: z
+          .array(
+            z
+              .object({
+                display_name: z.string().nullable(),
+                utilization: z.number().nullable(),
+                resets_at: z.string().nullable(),
+              })
+              .passthrough(),
+          )
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .nullable(),
+  })
+  .passthrough();
 
 const isoOrNull = (value: string | null | undefined): string | null => {
   if (typeof value !== "string" || value.length === 0) return null;
@@ -587,16 +644,18 @@ const claudeWindow = (
   window: ClaudeUsageWindow | null | undefined,
   windowMinutes: number,
 ): DiscoveredWindow | null =>
-  window === null || window === undefined ||
-    typeof window.utilization !== "number" ||
-    !Number.isFinite(window.utilization) || window.utilization < 0 ||
-    window.utilization > 100
+  window === null ||
+  window === undefined ||
+  typeof window.utilization !== "number" ||
+  !Number.isFinite(window.utilization) ||
+  window.utilization < 0 ||
+  window.utilization > 100
     ? null
     : {
-      usedPct: window.utilization,
-      windowMinutes,
-      resetsAt: isoOrNull(window.resets_at),
-    };
+        usedPct: window.utilization,
+        windowMinutes,
+        resetsAt: isoOrNull(window.resets_at),
+      };
 
 /**
  * Turn one `get_usage` response into discovered pools.
@@ -622,7 +681,10 @@ export function readingsFromClaudeUsage(
   const parsed = ClaudeUsageResponseSchema.safeParse(response);
   if (!parsed.success) return [];
   response = parsed.data;
-  if (response.rate_limits_available !== true || response.rate_limits === null) {
+  if (
+    response.rate_limits_available !== true ||
+    response.rate_limits === null
+  ) {
     return [];
   }
   const limits = response.rate_limits ?? {};
@@ -704,22 +766,22 @@ export function catalogFromClaudeModels(models: unknown): ModelCatalogEntry[] {
     const resolved = model.resolvedModel;
     const displayName = model.displayName;
     if (
-      resolved === null || resolved === undefined ||
-      displayName === null || displayName === undefined
+      resolved === null ||
+      resolved === undefined ||
+      displayName === null ||
+      displayName === undefined
     ) {
       continue;
     }
     const base = withoutContextSuffix(resolved);
     if (base.length === 0) continue;
     const forms = ids.get(base) ?? new Set<string>();
-    for (
-      const form of [
-        model.value,
-        resolved,
-        withoutContextSuffix(model.value ?? ""),
-        base,
-      ]
-    ) {
+    for (const form of [
+      model.value,
+      resolved,
+      withoutContextSuffix(model.value ?? ""),
+      base,
+    ]) {
       if (typeof form === "string" && form.length > 0) forms.add(form);
     }
     ids.set(base, forms);
@@ -877,43 +939,67 @@ export interface GrokBillingResponse {
   } | null;
 }
 
-const GrokMoneyValSchema = z.object({
-  val: z.number().nullable().optional(),
-}).passthrough().nullable().optional();
+const GrokMoneyValSchema = z
+  .object({
+    val: z.number().nullable().optional(),
+  })
+  .passthrough()
+  .nullable()
+  .optional();
 
-const GrokBillingResponseSchema = z.object({
-  subscription_tier: z.string().nullable().optional(),
-  config: z.object({
-    creditUsagePercent: z.number().nullable().optional(),
-    currentPeriod: z.object({
-      type: z.string().nullable().optional(),
-      start: z.string().nullable().optional(),
-      end: z.string().nullable().optional(),
-    }).passthrough().nullable().optional(),
-    onDemandCap: GrokMoneyValSchema,
-    onDemandUsed: GrokMoneyValSchema,
-    prepaidBalance: GrokMoneyValSchema,
-    isUnifiedBillingUser: z.boolean().nullable().optional(),
-    billingPeriodStart: z.string().nullable().optional(),
-    billingPeriodEnd: z.string().nullable().optional(),
-  }).passthrough().nullable().optional(),
-}).passthrough();
+const GrokBillingResponseSchema = z
+  .object({
+    subscription_tier: z.string().nullable().optional(),
+    config: z
+      .object({
+        creditUsagePercent: z.number().nullable().optional(),
+        currentPeriod: z
+          .object({
+            type: z.string().nullable().optional(),
+            start: z.string().nullable().optional(),
+            end: z.string().nullable().optional(),
+          })
+          .passthrough()
+          .nullable()
+          .optional(),
+        onDemandCap: GrokMoneyValSchema,
+        onDemandUsed: GrokMoneyValSchema,
+        prepaidBalance: GrokMoneyValSchema,
+        isUnifiedBillingUser: z.boolean().nullable().optional(),
+        billingPeriodStart: z.string().nullable().optional(),
+        billingPeriodEnd: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 /** Models advertised on ACP `initialize` `_meta.modelState.availableModels`. */
-const GrokInitModelsSchema = z.object({
-  availableModels: z.array(z.object({
-    modelId: z.string().nullable().optional(),
-    name: z.string().nullable().optional(),
-  }).passthrough()).optional(),
-}).passthrough();
+const GrokInitModelsSchema = z
+  .object({
+    availableModels: z
+      .array(
+        z
+          .object({
+            modelId: z.string().nullable().optional(),
+            name: z.string().nullable().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+  })
+  .passthrough();
 
 function periodWindowMinutes(
   period: { start?: string | null; end?: string | null } | null | undefined,
 ): number | null {
   if (period === null || period === undefined) return null;
-  const start = typeof period.start === "string" ? Date.parse(period.start) : NaN;
+  const start =
+    typeof period.start === "string" ? Date.parse(period.start) : NaN;
   const end = typeof period.end === "string" ? Date.parse(period.end) : NaN;
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+    return null;
   return Math.round((end - start) / 60_000);
 }
 
@@ -938,13 +1024,17 @@ export function readingsFromGrokBilling(
   if (config === null || config === undefined) return [];
 
   const percent = config.creditUsagePercent;
-  const usablePercent = typeof percent === "number" &&
-      Number.isFinite(percent) && percent >= 0 && percent <= 100
-    ? percent
-    : null;
+  const usablePercent =
+    typeof percent === "number" &&
+    Number.isFinite(percent) &&
+    percent >= 0 &&
+    percent <= 100
+      ? percent
+      : null;
   const period = config.currentPeriod;
   const resetsAt = isoOrNull(period?.end ?? config.billingPeriodEnd);
-  const windowMinutes = periodWindowMinutes(period) ??
+  const windowMinutes =
+    periodWindowMinutes(period) ??
     periodWindowMinutes({
       start: config.billingPeriodStart,
       end: config.billingPeriodEnd,
@@ -957,32 +1047,35 @@ export function readingsFromGrokBilling(
     return [];
   }
 
-  const weekly: DiscoveredWindow | null = usablePercent === null
-    ? null
-    : {
-      usedPct: usablePercent,
-      windowMinutes,
-      resetsAt,
-    };
+  const weekly: DiscoveredWindow | null =
+    usablePercent === null
+      ? null
+      : {
+          usedPct: usablePercent,
+          windowMinutes,
+          resetsAt,
+        };
 
-  return [{
-    provider: "grok",
-    account,
-    pool: "subscription",
-    label: parsed.data.subscription_tier ?? null,
-    models: ["*"],
-    fiveHour: null,
-    weekly,
-    // No five-hour field has ever been observed on `_x.ai/billing`. That is
-    // absence-by-design, not a parse miss.
-    fiveHourMeterState: "not-metered",
-    // Missing percent with a recognized surface is unknown, never not-metered:
-    // the vendor does meter the weekly pool; we just did not get the number.
-    weeklyMeterState: weekly === null ? "unknown" : "metered",
-    observedAt,
-    source: "provider",
-    confidence: "reported",
-  }];
+  return [
+    {
+      provider: "grok",
+      account,
+      pool: "subscription",
+      label: parsed.data.subscription_tier ?? null,
+      models: ["*"],
+      fiveHour: null,
+      weekly,
+      // No five-hour field has ever been observed on `_x.ai/billing`. That is
+      // absence-by-design, not a parse miss.
+      fiveHourMeterState: "not-metered",
+      // Missing percent with a recognized surface is unknown, never not-metered:
+      // the vendor does meter the weekly pool; we just did not get the number.
+      weeklyMeterState: weekly === null ? "unknown" : "metered",
+      observedAt,
+      source: "provider",
+      confidence: "reported",
+    },
+  ];
 }
 
 /** What one Grok probe session reads: billing + the free init model catalog. */
@@ -1000,7 +1093,9 @@ export interface GrokProbeTransport {
  * Models from the ACP `initialize` result's `_meta.modelState`. Free — this
  * frame is already required for the billing handshake.
  */
-export function catalogFromGrokInitialize(result: unknown): ModelCatalogEntry[] {
+export function catalogFromGrokInitialize(
+  result: unknown,
+): ModelCatalogEntry[] {
   if (typeof result !== "object" || result === null) return [];
   const meta = (result as Record<string, unknown>)._meta;
   if (typeof meta !== "object" || meta === null) return [];
@@ -1011,9 +1106,10 @@ export function catalogFromGrokInitialize(result: unknown): ModelCatalogEntry[] 
   for (const model of parsed.data.availableModels ?? []) {
     const modelId = model.modelId;
     if (typeof modelId !== "string" || modelId.length === 0) continue;
-    const displayName = typeof model.name === "string" && model.name.length > 0
-      ? model.name
-      : modelId;
+    const displayName =
+      typeof model.name === "string" && model.name.length > 0
+        ? model.name
+        : modelId;
     entries.push({ provider: "grok", modelId, displayName });
   }
   return entries;
@@ -1065,9 +1161,7 @@ export class GrokQuotaProbe implements QuotaProbe {
  * Bare `x.ai/billing` (no underscore) returns -32601 Method not found.
  */
 export class GrokStdioProbeTransport implements GrokProbeTransport {
-  constructor(
-    private readonly argv: string[] = ["grok", "agent", "stdio"],
-  ) {}
+  constructor(private readonly argv: string[] = ["grok", "agent", "stdio"]) {}
 
   async readBilling(timeoutMs: number): Promise<GrokProbePayload> {
     const child = Bun.spawn(this.argv, {

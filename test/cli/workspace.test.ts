@@ -3,15 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  WorkspaceNotInstalledError,
+  type LaunchDeps,
   launchWorkspace,
   resolveWorkspaceApp,
   runWorkspace,
+  WorkspaceNotInstalledError,
   workspaceOpenArguments,
-  type LaunchDeps,
 } from "../../src/cli/workspace";
-import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { getHiveHome } from "../../src/daemon/db";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 
 let root: string;
 beforeEach(() => {
@@ -21,7 +21,14 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 /** An installed release: a version directory with an app, and `current` at it. */
 function install(version: string): string {
-  const app = join(root, "versions", version, "HiveWorkspace.app", "Contents", "MacOS");
+  const app = join(
+    root,
+    "versions",
+    version,
+    "HiveWorkspace.app",
+    "Contents",
+    "MacOS",
+  );
   mkdirSync(app, { recursive: true });
   symlinkSync(join("versions", version), join(root, "current"));
   return join(root, "versions", version, "HiveWorkspace.app");
@@ -29,16 +36,24 @@ function install(version: string): string {
 
 describe("hive opens the installed release Workspace", () => {
   test("passes PATH and the private temp directory into a separate app", () => {
-    expect(workspaceOpenArguments(
+    expect(
+      workspaceOpenArguments(
+        "/Applications/HiveWorkspace.app",
+        ["--orchestrator", "codex"],
+        "/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
+        "/var/folders/user/T/",
+      ),
+    ).toEqual([
+      "-n",
+      "-a",
       "/Applications/HiveWorkspace.app",
-      ["--orchestrator", "codex"],
-      "/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
-      "/var/folders/user/T/",
-    )).toEqual([
-      "-n", "-a", "/Applications/HiveWorkspace.app",
-      "--env", "PATH=/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
-      "--env", "TMPDIR=/var/folders/user/T/",
-      "--args", "--orchestrator", "codex",
+      "--env",
+      "PATH=/usr/local/tools/bin:/Users/me/.local/bin:/usr/bin",
+      "--env",
+      "TMPDIR=/var/folders/user/T/",
+      "--args",
+      "--orchestrator",
+      "codex",
     ]);
   });
 
@@ -47,23 +62,36 @@ describe("hive opens the installed release Workspace", () => {
     // NSLog output is the only record of a pane renderer's attach failures and
     // its bounded give-up. Losing it made "renderer disconnected" undiagnosable
     // from the machine it happened on.
-    expect(workspaceOpenArguments(
+    expect(
+      workspaceOpenArguments(
+        "/Applications/HiveWorkspace.app",
+        ["--project", "/repo", "--instance-home", "/tmp/hv-abc123"],
+        "/usr/bin",
+        "/var/folders/user/T/",
+      ),
+    ).toEqual([
+      "-n",
+      "-a",
       "/Applications/HiveWorkspace.app",
-      ["--project", "/repo", "--instance-home", "/tmp/hv-abc123"],
-      "/usr/bin",
-      "/var/folders/user/T/",
-    )).toEqual([
-      "-n", "-a", "/Applications/HiveWorkspace.app",
-      "--env", "PATH=/usr/bin",
-      "--env", "TMPDIR=/var/folders/user/T/",
-      "--stderr", "/tmp/hv-abc123/workspace.log",
-      "--args", "--project", "/repo", "--instance-home", "/tmp/hv-abc123",
+      "--env",
+      "PATH=/usr/bin",
+      "--env",
+      "TMPDIR=/var/folders/user/T/",
+      "--stderr",
+      "/tmp/hv-abc123/workspace.log",
+      "--args",
+      "--project",
+      "/repo",
+      "--instance-home",
+      "/tmp/hv-abc123",
     ]);
   });
 
   test("resolves the app through the active version symlink", () => {
     install("0.0.7");
-    expect(resolveWorkspaceApp(root)).toEqual(join(root, "current", "HiveWorkspace.app"));
+    expect(resolveWorkspaceApp(root)).toEqual(
+      join(root, "current", "HiveWorkspace.app"),
+    );
   });
 
   test("activating a release activates its Workspace in the same rename", async () => {
@@ -95,13 +123,20 @@ describe("hive opens the installed release Workspace", () => {
       open: async (_app, args) => (argLists.push(args), 0),
       session: { cwd: "/tmp/proj", port: 4567, hivePath: "/opt/hive/bin/hive" },
     });
-    expect(argLists).toEqual([[
-      "--project", "/tmp/proj",
-      "--port", "4567",
-      "--instance-id", hiveInstanceSuffix(),
-      "--instance-home", getHiveHome(),
-      "--hive", "/opt/hive/bin/hive",
-    ]]);
+    expect(argLists).toEqual([
+      [
+        "--project",
+        "/tmp/proj",
+        "--port",
+        "4567",
+        "--instance-id",
+        hiveInstanceSuffix(),
+        "--instance-home",
+        getHiveHome(),
+        "--hive",
+        "/opt/hive/bin/hive",
+      ],
+    ]);
   });
 
   test("hands an explicit orchestrator selection to the app", async () => {
@@ -117,14 +152,22 @@ describe("hive opens the installed release Workspace", () => {
         orchestrator: "codex",
       },
     });
-    expect(argLists).toEqual([[
-      "--project", "/tmp/proj",
-      "--port", "4567",
-      "--instance-id", hiveInstanceSuffix(),
-      "--instance-home", getHiveHome(),
-      "--hive", "/opt/hive/bin/hive",
-      "--orchestrator", "codex",
-    ]]);
+    expect(argLists).toEqual([
+      [
+        "--project",
+        "/tmp/proj",
+        "--port",
+        "4567",
+        "--instance-id",
+        hiveInstanceSuffix(),
+        "--instance-home",
+        getHiveHome(),
+        "--hive",
+        "/opt/hive/bin/hive",
+        "--orchestrator",
+        "codex",
+      ],
+    ]);
   });
 
   test("--hive defaults to this very process, never PATH lookup", async () => {
@@ -135,13 +178,20 @@ describe("hive opens the installed release Workspace", () => {
       open: async (_app, args) => (argLists.push(args), 0),
       session: { cwd: "/tmp/proj", port: 4567 },
     });
-    expect(argLists).toEqual([[
-      "--project", "/tmp/proj",
-      "--port", "4567",
-      "--instance-id", hiveInstanceSuffix(),
-      "--instance-home", getHiveHome(),
-      "--hive", process.execPath,
-    ]]);
+    expect(argLists).toEqual([
+      [
+        "--project",
+        "/tmp/proj",
+        "--port",
+        "4567",
+        "--instance-id",
+        hiveInstanceSuffix(),
+        "--instance-home",
+        getHiveHome(),
+        "--hive",
+        process.execPath,
+      ],
+    ]);
   });
 
   test("with no release installed it refuses rather than launching a dev build", async () => {
@@ -152,15 +202,19 @@ describe("hive opens the installed release Workspace", () => {
     let opened = false;
     const promise = launchWorkspace({
       root,
-      open: async () => (opened = true, 0),
+      open: async () => {
+        opened = true;
+        return 0;
+      },
     });
     await expect(promise).rejects.toThrow(WorkspaceNotInstalledError);
     expect(opened).toEqual(false);
   });
 
   test("the refusal names the installer, not a build command", async () => {
-    const error = await launchWorkspace({ root })
-      .catch((cause: unknown) => cause);
+    const error = await launchWorkspace({ root }).catch(
+      (cause: unknown) => cause,
+    );
     const message = (error as Error).message;
     expect(message).toContain("install.sh");
     expect(message).not.toContain("swift run");
@@ -199,7 +253,12 @@ describe("bare hive opens the project you're in", () => {
   });
 
   test("hive, hive claude, hive codex, and hive grok share one session boundary", async () => {
-    for (const orchestrator of [undefined, "claude", "codex", "grok"] as const) {
+    for (const orchestrator of [
+      undefined,
+      "claude",
+      "codex",
+      "grok",
+    ] as const) {
       const launches: LaunchDeps[] = [];
       let starts = 0;
       await runWorkspace({
@@ -207,17 +266,25 @@ describe("bare hive opens the project you're in", () => {
         cwd: "/repo/root/subdir",
         resolveRoot: () => "/repo/root",
         isInitialized: () => true,
-        start: async () => (starts += 1, { port: 4483, cwd: "/repo/root" }),
-        launch: async (deps) => (launches.push(deps), 0),
+        start: async () => {
+          starts += 1;
+          return { port: 4483, cwd: "/repo/root" };
+        },
+        launch: async (deps) => {
+          launches.push(deps);
+          return 0;
+        },
       });
       expect(starts).toBe(1);
-      expect(launches).toEqual([{
-        session: {
-          cwd: "/repo/root",
-          port: 4483,
-          ...(orchestrator === undefined ? {} : { orchestrator }),
+      expect(launches).toEqual([
+        {
+          session: {
+            cwd: "/repo/root",
+            port: 4483,
+            ...(orchestrator === undefined ? {} : { orchestrator }),
+          },
         },
-      }]);
+      ]);
     }
   });
 
@@ -233,7 +300,9 @@ describe("bare hive opens the project you're in", () => {
         inits.push(root);
         order.push("init");
       },
-      start: async () => (order.push("start"), { port: 4483, cwd: "/repo/root" }),
+      start: async () => (
+        order.push("start"), { port: 4483, cwd: "/repo/root" }
+      ),
       write: (line) => lines.push(line),
       launch: async () => 0,
     });
@@ -254,7 +323,10 @@ describe("bare hive opens the project you're in", () => {
       },
       start: async () => ({ port: 4483, cwd: "/repo/root" }),
       write: (line) => lines.push(line),
-      launch: async () => ((launched = true), 0),
+      launch: async () => {
+        launched = true;
+        return 0;
+      },
     });
     expect(lines.join("\n")).toContain("disk full");
     expect(launched).toBe(true);
@@ -266,8 +338,11 @@ describe("bare hive opens the project you're in", () => {
     await runWorkspace({
       resolveRoot: () => null,
       checkUpdate: async () => ({
-        state: "update-available", current: "0.0.3", latest: "0.0.4",
-        securityCritical: false, stale: false,
+        state: "update-available",
+        current: "0.0.3",
+        latest: "0.0.4",
+        securityCritical: false,
+        stale: false,
       }),
       write: (line) => lines.push(line),
       launch: async (deps) => (launches.push(deps), 0),
@@ -285,7 +360,10 @@ describe("bare hive opens the project you're in", () => {
         throw new Error("offline");
       },
       write: (line) => lines.push(line),
-      launch: async () => ((launched = true), 0),
+      launch: async () => {
+        launched = true;
+        return 0;
+      },
     });
     expect(lines).toEqual([]);
     expect(launched).toEqual(true);

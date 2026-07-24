@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -7,7 +8,6 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import type { ProviderLedger, Vendor } from "./types";
 
 const args = new Map<string, string>();
@@ -20,7 +20,9 @@ const resume = args.get("--resume") === "true";
 
 function save(ledger: ProviderLedger): void {
   const temporary = `${ledgerPath}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(ledger, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(temporary, `${JSON.stringify(ledger, null, 2)}\n`, {
+    mode: 0o600,
+  });
   const descriptor = openSync(temporary, "r");
   fsyncSync(descriptor);
   closeSync(descriptor);
@@ -28,7 +30,8 @@ function save(ledger: ProviderLedger): void {
 }
 
 function load(): ProviderLedger {
-  if (existsSync(ledgerPath)) return JSON.parse(readFileSync(ledgerPath, "utf8"));
+  if (existsSync(ledgerPath))
+    return JSON.parse(readFileSync(ledgerPath, "utf8"));
   return {
     vendor,
     vendorSessionId: `${vendor}-${randomUUID()}`,
@@ -42,9 +45,15 @@ function load(): ProviderLedger {
   };
 }
 
-let ledger = load();
-const emit = (type: string, providerEventId: string, payload: Record<string, unknown> = {}) => {
-  process.stdout.write(`${JSON.stringify({ type, providerEventId, payload })}\n`);
+const ledger = load();
+const emit = (
+  type: string,
+  providerEventId: string,
+  payload: Record<string, unknown> = {},
+) => {
+  process.stdout.write(
+    `${JSON.stringify({ type, providerEventId, payload })}\n`,
+  );
 };
 
 function emitThroughApproval(): void {
@@ -78,7 +87,8 @@ function emitCompleted(): void {
 }
 
 if (resume) {
-  if (ledger.state === "working" || ledger.state === "pending_approval") emitThroughApproval();
+  if (ledger.state === "working" || ledger.state === "pending_approval")
+    emitThroughApproval();
   if (ledger.state === "completed") emitCompleted();
 }
 
@@ -102,7 +112,10 @@ process.stdin.on("data", (chunk: string) => {
       emitThroughApproval();
       continue;
     }
-    if (message.type === "approval" && message.approvalId === ledger.approvalId) {
+    if (
+      message.type === "approval" &&
+      message.approvalId === ledger.approvalId
+    ) {
       if (ledger.state !== "pending_approval") continue;
       ledger.approvalExecutions += 1;
       if (message.decision === "approve") ledger.toolExecutions += 1;
@@ -112,8 +125,12 @@ process.stdin.on("data", (chunk: string) => {
       ledger.finalText = `${vendor.toUpperCase()}_FIXTURE_COMPLETE`;
       ledger.state = "completed";
       save(ledger);
-      emit("assistant_final", `${ledger.commandId}:final`, { text: ledger.finalText });
-      emit("turn_completed", `${ledger.commandId}:complete`, { status: "completed" });
+      emit("assistant_final", `${ledger.commandId}:final`, {
+        text: ledger.finalText,
+      });
+      emit("turn_completed", `${ledger.commandId}:complete`, {
+        status: "completed",
+      });
     }
   }
 });

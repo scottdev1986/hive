@@ -2,17 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { QuotaConfigSchema, type QuotaLimit } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { CatalogedQuotaLedger as QuotaLedger } from "./authorized-launch.test-support";
 import { QuotaService } from "../../src/daemon/quota";
+import { QuotaConfigSchema, type QuotaLimit } from "../../src/schemas";
+import { CatalogedQuotaLedger as QuotaLedger } from "./authorized-launch.test-support";
 
 const roots: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 const claudeLimit: QuotaLimit = {
@@ -276,9 +276,12 @@ describe("statusLine quota telemetry", () => {
       expect(observation?.pool).toBe("subscription");
       expect(observation?.fiveHourUsed).toBe(50);
 
-      const discovered = quota.statuses(now).find((status) =>
-        !("configured" in status) && status.pool === "subscription"
-      );
+      const discovered = quota
+        .statuses(now)
+        .find(
+          (status) =>
+            !("configured" in status) && status.pool === "subscription",
+        );
       if (discovered === undefined || "configured" in discovered) {
         throw new Error("expected a discovered subscription pool");
       }

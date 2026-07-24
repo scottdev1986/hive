@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  type MemoryFact,
   MemoryFactSchema,
   MemorySearchResultSchema,
   MemoryWriteResultSchema,
-  type MemoryFact,
 } from "../../src/schemas/memory";
 
 const verifiedFact: MemoryFact = {
@@ -31,26 +31,34 @@ describe("persisted memory contracts", () => {
 
   test("a misspelled verification date cannot become a verified fact", () => {
     const { verified: _, ...withoutVerified } = verifiedFact;
-    expect(() => MemoryFactSchema.parse({
-      ...withoutVerified,
-      verfied: "2026-07-13",
-    })).toThrow();
+    expect(() =>
+      MemoryFactSchema.parse({
+        ...withoutVerified,
+        verfied: "2026-07-13",
+      }),
+    ).toThrow();
   });
 
   test("verification status and date cannot contradict each other", () => {
-    expect(() => MemoryFactSchema.parse({
-      ...verifiedFact,
-      status: "unverified",
-    })).toThrow();
-    expect(() => MemoryFactSchema.parse({
-      ...verifiedFact,
-      status: "stale",
-      verified: undefined,
-    })).toThrow();
-    expect(() => MemoryFactSchema.parse({
-      ...verifiedFact,
-      date: "2026-02-31",
-    })).toThrow();
+    expect(() =>
+      MemoryFactSchema.parse({
+        ...verifiedFact,
+        status: "unverified",
+      }),
+    ).toThrow();
+    expect(() =>
+      MemoryFactSchema.parse({
+        ...verifiedFact,
+        status: "stale",
+        verified: undefined,
+      }),
+    ).toThrow();
+    expect(() =>
+      MemoryFactSchema.parse({
+        ...verifiedFact,
+        date: "2026-02-31",
+      }),
+    ).toThrow();
   });
 
   test("write results reject unknown keys and preserve their positive fields", () => {
@@ -66,8 +74,9 @@ describe("persisted memory contracts", () => {
       verified: verifiedFact.verified,
     };
     expect(MemoryWriteResultSchema.parse(result)).toEqual(result);
-    expect(() => MemoryWriteResultSchema.parse({ ...result, raw_path: result.rawPath }))
-      .toThrow();
+    expect(() =>
+      MemoryWriteResultSchema.parse({ ...result, raw_path: result.rawPath }),
+    ).toThrow();
   });
 
   test("search-result dates use the same date contract as facts", () => {
@@ -83,9 +92,11 @@ describe("persisted memory contracts", () => {
       path: verifiedFact.path,
     };
     expect(MemorySearchResultSchema.parse(result)).toEqual(result);
-    expect(() => MemorySearchResultSchema.parse({ ...result, date: "last Tuesday" }))
-      .toThrow();
-    expect(() => MemorySearchResultSchema.parse({ ...result, date: "2026-02-31" }))
-      .toThrow();
+    expect(() =>
+      MemorySearchResultSchema.parse({ ...result, date: "last Tuesday" }),
+    ).toThrow();
+    expect(() =>
+      MemorySearchResultSchema.parse({ ...result, date: "2026-02-31" }),
+    ).toThrow();
   });
 });

@@ -19,8 +19,8 @@ import { z } from "zod";
 import { listMemoryFacts } from "../adapters/memory";
 import type { EpisodicStore } from "./episodic-store";
 import type { MemoryIndex } from "./memory-index";
-import type { StatusStore } from "./status-store";
 import { fuseAgentStatus, type StatusFreshness } from "./status-fusion";
+import type { StatusStore } from "./status-store";
 import type { TokenUsageStore } from "./token-usage";
 
 export const MEMORY_QUERY_CLASSES = [
@@ -104,9 +104,7 @@ const BLOCKED_PATTERN = /blocked|waiting|stuck/i;
 const LANDED_PATTERN = /land|complete/i;
 
 const ageFreshness = (observedAt: string, now: Date): StatusFreshness =>
-  now.getTime() - Date.parse(observedAt) <= 15 * 60 * 1_000
-    ? "fresh"
-    : "stale";
+  now.getTime() - Date.parse(observedAt) <= 15 * 60 * 1_000 ? "fresh" : "stale";
 
 // ---------------------------------------------------------------------------
 // L1 — bounded-excerpt point search over episodic events + facts.
@@ -134,8 +132,10 @@ export class EpisodicSearchIndex {
   sync(store: EpisodicStore): void {
     const counts = store.rowCounts();
     if (
-      counts.events === this.indexed.events && counts.facts === this.indexed.facts
-    ) return;
+      counts.events === this.indexed.events &&
+      counts.facts === this.indexed.facts
+    )
+      return;
     const events = store.eventsFor();
     const facts = store.currentFacts();
     this.database.transaction(() => {
@@ -192,24 +192,30 @@ export class EpisodicSearchIndex {
       params.push(filter.since);
     }
     params.push(filter.limit ?? 25);
-    const rows = this.database.query(`
+    const rows = this.database
+      .query(`
       SELECT kind, ref, agent, ts,
         snippet(episodic_fts, 4, '[', ']', '…', 12) AS snippet
       FROM episodic_fts
       WHERE ${clauses.join(" AND ")}
       ORDER BY rank LIMIT ?
-    `).all(...params);
-    return z.object({
-      kind: z.enum(["event", "fact"]),
-      ref: z.string(),
-      agent: z.string().nullable(),
-      ts: z.string(),
-      snippet: z.string(),
-    }).array().parse(rows).map((row) => ({
-      ...row,
-      source: "episodic-fts",
-      asOf: row.ts,
-    }));
+    `)
+      .all(...params);
+    return z
+      .object({
+        kind: z.enum(["event", "fact"]),
+        ref: z.string(),
+        agent: z.string().nullable(),
+        ts: z.string(),
+        snippet: z.string(),
+      })
+      .array()
+      .parse(rows)
+      .map((row) => ({
+        ...row,
+        source: "episodic-fts",
+        asOf: row.ts,
+      }));
   }
 }
 
@@ -237,18 +243,19 @@ function agentNow(
   agentId: string,
   now: Date,
 ): { row: AgentNowRow; blocked: boolean } | null {
-  const fused = deps.status === null
-    ? null
-    : (() => {
-        const events = deps.status.listEventsForAgent(agentId);
-        return events.length === 0
-          ? null
-          : fuseAgentStatus(
-            deps.status.listEvents(),
-            { agentId, incarnationGeneration: null },
-            now,
-          );
-      })();
+  const fused =
+    deps.status === null
+      ? null
+      : (() => {
+          const events = deps.status.listEventsForAgent(agentId);
+          return events.length === 0
+            ? null
+            : fuseAgentStatus(
+                deps.status.listEvents(),
+                { agentId, incarnationGeneration: null },
+                now,
+              );
+        })();
   const latest = deps.episodic?.eventsFor({ agent: agentId }).at(-1) ?? null;
   const report = fused?.report ?? null;
   if (report === null && latest === null && fused === null) return null;
@@ -261,18 +268,18 @@ function agentNow(
     turnState,
     attention: fused?.attention?.value ?? null,
     asOf: report?.observedAt ?? latest?.ts ?? now.toISOString(),
-    freshness: report?.freshness ??
+    freshness:
+      report?.freshness ??
       (latest === null ? "unknown" : ageFreshness(latest.ts, now)),
     confidence: report?.confidence ?? "low",
-    source: report === null
-      ? "episodic"
-      : `status:${report.source.kind}`,
+    source: report === null ? "episodic" : `status:${report.source.kind}`,
   };
-  const blocked = report !== null
-    ? report.blocker !== null || report.phase === "blocked"
-    : turnState === "stuck" ||
-      (latest !== null &&
-        BLOCKED_PATTERN.test(`${latest.type} ${latest.summary}`));
+  const blocked =
+    report !== null
+      ? report.blocker !== null || report.phase === "blocked"
+      : turnState === "stuck" ||
+        (latest !== null &&
+          BLOCKED_PATTERN.test(`${latest.type} ${latest.summary}`));
   return { row, blocked };
 }
 
@@ -282,11 +289,12 @@ function fleetAgents(
   const agents = new Set<string>();
   if (deps.status !== null) {
     for (const event of deps.status.listEvents()) {
-      const agentId = event.entity.kind === "agent"
-        ? event.entity.id
-        : typeof event.data.agentId === "string"
-        ? event.data.agentId
-        : null;
+      const agentId =
+        event.entity.kind === "agent"
+          ? event.entity.id
+          : typeof event.data.agentId === "string"
+            ? event.data.agentId
+            : null;
       if (agentId !== null) agents.add(agentId);
     }
   }
@@ -325,15 +333,10 @@ const finish = (
   state: rows.length === 0 ? "empty" : "ok",
   detail: rows.length === 0 ? emptyDetail : null,
   rows,
-  asOf: rows.reduce<string | null>(
-    (latest, row) => {
-      const asOf = typeof row.asOf === "string" ? row.asOf : null;
-      return asOf !== null && (latest === null || asOf > latest)
-        ? asOf
-        : latest;
-    },
-    null,
-  ),
+  asOf: rows.reduce<string | null>((latest, row) => {
+    const asOf = typeof row.asOf === "string" ? row.asOf : null;
+    return asOf !== null && (latest === null || asOf > latest) ? asOf : latest;
+  }, null),
   source,
 });
 
@@ -368,7 +371,9 @@ async function runClass(
         throw new Error("memory_query class agent-history requires 'agent'");
       }
       if (deps.episodic === null) {
-        return absent("episodic store is not open on this daemon", ["episodic"]);
+        return absent("episodic store is not open on this daemon", [
+          "episodic",
+        ]);
       }
       const agentId = deps.resolveAgentId(input.agent) ?? input.agent;
       const events = deps.episodic.eventsFor({
@@ -391,7 +396,9 @@ async function runClass(
       // Identity comes from the caller's capability subject, never from the
       // input: an `agent` field in the request is ignored on purpose.
       if (deps.episodic === null) {
-        return absent("episodic store is not open on this daemon", ["episodic"]);
+        return absent("episodic store is not open on this daemon", [
+          "episodic",
+        ]);
       }
       const agentId = deps.resolveAgentId(caller.subject) ?? caller.subject;
       const events = deps.episodic.eventsFor({
@@ -429,20 +436,24 @@ async function runClass(
       return finish(
         rows.length === 0
           ? []
-          : [{
-            agents: rows.length,
-            blocked: blockedCount,
-            rows,
-            source: "status+episodic",
-            asOf: now.toISOString(),
-          }],
+          : [
+              {
+                agents: rows.length,
+                blocked: blockedCount,
+                rows,
+                source: "status+episodic",
+                asOf: now.toISOString(),
+              },
+            ],
         "no agents have reported anything yet",
         [...episodicSurface],
       );
     }
     case "what-landed": {
       if (deps.episodic === null) {
-        return absent("episodic store is not open on this daemon", ["episodic"]);
+        return absent("episodic store is not open on this daemon", [
+          "episodic",
+        ]);
       }
       const events = deps.episodic.eventsFor(
         input.since === undefined ? {} : { since: input.since },
@@ -486,17 +497,20 @@ async function runClass(
           "token-usage",
         ]);
       }
-      const agentId = input.agent === undefined
-        ? undefined
-        : deps.resolveAgentId(input.agent) ?? input.agent;
-      const rows = deps.tokenUsage.spendTotals({
-        ...(agentId === undefined ? {} : { agentId }),
-        ...(input.since === undefined ? {} : { since: input.since }),
-      }).map((row) => ({
-        ...row,
-        source: "token-usage",
-        asOf: row.lastObservedAt ?? now.toISOString(),
-      }));
+      const agentId =
+        input.agent === undefined
+          ? undefined
+          : (deps.resolveAgentId(input.agent) ?? input.agent);
+      const rows = deps.tokenUsage
+        .spendTotals({
+          ...(agentId === undefined ? {} : { agentId }),
+          ...(input.since === undefined ? {} : { since: input.since }),
+        })
+        .map((row) => ({
+          ...row,
+          source: "token-usage",
+          asOf: row.lastObservedAt ?? now.toISOString(),
+        }));
       return finish(rows, "no measured token usage recorded", ["token-usage"]);
     }
     case "point-search": {
@@ -504,7 +518,9 @@ async function runClass(
         throw new Error("memory_query class point-search requires 'query'");
       }
       if (deps.episodic === null) {
-        return absent("episodic store is not open on this daemon", ["episodic"]);
+        return absent("episodic store is not open on this daemon", [
+          "episodic",
+        ]);
       }
       const index = indexFor(deps.episodic);
       index.sync(deps.episodic);
@@ -534,11 +550,12 @@ async function runClass(
         return absent("no memory wiki articles exist yet", ["wiki"]);
       }
       const pitfalls = new Set(
-        facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
-          `${fact.scope}:${fact.id}`
-        ),
+        facts
+          .filter((fact) => fact.kind === "pitfall")
+          .map((fact) => `${fact.scope}:${fact.id}`),
       );
-      const rows = deps.memory.search(input.query, { limit: 8 })
+      const rows = deps.memory
+        .search(input.query, { limit: 8 })
         .filter((hit) => pitfalls.has(`${hit.scope}:${hit.id}`))
         .map((hit) => ({
           scope: hit.scope,

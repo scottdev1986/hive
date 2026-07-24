@@ -1,14 +1,14 @@
 import type { Database } from "bun:sqlite";
 import {
   listMemoryFacts,
-  rebuildMemoryIndexFiles,
   type MemoryMigrationReport,
+  rebuildMemoryIndexFiles,
 } from "../adapters/memory";
 import {
-  MemorySearchResultSchema,
   type MemoryFact,
   type MemoryScope,
   type MemorySearchResult,
+  MemorySearchResultSchema,
   type MemorySimilarCandidate,
 } from "../schemas";
 
@@ -30,9 +30,10 @@ export function findSimilarMemoryCandidates(
   index: MemoryIndex,
   written: Pick<MemoryFact, "scope" | "id" | "title">,
 ): MemorySimilarCandidate[] {
-  return index.search(written.title, { limit: 4 })
-    .filter((result) =>
-      !(result.scope === written.scope && result.id === written.id)
+  return index
+    .search(written.title, { limit: 4 })
+    .filter(
+      (result) => !(result.scope === written.scope && result.id === written.id),
     )
     .slice(0, 3)
     .map(({ scope, id, title }) => ({ scope, id, title }));
@@ -54,26 +55,30 @@ export class MemoryIndex {
   }
 
   private insertRow(fact: MemoryFact): void {
-    this.database.query(`
+    this.database
+      .query(`
       INSERT INTO memory_fts (id, scope, topic, title, body, tags, date, status, path)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      fact.id,
-      fact.scope,
-      fact.topic,
-      fact.title,
-      fact.body,
-      fact.tags.join(" "),
-      fact.date,
-      fact.status,
-      fact.path,
-    );
+    `)
+      .run(
+        fact.id,
+        fact.scope,
+        fact.topic,
+        fact.title,
+        fact.body,
+        fact.tags.join(" "),
+        fact.date,
+        fact.status,
+        fact.path,
+      );
   }
 
   private deleteRow(scope: MemoryScope, id: string): void {
-    this.database.query(`
+    this.database
+      .query(`
       DELETE FROM memory_fts WHERE id = ? AND scope = ?
-    `).run(id, scope);
+    `)
+      .run(id, scope);
   }
 
   upsertFact(fact: MemoryFact): void {
@@ -116,25 +121,31 @@ export class MemoryIndex {
       return [];
     }
     const limit = options.limit ?? 10;
-    const rows = options.scope === undefined
-      ? this.database.query(`
+    const rows =
+      options.scope === undefined
+        ? this.database
+            .query(`
           SELECT id, scope, topic, title, date, status, tags, path,
                  snippet(memory_fts, 4, '[', ']', '…', 12) AS snippet
           FROM memory_fts WHERE memory_fts MATCH ? ORDER BY rank LIMIT ?
-        `).all(ftsQuery, limit)
-      : this.database.query(`
+        `)
+            .all(ftsQuery, limit)
+        : this.database
+            .query(`
           SELECT id, scope, topic, title, date, status, tags, path,
                  snippet(memory_fts, 4, '[', ']', '…', 12) AS snippet
           FROM memory_fts WHERE memory_fts MATCH ? AND scope = ?
           ORDER BY rank LIMIT ?
-        `).all(ftsQuery, options.scope, limit);
+        `)
+            .all(ftsQuery, options.scope, limit);
     return (rows as Array<Record<string, unknown>>).map((row) =>
       MemorySearchResultSchema.parse({
         ...row,
-        tags: typeof row.tags === "string"
-          ? row.tags.split(" ").filter((tag) => tag.length > 0)
-          : row.tags,
-      })
+        tags:
+          typeof row.tags === "string"
+            ? row.tags.split(" ").filter((tag) => tag.length > 0)
+            : row.tags,
+      }),
     );
   }
 }

@@ -2,20 +2,24 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  CAPABILITY_PROVIDERS,
-  forEachProvider,
-  type AgentRecord,
-  type CapabilityProvider,
-} from "../../src/schemas";
-import { QuotaConfigSchema, type QuotaLimit } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { QuotaLedger } from "../../src/daemon/quota-ledger";
 import { QuotaService } from "../../src/daemon/quota";
-import { authorizeForQuotaTest } from "./authorized-launch.test-support";
+import { QuotaLedger } from "../../src/daemon/quota-ledger";
 import { CrashRecovery } from "../../src/daemon/recovery";
-import { countGraphifyCallLines, readGraphifyCalls } from "../../src/daemon/tool-telemetry";
+import {
+  countGraphifyCallLines,
+  readGraphifyCalls,
+} from "../../src/daemon/tool-telemetry";
 import { knownBillings } from "../../src/daemon/usage-credits";
+import {
+  type AgentRecord,
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  forEachProvider,
+  QuotaConfigSchema,
+  type QuotaLimit,
+} from "../../src/schemas";
+import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 /**
  * Hive knows a closed vendor set, and for a long time it said so only by
@@ -78,7 +82,13 @@ test("an unknown vendor with nothing to read still throws, rather than reporting
 
 test("reading graphify calls for an unknown vendor throws instead of hunting a codex rollout", async () => {
   await expect(
-    readGraphifyCalls(UNKNOWN, join(home, "worktree"), "session-1", undefined, home),
+    readGraphifyCalls(
+      UNKNOWN,
+      join(home, "worktree"),
+      "session-1",
+      undefined,
+      home,
+    ),
   ).rejects.toThrow(/unknown vendor "future-vendor"/);
 });
 
@@ -165,7 +175,13 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
     Parameters<typeof knownBillings>[0][CapabilityProvider]
   >;
 
-  const billings = knownBillings({ claude: billing, codex: null, grok: null, kimi: null, opencode: null });
+  const billings = knownBillings({
+    claude: billing,
+    codex: null,
+    grok: null,
+    kimi: null,
+    opencode: null,
+  });
 
   expect(billings.claude).toBe(billing);
   expect("codex" in billings).toBe(false);
@@ -174,18 +190,22 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
 test("a review of an unknown vendor is not silently handed to claude", async () => {
   const db = new HiveDatabase(join(home, "quota.db"));
   const ledger = new QuotaLedger(db);
-  ledger.replaceModelCatalog("claude", [{
-    provider: "claude",
-    modelId: "claude-model",
-    displayName: "claude-model",
-    discoveredAt: "2026-07-09T12:00:00.000Z",
-  }]);
-  ledger.replaceModelCatalog("codex", [{
-    provider: "codex",
-    modelId: "codex-model",
-    displayName: "codex-model",
-    discoveredAt: "2026-07-09T12:00:00.000Z",
-  }]);
+  ledger.replaceModelCatalog("claude", [
+    {
+      provider: "claude",
+      modelId: "claude-model",
+      displayName: "claude-model",
+      discoveredAt: "2026-07-09T12:00:00.000Z",
+    },
+  ]);
+  ledger.replaceModelCatalog("codex", [
+    {
+      provider: "codex",
+      modelId: "codex-model",
+      displayName: "codex-model",
+      discoveredAt: "2026-07-09T12:00:00.000Z",
+    },
+  ]);
   const service = new QuotaService(
     ledger,
     QuotaConfigSchema.parse({
@@ -233,36 +253,46 @@ test("a model no catalog claims cannot be billed to any vendor's pool", () => {
   // measurement — "nobody claims it" — and it is grounds to refuse. (With no
   // catalog at all the honest answer is "cannot tell", which is a different
   // state and must not refuse; that case is covered in quota-discovery.test.)
-  ledger.replaceModelCatalog("claude", [{
-    provider: "claude",
-    modelId: "claude-opus-4-8",
-    displayName: "Opus 4.8",
-    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
-  }]);
-  ledger.replaceModelCatalog("codex", [{
-    provider: "codex",
-    modelId: "gpt-5.6-sol",
-    displayName: "GPT-5.6 Sol",
-    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
-  }]);
-  ledger.replaceModelCatalog("grok", [{
-    provider: "grok",
-    modelId: "fixture-grok-model",
-    displayName: "Fixture Grok Model",
-    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
-  }]);
-  ledger.replaceModelCatalog("kimi", [{
-    provider: "kimi",
-    modelId: "fixture-kimi-model",
-    displayName: "Fixture Kimi Model",
-    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
-  }]);
-  ledger.replaceModelCatalog("opencode", [{
-    provider: "opencode",
-    modelId: "fixture-opencode-model",
-    displayName: "Fixture opencode Model",
-    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
-  }]);
+  ledger.replaceModelCatalog("claude", [
+    {
+      provider: "claude",
+      modelId: "claude-opus-4-8",
+      displayName: "Opus 4.8",
+      discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+    },
+  ]);
+  ledger.replaceModelCatalog("codex", [
+    {
+      provider: "codex",
+      modelId: "gpt-5.6-sol",
+      displayName: "GPT-5.6 Sol",
+      discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+    },
+  ]);
+  ledger.replaceModelCatalog("grok", [
+    {
+      provider: "grok",
+      modelId: "fixture-grok-model",
+      displayName: "Fixture Grok Model",
+      discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+    },
+  ]);
+  ledger.replaceModelCatalog("kimi", [
+    {
+      provider: "kimi",
+      modelId: "fixture-kimi-model",
+      displayName: "Fixture Kimi Model",
+      discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+    },
+  ]);
+  ledger.replaceModelCatalog("opencode", [
+    {
+      provider: "opencode",
+      modelId: "fixture-opencode-model",
+      displayName: "Fixture opencode Model",
+      discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+    },
+  ]);
 
   expect(ledger.modelVendorFromCatalog("claude-opus-4-8")).toEqual({
     state: "claimed",
@@ -298,26 +328,28 @@ function reserve(
   model: string,
 ): { ok: boolean } {
   const now = new Date("2026-07-09T12:00:00.000Z");
-  return ledger.tryReserveGroup([{
-    id: `r-${provider}-${model}`,
-    agentName: "maya",
-    provider,
-    account: "personal",
-    pool: `${provider}-premium`,
-    model,
-    category: "simple_coding",
-    estimatedUnits: 4,
-    now: now.toISOString(),
-    expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-    fiveHourStart: now.toISOString(),
-    weeklyStart: now.toISOString(),
-    supplementalFiveHourUsed: 0,
-    supplementalWeeklyUsed: 0,
-    fiveHourAllowance: 100,
-    weeklyAllowance: 100,
-    fiveHourFloor: 0,
-    weeklyFloor: 0,
-  }]);
+  return ledger.tryReserveGroup([
+    {
+      id: `r-${provider}-${model}`,
+      agentName: "maya",
+      provider,
+      account: "personal",
+      pool: `${provider}-premium`,
+      model,
+      category: "simple_coding",
+      estimatedUnits: 4,
+      now: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 60_000).toISOString(),
+      fiveHourStart: now.toISOString(),
+      weeklyStart: now.toISOString(),
+      supplementalFiveHourUsed: 0,
+      supplementalWeeklyUsed: 0,
+      fiveHourAllowance: 100,
+      weeklyAllowance: 100,
+      fiveHourFloor: 0,
+      weeklyFloor: 0,
+    },
+  ]);
 }
 
 function quotaLimit(provider: "claude" | "codex"): QuotaLimit {
@@ -392,10 +424,7 @@ function deps(db: HiveDatabase, sessions: RecordingRecoverySessions) {
         return { presence: "exited", diagnosticIds: [] };
       },
     },
-    createRecoverySession: async (
-      agent: AgentRecord,
-      command: string,
-    ) => {
+    createRecoverySession: async (agent: AgentRecord, command: string) => {
       sessions.created.push({ name: agent.name, command });
     },
     port: 4483,

@@ -2,20 +2,20 @@
 /** Regenerate with `bun run scripts/test-fixtures/model-control-snapshot.ts`. */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import type { CapabilityDiscoveryResult } from "../../src/daemon/capability-discovery";
-import type { AccountBilling } from "../../src/daemon/usage-credits";
 import {
   buildModelControlSnapshot,
   type ModelControlSnapshot,
   type ModelControlSnapshotDependencies,
 } from "../../src/cli/model-control";
+import type { CapabilityDiscoveryResult } from "../../src/daemon/capability-discovery";
+import type { AccountBilling } from "../../src/daemon/usage-credits";
+import type { QuotaStatus } from "../../src/schemas";
 import {
-  known,
-  unknown,
   type CapabilityProvider,
   type CapabilityRecord,
+  known,
+  unknown,
 } from "../../src/schemas/capability";
-import type { QuotaStatus } from "../../src/schemas";
 
 const OBSERVED_AT = "2026-07-12T22:00:00.000Z";
 
@@ -59,23 +59,29 @@ const discovery: Record<CapabilityProvider, CapabilityDiscoveryResult> = {
   codex: { status: "unavailable", reason: "codex CLI not signed in" },
   grok: {
     status: "ok",
-    records: [record({
-      provider: "grok",
-      accountFingerprint: "grok123",
-      cliVersion: "0.2.99",
-      canonicalId: "grok-composer-2.5-fast",
-      launchToken: "grok-composer-2.5-fast",
-      displayName: null,
-      entitled: known(true, "grok.models", OBSERVED_AT),
-      hidden: known(false, "grok.models_cache", OBSERVED_AT),
-      supportsEffort: known(false, "grok.models_cache", OBSERVED_AT),
-      supportedEffortLevels: unknown(
-        "field-absent",
-        "grok.models_cache",
-        OBSERVED_AT,
-      ),
-      defaultEffort: unknown("field-absent", "grok.models_cache", OBSERVED_AT),
-    })],
+    records: [
+      record({
+        provider: "grok",
+        accountFingerprint: "grok123",
+        cliVersion: "0.2.99",
+        canonicalId: "grok-composer-2.5-fast",
+        launchToken: "grok-composer-2.5-fast",
+        displayName: null,
+        entitled: known(true, "grok.models", OBSERVED_AT),
+        hidden: known(false, "grok.models_cache", OBSERVED_AT),
+        supportsEffort: known(false, "grok.models_cache", OBSERVED_AT),
+        supportedEffortLevels: unknown(
+          "field-absent",
+          "grok.models_cache",
+          OBSERVED_AT,
+        ),
+        defaultEffort: unknown(
+          "field-absent",
+          "grok.models_cache",
+          OBSERVED_AT,
+        ),
+      }),
+    ],
     effectiveDefault: {
       provider: "grok",
       model: known("grok-4.5", "grok.models", OBSERVED_AT),
@@ -100,49 +106,51 @@ const billing: Record<CapabilityProvider, AccountBilling | null> = {
   opencode: null,
 };
 
-const quota: QuotaStatus[] = [{
-  provider: "claude",
-  account: "default",
-  pool: "plan",
-  origin: "discovered",
-  overridesDiscovered: false,
-  models: ["*"],
-  label: null,
-  routable: true,
-  confidence: "reported",
-  freshness: "fresh",
-  source: "provider",
-  fiveHour: {
-    availability: "available",
-    unit: "percent",
-    allowance: 100,
-    used: 63,
-    reserved: 0,
-    reservedIsEstimate: true,
-    remaining: 37,
-    remainingPct: 0.37,
-    resetsAt: OBSERVED_AT,
+const quota: QuotaStatus[] = [
+  {
+    provider: "claude",
+    account: "default",
+    pool: "plan",
+    origin: "discovered",
+    overridesDiscovered: false,
+    models: ["*"],
+    label: null,
+    routable: true,
     confidence: "reported",
+    freshness: "fresh",
     source: "provider",
-    observedAt: OBSERVED_AT,
-    windowMinutes: 300,
+    fiveHour: {
+      availability: "available",
+      unit: "percent",
+      allowance: 100,
+      used: 63,
+      reserved: 0,
+      reservedIsEstimate: true,
+      remaining: 37,
+      remainingPct: 0.37,
+      resetsAt: OBSERVED_AT,
+      confidence: "reported",
+      source: "provider",
+      observedAt: OBSERVED_AT,
+      windowMinutes: 300,
+    },
+    weekly: {
+      availability: "unknown",
+      unit: "percent",
+      allowance: null,
+      used: null,
+      reserved: 0,
+      reservedIsEstimate: true,
+      remaining: null,
+      remainingPct: null,
+      resetsAt: null,
+      confidence: "missing",
+      source: "none",
+      observedAt: null,
+      windowMinutes: null,
+    },
   },
-  weekly: {
-    availability: "unknown",
-    unit: "percent",
-    allowance: null,
-    used: null,
-    reserved: 0,
-    reservedIsEstimate: true,
-    remaining: null,
-    remainingPct: null,
-    resetsAt: null,
-    confidence: "missing",
-    source: "none",
-    observedAt: null,
-    windowMinutes: null,
-  },
-}];
+];
 
 export const modelControlSnapshotFixtureDependencies = (
   overrides: ModelControlSnapshotDependencies = {},
@@ -161,8 +169,9 @@ export const modelControlSnapshotFixtureDependencies = (
   ...overrides,
 });
 
-export const buildModelControlSnapshotFixture = (): Promise<ModelControlSnapshot> =>
-  buildModelControlSnapshot(modelControlSnapshotFixtureDependencies());
+export const buildModelControlSnapshotFixture =
+  (): Promise<ModelControlSnapshot> =>
+    buildModelControlSnapshot(modelControlSnapshotFixtureDependencies());
 
 export const renderModelControlSnapshotFixture = async (): Promise<string> =>
   `${JSON.stringify(await buildModelControlSnapshotFixture(), null, 2)}\n`;

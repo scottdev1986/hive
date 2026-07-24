@@ -1,20 +1,20 @@
-import {
-  domainUuidV7Schema,
-} from "../schemas/session-protocol";
 import { z } from "zod";
+import { domainUuidV7Schema } from "../schemas/session-protocol";
 import {
-  HiveTerminalBindingSchema,
   type HiveTerminalBinding,
+  HiveTerminalBindingSchema,
 } from "./session-host/terminal-host-binding";
 
 export type OrchestratorHostKind = "sessiond";
 
 export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
-  .shape.locator.unwrap().extend({
+  .shape.locator.unwrap()
+  .extend({
     subject: z.strictObject({ kind: z.literal("root") }).readonly(),
     hostKind: z.literal("sessiond"),
     engineBuildId: z.string().min(1),
-  }).readonly();
+  })
+  .readonly();
 export type RootSessiondLocator = z.infer<typeof RootSessiondLocatorSchema>;
 
 export function configuredOrchestratorHost(): OrchestratorHostKind {
@@ -29,27 +29,32 @@ export function rootSessionIdForLaunchRequest(requestId: string): string {
   return `ses_${request.slice("req_".length)}`;
 }
 
-export function mintRootSessiondLocator(input: Readonly<{
-  requestId: string;
-  instanceId: string;
-  engineBuildId: string;
-  bindings: readonly HiveTerminalBinding[];
-}>): RootSessiondLocator {
+export function mintRootSessiondLocator(
+  input: Readonly<{
+    requestId: string;
+    instanceId: string;
+    engineBuildId: string;
+    bindings: readonly HiveTerminalBinding[];
+  }>,
+): RootSessiondLocator {
   const sessionId = rootSessionIdForLaunchRequest(input.requestId);
-  const existing = input.bindings.find((binding) =>
-    binding.locator.instanceId === input.instanceId &&
-    binding.locator.subject.kind === "root" &&
-    binding.locator.sessionId === sessionId
-  );
-  if (existing !== undefined) return RootSessiondLocatorSchema.parse(existing.locator);
-  const generation = input.bindings.reduce(
-    (highest, binding) =>
+  const existing = input.bindings.find(
+    (binding) =>
       binding.locator.instanceId === input.instanceId &&
+      binding.locator.subject.kind === "root" &&
+      binding.locator.sessionId === sessionId,
+  );
+  if (existing !== undefined)
+    return RootSessiondLocatorSchema.parse(existing.locator);
+  const generation =
+    input.bindings.reduce(
+      (highest, binding) =>
+        binding.locator.instanceId === input.instanceId &&
         binding.locator.subject.kind === "root"
-      ? Math.max(highest, binding.locator.generation)
-      : highest,
-    0,
-  ) + 1;
+          ? Math.max(highest, binding.locator.generation)
+          : highest,
+      0,
+    ) + 1;
   return RootSessiondLocatorSchema.parse({
     schemaVersion: 1,
     instanceId: input.instanceId,

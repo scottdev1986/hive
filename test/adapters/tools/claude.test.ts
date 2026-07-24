@@ -20,18 +20,18 @@ import { join } from "node:path";
 import {
   buildClaudeResumeCommand,
   buildClaudeSpawnCommand,
+  claudeConfigPath,
+  claudeExecutableCandidates,
   claudeProjectDirectory,
   detectClaudeCliVersion,
-  resolveWorkingClaudeExecutable,
-  claudeExecutableCandidates,
   discoverClaudeRecoverySessionId,
   findLatestClaudeSessionId,
-  writeClaudeAgentConfig,
-  claudeConfigPath,
+  resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
+  writeClaudeAgentConfig,
 } from "../../../src/adapters/tools/claude";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/tools/graphify-hook";
+import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
 import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 
 let tempRoot = "";
@@ -143,10 +143,13 @@ describe("Claude adapter", () => {
     });
 
     test("loads Hive settings without reading project or local settings", () => {
-      expect(buildClaudeSpawnCommand({
-        ...base,
-        scopedSettingsPath: "/home/user/.hive/runtime/orchestrator/settings.json",
-      })).toEqual([
+      expect(
+        buildClaudeSpawnCommand({
+          ...base,
+          scopedSettingsPath:
+            "/home/user/.hive/runtime/orchestrator/settings.json",
+        }),
+      ).toEqual([
         "claude",
         "--model",
         "sonnet",
@@ -205,18 +208,16 @@ describe("Claude adapter", () => {
   });
 
   test("uses the daemon-resolved executable instead of a launcher PATH", () => {
-    expect(buildClaudeSpawnCommand({
-      name: "agent-3",
-      model: "sonnet",
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-      executable: "/home/user/.local/bin/claude",
-    })).toEqual([
-      "/home/user/.local/bin/claude",
-      "--model",
-      "sonnet",
-    ]);
+    expect(
+      buildClaudeSpawnCommand({
+        name: "agent-3",
+        model: "sonnet",
+        worktreePath: "/tmp/worktree",
+        daemonPort: 4317,
+        readOnly: false,
+        executable: "/home/user/.local/bin/claude",
+      }),
+    ).toEqual(["/home/user/.local/bin/claude", "--model", "sonnet"]);
   });
 
   test("resolves the first candidate that answers --version, skipping broken shims", () => {
@@ -233,10 +234,18 @@ describe("Claude adapter", () => {
   });
 
   test("falls back to the bare command with a null version when nothing works", () => {
-    expect(resolveWorkingClaudeExecutable(() => null, () => ["/broken/claude"]))
-      .toEqual({ path: "claude", version: null });
-    expect(resolveWorkingClaudeExecutable(() => "2.1.206", () => []))
-      .toEqual({ path: "claude", version: null });
+    expect(
+      resolveWorkingClaudeExecutable(
+        () => null,
+        () => ["/broken/claude"],
+      ),
+    ).toEqual({ path: "claude", version: null });
+    expect(
+      resolveWorkingClaudeExecutable(
+        () => "2.1.206",
+        () => [],
+      ),
+    ).toEqual({ path: "claude", version: null });
   });
 
   test("candidate order is PATH first, then the native-installer locations", () => {
@@ -249,48 +258,53 @@ describe("Claude adapter", () => {
   });
 
   test("omits the model flag for the account default", () => {
-    expect(buildClaudeSpawnCommand({
-      name: "agent-3",
-      model: "default",
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-    })).toEqual(["claude"]);
+    expect(
+      buildClaudeSpawnCommand({
+        name: "agent-3",
+        model: "default",
+        worktreePath: "/tmp/worktree",
+        daemonPort: 4317,
+        readOnly: false,
+      }),
+    ).toEqual(["claude"]);
   });
 
   test("builds a resume argv that replays the spawn flags with --resume", () => {
-    expect(buildClaudeResumeCommand({
-      name: "agent-3",
-      model: "sonnet",
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-    }, "0189-session")).toEqual([
-      "claude",
-      "--resume",
-      "0189-session",
-      "--model",
-      "sonnet",
-    ]);
+    expect(
+      buildClaudeResumeCommand(
+        {
+          name: "agent-3",
+          model: "sonnet",
+          worktreePath: "/tmp/worktree",
+          daemonPort: 4317,
+          readOnly: false,
+        },
+        "0189-session",
+      ),
+    ).toEqual(["claude", "--resume", "0189-session", "--model", "sonnet"]);
   });
 
   test("keeps resumed session flags before the appended system prompt", () => {
-    const command = buildClaudeResumeCommand({
-      name: "agent-3",
-      model: "sonnet",
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-      appendSystemPromptFile: "/tmp/root-instructions",
-    }, "0189-session");
+    const command = buildClaudeResumeCommand(
+      {
+        name: "agent-3",
+        model: "sonnet",
+        worktreePath: "/tmp/worktree",
+        daemonPort: 4317,
+        readOnly: false,
+        appendSystemPromptFile: "/tmp/root-instructions",
+      },
+      "0189-session",
+    );
     expect(command.slice(0, 3)).toEqual(["claude", "--resume", "0189-session"]);
     expect(command.at(-2)).toBe("--append-system-prompt-file");
     expect(command.at(-1)).toBe("/tmp/root-instructions");
   });
 
   test("derives the transcript project directory from the munged worktree path", () => {
-    expect(claudeProjectDirectory("/repo/.hive/worktrees/maya", "/home/u"))
-      .toEqual("/home/u/.claude/projects/-repo--hive-worktrees-maya");
+    expect(
+      claudeProjectDirectory("/repo/.hive/worktrees/maya", "/home/u"),
+    ).toEqual("/home/u/.claude/projects/-repo--hive-worktrees-maya");
   });
 
   test("disk discovery returns the newest transcript's session id, or null", async () => {
@@ -310,15 +324,20 @@ describe("Claude adapter", () => {
     await writeFile(join(projectDir, "newer-session.jsonl"), "{}\n");
     await writeFile(join(projectDir, "not-a-transcript.txt"), "ignored");
 
-    expect(await findLatestClaudeSessionId(worktreePath, fakeHome))
-      .toEqual("newer-session");
+    expect(await findLatestClaudeSessionId(worktreePath, fakeHome)).toEqual(
+      "newer-session",
+    );
   });
 
   test("recovery discovery uses internal creation evidence and refuses ambiguity", async () => {
     const fakeHome = join(tempRoot, "claude-recovery-home");
     const projectDir = claudeProjectDirectory(worktreePath, fakeHome);
     await mkdir(projectDir, { recursive: true });
-    const transcript = (sessionId: string, timestampKey: string, timestamp: string) =>
+    const transcript = (
+      sessionId: string,
+      timestampKey: string,
+      timestamp: string,
+    ) =>
       `${JSON.stringify({
         type: "user",
         sessionId,
@@ -330,11 +349,13 @@ describe("Claude adapter", () => {
       transcript("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
     );
 
-    expect(await discoverClaudeRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).toBeNull();
+    expect(
+      await discoverClaudeRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).toBeNull();
     await writeFile(
       join(projectDir, "current.jsonl"),
       transcript("current", "timestamp", "2026-07-13T12:00:01.000Z"),
@@ -344,32 +365,38 @@ describe("Claude adapter", () => {
       transcript("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
     );
 
-    expect(await discoverClaudeRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).toBe("current");
+    expect(
+      await discoverClaudeRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).toBe("current");
 
     await writeFile(
       join(projectDir, "second-current.jsonl"),
       transcript("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
     );
-    expect(discoverClaudeRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    expect(
+      discoverClaudeRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
     await rm(join(projectDir, "second-current.jsonl"));
 
     await writeFile(
       join(projectDir, "unknown-evidence.jsonl"),
       transcript("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
     );
-    expect(discoverClaudeRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).rejects.toMatchObject({
+    expect(
+      discoverClaudeRecoverySessionId(
+        worktreePath,
+        "2026-07-13T12:00:00.000Z",
+        fakeHome,
+      ),
+    ).rejects.toMatchObject({
       name: "RecoverySessionDiscoveryError",
       reason: "invalid-evidence",
     });
@@ -455,9 +482,9 @@ describe("Claude adapter", () => {
 
     // The flag outranks the settings file, so passing it would silently undo
     // the bypassPermissions mode written above and restore manual approval.
-    expect(
-      buildClaudeSpawnCommand({ ...base, dangerous: true }),
-    ).not.toContain("--permission-mode");
+    expect(buildClaudeSpawnCommand({ ...base, dangerous: true })).not.toContain(
+      "--permission-mode",
+    );
     // An attended reader (orchestrator, or the read-only restart of a revoked
     // writer) passes no autonomy and still gets manual approval.
     expect(buildClaudeSpawnCommand({ ...base, dangerous: false })).toContain(
@@ -494,12 +521,7 @@ describe("Claude adapter", () => {
     expect(settings.permissions).toEqual({
       defaultMode: "default",
       deny: ["Edit", "Write", "NotebookEdit", "Bash"],
-      allow: [
-        "Read",
-        "Glob",
-        "Grep",
-        "mcp__hive__*",
-      ],
+      allow: ["Read", "Glob", "Grep", "mcp__hive__*"],
     });
     expect(settings.enableAllProjectMcpServers).toEqual(true);
     expect(settings.hooks.SessionStart?.[0]?.hooks[0]?.command).toEqual(
@@ -605,29 +627,36 @@ describe("Claude adapter", () => {
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, { type: string; url: string }> };
     const withGraphSettings = JSON.parse(
-      await readFile(join(worktreePath, ".claude", "settings.local.json"), "utf8"),
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
     ) as { hooks: { PreToolUse?: Array<{ matcher: string }> } };
     expect(withGraph.mcpServers.graphify).toEqual({
       type: "http",
       url: "http://127.0.0.1:7799/mcp",
     });
-    expect(withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher))
-      .toEqual(["Bash", "Read|Glob|Grep"]);
+    expect(
+      withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher),
+    ).toEqual(["Bash", "Read|Glob|Grep"]);
     // The gap that let a whole agent run search the repo without one nudge:
     // Claude Code's NATIVE Grep tool was in no matcher, and Bash only ever saw
     // shelled-out search — the route the harness steers models away from. Assert
     // coverage the way the harness resolves it, as a regex against the tool
     // name, so a matcher string that no longer matches "Grep" fails here rather
     // than reading as covered.
-    const matchers = withGraphSettings.hooks.PreToolUse?.map((entry) =>
-      entry.matcher
-    ) ?? [];
+    const matchers =
+      withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher) ?? [];
     for (const tool of ["Bash", "Read", "Glob", "Grep"]) {
-      expect(matchers.some((matcher) => new RegExp(`^(${matcher})$`).test(tool)))
-        .toBe(true);
+      expect(
+        matchers.some((matcher) => new RegExp(`^(${matcher})$`).test(tool)),
+      ).toBe(true);
     }
     expect(
-      await readFile(join(worktreePath, ".claude", GRAPHIFY_HOOK_SCRIPT), "utf8"),
+      await readFile(
+        join(worktreePath, ".claude", GRAPHIFY_HOOK_SCRIPT),
+        "utf8",
+      ),
     ).toContain("127.0.0.1:7799/mcp");
 
     // A respawn under a daemon with no healthy server must not leave the old
@@ -641,7 +670,10 @@ describe("Claude adapter", () => {
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, unknown> };
     const withoutSettings = JSON.parse(
-      await readFile(join(worktreePath, ".claude", "settings.local.json"), "utf8"),
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
     ) as { hooks: { PreToolUse?: unknown[] } };
     expect(without.mcpServers.graphify).toBeUndefined();
     expect(without.mcpServers.hive).toBeDefined();
@@ -670,16 +702,21 @@ describe("Claude adapter", () => {
           UserPromptSubmit: [{ hooks: [] }],
           SessionStart: [
             {
-              hooks: [{
-                type: "command",
-                command: "user-session-start",
-              }],
+              hooks: [
+                {
+                  type: "command",
+                  command: "user-session-start",
+                },
+              ],
             },
             {
-              hooks: [{
-                type: "command",
-                command: "hive event session-start --agent agent-merge --port 5000",
-              }],
+              hooks: [
+                {
+                  type: "command",
+                  command:
+                    "hive event session-start --agent agent-merge --port 5000",
+                },
+              ],
             },
           ],
         },
@@ -702,10 +739,7 @@ describe("Claude adapter", () => {
     });
 
     const settings = JSON.parse(
-      await readFile(
-        join(claudeDirectory, "settings.local.json"),
-        "utf8",
-      ),
+      await readFile(join(claudeDirectory, "settings.local.json"), "utf8"),
     ) as {
       userSetting: string;
       permissions: {
@@ -749,9 +783,7 @@ describe("Claude adapter", () => {
     ]);
     expect(settings.hooks.SessionStart).toHaveLength(2);
     expect(
-      settings.hooks.SessionStart?.map((entry) =>
-        entry.hooks[0]?.command
-      ),
+      settings.hooks.SessionStart?.map((entry) => entry.hooks[0]?.command),
     ).toEqual([
       "user-session-start",
       `hive event session-start --agent agent-merge --port 5000 --instance-id ${hiveInstanceSuffix()}`,
@@ -783,8 +815,8 @@ describe("Claude adapter", () => {
       ),
     ) as { hooks: Record<string, { hooks: { command?: string }[] }[]> };
 
-    const turnStartCommands = settings.hooks.UserPromptSubmit?.map((entry) =>
-      entry.hooks[0]?.command
+    const turnStartCommands = settings.hooks.UserPromptSubmit?.map(
+      (entry) => entry.hooks[0]?.command,
     );
     expect(turnStartCommands).toContain(
       `hive event turn-start --agent orchestrator --port 4483 --instance-id ${hiveInstanceSuffix()}`,
@@ -806,7 +838,9 @@ describe("Claude adapter", () => {
 
     expect(settings.permissions.defaultMode).toEqual("acceptEdits");
     expect(settings.permissions.allow.includes("Edit")).toEqual(true);
-    expect(settings.permissions.allow.includes("Bash(bun test:*)")).toEqual(true);
+    expect(settings.permissions.allow.includes("Bash(bun test:*)")).toEqual(
+      true,
+    );
   });
 
   test("registers the statusLine command that forwards subscriber quota", async () => {
@@ -839,14 +873,22 @@ describe("Claude Hive integration", () => {
       hiveCommand: [hive],
     });
     const settings = JSON.parse(
-      await readFile(join(worktreePath, ".claude", "settings.local.json"), "utf8"),
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
     ) as {
       hooks: { SessionStart: Array<{ hooks: Array<{ command: string }> }> };
       statusLine: { command: string };
     };
     const mcp = JSON.parse(
       await readFile(join(worktreePath, ".mcp.json"), "utf8"),
-    ) as { mcpServers: Record<string, { command?: string; args?: string[]; headersHelper?: string }> };
+    ) as {
+      mcpServers: Record<
+        string,
+        { command?: string; args?: string[]; headersHelper?: string }
+      >;
+    };
 
     expect(settings.hooks.SessionStart[0]?.hooks[0]?.command).toStartWith(
       `'${hive}' event session-start`,
@@ -859,13 +901,15 @@ describe("Claude Hive integration", () => {
   });
 
   test("builds a normal Claude command", () => {
-    expect(buildClaudeSpawnCommand({
-      name: "maya",
-      model: "sonnet",
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-    })).toEqual(["claude", "--model", "sonnet"]);
+    expect(
+      buildClaudeSpawnCommand({
+        name: "maya",
+        model: "sonnet",
+        worktreePath: "/tmp/worktree",
+        daemonPort: 4317,
+        readOnly: false,
+      }),
+    ).toEqual(["claude", "--model", "sonnet"]);
   });
 
   test("registers only the HTTP daemon server", async () => {
@@ -976,9 +1020,7 @@ describe("unattended launch state", () => {
     await mkdir(home, { recursive: true });
     await seedClaudeWorktreeTrust(worktreePath, home);
 
-    const config = JSON.parse(
-      await readFile(claudeConfigPath(home), "utf8"),
-    );
+    const config = JSON.parse(await readFile(claudeConfigPath(home), "utf8"));
     expect(config.projects[worktreePath]).toEqual({
       hasTrustDialogAccepted: true,
       hasCompletedProjectOnboarding: true,
@@ -1068,10 +1110,12 @@ describe("unattended launch state", () => {
     const home = join(tempRoot, "home-concurrent");
     await mkdir(home, { recursive: true });
     const worktrees = ["alpha", "beta", "gamma", "delta"].map((name) =>
-      join(tempRoot, "concurrent", name)
+      join(tempRoot, "concurrent", name),
     );
 
-    await Promise.all(worktrees.map((path) => seedClaudeWorktreeTrust(path, home)));
+    await Promise.all(
+      worktrees.map((path) => seedClaudeWorktreeTrust(path, home)),
+    );
 
     const config = JSON.parse(await readFile(claudeConfigPath(home), "utf8"));
     expect(Object.keys(config.projects).sort()).toEqual([...worktrees].sort());

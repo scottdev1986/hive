@@ -37,8 +37,11 @@
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { currentBuildHash } from "../daemon/handshake";
-import { DAEMON_SCHEMA_EPOCH, DAEMON_WIRE_PROTOCOL } from "../daemon/handshake";
+import {
+  currentBuildHash,
+  DAEMON_SCHEMA_EPOCH,
+  DAEMON_WIRE_PROTOCOL,
+} from "../daemon/handshake";
 import {
   buildEmbeddingsRuntimeArtifact,
   EMBEDDINGS_RUNTIME_ASSET,
@@ -51,7 +54,7 @@ import {
   type ReleaseArtifact,
   type ReleaseManifest,
 } from "./manifest";
-import { signRelease, signingConfigFromEnv, type SigningConfig } from "./sign";
+import { type SigningConfig, signingConfigFromEnv, signRelease } from "./sign";
 
 const TARGETS = [
   { arch: "arm64", bunTarget: "bun-darwin-arm64", asset: "hive-darwin-arm64" },
@@ -62,8 +65,16 @@ const WORKSPACE_ASSET = "HiveWorkspace.tar.gz";
 const WORKSPACE_BUNDLE = "HiveWorkspace.app";
 const DEFAULT_ENTITLEMENTS = "scripts/signing/entitlements.plist";
 const SESSIOND_TARGETS = [
-  { arch: "arm64" as const, zigArch: "aarch64", asset: "hive-sessiond-darwin-arm64" },
-  { arch: "x64" as const, zigArch: "x86_64", asset: "hive-sessiond-darwin-x64" },
+  {
+    arch: "arm64" as const,
+    zigArch: "aarch64",
+    asset: "hive-sessiond-darwin-arm64",
+  },
+  {
+    arch: "x64" as const,
+    zigArch: "x86_64",
+    asset: "hive-sessiond-darwin-x64",
+  },
 ];
 
 interface Options {
@@ -82,7 +93,7 @@ interface Options {
 function parseArgs(argv: string[]): Options {
   const get = (flag: string): string | null => {
     const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] ?? null : null;
+    return index >= 0 ? (argv[index + 1] ?? null) : null;
   };
   const version = get("--version");
   if (version === null) throw new Error("--version is required");
@@ -149,16 +160,20 @@ export function machoRpaths(otoolOutput: string): string[] {
 }
 
 export function nonSystemMachODependencies(otoolOutput: string): string[] {
-  return [...new Set(
-    otoolOutput.split("\n")
-      .filter((line) => /^\s+(?:\/|@)/.test(line))
-      .map((line) => line.trim())
-      .map((line) => line.split(" (compatibility version", 1)[0]!)
-      .filter((path) =>
-        !path.startsWith("/System/Library/") &&
-        !path.startsWith("/usr/lib/")
-      ),
-  )];
+  return [
+    ...new Set(
+      otoolOutput
+        .split("\n")
+        .filter((line) => /^\s+(?:\/|@)/.test(line))
+        .map((line) => line.trim())
+        .map((line) => line.split(" (compatibility version", 1)[0]!)
+        .filter(
+          (path) =>
+            !path.startsWith("/System/Library/") &&
+            !path.startsWith("/usr/lib/"),
+        ),
+    ),
+  ];
 }
 
 /**
@@ -167,7 +182,10 @@ export function nonSystemMachODependencies(otoolOutput: string): string[] {
  * absolute non-system RPATH and prove the final executable has no external
  * dynamic-library dependency before it can be signed or archived.
  */
-async function makeWorkspaceSelfContained(executable: string, cwd: string): Promise<void> {
+async function makeWorkspaceSelfContained(
+  executable: string,
+  cwd: string,
+): Promise<void> {
   const initial = machoRpaths(
     await output(["/usr/bin/otool", "-l", executable], cwd),
   );
@@ -177,16 +195,20 @@ async function makeWorkspaceSelfContained(executable: string, cwd: string): Prom
       !path.startsWith("/System/Library/") &&
       !path.startsWith("/usr/lib/")
     ) {
-      await sh(["/usr/bin/install_name_tool", "-delete_rpath", path, executable], cwd);
+      await sh(
+        ["/usr/bin/install_name_tool", "-delete_rpath", path, executable],
+        cwd,
+      );
     }
   }
 
   const remaining = machoRpaths(
     await output(["/usr/bin/otool", "-l", executable], cwd),
-  ).filter((path) =>
-    path.startsWith("/") &&
-    !path.startsWith("/System/Library/") &&
-    !path.startsWith("/usr/lib/")
+  ).filter(
+    (path) =>
+      path.startsWith("/") &&
+      !path.startsWith("/System/Library/") &&
+      !path.startsWith("/usr/lib/"),
   );
   if (remaining.length > 0) {
     throw new Error(
@@ -205,12 +227,19 @@ async function makeWorkspaceSelfContained(executable: string, cwd: string): Prom
 }
 
 /** Content address of the inputs; see the header. */
-function buildHashFor(sourceHash: string, options: Options, target: string): string {
+function buildHashFor(
+  sourceHash: string,
+  options: Options,
+  target: string,
+): string {
   return createHash("sha256")
     .update("hive-build-v1\0")
-    .update(sourceHash).update("\0")
-    .update(options.version).update("\0")
-    .update(options.commit).update("\0")
+    .update(sourceHash)
+    .update("\0")
+    .update(options.version)
+    .update("\0")
+    .update(options.commit)
+    .update("\0")
     .update(target)
     .digest("hex");
 }
@@ -254,11 +283,14 @@ async function compileCli(
 
   await sh(
     [
-      "bun", "build", "--compile",
+      "bun",
+      "build",
+      "--compile",
       `--target=${target.bunTarget}`,
       ...defines,
       "src/cli.ts",
-      "--outfile", outfile,
+      "--outfile",
+      outfile,
     ],
     options.repoRoot,
     signed ? { BUN_NO_CODESIGN_MACHO_BINARY: "1" } : undefined,
@@ -307,8 +339,11 @@ async function compileWorkspace(options: Options): Promise<string> {
   for (const arch of ["arm64", "x86_64"]) {
     await sh(["swift", "build", "-c", "release", "--arch", arch], workspace);
     binPaths.push(
-      (await Bun.$`swift build -c release --arch ${arch} --show-bin-path`
-        .cwd(workspace).text()).trim(),
+      (
+        await Bun.$`swift build -c release --arch ${arch} --show-bin-path`
+          .cwd(workspace)
+          .text()
+      ).trim(),
     );
   }
 
@@ -318,26 +353,45 @@ async function compileWorkspace(options: Options): Promise<string> {
   await rm(bundle, { recursive: true, force: true });
   await mkdir(macos, { recursive: true });
   await mkdir(resources, { recursive: true });
-  await writeFile(join(bundle, "Contents", "Info.plist"), INFO_PLIST(options.version));
-  await copyFile(join(workspace, "Resources", "AppIcon.icns"), join(resources, "AppIcon.icns"));
-  await copyFile(join(workspace, "Resources", "Assets.car"), join(resources, "Assets.car"));
+  await writeFile(
+    join(bundle, "Contents", "Info.plist"),
+    INFO_PLIST(options.version),
+  );
+  await copyFile(
+    join(workspace, "Resources", "AppIcon.icns"),
+    join(resources, "AppIcon.icns"),
+  );
+  await copyFile(
+    join(workspace, "Resources", "Assets.car"),
+    join(resources, "Assets.car"),
+  );
   // SPM target resources (vendor marks for the Model Control Center).
   // Bundle.module resolves against Bundle.main.resourceURL in a bundled app,
   // so the generated bundle must ship inside Contents/Resources. The bundle
   // is architecture-independent; either slice's copy is the same bytes.
   await sh(
-    ["cp", "-R", join(binPaths[0]!, "HiveWorkspace_HiveWorkspace.bundle"), resources],
+    [
+      "cp",
+      "-R",
+      join(binPaths[0]!, "HiveWorkspace_HiveWorkspace.bundle"),
+      resources,
+    ],
     options.repoRoot,
   );
   await sh(
     [
-      "lipo", "-create",
+      "lipo",
+      "-create",
       ...binPaths.map((binPath) => join(binPath, "HiveWorkspace")),
-      "-output", join(macos, "HiveWorkspace"),
+      "-output",
+      join(macos, "HiveWorkspace"),
     ],
     options.repoRoot,
   );
-  await makeWorkspaceSelfContained(join(macos, "HiveWorkspace"), options.repoRoot);
+  await makeWorkspaceSelfContained(
+    join(macos, "HiveWorkspace"),
+    options.repoRoot,
+  );
   return bundle;
 }
 
@@ -358,8 +412,12 @@ async function compileSessiond(
   buildHash: string,
 ): Promise<SessiondBuild> {
   const lockPath = join(options.repoRoot, "native/toolchain-lock.json");
-  const zigVersion = (await Bun.$`/usr/bin/plutil -extract zig.version raw -o - ${lockPath}`.text()).trim();
-  const deploymentTarget = (await Bun.$`/usr/bin/plutil -extract deploymentTarget raw -o - ${lockPath}`.text()).trim();
+  const zigVersion = (
+    await Bun.$`/usr/bin/plutil -extract zig.version raw -o - ${lockPath}`.text()
+  ).trim();
+  const deploymentTarget = (
+    await Bun.$`/usr/bin/plutil -extract deploymentTarget raw -o - ${lockPath}`.text()
+  ).trim();
   const nativeCache =
     process.env.HIVE_NATIVE_CACHE ??
     join(process.env.HOME ?? "", ".cache/hive/native");
@@ -393,12 +451,17 @@ async function compileSessiond(
   const zigRunnerTools = join(options.repoRoot, "scripts/zig-runner-tools");
   await sh(
     [
-      zig, "build", "install",
-      "--prefix", prefix,
-      "--global-cache-dir", join(nativeCache, "zig-global"),
+      zig,
+      "build",
+      "install",
+      "--prefix",
+      prefix,
+      "--global-cache-dir",
+      join(nativeCache, "zig-global"),
       `-Dtarget=${target.zigArch}-macos.${deploymentTarget}`,
       "-Doptimize=ReleaseFast",
-      "--sysroot", overlay,
+      "--sysroot",
+      overlay,
     ],
     join(options.repoRoot, "native/sessiond"),
     { PATH: `${zigRunnerTools}:${process.env.PATH ?? ""}` },
@@ -406,7 +469,9 @@ async function compileSessiond(
 
   const built = join(prefix, "bin", "hive-sessiond");
   if (!(await Bun.file(built).exists())) {
-    throw new Error(`sessiond ${target.arch} build produced no binary at ${built}`);
+    throw new Error(
+      `sessiond ${target.arch} build produced no binary at ${built}`,
+    );
   }
   const outfile = join(options.out, target.asset);
   await copyFile(built, outfile);
@@ -414,9 +479,15 @@ async function compileSessiond(
 }
 
 /** Tar the (now signed and stapled) bundle, digest it, and clean up. */
-async function finalizeWorkspace(options: Options, bundle: string): Promise<ReleaseArtifact[]> {
+async function finalizeWorkspace(
+  options: Options,
+  bundle: string,
+): Promise<ReleaseArtifact[]> {
   const tarball = join(options.out, WORKSPACE_ASSET);
-  await sh(["tar", "-czf", tarball, "-C", options.out, WORKSPACE_BUNDLE], options.repoRoot);
+  await sh(
+    ["tar", "-czf", tarball, "-C", options.out, WORKSPACE_BUNDLE],
+    options.repoRoot,
+  );
   await rm(bundle, { recursive: true, force: true });
 
   const stat = await digest(tarball);
@@ -443,7 +514,9 @@ async function finalizeWorkspace(options: Options, bundle: string): Promise<Rele
  * it is Developer-ID-signed (they are upstream napi binaries); its trust
  * anchor is the manifest SHA-256, exactly like every other artifact.
  */
-async function buildEmbeddingsRuntime(options: Options): Promise<ReleaseArtifact[]> {
+async function buildEmbeddingsRuntime(
+  options: Options,
+): Promise<ReleaseArtifact[]> {
   const source = await findSourceNodeModules(
     join(options.repoRoot, "node_modules"),
   );
@@ -496,12 +569,18 @@ export async function build(options: Options): Promise<ReleaseManifest> {
         await compileSessiond(
           options,
           target,
-          buildHashFor(sourceHash, options, `sessiond-${target.zigArch}-ReleaseFast`),
+          buildHashFor(
+            sourceHash,
+            options,
+            `sessiond-${target.zigArch}-ReleaseFast`,
+          ),
         ),
       );
     }
   }
-  const appBundle = options.skipWorkspace ? null : await compileWorkspace(options);
+  const appBundle = options.skipWorkspace
+    ? null
+    : await compileWorkspace(options);
   // Not signed (upstream napi binaries, not ours to re-sign) — built here so
   // it is digested alongside everything else below.
   const embeddingsArtifacts = options.skipEmbeddings
@@ -511,13 +590,16 @@ export async function build(options: Options): Promise<ReleaseManifest> {
   // Sign, notarize, and staple in place. A no-op when no Developer ID is set.
   // Sessiond Mach-Os take the same Developer ID path as the CLI slices.
   if (signing !== null) {
-    await signRelease({
-      cliSlices: [
-        ...cliBuilds.map((build) => build.outfile),
-        ...sessiondBuilds.map((build) => build.outfile),
-      ],
-      appBundle,
-    }, signing);
+    await signRelease(
+      {
+        cliSlices: [
+          ...cliBuilds.map((build) => build.outfile),
+          ...sessiondBuilds.map((build) => build.outfile),
+        ],
+        appBundle,
+      },
+      signing,
+    );
   }
 
   // Digest last, so the manifest records the signed and stapled bytes.
@@ -573,6 +655,8 @@ if (import.meta.main) {
   const manifest = await build(options);
   console.log(`built hive ${manifest.version} -> ${options.out}`);
   for (const artifact of manifest.artifacts) {
-    console.log(`  ${artifact.name} ${artifact.arch} ${artifact.sha256.slice(0, 12)}`);
+    console.log(
+      `  ${artifact.name} ${artifact.arch} ${artifact.sha256.slice(0, 12)}`,
+    );
   }
 }

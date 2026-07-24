@@ -28,12 +28,7 @@ function locator(agentId: string) {
 }
 
 function rootLocator() {
-  return mintSessionLocator(
-    instanceId,
-    { kind: "root" },
-    1,
-    engineBuildId,
-  );
+  return mintSessionLocator(instanceId, { kind: "root" }, 1, engineBuildId);
 }
 
 function snapshot(
@@ -44,13 +39,15 @@ function snapshot(
     schemaVersion: 1,
     source: { sessionId: "workspace-session", process },
     inventoryRevision: revision,
-    terminals: [{
-      agentId: "agent-1",
-      agentName: "visible-agent",
-      locator: locator("agent-1"),
-      state: "pending",
-      geometry,
-    }],
+    terminals: [
+      {
+        agentId: "agent-1",
+        agentName: "visible-agent",
+        locator: locator("agent-1"),
+        state: "pending",
+        geometry,
+      },
+    ],
     ...overrides,
   };
 }
@@ -60,13 +57,17 @@ function authority() {
   let build = engineBuildId;
   const value = new WorkspaceVisibilityAuthority({
     expectedInstanceId: instanceId,
-    observeProcess: (pid) => pid === observed.processId ? observed : null,
+    observeProcess: (pid) => (pid === observed.processId ? observed : null),
     discoverEngineBuildId: async () => build,
   });
   return {
     value,
-    replaceProcess: (next: typeof process) => { observed = next; },
-    replaceBuild: (next: string) => { build = next; },
+    replaceProcess: (next: typeof process) => {
+      observed = next;
+    },
+    replaceBuild: (next: string) => {
+      build = next;
+    },
   };
 }
 
@@ -92,92 +93,130 @@ describe("WorkspaceVisibilityAuthority", () => {
   test("rejects duplicate ownership and mismatched exact locators", () => {
     const host = authority();
     const repeated = snapshot("1").terminals[0]!;
-    expect(host.value.publish(snapshot("1", {
-      terminals: [
-        repeated,
-        {
-          ...repeated,
-          locator: {
-            ...repeated.locator,
-            generation: repeated.locator.generation + 1,
-          },
-        },
-      ],
-    }))).toMatchObject({ state: "rejected", reason: "duplicate-terminal" });
-    expect(host.value.publish(snapshot("1", {
-      terminals: [{ ...repeated, agentId: "wrong-agent" }],
-    }))).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
+    expect(
+      host.value.publish(
+        snapshot("1", {
+          terminals: [
+            repeated,
+            {
+              ...repeated,
+              locator: {
+                ...repeated.locator,
+                generation: repeated.locator.generation + 1,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ state: "rejected", reason: "duplicate-terminal" });
+    expect(
+      host.value.publish(
+        snapshot("1", {
+          terminals: [{ ...repeated, agentId: "wrong-agent" }],
+        }),
+      ),
+    ).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
   });
 
   test("admission re-reads source liveness, engine build, state, and revision", async () => {
     const host = authority();
-    expect(host.value.publish(snapshot("1"))).toMatchObject({ state: "accepted" });
-    await expect(host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }))
-      .resolves.toEqual({
-        engineBuildId,
-        geometry,
-        visibility: {
-          workspaceSessionId: "workspace-session",
-          workspacePid: 7101,
-          workspaceStartToken: "7101:100",
-          openTerminalRevision: "1",
-        },
-      });
+    expect(host.value.publish(snapshot("1"))).toMatchObject({
+      state: "accepted",
+    });
+    await expect(
+      host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }),
+    ).resolves.toEqual({
+      engineBuildId,
+      geometry,
+      visibility: {
+        workspaceSessionId: "workspace-session",
+        workspacePid: 7101,
+        workspaceStartToken: "7101:100",
+        openTerminalRevision: "1",
+      },
+    });
 
-    expect(host.value.publish(snapshot("2", {
-      terminals: [{ ...snapshot("2").terminals[0]!, state: "closing" }],
-    }))).toMatchObject({ state: "accepted" });
-    await expect(host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }))
-      .resolves.toBeNull();
+    expect(
+      host.value.publish(
+        snapshot("2", {
+          terminals: [{ ...snapshot("2").terminals[0]!, state: "closing" }],
+        }),
+      ),
+    ).toMatchObject({ state: "accepted" });
+    await expect(
+      host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }),
+    ).resolves.toBeNull();
 
-    expect(host.value.publish(snapshot("3"))).toMatchObject({ state: "accepted" });
+    expect(host.value.publish(snapshot("3"))).toMatchObject({
+      state: "accepted",
+    });
     host.replaceBuild("changed-engine");
-    await expect(host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }))
-      .resolves.toBeNull();
+    await expect(
+      host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }),
+    ).resolves.toBeNull();
     host.replaceBuild(engineBuildId);
     host.replaceProcess({ processId: 7101, startToken: "7101:200" });
-    await expect(host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }))
-      .resolves.toBeNull();
+    await expect(
+      host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }),
+    ).resolves.toBeNull();
   });
 
   test("admits the exact root pane without synthesizing an agent identity", async () => {
     const host = authority();
     const root = rootLocator();
-    expect(host.value.publish(snapshot("1", {
-      terminals: [{
+    expect(
+      host.value.publish(
+        snapshot("1", {
+          terminals: [
+            {
+              agentId: ROOT_VISIBILITY_ID,
+              agentName: "queen",
+              locator: root,
+              state: "pending",
+              geometry,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ state: "accepted" });
+    await expect(
+      host.value.admit({
         agentId: ROOT_VISIBILITY_ID,
         agentName: "queen",
-        locator: root,
-        state: "pending",
-        geometry,
-      }],
-    }))).toMatchObject({ state: "accepted" });
-    await expect(host.value.admit({
-      agentId: ROOT_VISIBILITY_ID,
-      agentName: "queen",
-    })).resolves.toMatchObject({
+      }),
+    ).resolves.toMatchObject({
       engineBuildId,
       geometry,
       visibility: { openTerminalRevision: "1" },
     });
-    expect(host.value.currentSnapshot()?.terminals[0]?.locator.subject).toEqual({
-      kind: "root",
-    });
+    expect(host.value.currentSnapshot()?.terminals[0]?.locator.subject).toEqual(
+      {
+        kind: "root",
+      },
+    );
   });
 
   test("missing renderer geometry starts at a conventional terminal size", async () => {
     const host = authority();
-    expect(host.value.publish(snapshot("1", {
-      terminals: [{
-        ...snapshot("1").terminals[0]!,
-        geometry: null,
-      }],
-    }))).toMatchObject({ state: "accepted" });
+    expect(
+      host.value.publish(
+        snapshot("1", {
+          terminals: [
+            {
+              ...snapshot("1").terminals[0]!,
+              geometry: null,
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ state: "accepted" });
 
-    await expect(host.value.admit({
-      agentId: "agent-1",
-      agentName: "visible-agent",
-    })).resolves.toMatchObject({
+    await expect(
+      host.value.admit({
+        agentId: "agent-1",
+        agentName: "visible-agent",
+      }),
+    ).resolves.toMatchObject({
       geometry: {
         columns: 80,
         rows: 24,
@@ -210,19 +249,27 @@ describe("WorkspaceVisibilityAuthority", () => {
 
   test("rejects a root locator presented as an agent pane", () => {
     const host = authority();
-    expect(host.value.publish(snapshot("1", {
-      terminals: [{
-        agentId: "agent-1",
-        agentName: "visible-agent",
-        locator: rootLocator(),
-        state: "pending",
-      }],
-    }))).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
+    expect(
+      host.value.publish(
+        snapshot("1", {
+          terminals: [
+            {
+              agentId: "agent-1",
+              agentName: "visible-agent",
+              locator: rootLocator(),
+              state: "pending",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
   });
 
   test("a dead prior source may be replaced, but a live one is exclusive", () => {
     const host = authority();
-    expect(host.value.publish(snapshot("1"))).toMatchObject({ state: "accepted" });
+    expect(host.value.publish(snapshot("1"))).toMatchObject({
+      state: "accepted",
+    });
     const second = snapshot("1", {
       source: {
         sessionId: "replacement-workspace",
@@ -249,12 +296,16 @@ describe("WorkspaceVisibilityAuthority", () => {
       discoverEngineBuildId: async () => engineBuildId,
     });
     expect(host.publish(snapshot("1"))).toMatchObject({ state: "accepted" });
-    expect(host.publish(snapshot("1", {
-      source: {
-        sessionId: "second-live-workspace",
-        process: secondProcess,
-      },
-    }))).toMatchObject({
+    expect(
+      host.publish(
+        snapshot("1", {
+          source: {
+            sessionId: "second-live-workspace",
+            process: secondProcess,
+          },
+        }),
+      ),
+    ).toMatchObject({
       state: "rejected",
       reason: "source-identity-mismatch",
     });

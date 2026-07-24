@@ -22,15 +22,15 @@
  */
 import { readFileSync } from "node:fs";
 import {
+  type DaemonHandshake,
+  handshakeMismatch,
+  parseDaemonHandshake,
+} from "../daemon/handshake";
+import {
   cleanupLifecycleFiles,
   getPidFilePath,
   readDaemonPort,
 } from "../daemon/lifecycle";
-import {
-  handshakeMismatch,
-  parseDaemonHandshake,
-  type DaemonHandshake,
-} from "../daemon/handshake";
 
 const HANDSHAKE_TIMEOUT_MS = 500;
 
@@ -42,13 +42,21 @@ export type DaemonUpdateState =
   /** Ours, wrong build, quiescent. Restart it. */
   | { state: "stale"; port: number; pid: number | null; reason: string }
   /** Ours, wrong build, team live. Stage only; never interrupt. */
-  | { state: "busy"; port: number; reason: string; liveAgents: readonly string[] }
+  | {
+      state: "busy";
+      port: number;
+      reason: string;
+      liveAgents: readonly string[];
+    }
   /** Someone else's. Refuse, loudly, and touch nothing. */
   | { state: "foreign"; port: number; reason: string };
 
 export function readDaemonPid(): number | null {
   try {
-    const pid = Number.parseInt(readFileSync(getPidFilePath(), "utf8").trim(), 10);
+    const pid = Number.parseInt(
+      readFileSync(getPidFilePath(), "utf8").trim(),
+      10,
+    );
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   } catch {
     return null;
@@ -97,9 +105,8 @@ export async function inspectDaemonForUpdate(
     // than kill a pid we cannot identify.
     return { state: "absent" };
   }
-  const expected = typeof deps.expected === "function"
-    ? await deps.expected()
-    : deps.expected;
+  const expected =
+    typeof deps.expected === "function" ? await deps.expected() : deps.expected;
 
   // Identity before everything. A daemon serving another project is never ours
   // to stop, whatever else differs. Both keys are identity: `hiveUuid` names the
@@ -138,7 +145,9 @@ export type RestartOutcome =
   | { stopped: false; reason: string };
 
 const isNoSuchProcess = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error &&
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
   (error as { code?: unknown }).code === "ESRCH";
 
 /**
@@ -156,7 +165,8 @@ export async function restartStaleDaemon(
   deps: RestartDeps = {},
 ): Promise<RestartOutcome> {
   if (state.state === "absent") return { stopped: true, pid: null };
-  if (state.state === "current") return { stopped: false, reason: "daemon is already current" };
+  if (state.state === "current")
+    return { stopped: false, reason: "daemon is already current" };
   if (state.state === "foreign") {
     return {
       stopped: false,
@@ -195,7 +205,10 @@ export async function restartStaleDaemon(
       await sleep(50);
     }
     if (await stillRunning(state.port)) {
-      return { stopped: false, reason: `daemon on port ${state.port} did not exit` };
+      return {
+        stopped: false,
+        reason: `daemon on port ${state.port} did not exit`,
+      };
     }
   }
 
@@ -216,12 +229,16 @@ export async function restartStaleDaemon(
 export function explainRefusal(state: DaemonUpdateState): string | null {
   switch (state.state) {
     case "busy":
-      return `${state.liveAgents.length} agent(s) still working (${state.liveAgents.join(", ")}); ` +
+      return (
+        `${state.liveAgents.length} agent(s) still working (${state.liveAgents.join(", ")}); ` +
         "the running daemon and team are unaffected\n" +
-        "Fix: run `hive stop`, then rerun `hive update`";
+        "Fix: run `hive stop`, then rerun `hive update`"
+      );
     case "foreign":
-      return `port ${state.port} serves a different project (${state.reason})\n` +
-        "Fix: stop that daemon, then update this project";
+      return (
+        `port ${state.port} serves a different project (${state.reason})\n` +
+        "Fix: stop that daemon, then update this project"
+      );
     default:
       return null;
   }

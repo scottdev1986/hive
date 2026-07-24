@@ -42,10 +42,12 @@ const PROVED_EFFORT_ORDER: Record<CapabilityProvider, readonly string[]> = {
 
 const EFFORT_ORDER_BASIS: Record<CapabilityProvider, string> = {
   claude: "Claude effort documentation and the model's advertised levels",
-  codex: "Codex model/list descriptions and OpenAI reasoning-effort documentation",
+  codex:
+    "Codex model/list descriptions and OpenAI reasoning-effort documentation",
   grok: "xAI reasoning-effort documentation and the model's advertised levels",
   kimi: "Kimi Code thinking-effort documentation and the model's advertised levels",
-  opencode: "no vendor-canonical effort order; opencode reasoning levels are provider-specific variants",
+  opencode:
+    "no vendor-canonical effort order; opencode reasoning levels are provider-specific variants",
 };
 
 export function codingTierForCategory(category: RoutingCategory): CodingTier {
@@ -72,7 +74,9 @@ export function resolveAutoEffort(
   category: RoutingCategory,
 ): AutoEffortResolution {
   if (record === undefined) {
-    throw new Error("Hive-decides effort requires a readable model capability record");
+    throw new Error(
+      "Hive-decides effort requires a readable model capability record",
+    );
   }
   if (record.supportsEffort.state === "known" && !record.supportsEffort.value) {
     return {
@@ -101,8 +105,8 @@ export function resolveAutoEffort(
         `${record.provider} ${unproved.join(", ")}; choose an exact advertised level`,
     );
   }
-  const orderedLevels = advertised.sort((left, right) =>
-    rank.get(left)! - rank.get(right)!
+  const orderedLevels = advertised.sort(
+    (left, right) => rank.get(left)! - rank.get(right)!,
   );
   const tier = codingTierForCategory(category);
   let effort: string;
@@ -151,9 +155,8 @@ export function validateEffort(
   const levels = record.supportedEffortLevels;
   if (levels.state === "known") {
     if (!levels.value.includes(effort)) {
-      const supported = levels.value.length === 0
-        ? "none"
-        : levels.value.join(", ");
+      const supported =
+        levels.value.length === 0 ? "none" : levels.value.join(", ");
       throw new Error(
         `Cannot launch ${model} with effort ${effort}: supported effort levels are ${supported}`,
       );

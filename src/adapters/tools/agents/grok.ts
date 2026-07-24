@@ -7,10 +7,10 @@ import { shellJoin } from "../../../daemon/session-host/shell-session";
 import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
+  type GrokSpawnOptions,
   resolveWorkingGrokExecutable,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
-  type GrokSpawnOptions,
 } from "../grok";
 import type { AgentAdapter } from "./agent-adapter";
 
@@ -35,14 +35,15 @@ export const grokAgentAdapter: AgentAdapter = {
         ? {}
         : { executable: context.executable }),
     };
-    const argv = context.resumeSessionId !== undefined
-      ? buildGrokResumeCommand(options, context.resumeSessionId)
-      : buildGrokSpawnCommand({
-        ...options,
-        ...(context.newVendorSessionId === undefined
-          ? {}
-          : { sessionId: context.newVendorSessionId }),
-      });
+    const argv =
+      context.resumeSessionId !== undefined
+        ? buildGrokResumeCommand(options, context.resumeSessionId)
+        : buildGrokSpawnCommand({
+            ...options,
+            ...(context.newVendorSessionId === undefined
+              ? {}
+              : { sessionId: context.newVendorSessionId }),
+          });
     let command = shellJoin(argv);
     if (context.instructionPath !== undefined) {
       command = wrapGrokWithRulesFile(

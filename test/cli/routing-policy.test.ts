@@ -2,13 +2,16 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OPERATOR_SUBJECT, writeCredential } from "../../src/daemon/credentials";
 import {
   parseChainEntryArg,
   parseEffortTargetArg,
   setProviderPolicy,
   setSelectionMode,
 } from "../../src/cli/routing-policy";
+import {
+  OPERATOR_SUBJECT,
+  writeCredential,
+} from "../../src/daemon/credentials";
 
 describe("chain entry syntax — the CLI half of the Control Center contract", () => {
   test("provider/model parses as a specific target with provider-controlled effort", () => {
@@ -34,20 +37,28 @@ describe("chain entry syntax — the CLI half of the Control Center contract", (
 
   test("there is NO vendor-default form — the user is specific on the models he chooses", () => {
     // "vendor-default:grok" has no slash, so it fails the only legal shape.
-    expect(() => parseChainEntryArg("vendor-default:grok")).toThrow(/provider\/model/);
+    expect(() => parseChainEntryArg("vendor-default:grok")).toThrow(
+      /provider\/model/,
+    );
   });
 
   test("an unknown provider, a missing model, and a bare word all refuse with the syntax named", () => {
-    expect(() => parseChainEntryArg("acme/some-model")).toThrow(/unknown provider/);
+    expect(() => parseChainEntryArg("acme/some-model")).toThrow(
+      /unknown provider/,
+    );
     expect(() => parseChainEntryArg("claude/")).toThrow(/provider\/model/);
     expect(() => parseChainEntryArg("claude")).toThrow(/provider\/model/);
   });
 
   test("effort targets parse exactly and reject the rest", () => {
-    expect(parseEffortTargetArg("exact:xhigh")).toEqual({ mode: "exact", value: "xhigh" });
+    expect(parseEffortTargetArg("exact:xhigh")).toEqual({
+      mode: "exact",
+      value: "xhigh",
+    });
     expect(parseEffortTargetArg("none")).toEqual({ mode: "none" });
-    expect(parseEffortTargetArg("provider-controlled"))
-      .toEqual({ mode: "provider-controlled" });
+    expect(parseEffortTargetArg("provider-controlled")).toEqual({
+      mode: "provider-controlled",
+    });
     expect(() => parseEffortTargetArg("exact:")).toThrow(/effort must be/);
     expect(() => parseEffortTargetArg("high")).toThrow(/effort must be/);
   });
@@ -68,30 +79,34 @@ describe("Model Control Center daemon pinning", () => {
       updatedAt: "2026-07-13T12:00:00.000Z",
       provisional: false,
       providers: { claude: "enabled" },
-      models: [{
-        provider: "claude",
-        model: "claude-test",
-        state: "enabled",
-        effort: { mode: "provider-controlled" },
-      }],
-      chains: {
-        default: [{
+      models: [
+        {
           provider: "claude",
           model: "claude-test",
+          state: "enabled",
           effort: { mode: "provider-controlled" },
-        }],
+        },
+      ],
+      chains: {
+        default: [
+          {
+            provider: "claude",
+            model: "claude-test",
+            effort: { mode: "provider-controlled" },
+          },
+        ],
       },
       selection: { global: "auto", categories: {} },
     };
     let requestedUrl = "";
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((
-      async (input) => {
-        requestedUrl = String(input);
-        return new Response(JSON.stringify(policy), {
-          headers: { "content-type": "application/json" },
-        });
-      }
-    ) as typeof fetch);
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input,
+    ) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify(policy), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch);
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
 
     try {
@@ -114,33 +129,51 @@ describe("Model Control Center daemon pinning", () => {
     writeCredential(OPERATOR_SUBJECT, "operator-test-token");
     const bodies: unknown[] = [];
     let revision = 0;
-    let selection = { global: "never-configured", categories: {} as Record<string, string> };
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (_input, init) => {
+    const selection = {
+      global: "never-configured",
+      categories: {} as Record<string, string>,
+    };
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      _input,
+      init,
+    ) => {
       const mutation = JSON.parse(String(init?.body)) as {
         mode: string;
         category?: string;
       };
       bodies.push(mutation);
       if (mutation.category === undefined) selection.global = mutation.mode;
-      else if (mutation.mode === "unset") delete selection.categories[mutation.category];
+      else if (mutation.mode === "unset")
+        delete selection.categories[mutation.category];
       else selection.categories[mutation.category] = mutation.mode;
       revision += 1;
-      return new Response(JSON.stringify({
-        schemaVersion: 2,
-        revision,
-        updatedAt: "2026-07-13T12:00:00.000Z",
-        provisional: false,
-        providers: {},
-        models: [],
-        chains: {},
-        selection,
-      }), { headers: { "content-type": "application/json" } });
+      return new Response(
+        JSON.stringify({
+          schemaVersion: 2,
+          revision,
+          updatedAt: "2026-07-13T12:00:00.000Z",
+          provisional: false,
+          providers: {},
+          models: [],
+          chains: {},
+          selection,
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
     }) as typeof fetch);
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await setSelectionMode("choice", { port: 4483 }, "0");
-      await setSelectionMode("auto", { port: 4483, category: "debugging" }, "1");
-      await setSelectionMode("unset", { port: 4483, category: "debugging" }, "2");
+      await setSelectionMode(
+        "auto",
+        { port: 4483, category: "debugging" },
+        "1",
+      );
+      await setSelectionMode(
+        "unset",
+        { port: 4483, category: "debugging" },
+        "2",
+      );
       expect(bodies).toEqual([
         { op: "set-selection", expectedRevision: 0, mode: "choice" },
         {

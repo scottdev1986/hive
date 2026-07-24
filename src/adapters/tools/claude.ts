@@ -13,28 +13,28 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { isDeepStrictEqual } from "node:util";
-import {
-  GRAPHIFY_HOOK_SCRIPT,
-  graphifyHookPath,
-  writeGraphifyHook,
-  type GraphifyHookKind,
-} from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { withFileLock } from "../file-lock";
 import {
-  invalidRecoveryArtifactEvidence,
-  isMissingRecoveryArtifact,
-  recoveryArtifactTimestamp,
-  RecoverySessionDiscoveryError,
-  selectRecoverySessionId,
-  type RecoverySessionArtifact,
-} from "./recovery-session";
+  GRAPHIFY_HOOK_SCRIPT,
+  type GraphifyHookKind,
+  graphifyHookPath,
+  writeGraphifyHook,
+} from "./graphify-hook";
 import { ORCHESTRATOR_CLAUDE_WRITE_RULES } from "./orchestrator-role";
 import {
   probeProviderExecutable,
   providerExecutableCandidates,
   resolveProviderExecutable,
 } from "./provider-executable";
+import {
+  invalidRecoveryArtifactEvidence,
+  isMissingRecoveryArtifact,
+  type RecoverySessionArtifact,
+  RecoverySessionDiscoveryError,
+  recoveryArtifactTimestamp,
+  selectRecoverySessionId,
+} from "./recovery-session";
 
 export interface ClaudeSpawnOptions {
   name: string;
@@ -161,8 +161,12 @@ export function resolveWorkingClaudeExecutable(
   probe: (executable: string) => string | null = probeClaudeVersion,
   candidates: () => string[] = claudeExecutableCandidates,
 ): ResolvedClaudeExecutable {
-  return resolveProviderExecutable("claude", [], probe, candidates) ??
-    { path: "claude", version: null };
+  return (
+    resolveProviderExecutable("claude", [], probe, candidates) ?? {
+      path: "claude",
+      version: null,
+    }
+  );
 }
 
 const shellToken = (value: string): string => {
@@ -172,7 +176,9 @@ const shellToken = (value: string): string => {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 };
 
-const hook = (command: string): { hooks: { type: "command"; command: string }[] }[] => [
+const hook = (
+  command: string,
+): { hooks: { type: "command"; command: string }[] }[] => [
   { hooks: [{ type: "command", command }] },
 ];
 
@@ -217,15 +223,17 @@ function deepMerge(
     merged[key] =
       isRecord(existingValue) && isRecord(hiveValue)
         ? deepMerge(existingValue, hiveValue, nextPath)
-        : Array.isArray(existingValue) && Array.isArray(hiveValue) &&
+        : Array.isArray(existingValue) &&
+            Array.isArray(hiveValue) &&
             nextPath.length >= 2 &&
             (nextPath[0] === "hooks" || nextPath[0] === "permissions")
-        ? [...existingValue, ...hiveValue].filter((value, index, values) =>
-            values.findIndex((candidate) =>
-              isDeepStrictEqual(candidate, value)
-            ) === index
-          )
-        : hiveValue;
+          ? [...existingValue, ...hiveValue].filter(
+              (value, index, values) =>
+                values.findIndex((candidate) =>
+                  isDeepStrictEqual(candidate, value),
+                ) === index,
+            )
+          : hiveValue;
   }
   return merged;
 }
@@ -241,7 +249,9 @@ function removeOwnedHiveHooks(
       if (!isRecord(entry) || !Array.isArray(entry.hooks)) return true;
       return !entry.hooks.some((hook) => {
         if (!isRecord(hook) || typeof hook.command !== "string") return false;
-        if (!/(?:^|\s)event [a-z-]+ --agent \S+ --port \d+/.test(hook.command)) {
+        if (
+          !/(?:^|\s)event [a-z-]+ --agent \S+ --port \d+/.test(hook.command)
+        ) {
           return false;
         }
         const owner = /--instance-id (\S+)/.exec(hook.command)?.[1];
@@ -251,9 +261,7 @@ function removeOwnedHiveHooks(
   }
 }
 
-export function buildClaudeSpawnCommand(
-  options: ClaudeSpawnOptions,
-): string[] {
+export function buildClaudeSpawnCommand(options: ClaudeSpawnOptions): string[] {
   const command = [options.executable ?? "claude"];
   if (options.model !== "default") {
     command.push("--model", options.model);
@@ -288,10 +296,7 @@ export function buildClaudeSpawnCommand(
     );
   }
   if (options.appendSystemPromptFile !== undefined) {
-    command.push(
-      "--append-system-prompt-file",
-      options.appendSystemPromptFile,
-    );
+    command.push("--append-system-prompt-file", options.appendSystemPromptFile);
   }
   return command;
 }
@@ -348,7 +353,10 @@ export async function findLatestClaudeSessionId(
     try {
       const info = await stat(join(directory, entry));
       if (newest === null || info.mtimeMs > newest.mtimeMs) {
-        newest = { sessionId: entry.slice(0, -".jsonl".length), mtimeMs: info.mtimeMs };
+        newest = {
+          sessionId: entry.slice(0, -".jsonl".length),
+          mtimeMs: info.mtimeMs,
+        };
       }
     } catch {
       // A transcript deleted mid-scan is simply not a candidate.
@@ -401,9 +409,12 @@ async function readClaudeRecoveryArtifact(
           continue;
         }
         if (
-          typeof parsed !== "object" || parsed === null ||
-          !("sessionId" in parsed) || parsed.sessionId !== sessionId
-        ) continue;
+          typeof parsed !== "object" ||
+          parsed === null ||
+          !("sessionId" in parsed) ||
+          parsed.sessionId !== sessionId
+        )
+          continue;
         sawSessionRecord = true;
         if (!("timestamp" in parsed)) continue;
         if (!("cwd" in parsed) || typeof parsed.cwd !== "string") {
@@ -425,11 +436,7 @@ async function readClaudeRecoveryArtifact(
   } catch (error) {
     if (error instanceof RecoverySessionDiscoveryError) throw error;
     if (isMissingRecoveryArtifact(error)) return null;
-    return invalidRecoveryArtifactEvidence(
-      "Claude",
-      path,
-      "cannot be read",
-    );
+    return invalidRecoveryArtifactEvidence("Claude", path, "cannot be read");
   }
   if (Number.isFinite(earliest)) {
     return { sessionId, createdAtMs: earliest, path };
@@ -466,39 +473,40 @@ export async function seedClaudeWorktreeTrust(
   const key = await realpath(worktreePath).catch(() => resolve(worktreePath));
   const configPath = claudeConfigPath(home);
 
-  const seed = async (): Promise<void> => withFileLock(`${configPath}.hive.lock`, async () => {
-    const config = await readJsonObject(configPath);
-    const projects = isRecord(config.projects) ? config.projects : {};
-    const existing = isRecord(projects[key]) ? projects[key] : {};
-    // hasTrustDialogAccepted is the load-bearing key: on 2.1.206 it alone both
-    // clears the dialog and restores project-scoped settings. The onboarding
-    // pair is cheap insurance against a version that gates an interactive
-    // project-onboarding step on it, and stays inside this worktree's entry.
-    const seeded = {
-      ...existing,
-      hasTrustDialogAccepted: true,
-      hasCompletedProjectOnboarding: true,
-      projectOnboardingSeenCount: Math.max(
-        1,
-        positiveInteger(existing.projectOnboardingSeenCount),
-      ),
-    };
-    // Re-spawns and crash recovery re-seed the same worktree; skipping the
-    // write keeps us out of the way of the CLI's own config writer.
-    if (isDeepStrictEqual(existing, seeded)) return;
+  const seed = async (): Promise<void> =>
+    withFileLock(`${configPath}.hive.lock`, async () => {
+      const config = await readJsonObject(configPath);
+      const projects = isRecord(config.projects) ? config.projects : {};
+      const existing = isRecord(projects[key]) ? projects[key] : {};
+      // hasTrustDialogAccepted is the load-bearing key: on 2.1.206 it alone both
+      // clears the dialog and restores project-scoped settings. The onboarding
+      // pair is cheap insurance against a version that gates an interactive
+      // project-onboarding step on it, and stays inside this worktree's entry.
+      const seeded = {
+        ...existing,
+        hasTrustDialogAccepted: true,
+        hasCompletedProjectOnboarding: true,
+        projectOnboardingSeenCount: Math.max(
+          1,
+          positiveInteger(existing.projectOnboardingSeenCount),
+        ),
+      };
+      // Re-spawns and crash recovery re-seed the same worktree; skipping the
+      // write keeps us out of the way of the CLI's own config writer.
+      if (isDeepStrictEqual(existing, seeded)) return;
 
-    const next = { ...config, projects: { ...projects, [key]: seeded } };
-    // Rename onto the config so a concurrent reader never sees a half file.
-    const temporaryPath = `${configPath}.hive-${process.pid}-${Date.now()}.tmp`;
-    await mkdir(dirname(configPath), { recursive: true });
-    try {
-      await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
-      await rename(temporaryPath, configPath);
-    } catch (error) {
-      await unlink(temporaryPath).catch(() => undefined);
-      throw error;
-    }
-  });
+      const next = { ...config, projects: { ...projects, [key]: seeded } };
+      // Rename onto the config so a concurrent reader never sees a half file.
+      const temporaryPath = `${configPath}.hive-${process.pid}-${Date.now()}.tmp`;
+      await mkdir(dirname(configPath), { recursive: true });
+      try {
+        await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
+        await rename(temporaryPath, configPath);
+      } catch (error) {
+        await unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
+    });
 
   // Chain even on failure so one bad seed cannot wedge later spawns.
   const next = trustSeedQueue.then(seed, seed);
@@ -548,8 +556,8 @@ export async function writeClaudeAgentConfig(
   // restart of a revoked writer, which must keep its shell and edit tools
   // taken away. Attended mode only — under bypass there is no prompt left to
   // scope the grant, so that branch keeps the unmodified list.
-  const boardTools = (options.boardTools ?? false) &&
-    !(options.dangerous ?? false);
+  const boardTools =
+    (options.boardTools ?? false) && !(options.dangerous ?? false);
   const attendedDeny = boardTools ? ["NotebookEdit"] : readOnlyDeny;
 
   const permissions = options.readOnly
@@ -578,25 +586,25 @@ export async function writeClaudeAgentConfig(
           ],
         }
     : (options.dangerous ?? false)
-    ? { defaultMode: "bypassPermissions" }
-    : {
-        defaultMode: "acceptEdits",
-        allow: [
-          "Read",
-          "Glob",
-          "Grep",
-          "Edit",
-          "Write",
-          "NotebookEdit",
-          "Bash(git status:*)",
-          "Bash(git diff:*)",
-          "Bash(git log:*)",
-          "Bash(git add:*)",
-          "Bash(git commit:*)",
-          "Bash(bun test:*)",
-          "Bash(bun run:*)",
-        ],
-      };
+      ? { defaultMode: "bypassPermissions" }
+      : {
+          defaultMode: "acceptEdits",
+          allow: [
+            "Read",
+            "Glob",
+            "Grep",
+            "Edit",
+            "Write",
+            "NotebookEdit",
+            "Bash(git status:*)",
+            "Bash(git diff:*)",
+            "Bash(git log:*)",
+            "Bash(git add:*)",
+            "Bash(git commit:*)",
+            "Bash(bun test:*)",
+            "Bash(bun run:*)",
+          ],
+        };
 
   // Every bypass-mode session, including an autonomous reader, needs the
   // worktree-local acknowledgement or it blocks on an interactive warning.
@@ -610,7 +618,9 @@ export async function writeClaudeAgentConfig(
 
   const settings = {
     enableAllProjectMcpServers: true,
-    ...(bypassingPermissions ? { skipDangerousModePermissionPrompt: true } : {}),
+    ...(bypassingPermissions
+      ? { skipDangerousModePermissionPrompt: true }
+      : {}),
     hooks: {
       SessionStart: hook(eventCommand("session-start")),
       // Always write the current daemon endpoint. deepMerge preserves the
@@ -630,7 +640,10 @@ export async function writeClaudeAgentConfig(
               {
                 matcher: "Bash",
                 hooks: [
-                  { type: "command", command: graphifyCommand("claude-search") },
+                  {
+                    type: "command",
+                    command: graphifyCommand("claude-search"),
+                  },
                 ],
               },
               // Grep belongs HERE, not on the Bash matcher. The `search` branch
@@ -679,8 +692,7 @@ export async function writeClaudeAgentConfig(
         // not through `headers: {Authorization: "Bearer ${VAR}"}`. An env var
         // would be inherited by every descendant of this agent's process; the
         // helper reads a 0600 file with a close-on-exec descriptor instead.
-        headersHelper:
-          `${hiveInvocation} credential --agent ${shellToken(options.name)}`,
+        headersHelper: `${hiveInvocation} credential --agent ${shellToken(options.name)}`,
       },
       // The repo's local knowledge graph, read-only and loopback-only. Only
       // written when the daemon's server was healthy at spawn time.
@@ -699,10 +711,7 @@ export async function writeClaudeAgentConfig(
   const mergedMcp = deepMerge(existingMcp, mcp);
   // A missing URL must remove a stale merged entry or every respawn retains a
   // dead endpoint.
-  if (
-    options.graphifyUrl === undefined &&
-    isRecord(mergedMcp.mcpServers)
-  ) {
+  if (options.graphifyUrl === undefined && isRecord(mergedMcp.mcpServers)) {
     delete mergedMcp.mcpServers.graphify;
   }
   if (
@@ -730,13 +739,7 @@ export async function writeClaudeAgentConfig(
 
   await Promise.all([
     writeGraphifyHook(graphifyHook, options.graphifyUrl),
-    writeFile(
-      settingsPath,
-      `${JSON.stringify(mergedSettings, null, 2)}\n`,
-    ),
-    writeFile(
-      mcpPath,
-      `${JSON.stringify(mergedMcp, null, 2)}\n`,
-    ),
+    writeFile(settingsPath, `${JSON.stringify(mergedSettings, null, 2)}\n`),
+    writeFile(mcpPath, `${JSON.stringify(mergedMcp, null, 2)}\n`),
   ]);
 }

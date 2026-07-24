@@ -1,6 +1,6 @@
 import {
-  unknownVendor,
   type CapabilityProvider,
+  unknownVendor,
 } from "../../../schemas/capability";
 import type { AgentAdapter } from "./agent-adapter";
 import { claudeAgentAdapter } from "./claude";

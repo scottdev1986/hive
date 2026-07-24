@@ -159,7 +159,7 @@ async function importFastembedRuntime(): Promise<{
   if (await Bun.file(bundlePath).exists()) {
     try {
       return {
-        runtime: await import(bundlePath) as FastembedRuntime,
+        runtime: (await import(bundlePath)) as FastembedRuntime,
         origin: bundlePath,
       };
     } catch (error) {
@@ -175,7 +175,7 @@ async function importFastembedRuntime(): Promise<{
   }
   try {
     return {
-      runtime: await import("fastembed") as FastembedRuntime,
+      runtime: (await import("fastembed")) as FastembedRuntime,
       origin: "fastembed from node_modules (repo dev path)",
     };
   } catch (error) {
@@ -205,9 +205,10 @@ async function embedderFromRuntime(
   cacheDir: string,
 ): Promise<MemoryEmbedder> {
   const { FlagEmbedding, EmbeddingModel } = runtime;
-  const fastembedModel = model === "bge-small-en-v1.5"
-    ? EmbeddingModel.BGESmallENV15
-    : EmbeddingModel.AllMiniLML6V2;
+  const fastembedModel =
+    model === "bge-small-en-v1.5"
+      ? EmbeddingModel.BGESmallENV15
+      : EmbeddingModel.AllMiniLML6V2;
   const session = await FlagEmbedding.init({
     model: fastembedModel,
     cacheDir,
@@ -264,7 +265,7 @@ export async function probeExternalRuntime(
       `embedding-runtime-missing: no runtime bundle at ${bundlePath}`,
     );
   }
-  const runtime = await import(bundlePath) as FastembedRuntime;
+  const runtime = (await import(bundlePath)) as FastembedRuntime;
   const embedder = await embedderFromRuntime(runtime, model, cacheDir);
   return {
     bundlePath,
@@ -345,13 +346,17 @@ export class MemoryEmbeddingService {
 
   private apiUnavailableDetail(): string {
     if (Bun.env[MEMORY_EMBEDDING_API_KEY_ENV] === undefined) {
-      return `embedding_provider is "api" but ${MEMORY_EMBEDDING_API_KEY_ENV} ` +
+      return (
+        `embedding_provider is "api" but ${MEMORY_EMBEDDING_API_KEY_ENV} ` +
         "is not set — semantic memory is unavailable (the api knob is a " +
-        "manual escape hatch, not a fallback; set the key or use \"local\")";
+        'manual escape hatch, not a fallback; set the key or use "local")'
+      );
     }
-    return "embedding_provider is \"api\" and an API key is set, but no API " +
+    return (
+      'embedding_provider is "api" and an API key is set, but no API ' +
       "embedding provider ships in this build (HM-5 is local-only per plan " +
-      "D4) — semantic memory is unavailable";
+      "D4) — semantic memory is unavailable"
+    );
   }
 
   /** The embedder, loading the model on first call; null when unavailable.
@@ -361,22 +366,23 @@ export class MemoryEmbeddingService {
     if (this.attempt === null) {
       const cacheDir = this.options.cacheDir ?? memoryModelsDir();
       const load = this.options.load ?? loadLocalEmbedder;
-      this.attempt = load(this.config.model, cacheDir).then((embedder) => {
-        this.loaded = embedder;
-        this.options.log?.(
-          `Hive memory embeddings: READY — model ${embedder.model} loaded ` +
-            `(${embedder.dimensions}-dim)`,
-        );
-        return embedder;
-      }).catch((error) => {
-        this.failureDetail =
-          `local embedding model ${this.config.model} failed to load: ${
+      this.attempt = load(this.config.model, cacheDir)
+        .then((embedder) => {
+          this.loaded = embedder;
+          this.options.log?.(
+            `Hive memory embeddings: READY — model ${embedder.model} loaded ` +
+              `(${embedder.dimensions}-dim)`,
+          );
+          return embedder;
+        })
+        .catch((error) => {
+          this.failureDetail = `local embedding model ${this.config.model} failed to load: ${
             error instanceof Error ? error.message : "unknown error"
           } — semantic memory is unavailable, recall is FTS-only`;
-        console.error(`Hive memory embeddings: ${this.failureDetail}`);
-        this.options.log?.(`Hive memory embeddings: ${this.failureDetail}`);
-        return null;
-      });
+          console.error(`Hive memory embeddings: ${this.failureDetail}`);
+          this.options.log?.(`Hive memory embeddings: ${this.failureDetail}`);
+          return null;
+        });
     }
     return this.attempt;
   }
@@ -495,7 +501,9 @@ export class MemoryEmbeddingIndex {
     if (label !== "ready" && label !== "pending") {
       // The leg is known-down (the load failure is memoized) or configured
       // off — do not re-attempt on every write, say so on the response.
-      return Promise.resolve<MemoryEmbeddingWriteOutcome>(`unavailable:${label}`);
+      return Promise.resolve<MemoryEmbeddingWriteOutcome>(
+        `unavailable:${label}`,
+      );
     }
     if (label === "pending") {
       // The first-ever embed pays the model load (~seconds warm, a download
@@ -528,7 +536,10 @@ export class MemoryEmbeddingIndex {
 
   /** Drop vector rows whose source disappeared (deleted article,
    * invalidated fact) — the stale-row half of index maintenance. */
-  prune(keep: { articles: ReadonlySet<string>; facts: ReadonlySet<string> }): number {
+  prune(keep: {
+    articles: ReadonlySet<string>;
+    facts: ReadonlySet<string>;
+  }): number {
     try {
       return this.deps.store.pruneMemoryEmbeddings(keep);
     } catch (error) {
@@ -545,19 +556,28 @@ export class MemoryEmbeddingIndex {
    * surface is unavailable — the exact signal the recall bundle uses to fall
    * back to byte-identical FTS-only output. Brute force by design: corpora
    * are small and there is no sqlite-vec native dependency. */
-  async searchArticles(query: string, limit: number): Promise<SemanticArticleHit[] | null> {
+  async searchArticles(
+    query: string,
+    limit: number,
+  ): Promise<SemanticArticleHit[] | null> {
     const embedder = await this.deps.service.embedder();
     if (embedder === null) return null;
     const queryVector = await embedder.embedQuery(query);
-    const rows = this.deps.store.memoryEmbeddings({ kind: "article" })
-      .filter((row: MemoryEmbeddingRow) => row.dimensions === queryVector.length);
+    const rows = this.deps.store
+      .memoryEmbeddings({ kind: "article" })
+      .filter(
+        (row: MemoryEmbeddingRow) => row.dimensions === queryVector.length,
+      );
     const scored = rows.map((row) => ({
       scope: row.scope,
       id: row.sourceId,
       score: cosineSimilarity(row.vector, queryVector),
     }));
-    scored.sort((a, b) =>
-      b.score - a.score || a.scope.localeCompare(b.scope) || a.id.localeCompare(b.id)
+    scored.sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.scope.localeCompare(b.scope) ||
+        a.id.localeCompare(b.id),
     );
     return scored.slice(0, limit);
   }

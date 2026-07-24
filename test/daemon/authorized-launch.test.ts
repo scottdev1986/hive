@@ -15,10 +15,11 @@ const passingChecks = (): LaunchGateChecks => ({
 });
 
 describe("AuthorizedLaunch", () => {
-  if (false) {
+  const directConstructionMustNotCompile = (): void => {
     // @ts-expect-error The constructor is private; making it public breaks typecheck.
     new AuthorizedLaunch({ tool: "codex", model: "ungated" });
-  }
+  };
+  void directConstructionMustNotCompile;
 
   test("only the complete ordered gate can mint a launch", async () => {
     const order: string[] = [];
@@ -69,14 +70,19 @@ describe("AuthorizedLaunch", () => {
       { tool: "codex", model: "gpt-test" },
       checks,
     );
-    expect(result.refusal).toEqual({ reason: "effort", detail: "effort says no" });
+    expect(result.refusal).toEqual({
+      reason: "effort",
+      detail: "effort says no",
+    });
   });
 
   test("a plain object cannot cross the runtime adapter boundary", () => {
-    expect(() => requireAuthorizedLaunch({
-      tool: "codex",
-      model: "ungated",
-    } as unknown as AuthorizedLaunch)).toThrow("requires an AuthorizedLaunch");
+    expect(() =>
+      requireAuthorizedLaunch({
+        tool: "codex",
+        model: "ungated",
+      } as unknown as AuthorizedLaunch),
+    ).toThrow("requires an AuthorizedLaunch");
   });
 
   test("production code contains no cast around the private launch brand", async () => {

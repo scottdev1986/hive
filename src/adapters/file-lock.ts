@@ -6,7 +6,9 @@ interface FileLockOwner {
 }
 
 const isMissingFileError = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error &&
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
   error.code === "ENOENT";
 
 function parseLockOwner(source: string, path: string): FileLockOwner | null {
@@ -17,15 +19,17 @@ function parseLockOwner(source: string, path: string): FileLockOwner | null {
   } catch {
     return null;
   }
-  if (
-    typeof parsed !== "object" || parsed === null || Array.isArray(parsed)
-  ) throw new Error(`Invalid lock owner in ${path}`);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error(`Invalid lock owner in ${path}`);
   const record = parsed as Record<string, unknown>;
   if (
     Object.keys(record).some((key) => key !== "pid" && key !== "token") ||
-    !Number.isSafeInteger(record.pid) || Number(record.pid) <= 0 ||
-    typeof record.token !== "string" || record.token.length === 0
-  ) throw new Error(`Invalid lock owner in ${path}`);
+    !Number.isSafeInteger(record.pid) ||
+    Number(record.pid) <= 0 ||
+    typeof record.token !== "string" ||
+    record.token.length === 0
+  )
+    throw new Error(`Invalid lock owner in ${path}`);
   return { pid: Number(record.pid), token: record.token };
 }
 
@@ -184,15 +188,17 @@ export async function withFileLock<T>(
     await Bun.sleep(20);
   }
 
-  try {
-    return await operation();
-  } finally {
-    const current = await readFile(path, "utf8").catch(() => "");
-    if (current === encoded) {
-      await unlink(path).catch(() => undefined);
-      if (await readFile(path, "utf8").catch(() => null) === encoded) {
-        throw new Error(`Failed to release lock ${path}`);
-      }
+  const outcome = await operation().then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  const current = await readFile(path, "utf8").catch(() => "");
+  if (current === encoded) {
+    await unlink(path).catch(() => undefined);
+    if ((await readFile(path, "utf8").catch(() => null)) === encoded) {
+      throw new Error(`Failed to release lock ${path}`);
     }
   }
+  if (!outcome.ok) throw outcome.error;
+  return outcome.value;
 }

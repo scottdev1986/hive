@@ -24,8 +24,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { killAgentCli, killOrigin, stopHive } from "../../src/cli/control";
-import { HiveDatabase } from "../../src/daemon/db";
 import { writeCredential } from "../../src/daemon/credentials";
+import { HiveDatabase } from "../../src/daemon/db";
 import type { AgentRecord } from "../../src/schemas";
 
 const LOCATOR = {
@@ -95,11 +95,16 @@ beforeEach(() => {
     fetch: async (request) => {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/kill")) {
-        const body = await request.json().catch(() => null) as
-          | { origin?: string }
-          | null;
-        killRequests.push({ url: url.pathname, ...body?.origin === undefined ? {} : { origin: body.origin } });
-        return Response.json({ reaped: { killed: [{ pid: 1 }], survivors: [] } });
+        const body = (await request.json().catch(() => null)) as {
+          origin?: string;
+        } | null;
+        killRequests.push({
+          url: url.pathname,
+          ...(body?.origin === undefined ? {} : { origin: body.origin }),
+        });
+        return Response.json({
+          reaped: { killed: [{ pid: 1 }], survivors: [] },
+        });
       }
       return Response.json({ agents: [] });
     },
@@ -126,7 +131,10 @@ test("stopHive with partial deps cannot reach through ambient HIVE_HOME and kill
     sleep: async () => {},
     timeoutMs: 50,
     log: () => {},
-  }).then(() => null, (thrown: unknown) => thrown);
+  }).then(
+    () => null,
+    (thrown: unknown) => thrown,
+  );
 
   // The incident signature is a captured kill request with a stop origin.
   // Surface it in the failure output so the reproduction is self-evident.

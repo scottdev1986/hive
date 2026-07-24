@@ -14,16 +14,22 @@
  * import here — a skill that nobody imports is a skill nobody ships, and
  * `shipped.test.ts` fails when this list and `skills/` disagree.
  */
-import codeReview from "../../skills/code-review/SKILL.md" with { type: "text" };
-import hiveClaude from "../../skills/hive-claude/SKILL.md" with { type: "text" };
+import codeReview from "../../skills/code-review/SKILL.md" with {
+  type: "text",
+};
+import hiveClaude from "../../skills/hive-claude/SKILL.md" with {
+  type: "text",
+};
 import hiveCodex from "../../skills/hive-codex/SKILL.md" with { type: "text" };
 import hiveGrok from "../../skills/hive-grok/SKILL.md" with { type: "text" };
-import hiveMemory from "../../skills/hive-memory/SKILL.md" with { type: "text" };
+import hiveMemory from "../../skills/hive-memory/SKILL.md" with {
+  type: "text",
+};
 import karpathyGuidelines from "../../skills/karpathy-guidelines/SKILL.md" with {
   type: "text",
 };
-import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 import type { SkillTool } from "../adapters/skills";
+import { CAPABILITY_PROVIDERS } from "../schemas/capability";
 
 export interface ShippedSkill {
   /** Directory name, and the `name` in the skill's own frontmatter. */
@@ -43,14 +49,22 @@ export const SHIPPED_SKILLS: readonly ShippedSkill[] = [
   // "Every vendor" is spelled as the union, not a hand-typed list, so a new
   // vendor's agents receive the all-vendor skills without anyone remembering
   // this file exists.
-  { name: "hive-memory", content: hiveMemory, tools: [...CAPABILITY_PROVIDERS] },
+  {
+    name: "hive-memory",
+    content: hiveMemory,
+    tools: [...CAPABILITY_PROVIDERS],
+  },
   {
     name: "karpathy-guidelines",
     content: karpathyGuidelines,
     tools: [...CAPABILITY_PROVIDERS],
   },
   // Any vendor can be assigned a cross-vendor review, so every vendor gets it.
-  { name: "code-review", content: codeReview, tools: [...CAPABILITY_PROVIDERS] },
+  {
+    name: "code-review",
+    content: codeReview,
+    tools: [...CAPABILITY_PROVIDERS],
+  },
 ];
 
 /** The shipped skills a given CLI should be given. */

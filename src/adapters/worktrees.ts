@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, realpath, rm } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   hiveInstanceSuffix,
@@ -57,7 +57,7 @@ export async function observedWorktreeFiles(
       }
     }
   }
-  if (branch !== null && await branchExists(repoRoot, branch)) {
+  if (branch !== null && (await branchExists(repoRoot, branch))) {
     const diff = await runGit(repoRoot, [
       "diff",
       "--name-only",
@@ -69,7 +69,9 @@ export async function observedWorktreeFiles(
       }
     }
   }
-  return [...paths].filter((path) => !HIVE_WORKTREE_WIRING.includes(path)).sort();
+  return [...paths]
+    .filter((path) => !HIVE_WORKTREE_WIRING.includes(path))
+    .sort();
 }
 
 export interface UnmergedBranch {
@@ -130,9 +132,10 @@ async function assertBranchMutationAllowed(
   const owner = await branchOwner(repoRoot, branch);
   if (owner === hiveInstanceSuffix()) return;
   if (owner === undefined && isDefaultHiveHome()) return;
-  const reason = owner === undefined
-    ? "ownerless legacy branch outside the default Hive instance"
-    : "branch owned by another Hive instance";
+  const reason =
+    owner === undefined
+      ? "ownerless legacy branch outside the default Hive instance"
+      : "branch owned by another Hive instance";
   throw new Error(`refusing to modify ${reason}: ${branch}`);
 }
 
@@ -245,27 +248,29 @@ async function removeMissingWorktreeRegistration(
     ? commonDirValue
     : resolve(repoRoot, commonDirValue);
   const registrationsDir = join(commonDir, "worktrees");
-  const entries = await readdir(registrationsDir, { withFileTypes: true })
-    .catch((error: unknown) => {
-      if (isMissingFileError(error)) return [];
-      throw error;
-    });
+  const entries = await readdir(registrationsDir, {
+    withFileTypes: true,
+  }).catch((error: unknown) => {
+    if (isMissingFileError(error)) return [];
+    throw error;
+  });
   const matches: string[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const registration = join(registrationsDir, entry.name);
-    const gitdir = await readFile(join(registration, "gitdir"), "utf8")
-      .catch((error: unknown) => {
+    const gitdir = await readFile(join(registration, "gitdir"), "utf8").catch(
+      (error: unknown) => {
         if (isMissingFileError(error)) return null;
         throw error;
-      });
+      },
+    );
     if (gitdir === null) continue;
     const gitFile = gitdir.trim();
     const linkedGitFile = isAbsolute(gitFile)
       ? gitFile
       : resolve(registration, gitFile);
     if (
-      await canonicalizePotentialPath(dirname(linkedGitFile)) === worktreePath
+      (await canonicalizePotentialPath(dirname(linkedGitFile))) === worktreePath
     ) {
       matches.push(registration);
     }
@@ -324,8 +329,9 @@ export async function createWorktree(
   ]);
   if (result.exitCode !== 0) {
     const branchTaken = await branchExists(repoRoot, branch);
-    const pathTaken = (await listWorktrees(repoRoot).catch(() => []))
-      .some((worktree) => worktree.path === resolve(path));
+    const pathTaken = (await listWorktrees(repoRoot).catch(() => [])).some(
+      (worktree) => worktree.path === resolve(path),
+    );
     if (branchTaken || pathTaken) {
       throw new WorktreeNameCollisionError(
         `Agent name ${agentName} is already claimed in ${repoRoot}`,
@@ -336,12 +342,12 @@ export async function createWorktree(
   await markBranchOwned(repoRoot, branch, true);
 
   const createdPath = await realpath(path);
-  const created = (await listWorktrees(repoRoot)).find((worktree) =>
-    worktree.path === createdPath
+  const created = (await listWorktrees(repoRoot)).find(
+    (worktree) => worktree.path === createdPath,
   );
   if (
     created?.branch !== branch ||
-    await branchOwner(repoRoot, branch) !== hiveInstanceSuffix()
+    (await branchOwner(repoRoot, branch)) !== hiveInstanceSuffix()
   ) {
     throw new Error(
       `git worktree add did not create the requested owned worktree: ${path}`,
@@ -393,7 +399,7 @@ async function deleteBranch(
     }
   }
   await markBranchOwned(repoRoot, branch, false);
-  if (await branchOwner(repoRoot, branch) === hiveInstanceSuffix()) {
+  if ((await branchOwner(repoRoot, branch)) === hiveInstanceSuffix()) {
     throw new Error(
       `git update-ref succeeded but branch ownership still exists: ${branch}`,
     );
@@ -418,16 +424,21 @@ export async function unavailableAgentNames(
       .filter((worktree) => worktree.path.includes(marker))
       .map((worktree) => basename(worktree.path)),
   );
-  const branches = branchResult.exitCode === 0
-    ? branchResult.stdout.split("\n")
-    : [];
-  return new Set(candidates.filter((name) =>
-    worktreeNames.has(name) ||
-    branches.some((branch) => branch.startsWith(`hive/${name}-`))
-  ));
+  const branches =
+    branchResult.exitCode === 0 ? branchResult.stdout.split("\n") : [];
+  return new Set(
+    candidates.filter(
+      (name) =>
+        worktreeNames.has(name) ||
+        branches.some((branch) => branch.startsWith(`hive/${name}-`)),
+    ),
+  );
 }
 
-async function branchExists(repoRoot: string, branch: string): Promise<boolean> {
+async function branchExists(
+  repoRoot: string,
+  branch: string,
+): Promise<boolean> {
   const result = await runGit(repoRoot, [
     "rev-parse",
     "--verify",
@@ -473,7 +484,7 @@ export async function assessStrandedWork(
   }
 
   let unmergedCommits = 0;
-  if (branch !== null && await branchExists(repoRoot, branch)) {
+  if (branch !== null && (await branchExists(repoRoot, branch))) {
     const revListResult = await runGit(repoRoot, [
       "rev-list",
       "--count",
@@ -565,7 +576,10 @@ export async function removeWorktree(
       (candidate) => candidate.path === requestedPath,
     );
     await assertBranchMutationAllowed(repoRoot, staleWorktree?.branch ?? null);
-    await assertBranchMutationAllowed(repoRoot, normalizedOptions.branch ?? null);
+    await assertBranchMutationAllowed(
+      repoRoot,
+      normalizedOptions.branch ?? null,
+    );
     const removedRegistration = await removeMissingWorktreeRegistration(
       repoRoot,
       requestedPath,
@@ -575,9 +589,11 @@ export async function removeWorktree(
         `could not find git metadata for missing worktree: ${requestedPath}`,
       );
     }
-    if ((await listWorktrees(repoRoot)).some(
-      (candidate) => candidate.path === requestedPath
-    )) {
+    if (
+      (await listWorktrees(repoRoot)).some(
+        (candidate) => candidate.path === requestedPath,
+      )
+    ) {
       throw new Error(
         `git worktree registration still exists after removal: ${requestedPath}`,
       );
@@ -625,9 +641,12 @@ export async function removeWorktree(
 
   const removeResult = await runGit(repoRoot, removeArgs);
   assertGitSuccess(removeResult, "worktree remove");
-  if ((await listWorktrees(repoRoot)).some((candidate) =>
-    candidate.path === canonicalPath || candidate.path === requestedPath
-  )) {
+  if (
+    (await listWorktrees(repoRoot)).some(
+      (candidate) =>
+        candidate.path === canonicalPath || candidate.path === requestedPath,
+    )
+  ) {
     throw new Error(
       `git worktree remove succeeded but the worktree still exists: ${canonicalPath}`,
     );

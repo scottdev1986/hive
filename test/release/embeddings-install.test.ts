@@ -12,8 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultReleaseInstallDeps,
-  installEmbeddingsFromRelease,
   type EmbeddingsReleaseInstallDeps,
+  installEmbeddingsFromRelease,
 } from "../../src/release/embeddings-install";
 import { EMBEDDINGS_RUNTIME_ASSET } from "../../src/release/embeddings-runtime";
 import type { ReleaseManifest } from "../../src/release/manifest";
@@ -24,15 +24,20 @@ const tempRoots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
-    tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    tempRoots
+      .splice(0)
+      .map((root) => rm(root, { recursive: true, force: true })),
   );
 });
 
 const RELEASE_KEY = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
-    publicKey: publicKey.export({ format: "der", type: "spki" }).toString("base64"),
-    sign: (bytes: Uint8Array) => sign(null, bytes, privateKey).toString("base64"),
+    publicKey: publicKey
+      .export({ format: "der", type: "spki" })
+      .toString("base64"),
+    sign: (bytes: Uint8Array) =>
+      sign(null, bytes, privateKey).toString("base64"),
   };
 })();
 
@@ -60,11 +65,18 @@ async function makeFixture(version = "1.2.3"): Promise<Fixture> {
     `${JSON.stringify({ fastembed: "9.9.9-fixture" })}\n`,
   );
   const tarballPath = join(root, EMBEDDINGS_RUNTIME_ASSET);
-  const tar = Bun.spawn(
-    ["tar", "-czf", tarballPath, "-C", join(root, "payload"), "embeddings-runtime"],
-  );
+  const tar = Bun.spawn([
+    "tar",
+    "-czf",
+    tarballPath,
+    "-C",
+    join(root, "payload"),
+    "embeddings-runtime",
+  ]);
   expect(await tar.exited).toBe(0);
-  const tarballBytes = new Uint8Array(await Bun.file(tarballPath).arrayBuffer());
+  const tarballBytes = new Uint8Array(
+    await Bun.file(tarballPath).arrayBuffer(),
+  );
 
   const runtimeDir = join(root, "tools", "embeddings");
   const artifacts = (["arm64", "x64"] as const).map((arch) => ({
@@ -148,16 +160,22 @@ describe("installEmbeddingsFromRelease", () => {
       expect(outcome.detail).toContain("hive 1.2.3");
       expect(outcome.detail).toContain("dimensions=384");
     }
-    expect(await Bun.file(join(fixture.runtimeDir, "dist", "entry.js")).exists())
-      .toBe(true);
-    expect(await Bun.file(join(fixture.runtimeDir, "INSTALL.json")).exists())
-      .toBe(true);
-    expect(await Bun.file(join(fixture.runtimeDir, "stale")).exists()).toBe(false);
+    expect(
+      await Bun.file(join(fixture.runtimeDir, "dist", "entry.js")).exists(),
+    ).toBe(true);
+    expect(
+      await Bun.file(join(fixture.runtimeDir, "INSTALL.json")).exists(),
+    ).toBe(true);
+    expect(await Bun.file(join(fixture.runtimeDir, "stale")).exists()).toBe(
+      false,
+    );
     // The probe ran against the staging sibling, not the live dir; the
     // staging dir is gone after the swap.
     expect(probedDirs).toHaveLength(1);
     expect(probedDirs[0]).not.toBe(fixture.runtimeDir);
-    expect(probedDirs[0]!.startsWith(`${fixture.runtimeDir}.staging-`)).toBe(true);
+    expect(probedDirs[0]!.startsWith(`${fixture.runtimeDir}.staging-`)).toBe(
+      true,
+    );
     expect(await Bun.file(probedDirs[0]!).exists()).toBe(false);
   });
 
@@ -212,7 +230,9 @@ describe("installEmbeddingsFromRelease", () => {
 
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) expect(outcome.reason).toContain("SHA-256");
-    expect(await Bun.file(join(fixture.runtimeDir, "kept")).text()).toBe("working\n");
+    expect(await Bun.file(join(fixture.runtimeDir, "kept")).text()).toBe(
+      "working\n",
+    );
   });
 
   test("a release without an embeddings artifact for this arch is an honest refusal", async () => {
@@ -223,9 +243,13 @@ describe("installEmbeddingsFromRelease", () => {
         source: async () => {
           const manifest: ReleaseManifest = {
             ...fixture.manifest,
-            artifacts: fixture.manifest.artifacts.filter((a) => a.arch === "arm64"),
+            artifacts: fixture.manifest.artifacts.filter(
+              (a) => a.arch === "arm64",
+            ),
           };
-          const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+          const manifestBytes = new TextEncoder().encode(
+            JSON.stringify(manifest),
+          );
           return {
             manifest,
             manifestBytes,
@@ -255,8 +279,11 @@ describe("installEmbeddingsFromRelease", () => {
     );
 
     expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.reason).toContain("embedding-runtime-broken");
-    expect(await Bun.file(join(fixture.runtimeDir, "kept")).text()).toBe("working\n");
+    if (!outcome.ok)
+      expect(outcome.reason).toContain("embedding-runtime-broken");
+    expect(await Bun.file(join(fixture.runtimeDir, "kept")).text()).toBe(
+      "working\n",
+    );
     const siblings = await readdir(join(fixture.root, "tools"));
     expect(siblings.filter((name) => name.includes("staging"))).toEqual([]);
   });
@@ -273,7 +300,8 @@ describe("defaultReleaseInstallDeps — the version pin", () => {
   });
 
   test("an explicit version wins — hive update pins to the version it activated", () => {
-    expect(defaultReleaseInstallDeps({ ...base, version: "9.9.9" }).version)
-      .toBe("9.9.9");
+    expect(
+      defaultReleaseInstallDeps({ ...base, version: "9.9.9" }).version,
+    ).toBe("9.9.9");
   });
 });

@@ -18,10 +18,11 @@ export function providerExecutableCandidates(
     .filter((directory) => directory.length > 0)
     .map((directory) => join(directory, command));
   const fallbacks = homeRelativeFallbacks.map((path) =>
-    isAbsolute(path) ? path : join(home, path)
+    isAbsolute(path) ? path : join(home, path),
   );
-  return [...new Set([...fromPath, ...fallbacks])]
-    .filter((candidate) => existsSync(candidate));
+  return [...new Set([...fromPath, ...fallbacks])].filter((candidate) =>
+    existsSync(candidate),
+  );
 }
 
 export function probeProviderExecutable(

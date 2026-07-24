@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
+import type {
+  OrphanDiscardMode,
+  OrphanDiscardResult,
+} from "../../../src/daemon/session-host/sessiond-host";
+import type { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
+import type {
+  InputReceipt,
+  SessionInspection,
+} from "../../../src/daemon/session-host/terminal-host-contract";
 import type { AgentRecord } from "../../../src/schemas";
 import type { SessionLocator } from "../../../src/schemas/session-protocol";
-import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
-import type { OrphanDiscardMode, OrphanDiscardResult } from "../../../src/daemon/session-host/sessiond-host";
-import type { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
-import type { InputReceipt, SessionInspection } from "../../../src/daemon/session-host/terminal-host-contract";
 
 /**
  * The 2026-07-21 messaging regression, at the layer that has to end it.
@@ -73,7 +79,10 @@ const rootLocator: SessionLocator = {
 /** A running session whose inspection reports the orphan as owner of record. */
 function inspection(): SessionInspection {
   return {
-    session: { key: "ses_018f1e90-7b5a-7cc0-8000-000000000401", incarnation: "7" },
+    session: {
+      key: "ses_018f1e90-7b5a-7cc0-8000-000000000401",
+      incarnation: "7",
+    },
     lifecycle: "running",
     completeness: "complete",
     host: null,
@@ -113,7 +122,11 @@ class HumanClaimArbiterWire {
   discarded = false;
   readonly attempts: string[] = [];
 
-  constructor(private readonly claimState: "HumanOrphaned" | "HumanOwned" = "HumanOrphaned") {}
+  constructor(
+    private readonly claimState:
+      | "HumanOrphaned"
+      | "HumanOwned" = "HumanOrphaned",
+  ) {}
 
   client(): SessiondViewerAttachClient {
     return {
@@ -158,7 +171,9 @@ function injector(
     },
   };
   return new SessiondViewerAgentInput(
-    broker as unknown as ConstructorParameters<typeof SessiondViewerAgentInput>[0],
+    broker as unknown as ConstructorParameters<
+      typeof SessiondViewerAgentInput
+    >[0],
     "hive-daemon:test",
     async () => wire.client(),
     (_, mode) => discard(mode),
@@ -197,8 +212,9 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
 
     expect(recovered.outcome).toBe("injected");
     expect(modes).toEqual(["orphaned"]);
-    expect(recovered.outcome === "injected" && recovered.recovery)
-      .toContain("orphaned draft (owner workspace-pane) discarded after 120000ms; retrying");
+    expect(recovered.outcome === "injected" && recovered.recovery).toContain(
+      "orphaned draft (owner workspace-pane) discarded after 120000ms; retrying",
+    );
     expect(wire.attempts).toEqual(["message-1", "message-1"]);
   });
 
@@ -239,8 +255,9 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     })).injectIdle(agent(), "hi", { messageId: "message-1" });
 
     expect(refused.outcome).toBe("declined");
-    expect(refused.outcome === "declined" && refused.reason)
-      .toContain("input-claim resolution refused: human_owned");
+    expect(refused.outcome === "declined" && refused.reason).toContain(
+      "input-claim resolution refused: human_owned",
+    );
     expect(wire.attempts).toHaveLength(1);
   });
 
@@ -270,14 +287,19 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
       },
     };
     const input = new SessiondViewerAgentInput(
-      broker as unknown as ConstructorParameters<typeof SessiondViewerAgentInput>[0],
+      broker as unknown as ConstructorParameters<
+        typeof SessiondViewerAgentInput
+      >[0],
       "hive-daemon:test",
       async () => wire.client(),
       undefined,
     );
-    const result = await input.injectIdle(agent(), "hi", { messageId: "message-1" });
+    const result = await input.injectIdle(agent(), "hi", {
+      messageId: "message-1",
+    });
     expect(result.outcome).toBe("declined");
-    expect(result.outcome === "declined" && result.reason)
-      .toContain("input-claim resolution is not wired on this host");
+    expect(result.outcome === "declined" && result.reason).toContain(
+      "input-claim resolution is not wired on this host",
+    );
   });
 });

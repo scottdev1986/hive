@@ -1,15 +1,15 @@
+import { canonicalRoutingPolicyJson } from "../daemon/routing-policy-store";
 import {
-  CapabilityProviderSchema,
-  RoutingCategorySchema,
-  RoutingPolicySchema,
   type CapabilityProvider,
+  CapabilityProviderSchema,
   type ChainEntry,
   type EffortTarget,
   type RoutingCategory,
+  RoutingCategorySchema,
   type RoutingPolicy,
   type RoutingPolicyMutation,
+  RoutingPolicySchema,
 } from "../schemas";
-import { canonicalRoutingPolicyJson } from "../daemon/routing-policy-store";
 import { requireDaemonPort } from "./control";
 import { operatorFetch } from "./credential";
 
@@ -79,9 +79,9 @@ function parseProvider(raw: string): CapabilityProvider {
   const parsed = CapabilityProviderSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(
-      `unknown provider ${JSON.stringify(raw)}; Hive knows ${
-        CapabilityProviderSchema.options.join(", ")
-      }`,
+      `unknown provider ${JSON.stringify(raw)}; Hive knows ${CapabilityProviderSchema.options.join(
+        ", ",
+      )}`,
     );
   }
   return parsed.data;
@@ -91,9 +91,9 @@ function parseCategory(raw: string): RoutingCategory {
   const parsed = RoutingCategorySchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(
-      `unknown category ${JSON.stringify(raw)}; categories are ${
-        RoutingCategorySchema.options.join(", ")
-      }`,
+      `unknown category ${JSON.stringify(raw)}; categories are ${RoutingCategorySchema.options.join(
+        ", ",
+      )}`,
     );
   }
   return parsed.data;
@@ -134,17 +134,18 @@ export function parseChainEntryArg(raw: string): ChainEntry {
   const at = raw.lastIndexOf("@");
   const body = at === -1 ? raw : raw.slice(0, at);
   const level = at === -1 ? null : raw.slice(at + 1);
-  const effort: EffortTarget = level === null
-    ? { mode: "provider-controlled" }
-    : level === "none"
-    ? { mode: "none" }
-    : { mode: "exact", value: level };
+  const effort: EffortTarget =
+    level === null
+      ? { mode: "provider-controlled" }
+      : level === "none"
+        ? { mode: "none" }
+        : { mode: "exact", value: level };
   const slash = body.indexOf("/");
   if (slash === -1 || slash === body.length - 1 || level === "") {
     throw new Error(
-      `a chain entry is provider/model, provider/model@LEVEL, or provider/model@none; got ${
-        JSON.stringify(raw)
-      }`,
+      `a chain entry is provider/model, provider/model@LEVEL, or provider/model@none; got ${JSON.stringify(
+        raw,
+      )}`,
     );
   }
   return {
@@ -172,12 +173,14 @@ export async function setProviderPolicy(
   expectRevision: string,
   port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
-    op: "set-provider",
-    expectedRevision: parseExpectedRevision(expectRevision),
-    provider: parseProvider(provider),
-    state: parseState(state),
-  }));
+  printPolicy(
+    await applyPolicyMutation(requireDaemonPort(port), {
+      op: "set-provider",
+      expectedRevision: parseExpectedRevision(expectRevision),
+      provider: parseProvider(provider),
+      state: parseState(state),
+    }),
+  );
 }
 
 export async function setModelPolicy(
@@ -187,13 +190,15 @@ export async function setModelPolicy(
   expectRevision: string,
   port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
-    op: "set-model",
-    expectedRevision: parseExpectedRevision(expectRevision),
-    provider: parseProvider(provider),
-    model,
-    state: parseState(state),
-  }));
+  printPolicy(
+    await applyPolicyMutation(requireDaemonPort(port), {
+      op: "set-model",
+      expectedRevision: parseExpectedRevision(expectRevision),
+      provider: parseProvider(provider),
+      model,
+      state: parseState(state),
+    }),
+  );
 }
 
 export async function setModelEffort(
@@ -203,13 +208,15 @@ export async function setModelEffort(
   expectRevision: string,
   port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
-    op: "set-effort",
-    expectedRevision: parseExpectedRevision(expectRevision),
-    provider: parseProvider(provider),
-    model,
-    effort: effort === "unset" ? "unset" : parseEffortTargetArg(effort),
-  }));
+  printPolicy(
+    await applyPolicyMutation(requireDaemonPort(port), {
+      op: "set-effort",
+      expectedRevision: parseExpectedRevision(expectRevision),
+      provider: parseProvider(provider),
+      model,
+      effort: effort === "unset" ? "unset" : parseEffortTargetArg(effort),
+    }),
+  );
 }
 
 export async function setSelectionMode(
@@ -217,19 +224,26 @@ export async function setSelectionMode(
   options: { category?: string; port?: number },
   expectRevision: string,
 ): Promise<void> {
-  if (mode !== "never-configured" && mode !== "auto" && mode !== "choice" && mode !== "unset") {
+  if (
+    mode !== "never-configured" &&
+    mode !== "auto" &&
+    mode !== "choice" &&
+    mode !== "unset"
+  ) {
     throw new Error(
       `selection mode must be never-configured, auto, choice, or unset; got ${JSON.stringify(mode)}`,
     );
   }
-  printPolicy(await applyPolicyMutation(requireDaemonPort(options.port), {
-    op: "set-selection",
-    expectedRevision: parseExpectedRevision(expectRevision),
-    ...(options.category === undefined
-      ? {}
-      : { category: parseCategory(options.category) }),
-    mode,
-  }));
+  printPolicy(
+    await applyPolicyMutation(requireDaemonPort(options.port), {
+      op: "set-selection",
+      expectedRevision: parseExpectedRevision(expectRevision),
+      ...(options.category === undefined
+        ? {}
+        : { category: parseCategory(options.category) }),
+      mode,
+    }),
+  );
 }
 
 export async function setCategoryChain(
@@ -238,10 +252,12 @@ export async function setCategoryChain(
   expectRevision: string,
   port?: number,
 ): Promise<void> {
-  printPolicy(await applyPolicyMutation(requireDaemonPort(port), {
-    op: "set-chain",
-    expectedRevision: parseExpectedRevision(expectRevision),
-    category: parseCategory(category),
-    entries: entries.map(parseChainEntryArg),
-  }));
+  printPolicy(
+    await applyPolicyMutation(requireDaemonPort(port), {
+      op: "set-chain",
+      expectedRevision: parseExpectedRevision(expectRevision),
+      category: parseCategory(category),
+      entries: entries.map(parseChainEntryArg),
+    }),
+  );
 }
