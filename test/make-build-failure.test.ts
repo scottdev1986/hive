@@ -25,6 +25,7 @@ test("make build propagates a compile failure and removes the previous artifact"
   const ghosttyInfo = join(fixture, "GhosttyKit.xcframework", "Info.plist");
   const sessiondRelease = join(fixture, "sessiond-release", "hive-sessiond");
   const sessiond = join(fixture, "sessiond", "hive-sessiond");
+  const graphifyManifest = join(fixture, "graphify-runtime.json");
   try {
     for (const path of [
       binDir,
@@ -50,7 +51,12 @@ test("make build propagates a compile failure and removes the previous artifact"
     chmodSync(fakeBun, 0o755);
     writeFileSync(artifact, "previous executable\n");
     chmodSync(artifact, 0o755);
-    for (const path of [toolchainStamp, ghosttyStamp, ghosttyInfo]) {
+    for (const path of [
+      toolchainStamp,
+      ghosttyStamp,
+      ghosttyInfo,
+      graphifyManifest,
+    ]) {
       writeFileSync(path, "fixture\n");
     }
     writeFileSync(sessiondRelease, "sessiond\n");
@@ -63,6 +69,7 @@ test("make build propagates a compile failure and removes the previous artifact"
       ghosttyInfo,
       sessiondRelease,
       sessiond,
+      graphifyManifest,
     ])
       utimesSync(path, future, future);
 
@@ -80,6 +87,7 @@ test("make build propagates a compile failure and removes the previous artifact"
         `GHOSTTYKIT_INFO=${ghosttyInfo}`,
         `SESSIOND_RELEASE_BIN=${sessiondRelease}`,
         `SESSIOND_BIN=${sessiond}`,
+        `GRAPHIFY_LOCAL_MANIFEST=${graphifyManifest}`,
       ],
       {
         cwd: root,

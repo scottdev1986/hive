@@ -208,6 +208,7 @@ describe("the Graphify runtime workflow", () => {
 
   test("a combined release waits for the signed runtime channel", () => {
     expect(release).toContain("scripts/graphify/wait-channel.ts");
+    expect(release).toContain("EXPECTED_GRAPHIFY_SOURCE");
   });
 });
 

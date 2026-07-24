@@ -30,19 +30,16 @@ jobs:
     outputs:
       graphify_only: ${{ steps.classify.outputs.graphify_only }}
       graphify_changed: ${{ steps.classify.outputs.graphify_changed }}
+      graphify_commit: ${{ steps.classify.outputs.graphify_commit }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: classify
-        env:
-          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          base="${BEFORE:-}"
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            base="HEAD^"
-          fi
+          base="$(git tag --list 'v[0-9]*' --sort=-version:refname | sed -n '1p')"
+          [ -n "$base" ] || base="$(git rev-list --max-parents=0 HEAD)"
           graphify_only=true
           graphify_changed=false
           while IFS= read -r path; do
@@ -52,8 +49,14 @@ jobs:
               *) graphify_only=false ;;
             esac
           done < <(git diff --name-only "$base" HEAD)
+          graphify_commit=""
+          if [ "$graphify_changed" = true ]; then
+            graphify_commit="$(git log -1 --format=%H "$base..HEAD" -- \
+              graphify.lock scripts/graphify .github/workflows/graphify-artifacts.yml)"
+          fi
           echo "graphify_only=$graphify_only" >> "$GITHUB_OUTPUT"
           echo "graphify_changed=$graphify_changed" >> "$GITHUB_OUTPUT"
+          echo "graphify_commit=$graphify_commit" >> "$GITHUB_OUTPUT"
 
   release:
     needs: changes
@@ -128,6 +131,7 @@ jobs:
         if: steps.plan.outputs.action == 'release' && needs.changes.outputs.graphify_changed == 'true'
         env:
           HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
+          EXPECTED_GRAPHIFY_SOURCE: ${{ needs.changes.outputs.graphify_commit }}
         run: bun run scripts/graphify/wait-channel.ts
 
       # The Gate 6 lock restores every lib-vt-authored split through the
