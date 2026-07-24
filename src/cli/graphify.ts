@@ -42,10 +42,12 @@ export async function provisionGraphify(
 
   const installed = await installGraphify(deps.install);
   if (!installed.ok) {
-    deps.log(installed.reason);
-    return 1;
+    deps.log(`Graphify update unavailable: ${installed.reason}`);
+    if (!existsSync(graphifyBin())) return 1;
+    deps.log("Using the installed Graphify runtime.");
+  } else {
+    deps.log(`Installed ${installed.detail}.`);
   }
-  deps.log(`Installed ${installed.detail}.`);
 
   deps.log(
     "Building the graph (first build on a large repo can take minutes)…",

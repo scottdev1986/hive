@@ -70,10 +70,34 @@ describe("hive init command boundary", () => {
     git(repo, ["commit", "-m", "init", "--no-gpg-sign"]);
     const defaultHome = join(home, ".hive");
     await installFakeGraphify(defaultHome);
+    const manifest = join(home, "graphify-runtime.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        schema: 1,
+        graphifyVersion: graphifyPin(),
+        hiveBuild: 1,
+        consumerApi: 1,
+        tag: `graphify-v${graphifyPin()}-hive.1`,
+        sourceCommit: "test",
+        publishedAt: "2026-07-24T00:00:00Z",
+        artifacts: [
+          {
+            platform: "darwin",
+            arch: process.arch,
+            name: "missing.tar.zst",
+            url: "file:///missing.tar.zst",
+            size: 1,
+            sha256: "0".repeat(64),
+          },
+        ],
+      }),
+    );
 
     const commandEnv: Record<string, string | undefined> = {
       ...process.env,
       HOME: home,
+      HIVE_GRAPHIFY_MANIFEST: manifest,
     };
     delete commandEnv.HIVE_HOME;
     const child = Bun.spawn([process.execPath, CLI, "init"], {
