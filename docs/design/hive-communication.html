@@ -1,711 +1,747 @@
 <!DOCTYPE html>
-<html lang="en" class="doc-communication">
+<html lang="en" class="doc-terminal doc-hierarchy">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>Hive: Communication Fabric</title>
+  <title>Hive Communication Rebuild — Technical Specification</title>
   <link rel="stylesheet" href="hive-design.css">
 </head>
 <body>
   <header class="shell topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
-    <div class="doc-meta">CROSS-CUTTING CONTRACT · TERMINAL → HIERARCHY → UI · 2026-07-16</div>
+    <div class="doc-meta">COMMUNICATION REBUILD · TECHNICAL SPECIFICATION · 2026-07-24</div>
   </header>
 
   <main>
-    <div class="shell">
-      <div class="hero">
-        <p class="eyebrow">Communication fabric · cross-cutting contract</p>
-        <h1>Durable messages. Bounded context. Measured receipt.</h1>
-        <p class="hero-copy">Hive’s communication plane is a local, durable control system for agentic engineers. It identifies the real actor, authorizes the route, separates work from conversation, keeps durable truth lossless, and places only the relevant working set into provider context.</p>
-        <div class="hero-chips" aria-label="Contract pillars"><span>DAEMON-OWNED LEDGER</span><span>MCP CONTROL SURFACE</span><span>PROVIDER-AWARE DELIVERY</span><span>WORK-SCOPED ROUTING</span><span>MEASURED CONTEXT TAX</span></div>
-      </div>
-    </div>
-
-<section id="decision">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">01 · Decision</p>
-        <h2>Communication is a cross-cutting contract, not a fourth transition.</h2>
-      </div>
-      <p>The terminal transition supplies reliable session transport. The Queen’s Hive supplies identities, authority edges, tasks, and channels. Split Horizon consumes their typed projections. This document defines the seam that all three share.</p>
-    </div>
-
-    <div class="phase-grid">
-      <article class="phase-card">
-        <span class="phase-tag">C0 · TERMINAL</span>
-        <h3>Make delivery truthful</h3>
-        <p>Introduce stable address binding, MessageEnvelope v2, immutable receipt events, token-and-byte-bounded wakes, one serialized delivery lane, and per-boundary Hive context attribution while the flat assignment policy still governs.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C1 · HIERARCHY</span>
-        <h3>Make routing accountable</h3>
-        <p>Authorize every sparse route through the current hierarchy revision, task ownership, delegation chain, or explicit channel. Add artifacts, delta rollups, recovery, and per-edge byte/token bounds without replaying history when an edge opens.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C2 · UI</span>
-        <h3>Make state legible</h3>
-        <p>Expose derived queue, receipt, channel, artifact, failure, and token-attribution projections in the native AppKit workspace. The UI never invents a stronger state than the daemon ledger contains.</p>
-      </article>
-    </div>
-
-    <div class="callout"><strong>Ownership boundary.</strong> <a href="terminal-stack-transition.html">Terminal Stack Transition</a> owns bytes, sessions, provider adapters, safe injection, and raw provider-usage observations. <a href="agentic-hierarchy.html">The Queen’s Hive</a> owns who may communicate, about which task, under which authority. This document owns the envelope, MCP operations, durable delivery ledger, context selection, Hive-added input attribution, and receipt semantics. <a href="split-horizon.html">Split Horizon</a> owns presentation and engineer controls.</div>
-  </div>
-</section>
-
-<section id="principles">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">02 · Invariants</p>
-        <h2>Identify. Authorize. Deliver. Prove.</h2>
-      </div>
-      <p>Messages are untrusted content carried by a trusted control plane. Natural language may explain an action; it may never create authority, change lifecycle, or stand in for evidence.</p>
-    </div>
-
-    <div class="principles">
-      <article class="principle">
-        <span class="num">01 / IDENTIFY</span>
-        <strong>The daemon names the actor</strong>
-        <p>No caller supplies <code>from</code>. The authenticated action binding determines the sender Address, the exact process binding, and the resolved MessageScope.</p>
-      </article>
-      <article class="principle">
-        <span class="num">02 / AUTHORIZE</span>
-        <strong>The route is a capability</strong>
-        <p>A recipient name is not permission. The daemon resolves a target to a stable Address, checks instance/Assignment/capability authorization at C0 — owner edges, channels, and fences at C1 — and checks again before delivery and read.</p>
-      </article>
-      <article class="principle">
-        <span class="num">03 / DELIVER</span>
-        <strong>One lane owns each recipient</strong>
-        <p>Inbox pulls, provider-native delivery, session injection, human composer leases, and control traffic serialize through one recipient lane. Competing transports never race.</p>
-      </article>
-      <article class="principle">
-        <span class="num">04 / PROVE</span>
-        <strong>Events, not optimistic labels</strong>
-        <p>Queued, transport-written, provider-observed, recipient-acknowledged, and applied are different facts. A timeout, successful command, or later turn is never promoted into proof of action.</p>
-      </article>
-    </div>
-  </div>
-</section>
-
-<section id="current-system">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">03 · Ground truth</p>
-        <h2>Keep what is load-bearing. Replace what is ambiguous.</h2>
-      </div>
-      <p>Hive already has the right bones: SQLite durability, provider-aware delivery, composer protection, explicit priority, bounded root envelopes, and measured provider boundaries. The redesign removes name-only identity, mutable receipt ambiguity, unbounded body injection, and policy hidden inside transport code.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Today</th><th>Decision</th><th>Why</th></tr></thead>
-        <tbody>
-          <tr><td>SQLite message rows and monotonic recipient sequence</td><td>Keep; migrate behind an append-only v2 event ledger.</td><td>Durability and stable ordering are correct foundations.</td></tr>
-          <tr><td>Queued → injected → agent-acknowledged → applied</td><td>Replace the overloaded projection with immutable AdmissionDecision, DeliveryAttempt, and ReceiptEvent records.</td><td>Transport acceptance, provider observation, recipient acknowledgement, and verified effect fail independently.</td></tr>
-          <tr><td>Claimed <code>from</code> checked against a credential</td><td>Delete <code>from</code> from the MCP input.</td><td>The daemon already knows the authenticated actor; accepting identity as data creates avoidable confused-deputy risk.</td></tr>
-          <tr><td>Recipient stored primarily by name</td><td>Resolve once to a stable Address: logical root, or agent ID + generation; friendly name display-only.</td><td>A queued message must never follow a reused name to a successor.</td></tr>
-          <tr><td>Full agent paste; root receives a bounded head-and-tail envelope</td><td>Use bounded wake envelopes for every recipient and fetch full content explicitly.</td><td>Wake traffic should consume predictable context regardless of sender behavior.</td></tr>
-          <tr><td>Normal, steer, urgent, critical priorities</td><td>Keep priority, but validate it separately from structured control intent.</td><td>Urgency answers when to interrupt; intent answers what authority or process state must change.</td></tr>
-          <tr><td>Composer lease before every delivery path</td><td>Keep as a hard invariant across sessiond and provider-native adapters.</td><td>No incoming traffic owns the engineer’s draft.</td></tr>
-          <tr><td>Root is a reserved destination without an agents row</td><td>Keep. Model it as a special Address kind, never a synthetic worker.</td><td>The queen’s lifecycle and authority are derived from root identity and measured provider state.</td></tr>
-          <tr><td>Normal inbox pulls can mark a message applied</td><td>Stop doing this in v2. A read produces a read receipt; application requires an explicit disposition or system evidence.</td><td>Reading content is not acting on it.</td></tr>
-          <tr><td>Legacy phrase classifier infers a narrow control intent</td><td>Retain only during migration, instrument usage, then remove.</td><td>Raw prose must not revoke authority or control a process.</td></tr>
-          <tr><td>Scoped brief assembled before each spawn</td><td>Keep as process-input launch provenance; C1 formalizes it as the hierarchy-owned <code>SpawnBrief</code>, never an inbox message.</td><td>Launch context is process input bound to one exact generation, not conversation, and never re-enters delivery or retry.</td></tr>
-          <tr><td>Settings groups the orchestrator’s whole provider session as “Hive control”</td><td>Replace at Communication Fabric cutover with provider total input/output plus separately attributed Hive-delivered input.</td><td>The queen’s reasoning and task work are not protocol overhead. The current view cannot distinguish useful delivered payload from Hive wrappers, replay, or tool context.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
-<section id="architecture">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">04 · Architecture</p>
-        <h2>One owner for each truth.</h2>
-      </div>
-      <p>The communication plane is deliberately local. Hive is not inventing an internet agent-discovery protocol; a future A2A gateway may translate at the boundary without exposing internal grants or weakening local receipt semantics.</p>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Daemon control plane</h3>
-        <ul class="check-list">
-          <li><strong>Identity registry:</strong> reserves agentId and generation before provider spawn and binds credentials to the launched process.</li>
-          <li><strong>Policy engine:</strong> evaluates MessageScope, instance/Assignment, and capability bindings at C0 — hierarchy/task/channel/run fences from C1 — at admission and use.</li>
-          <li><strong>Message ledger:</strong> stores immutable envelopes, decisions, attempts, receipts, and terminal failure reasons.</li>
-          <li><strong>Scheduler:</strong> enforces per-recipient order, fair bounded queues, backpressure, expiry, and a separate control lane.</li>
-          <li><strong>Context assembler:</strong> selects pinned truth, the active working set, and referenced history; records every Hive-delivered block before it crosses a provider boundary.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>Execution and presentation</h3>
-        <ul class="check-list">
-          <li><strong>Provider adapters:</strong> expose only the boundaries Claude, Codex, or Grok can actually prove.</li>
-          <li><strong>Usage observers:</strong> normalize provider-reported input, output, cached input, and reasoning where available; missing fields remain unknown and no price is inferred.</li>
-          <li><strong>sessiond:</strong> owns Ghostty process transport and safe terminal input after the terminal transition.</li>
-          <li><strong>Hierarchy services:</strong> own Task, InterfaceContract, ArtifactRef, DelegationGrant, SpecRevision, SpawnBrief, and CommunicationChannel authorization.</li>
-          <li><strong>Workspace:</strong> renders projections and sends typed engineer commands; it never writes ledger state directly.</li>
-        </ul>
-      </article>
-    </div>
-
-    <div class="callout"><strong>Control fields are not prompt text.</strong> Sender, recipient, MessageScope, priority, intent, evaluated policy revisions, expiry, and message-content/artifact permissions live outside the message body. Providers receive the body inside an explicit untrusted-content boundary.</div>
-  </div>
-</section>
-
-<section id="data-model">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">05 · Durable model</p>
-        <h2>The envelope is immutable. State is a projection.</h2>
-      </div>
-      <p>MessageEnvelope v2 records what was admitted. Later facts append beside it. No delivery worker rewrites history to make an operation look more complete than it was.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Record</th><th>Required fields</th><th>Rule</th></tr></thead>
-        <tbody>
-          <tr><td><strong>Address</strong></td><td><code>kind</code> plus kind-specific stable subject</td><td><code>operator</code>, <code>root</code>, and <code>system</code> are logical instance-scoped identities; <code>agent</code> is agentId + generation. The immutable address says who spoke or receives—it grants no authority. The exact authenticated Workspace/CLI session, root provider generation, or daemon process binding that performed an action is recorded in AdmissionDecision or DeliveryAttempt rather than smuggled into the logical address.</td></tr>
-          <tr><td><strong>MessageScope</strong></td><td>tagged union: <code>instance</code> = instanceId; <code>flat-assignment</code> = assignmentId + assignmentGeneration; <code>hierarchy-task</code> = runId + runEpoch + taskId + taskRevision + hierarchyRevision; <code>channel</code> = channelId + channelRevision + hierarchyRevision + runEpoch; <code>control</code> = controlId + exact target binding + capabilityEpoch</td><td>The daemon constructs scope from the authenticated binding and current records; a caller may choose an authorized channel but never restates Assignment, Task, Run, or epoch truth. <code>instance</code> covers ordinary operator↔root guidance and non-control daemon notice in C0. Scope identifies the conversation/work boundary and idempotency domain; it never authorizes a route.</td></tr>
-          <tr><td><strong>MessageEnvelopeV2</strong></td><td>messageId, protocolVersion, sender Address, recipient Address, recipient sequence, scope, threadId, causal parents, priority, intent, content parts, idempotency key, policy revision, created/admitted/expiry times, digest</td><td>Immutable after admission. Every envelope has exactly one recipient Address. A channel, when used, is frozen inside the channel MessageScope; bounded multi-recipient expansion creates independently addressed envelopes and never one channel-addressed envelope. Exactly one MessageScope is frozen at admission; the daemon infers the exact open Assignment that authorizes a flat route from current sender/recipient bindings, and a C0 envelope never fabricates a runId or taskId — <code>hierarchy-task</code> and <code>channel</code> scopes exist only from C1. Inline content is capped at 16 KiB; critical control explanation is capped at 2 KiB and must be self-contained — it may not overflow into a MessageContentRef. Larger ordinary bodies travel by <code>MessageContentRef</code>; reusable work products by hierarchy-owned <code>ArtifactRef</code> from C1.</td></tr>
-          <tr><td><strong>MessageContentRef</strong></td><td>contentId (ledger-internal), messageId, part index, SHA-256, byte length, media type, inline preview, createdAt, retention class</td><td>Communication-owned, immutable, and envelope-scoped. The content digest participates in the envelope body digest and idempotency check. The reference is not independently addressable: a bounded range read reauthorizes the containing message. Full bytes charge the sender budget; terminal state and message retention bound their lifetime, and orphaned objects are garbage-collected.</td></tr>
-          <tr><td><strong>AdmissionDecision</strong></td><td>messageId, actor binding, allow/reject, reason code, evaluated policy revisions, decidedAt</td><td>Authorization failure is explicit and durable. A rejected envelope never enters a recipient queue. At C0 the decision records the exact instance route binding and capability epoch and, for flat-assignment scope, the Assignment binding; C1 adds hierarchyRevision, runEpoch, and channel revision.</td></tr>
-          <tr><td><strong>DeliveryAttempt</strong></td><td>messageId, attempt, exact recipient binding (agent generation, current root provider generation, or authenticated operator inbox/Workspace session — ordinary logical-operator mail may wait until an authenticated inbox session pulls it), adapter, delivery mode, startedAt, completedAt, adapter result, downgrade reason</td><td>A successful transport call proves only what that adapter contract says it proves. The terminal transport emits immutable attempt evidence; this contract owns retry, idempotency, and the canonical projection.</td></tr>
-          <tr><td><strong>ReceiptEvent</strong></td><td>messageId, event kind, actor/system source, timestamp, envelope digest, disposition, optional evidence reference</td><td>Kinds include transport-written, provider-observed, read, recipient-acknowledged, applied, rejected, expired, cancelled, and in-doubt. Events append; they do not overwrite one another.</td></tr>
-          <tr><td><strong>CommunicationChannel (hierarchy-owned)</strong></td><td>channelId, owner, participant addresses (authorized <code>root</code>/<code>agent</code> kinds only), run/task/interface binding, purpose, allowed actions, byte/token budget, createdAt, expiresAt, hierarchy revision, lifecycle</td><td>Channels authorize routes; they do not create task, filesystem, or landing authority. The channel record’s lifecycle and policy are hierarchy truth — The Queen’s Hive owns it; this contract owns its admission, delivery, and receipts. Expiry or revocation closes future admission and delivery. <code>system</code> is sender-only and <code>operator</code> interacts with the queen rather than joining worker channels; the engineer observes and controls through typed operator authority without becoming a participant.</td></tr>
-          <tr><td><strong>SpawnBrief (hierarchy-owned)</strong></td><td>briefId, run/task/spec/plan revisions, recipient agentId + generation, delegation grant, branch/worktree/base binding, selected source excerpts and graph snapshot provenance, recovery checkpoint if any, byte/token budget, createdAt, digest</td><td>A spawn brief is immutable process-input provenance, not an ordinary message. The Queen’s Hive owns its content; the daemon spawner passes it exactly once as launch context — no MessageEnvelope, DeliveryAttempt, or ReceiptEvent is created. The daemon constructs it only after identity reservation and policy admission, records exactly what context was selected, and binds it to one generation. A successor receives a new brief that cites the prior recovery checkpoint; a reused name receives nothing.</td></tr>
-          <tr><td><strong>ContextInputRecord</strong></td><td>boundaryId, provider/model/session, exact recipient binding, MessageScope/run/task when present, ordered blocks of origin + purpose + source ID/revision/digest + required-read flag + rendered bytes/tokens + count method, createdAt</td><td>Immutable record of the input Hive added at one real provider boundary. Origins distinguish <code>message-payload</code>, <code>protocol</code>, <code>rollup</code>, <code>handoff</code>, <code>tool-schema</code>, and <code>tool-result</code>. Counting is <code>provider-exact</code>, <code>tokenizer-estimate</code>, or <code>unknown</code>; an estimate never renders as exact. Reusing a digest records replay rather than pretending it is new information.</td></tr>
-          <tr><td><strong>TokenAttributionProjection</strong></td><td>scope and interval, per-provider/model observations, provider input/output/cached/reasoning/total with measured state and source, Hive-delivered payload/protocol/replayed input, unknown subjects, observedAt</td><td>Joins raw provider-usage observations to ContextInputRecords. Provider totals remain primary and per-provider; an all-provider value is only a labeled arithmetic sum. Hive attribution applies only to input Hive placed in context—never causally assigns provider output or reasoning to Hive. This projection contains no prices, costs, budgets, or user-selectable efficiency levels.</td></tr>
-          <tr><td><strong>WorkManifest</strong></td><td>manifestId/revision, repo/instance/worktree identity and path, branch/base/head, owning Assignment ID + generation at C0 and Task/SpawnBrief refs at C1, exact ahead commit IDs/count with bounded summaries, dirty and untracked relative paths with status/digest/size, agent ID + generation + last accepted status, structured handoff (goal, done, remaining, decisions, uncertainty), evidence/recovery refs at C0 with ArtifactRefs and pending PromotionGrant refs at C1, per-field <code>measured</code>|<code>claimed</code> provenance, observedAt/watcher watermark, completeness <code>known</code>|<code>unknown</code>, digest, lifecycle <code>active</code>|<code>stranded</code>|<code>claimed</code>|<code>resuming</code>|<code>completed</code>|<code>cleaned</code>|<code>discarded</code></td><td>Hive must always know whether stranded work exists and what is on it without opening the worktree. The manifest carries paths and digests, never secret file contents; surviving bytes stay in the worktree and its commits. The daemon computes only branch/ref/commit/dirty/evidence inventory — it never infers semantic progress from a diff. The handoff is seeded at spawn (goal = pinned Assignment/SpawnBrief, done = [], remaining = goal, decisions = []) and thereafter advanced only by agent-written structured progress accepted with status or checkpoint calls, each carrying observedAt and provenance; without a later checkpoint the handoff is shown stale/unknown, never invented.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>The manifest journal is the durable truth</h3>
-        <p>The normative copy of every WorkManifest revision is an append-only, checksummed manifest journal in Hive-owned storage outside every worktree, written with atomic compare-and-swap revisions. SQLite holds only a query projection that startup can rebuild from the journal. A manifest row is independent of the agent/worktree registry — no cascade ever deletes it — because the disaster window this record exists for is exactly when mutable registry rows have historically been lost.</p>
-      </article>
-      <article class="detail-panel">
-        <h3>Write cadence is event-driven</h3>
-        <p>The daemon appends a manifest revision on spawn/Assignment, on each accepted status or progress checkpoint, on observed Git ref/commit and file-watcher changes, on promotion, and at final teardown capture. A bounded reconciliation sweep is evidence maintenance only. Watcher overflow or an inaccessible worktree sets completeness = unknown; unknown never means empty.</p>
-      </article>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Address kind</th><th>Sender</th><th>Recipient</th><th>Exact binding outside the envelope</th></tr></thead>
-        <tbody>
-          <tr><td>operator</td><td>Yes</td><td>Yes</td><td>Authenticated Workspace/CLI session</td></tr>
-          <tr><td>root</td><td>Yes</td><td>Yes</td><td>Current queen provider generation</td></tr>
-          <tr><td>agent</td><td>Yes</td><td>Yes</td><td>Generation is part of the address; process binding is still recorded</td></tr>
-          <tr><td>system</td><td>Yes</td><td>No</td><td>Daemon process identity and typed event source</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="callout"><strong>Identity is not authority.</strong> An operator message records engineer guidance; prose such as “approved,” “land,” or “stop” never performs G1, G2, lifecycle, or run control. Those remain typed daemon operations. Direct human bytes sent to a provider TUI are terminal input-arbiter transactions outside the message ledger; a Workspace/CLI composer message enters the ledger as <code>operator</code>. Replies to <code>system</code> events are new typed operations, never messages addressed back to the daemon.</div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Stable identity before spawn</h3>
-        <p>The daemon reserves agentId, generation, display name, node slot, and credential binding synchronously before launching the provider. Messages may target that exact reserved identity. If spawn fails, the reservation and its queued messages become terminal rejected; none may attach to a later reuse of the name. An ordinary envelope addressed to the logical root remains queued across queen provider succession. Generation-bound control does not transfer: its DeliveryAttempt targets one exact root binding and becomes terminal or explicitly recovered when that binding is replaced.</p>
-      </article>
-      <article class="detail-panel">
-        <h3>Causality without an exactly-once fiction</h3>
-        <p>Idempotency keys are scoped to the sender plus the resolved message scope: an agent key scopes to agentId + generation + scope, and a logical-kind key (operator, root, system) scopes to the exact authenticated action binding. <code>inReplyTo</code> and causal parents express dependency; the recipient sequence expresses ledger admission order. Inbox and event consumption are at least once — consumers dedupe and acknowledge by messageId and envelope digest. A provider delivery attempt is never blindly repeated after transport-written or in-doubt: retry requires adapter-proven idempotency, otherwise the fabric reconciles from evidence or defers to the owner or engineer.</p>
-      </article>
-    </div>
-
-    <div class="callout"><strong>Message ≠ task ≠ context ≠ artifact.</strong> A message may negotiate or update a task. A thread groups related conversation. A task owns durable work and termination. An ArtifactRef names immutable or revisioned output. Completing a task is terminal; later refinement creates a new task linked to the same run or thread.</div>
-
-    <div class="callout"><strong>Message content is not a work artifact.</strong> Inline envelope content is capped at 16 KiB. Overflow uses a <code>MessageContentRef</code> plus a declared length, media type, and at most 1 KiB of inline preview so a 4 KiB wake remains triageable. Delivery never pastes referenced content into a terminal; recipients pull authorized ranges. If content must remain useful after the message is consumed, publish a hierarchy-owned <code>ArtifactRef</code> from C1 onward. Hive never auto-promotes message content into a work artifact.</div>
-  </div>
-</section>
-
-<section id="routing">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">06 · Routing policy</p>
-        <h2>Default-deny, with narrow channels for real collaboration.</h2>
-      </div>
-      <p>At C0 the flat Assignment binds each worker to the queen. From C1, the queen rules through revisioned owner edges: the queen owns direct and flat workers, and a lead owns its crew when the full hive is active. Routing follows the current owner by default, while explicit paired and cross-boundary work uses narrow channels rather than a permanent all-to-all chat mesh.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Route</th><th>Default</th><th>Authority</th></tr></thead>
-        <tbody>
-          <tr><td>Engineer ↔ queen</td><td>Allowed</td><td>Workspace/root control binding; G1/G2 and run-control operations remain typed, not prose.</td></tr>
-          <tr><td>Queen ↔ flat worker (C0)</td><td>Allowed</td><td>Exact open Assignment and capability epoch.</td></tr>
-          <tr><td>Queen ↔ owned node (direct worker or lead, C1)</td><td>Allowed within run</td><td>Current hierarchy ownership and run epoch; in direct and flat topologies the queen is the current owner.</td></tr>
-          <tr><td>Lead ↔ crew worker (full hive)</td><td>Allowed within task</td><td>Current ownership edge and attenuated delegation grant.</td></tr>
-          <tr><td>Worker → owner</td><td>Allowed</td><td>Open Assignment at C0; current Task ownership at C1. If the owner is measured dead or detached, the daemon reroutes control/status to queen through the recovery record.</td></tr>
-          <tr><td>Crew worker → queen emergency escalation (full hive, C1)</td><td>Narrow exception</td><td>Rate-limited <code>safety</code> or <code>owner-unavailable</code> intent, always audited; it grants no direct task reassignment.</td></tr>
-          <tr><td>Lead worker ↔ lead worker</td><td>Denied unless channel exists</td><td>Queen-owned interface channel bound to accepted InterfaceContract participants and revision.</td></tr>
-          <tr><td>Worker ↔ worker</td><td>Denied unless channel exists</td><td>Owner- or queen-created pair/task channel with explicit participants, purpose, budget, and expiry.</td></tr>
-          <tr><td>Reviewer ↔ author</td><td>Allowed only for assigned review</td><td>Review task/channel; reviewer is an assignment, not a hierarchy tier.</td></tr>
-          <tr><td>System → any live binding</td><td>Allowed for lifecycle/control</td><td>Daemon event source and current recipient binding; system traffic cannot impersonate an agent.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="callout"><strong>Self-hosting proof.</strong> A queen-brokered pair channel—two equal agents, one shared design task, explicit owner, bounded lifetime—is the canonical first worker-to-worker channel. The protocol must support the collaboration used to design it.</div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Revalidate on use</h3>
-        <p>Admission records the policy that allowed a message. The daemon re-evaluates the current exact invoking binding and, for delivery, the exact recipient binding, then MessageScope authorization, capability epoch, and — at C1 — channel lifecycle, hierarchyRevision, and runEpoch before delivery, message-content/artifact read, or acknowledgement. Revocation can stop a queued message without rewriting the original decision. A paused run fences every work-bearing action — admission, delivery, reads, spawn, write, promote — while typed control, recovery, acknowledgement, and evidence traffic remain available. A historical action stays valid evidence if its epochs were valid when it occurred and no explicit later invalidation names it; a new invocation always evaluates current state. Critical revocation may explicitly invalidate pending candidates, verdicts, grants, messages, and attempts.</p>
-      </article>
-      <article class="detail-panel">
-        <h3>No implicit broadcast</h3>
-        <p>Fan-out duplicates cost and creates ambiguous partial receipt. Owner and queen updates use typed rollups or explicit bounded recipient sets expanded by the daemon into independently addressed envelopes. Every recipient gets its own sequence and receipt trail.</p>
-      </article>
-    </div>
-  </div>
-</section>
-
-<section id="mcp-surface">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">07 · MCP surface</p>
-        <h2>Small calls, stable bindings, explicit evidence.</h2>
-      </div>
-      <p>MCP is Hive’s cross-vendor control surface. Its inputs are ergonomic for agents but never ask the model to restate facts the daemon already knows.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Operation</th><th>Input</th><th>Result contract</th></tr></thead>
-        <tbody>
-          <tr><td><strong>hive_send</strong></td><td><code>to</code> = queen, owner, agentId, nodeId (from C1), or current display alias, resolved once by the daemon to an exact Address; optional channelId from C1 selects an already-authorized route between that sender and recipient; body/parts; optional threadId; priority; structured intent; idempotency key; expiry</td><td>No <code>from</code>, and no caller-restated scope truth: the daemon infers instance/Assignment at C0 and the current Task from C1; channelId only selects an already-authorized channel. Returns messageId, resolved stable recipient, admission result, and current measured projection. <code>queued</code> is reported as not received.</td></tr>
-          <tr><td><strong>hive_inbox</strong></td><td>cursor, limit, maxBytes, maxTokens, optional fields and scope/channel filters</td><td>The authenticated recipient is implicit. Results are bounded by the lower byte/token limit and at least once. Field selection avoids returning bodies, receipts, or status the caller did not request. Reading appends a read receipt but never marks content applied.</td></tr>
-          <tr><td><strong>hive_read_message</strong></td><td>messageId, optional part index, bounded byte range, and maxTokens</td><td>Returns authorized inline parts and/or bounded ranges of a message-scoped content object after digest checks. Reads are bounded by both representations, audited, do not acknowledge action, and never make the content independently addressable.</td></tr>
-          <tr><td><strong>hive_ack_message</strong></td><td>one or more messageIds, envelope digests, disposition = accepted/deferred/rejected/applied, optional evidence or bound state revision</td><td>Idempotently appends recipient receipt events. <code>applied</code> requires a typed state transition or evidence reference when the message requested work.</td></tr>
-          <tr><td><strong>hive_message_status</strong></td><td>messageId or sender-owned idempotency key</td><td>Returns the derived event timeline visible to the sender, owner, or queen; it never exposes unauthorized body content.</td></tr>
-          <tr><td><strong>hive_open_channel (from C1)</strong></td><td>task/interface binding, exact participants, purpose, budget, expiry</td><td>Available only to the current owner or queen; the call invokes the hierarchy-owned channel transition. Returns a revisioned channel or a reasoned rejection; it grants communication only.</td></tr>
-          <tr><td><strong>hive_get_work_manifest</strong></td><td>manifestId, optional revision</td><td>Returns the bounded WorkManifest projection by ID and revision — never by worktree path — to an authenticated operator, the queen, or the current owner only, reauthorized at read. <code>hive_status</code> carries a bounded stranded-work summary that never leaks paths across scope; no caller supplies path, branch, or task truth.</td></tr>
-          <tr><td><strong>hive_resolve_stranded_work</strong></td><td>manifestId, expectedRevision, idempotency key, action = <code>resume</code> | <code>preserve</code> | <code>discard</code></td><td>Authenticated operator only; compare-and-swap on the manifest revision. An identical idempotency key returns the original disposition result; a different key with a stale expectedRevision is rejected. <code>resume</code> CAS-moves the manifest stranded → claimed, preflights the recorded worktree/branch/head, and atomically binds the preserved work to a fresh Assignment and agent generation with a new brief citing the WorkManifest — a concurrent resume loses the CAS, and a spawn failure returns the manifest to preserved/stranded with evidence, never attaching the work to a reused display name; <code>preserve</code> records the disposition without claiming completion; <code>discard</code> is the sole destructive path and records authorization and a tombstone. Completion is never a direct state flip — resumed work proves itself through ordinary promotion and gates.</td></tr>
-          <tr><td><strong>hive_close_channel (from C1)</strong></td><td>channelId, expected revision, reason</td><td>Append-only closure invoking the hierarchy-owned transition; queued messages are re-evaluated and normally expire rejected.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="callout"><strong>Attribution boundary.</strong> Where an adapter can count the final rendered input, Hive compares that input with an otherwise identical rendering that omits Hive-owned blocks; the marginal difference is Hive-delivered input, and any tokenizer-boundary residual is protocol overhead. The ordered block manifest allocates that result to payload, protocol, and replay. Where exact counterfactual counting is unavailable, Hive counts only its rendered blocks with the provider tokenizer and labels the result estimated. Provider total always comes from the provider observation, not this attribution calculation.</div>
-
-    <div class="callout"><strong>Usage is not an agent tool.</strong> TokenAttributionProjection is a read-only Workspace/CLI daemon projection and is not loaded into provider tool schemas or model context. Observing whether Hive is efficient must not itself add recurring Hive tokens.</div>
-
-    <div class="callout"><strong>Tool context is context.</strong> Each recipient receives only the small authorized core schema needed for its current work. Optional Hive tool families are deferred or discovered on demand where the provider supports it; unsupported adapters use a deliberately bounded static set. Tool discovery changes visibility, never capability or authority.</div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Typed work remains typed</h3>
-        <p>Assignment status, task transitions, reviews, promotion requests, G1/G2, budget changes, and pause/abort use hierarchy or run-control operations. A sentence such as “done,” “approved,” or “land this” has no lifecycle or authority effect.</p>
-      </article>
-      <article class="detail-panel">
-        <h3>Artifacts stay out of the queue (from C1)</h3>
-        <p><code>hive_publish_artifact</code> verifies the caller’s task/worktree scope, hashes the content or commit object, and returns the hierarchy-owned ArtifactRef. <code>hive_read_artifact</code> opens a bounded range after authorization. Messages carry summaries and references, not megabyte payloads or arbitrary filesystem paths.</p>
-      </article>
-    </div>
-  
-    <div class="callout"><strong>Spawn is not send.</strong> At C0 <code>hive_spawn</code> launches with the current Assignment-scoped spawn brief; C1 accepts a typed Task/DelegationSpec request and records the hierarchy-owned SpawnBrief. Either way the daemon reserves identity first, launches the provider with that exact brief as process input, and measures the first boundary. Failure terminates the reservation and brief binding. Chat messages may refine an active Assignment at C0 or Task from C1; they never substitute for its initial contract.</div>
-  </div>
-</section>
-
-<section id="delivery">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">08 · Wake and delivery</p>
-        <h2>Wake cheaply. Pull deliberately. Interrupt truthfully.</h2>
-      </div>
-      <p>A provider wake is a scarce context event. The daemon batches ordinary traffic, preserves urgent semantics, and records provider limitations instead of pretending every adapter has the same control surface.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Priority</th><th>Scheduling</th><th>Proof boundary</th></tr></thead>
-        <tbody>
-          <tr><td><strong>normal</strong></td><td>Next measured turn boundary. Pending messages coalesce into one wake containing IDs, senders, resolved scope, and bounded previews.</td><td>Wake transport may become transport-written; only a provider boundary becomes provider-observed.</td></tr>
-          <tr><td><strong>steer</strong></td><td>Non-destructive guidance at the nearest provider tool hook. If an adapter lacks a hook, it degrades to normal and records the downgrade.</td><td>Never report mid-turn steering merely because content was queued or typed.</td></tr>
-          <tr><td><strong>urgent</strong></td><td>Cancels the in-flight model turn and injects before normal traffic. The cancelled reasoning is never resumed.</td><td>Cancellation and subsequent provider observation are separate events. Urgent does not by itself revoke durable authority.</td></tr>
-          <tr><td><strong>critical</strong></td><td>Uses the isolated control lane and structured intent. Authority fencing occurs before any process operation.</td><td>The final state depends on intent-specific measured process evidence, not on message delivery.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="callout"><strong>Wake budget.</strong> A wake envelope is at most 4 KiB and 512 rendered tokens; the lower limit wins. It contains a batch cursor, counts, message IDs that fit, and bounded previews. Overflow remains queued for the next pull rather than expanding the wake. Full content is pulled only when needed. Critical explanation remains self-contained, is at most 2 KiB, and must also fit the rendered-token ceiling; the control operation itself is typed outside the body.</div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Priority is not intent</h3>
-        <ul class="check-list">
-          <li><strong>pause:</strong> advance the relevant authority epoch, capture the process tree, verify SIGSTOP of the same process, and resume only after re-attestation.</li>
-          <li><strong>stop / cancel / restrict-writes:</strong> revoke authority, reap or replace the process according to teardown policy, and verify the resulting state.</li>
-          <li><strong>invalid combinations:</strong> reject them at admission; do not infer intent from message prose.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>One recipient lane</h3>
-        <ul class="check-list">
-          <li>Recheck the human composer lease immediately before every write or provider call.</li>
-          <li>Serialize provider-native and sessiond paths; a message chooses one adapter per attempt.</li>
-          <li>Keep control traffic independent of normal queue depth.</li>
-          <li>Preserve provider-specific truth: Claude/Codex steer at tool boundaries; unsupported adapters say they deferred.</li>
-        </ul>
-      </article>
-    </div>
-  </div>
-</section>
-
-<section id="receipts">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">09 · Receipts and failure</p>
-        <h2>Absence is unknown. Contradiction is evidence.</h2>
-      </div>
-      <p>The message projection is derived from positive controls. A quiet terminal may be idle, modal, disconnected, dead, or simply unsupported by the observer. Hive preserves that uncertainty and escalates only from measured facts.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Event</th><th>What it proves</th><th>What it does not prove</th></tr></thead>
-        <tbody>
-          <tr><td>admitted / queued</td><td>The daemon durably accepted an authorized envelope for a stable recipient.</td><td>The recipient process saw it.</td></tr>
-          <tr><td>transport-written</td><td>The selected adapter accepted bytes or a native item according to its contract.</td><td>The TUI submitted them, the provider observed them, or the agent acted.</td></tr>
-          <tr><td>provider-observed</td><td>A provider-specific marker or boundary is associated after the matching delivery attempt — not necessarily a literal envelope marker.</td><td>The agent understood, accepted, or applied the request.</td></tr>
-          <tr><td>read</td><td>The authenticated recipient fetched the content and matching digest.</td><td>The requested state change occurred.</td></tr>
-          <tr><td>recipient-acknowledged</td><td>The exact bound recipient explicitly returned a disposition for that message and digest.</td><td>The disposition is correct without its linked state revision or evidence.</td></tr>
-          <tr><td>applied</td><td>A typed daemon transition or evidence-bearing acknowledgement matches the request.</td><td>Anything beyond the recorded scope.</td></tr>
-          <tr><td>in-doubt</td><td>Hive lost a proof boundary after a possibly effective attempt.</td><td>Success or failure. Retry requires idempotency or engineer/owner choice.</td></tr>
-          <tr><td>rejected / expired / cancelled</td><td>The envelope will not be newly delivered under that binding.</td><td>That an earlier in-doubt attempt had no effect.</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Busy, modal, deaf, and dead differ</h3>
-        <p>Turn state and process liveness are separate axes. The delivery scheduler uses provider events, process identity, session state, composer lease, and contradictory observations together. A single empty reader or stale screen is never enough to classify the recipient.</p>
-      </article>
-      <article class="detail-panel">
-        <h3>Alert once, with evidence</h3>
-        <p>Missed urgent deadlines, terminal recipient loss, queue pressure, and adapter degradation append durable incidents. Acknowledgment deadlines start at the matching transport-written event, never enqueue. Initial policy is urgent 180 seconds and critical 10 seconds. A miss appends typed attention and invokes intent-specific escalation/recovery; it does not rewrite any receipt or permit blind retry. At C0 the queen receives instance and Assignment aggregates; C1 adds owner-subtree and run rollups. Repeated maintenance polls do not flood agent context with identical alerts.</p>
-      </article>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Stranding is measured, not inferred</h3>
-        <p>Startup after an unclosed daemon epoch reads the manifest journal first, rebuilds the projection, and marks every <code>active</code> manifest <code>stranded</code> from journal state alone — before any worktree is opened. Hive worktree registrations and the worktrees directory are enumerated only to detect existence and missing/orphan cases, never to reconstruct task context. A worktree with no manifest is a surfaced incident, never silently adopted or deleted. The one permitted on-disk safety measurement exists to prevent unsafe cleanup; it is not forensic reconstruction and never overwrites the journaled handoff.</p>
-      </article>
-      <article class="detail-panel">
-        <h3>Reconciliation and the Engineer prompt</h3>
-        <p>Auto-clean requires both a known-complete manifest and an agreeing safety measurement taken with untracked-files=all semantics: zero unique commits relative to the recorded base, zero dirty files, zero untracked files, and no recovery artifacts or pending promotion. The cleanup itself is bound to that exact manifest revision, head, and watcher watermark under compare-and-swap after the measurement — any intervening change preserves and prompts, closing the measure-then-delete race. Any disagreement, unknown, or content preserves the worktree and raises a typed Engineer prompt rendering the goal/task/brief, owner and generation, exact commits with summaries, dirty/untracked list, last progress/decisions/evidence, and freshness/cause. Typed choices: <strong>resume/complete</strong> (a fresh agent binding and generation spawned with a brief citing the WorkManifest), <strong>preserve</strong>, or <strong>discard</strong> (explicit destructive authorization). Completion still follows ordinary promotion and landing, never an ad hoc cleanup. Before Split Horizon the prompt is a CLI/daemon surface. Commit subjects, dirty paths, and agent-written handoff fields are untrusted measured/claimed data: the prompt and the successor brief render them outside control fields, they can never override pinned engineer constraints, mint authority, select a disposition, or become instructions merely because they sit in a WorkManifest — the successor verifies them.</p>
-      </article>
-    </div>
-  </div>
-</section>
-
-<section id="backpressure">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">10 · Context and flow control</p>
-        <h2>The durable truth is lossless. Active context is selective.</h2>
-      </div>
-      <p>Multi-agent communication carries a measurable token and attention tax. Hive reduces repetition and irrelevant context, never the only copy of information the engineer or agent may need.</p>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Three internal context classes</h3>
-        <ul class="check-list">
-          <li><strong>Pinned truth:</strong> exact active engineer instructions, requirements, acceptance criteria, authority, unresolved decisions, blockers, and uncertainty survive every compaction and handoff.</li>
-          <li><strong>Active working set:</strong> current objective, recent relevant deltas, evidence, failures, and next action are revised in place instead of appended repeatedly.</li>
-          <li><strong>Referenced history:</strong> old messages, completed decisions, transcripts, logs, files, diffs, and tool output remain durable and boundedly retrievable by ID, revision, digest, and range.</li>
-          <li>These are deterministic context classes, not user-selectable quality or usage modes.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>Bounded delivery</h3>
-        <ul class="check-list">
-          <li>Per-recipient message-count, byte, and rendered-token limits; C0 bounds instance and Assignment scopes, C1 adds channel and run bounds.</li>
-          <li>One ordinary wake per available provider boundary, containing a bounded batch.</li>
-          <li>Opening a channel or adding a participant does not inject prior channel history; the recipient receives only its brief plus novel deltas and exact references.</li>
-          <li>Fair scheduling across eligible scope senders after the isolated control lane.</li>
-          <li>Explicit backpressure with retry guidance; no silent drop and no unbounded SQLite queue.</li>
-          <li>Expiry for advisory traffic; durable task and control records use their own lifecycle.</li>
-        </ul>
-      </article>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Valuable information cannot hide behind a preview</h3>
-        <ul class="check-list">
-          <li>New operator instructions, changed requirements or acceptance criteria, authority changes, direct work requests, decisions, review verdicts, blockers, and changed uncertainty are mandatory reads.</li>
-          <li>A mandatory item is delivered in full when bounded, or the recipient must pull and digest-check its exact content before acknowledging or continuing affected work.</li>
-          <li>The daemon classifies mandatory reads from typed sender, intent, task, review, and authority state; it does not spend another model call guessing importance from prose.</li>
-          <li>Receipts, unchanged status, duplicate revisions, and low-value lifecycle chatter stay outside provider context unless explicitly requested.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>References carry the weight</h3>
-        <ul class="check-list">
-          <li>Summaries cite message IDs and digests, MessageContentRefs, Assignment evidence, commits, diffs, tests, and decisions at C0; C1 adds Task revisions and ArtifactRefs.</li>
-          <li>Rollups contain deltas since the receiver’s acknowledged snapshot, not repeated full state.</li>
-          <li>Agents send changed decisions, evidence, blockers, and requests—not restated briefs or full conversation history.</li>
-          <li>Large content is range-readable and digest-checked.</li>
-          <li>Messages do not duplicate source files, full transcripts, or status already available through typed tools.</li>
-          <li>Content IDs, revisions, and digests suppress unchanged replay; tool results return requested fields or daemon-computed aggregates rather than full logs.</li>
-          <li>Uncertainty and blockers survive summarization; the rollup may not collapse “unknown” into “green.”</li>
-        </ul>
-      </article>
-    </div>
-
-    <div class="callout"><strong>Context compaction is explicit.</strong> A structured checkpoint records its source message range, the resolved MessageScope revisions (Assignment in C0; task/tree/channel in C1), MessageContentRef/ArtifactRef IDs and digests as available, unresolved decisions, blockers, uncertainty, and omitted byte/token counts. Pinned truth is restored exactly. Provider-native compaction may reduce active context but its opaque output is never Hive’s only recovery record; the checkpoint supplements the durable ledger and never deletes the only copy of a pending instruction or silently changes the engineer-approved specification.</div>
-
-    <div class="callout"><strong>Handoff shape (SPEC §7).</strong> A compaction or replacement handoff carries three layers: pinned engineer constraints byte-identical to their approved source; daemon- and worktree-computed state as pointers and digests, never re-typed; and a short written layer of goal, done, failures with reasons, uncertainty, and next action. Transcripts, raw tool output, and file copies are dropped — the recipient verifies pointers against the ledger and worktree. Unknown context is not free: it is named as unknown and re-proven before new work depends on it. Checkpoints reference message ID ranges, queue high-waters, resolved scope revisions, and message-content/artifact IDs and digests; they never copy bodies or read/acknowledgement traffic.</div>
-
-    <div class="callout"><strong>Caching is not token reduction.</strong> Stable provider prefixes may improve provider cache reuse, but cached input still occupies context and remains provider-reported usage. Hive never credits a cache hit as fewer tokens, and stateful provider session IDs are not counted as savings unless the provider’s measured input actually falls.</div>
-
-    <div class="callout"><strong>No cost system.</strong> Token attribution exists to expose and reduce Hive’s context tax. The ledger stores token observations and their provenance only—no currency, price table, projected spend, automatic budget increase, or efficiency-level control.</div>
-  </div>
-</section>
-
-<section id="security">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">11 · Security and retention</p>
-        <h2>Local does not mean ambient.</h2>
-      </div>
-      <p>The daemon is the reference monitor even when every process runs under one OS user. Same-UID compromise remains an accepted residual; Hive still minimizes what one stale or confused agent can do through its official surfaces.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Control</th><th>Requirement</th></tr></thead>
-        <tbody>
-          <tr><td>Credentials</td><td>Per agentId + generation + capability epoch for agents; operator, root, and system actions bind their exact authenticated action binding. Never placed in prompts, message bodies, command-line arguments, or logs.</td></tr>
-          <tr><td>Storage</td><td>SQLite database, WAL, message-content objects, the manifest journal, artifacts, and runtime bindings use owner-only permissions. Message bodies and secrets are redacted from routine logs.</td></tr>
-          <tr><td>Authorization</td><td>Validate the current instance, Assignment, and capability bindings at C0 — delegation chains and hierarchy fences from C1 — at invocation time. A stale admission is not a future permit.</td></tr>
-          <tr><td>Content trust</td><td>Peer text is untrusted data. Control fields are rendered separately and raw body content cannot call tools, change priority, or mint grants.</td></tr>
-          <tr><td>Content access</td><td>ArtifactRef resolves only through the daemon after task/channel authorization; a MessageContentRef resolves only through its containing envelope’s authorization. Arbitrary sender-provided paths are rejected.</td></tr>
-          <tr><td>Audit</td><td>Body and message-content reads, artifact opens, channel changes, authority failures, and control operations append actor-bound records.</td></tr>
-          <tr><td>Retention</td><td>Every content object has a retention class. The default retains bodies through the resolved scope’s closure and review — Assignment or instance at C0, Run at C1; cleanup removes content only after engineer-approved retention while preserving the minimum audit metadata and digests. WorkManifest active/stranded revisions are retained until ordinary Assignment/Run closure plus Engineer disposition; cleanup may compact them to a checksummed tombstone/audit digest but never erases the only handoff before resolution.</td></tr>
-          <tr><td>External gateways</td><td>A2A or other remote bridges terminate at a separately authorized gateway identity. Remote agent cards or credentials never become internal hierarchy authority.</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
-<section id="implementation">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">12 · Implementation sequence</p>
-        <h2>Change the substrate without creating a second truth.</h2>
-      </div>
-      <p>The v2 ledger is introduced beside the current table, projected through compatibility adapters, and cut over only after live legacy sessions drain. Each stage belongs to one of the three approved transitions.</p>
-    </div>
-
-    <div class="phase-grid">
-      <article class="phase-card">
-        <span class="phase-tag">C0A · DURABLE CORE</span>
-        <h3>Envelope and identity</h3>
-        <p>Add v2 envelopes/events; reserve stable identity before spawn; bind sender implicitly; add digests, causal links, idempotency scope, limits, and a compatibility projection for current callers. Add the message-content object store, envelope digest binding, bounded previews/range reads, flow accounting, retention, and orphan GC. Add ContextInputRecord and the per-provider TokenAttributionProjection, fed by raw provider observations without price data. Add the WorkManifest record, its append-only checksummed manifest journal outside every worktree, and the event-driven write cadence.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C0B · DELIVERY</span>
-        <h3>Bounded truthful wakes</h3>
-        <p>Route tmux/sessiond/native attempts through one lane, preserve the composer lease, split provider-observed from applied, enforce byte and rendered-token bounds, add inbox cursors, field selection, mandatory reads, and explicit acknowledgements, then instrument legacy phrase and name routing.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C0C · RECOVERY CONTINUITY</span>
-        <h3>Stranded work survives shutdown</h3>
-        <p>Run the startup stranding reconciliation: journal-first rebuild of the WorkManifest projection, agreed-empty auto-clean, and the typed Engineer prompt with resume/preserve/discard dispositions through the operator-only resolver.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C1A · POLICY</span>
-        <h3>Hierarchy-aware routes</h3>
-        <p>Add current-revision edge checks, owner aliases, channels, delegation validation, run/task binding, emergency escalation, artifacts, rollups, budgets, and recovery routing. Bind WorkManifests to formal Task, SpawnBrief, and RecoveryCheckpoint records.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C1B · CUTOVER</span>
-        <h3>Remove ambiguous paths</h3>
-        <p>After no live legacy binding remains, reject caller-supplied <code>from</code>, name-only durable addresses, inbox-implies-applied, unbounded full-body paste, prose-derived control intent, and the old whole-orchestrator “Hive control” attribution.</p>
-      </article>
-      <article class="phase-card">
-        <span class="phase-tag">C2 · WORKSPACE</span>
-        <h3>Expose projections</h3>
-        <p>Render queue pressure, stable participants, delivery timelines, channel expiry, artifacts, in-doubt actions, adapter degradation, provider totals, and Hive-delivered payload/protocol/replay input. Engineer controls call typed MCP/daemon operations; there are no cost controls or efficiency modes.</p>
-      </article>
-    </div>
-
-    <div class="callout"><strong>No flag-day message migration.</strong> A message is wholly v1 or v2 and carries its protocol version. Compatibility code may project v2 facts into old fields; it may not fabricate v2 receipts from old timestamps. The token UI is a hard semantic cutover: existing provider collectors may supply raw observations, but the whole-orchestrator “Hive control” projection and old Usage view are removed rather than shown beside TokenAttributionProjection. Restart recovery drains critical v2 control before ordinary traffic.</div>
-  </div>
-</section>
-
-<section id="verification">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">13 · Verification</p>
-        <h2>The test suite attacks the boundaries.</h2>
-      </div>
-      <p>Unit tests prove schemas and policy. Integration tests use real provider/session boundaries where the claim depends on them. Chaos tests interrupt the daemon between every durable step.</p>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Identity and authority</h3>
-        <ul class="check-list">
-          <li>Reserve identity, queue a message, fail spawn, reuse the display name: the successor receives nothing.</li>
-          <li>Admit under a valid edge, revoke before delivery: delivery is rejected with both policy revisions preserved.</li>
-          <li>Expire a pair channel with pending traffic: no new delivery; owner and sender see one terminal reason.</li>
-          <li>Attempt spoofed sender, cross-run read, stale generation acknowledgement, and artifact path escape: all fail closed.</li>
-          <li>Address queen without creating an agents row; across root succession, ordinary queued traffic survives and is reauthorized after attestation while stale generation-bound control is rejected.</li>
-          <li>Deliver a flat C0 envelope with no hierarchy record present: the full lifecycle works and nothing fabricates a Run or Task.</li>
-          <li>Reconstruct a worker or queen replacement from the recorded brief/checkpoint and measured replies; verify the exact context provenance and ensure no old generation or display-name successor can claim it.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>Delivery and recovery</h3>
-        <ul class="check-list">
-          <li>Busy, idle, modal, detached, dead, and composer-active sessions produce distinct measured projections.</li>
-          <li>Crash after admission, after transport write, and before receipt append: retry is idempotent or becomes in-doubt, never optimistic success — and no attempt blindly repeats after transport-written or in-doubt.</li>
-          <li>Claude, Codex, and Grok expose truthful steer/cancel degradation; no adapter test double substitutes for live acceptance.</li>
-          <li>Pause preserves and verifies the same process; stop/restrict-writes follows teardown and capability fencing. A paused run blocks work-bearing admission and delivery while control, recovery, acknowledgement, and evidence still flow; historical receipts with then-valid epochs remain evidence unless explicitly invalidated.</li>
-          <li>Normal batches respect recipient order, fair channel service, queue caps, and the 4 KiB / 512-rendered-token wake budget.</li>
-        </ul>
-      </article>
-    </div>
-
-    <div class="split">
-      <article class="detail-panel">
-        <h3>Context and evidence</h3>
-        <ul class="check-list">
-          <li>A 1 MiB message becomes one MessageContentRef with a bounded preview in C0; from C1, a durable reusable work product becomes an ArtifactRef instead. Neither path terminal-pastes the body.</li>
-          <li>Inbox read does not become applied; explicit acknowledgement without matching digest is rejected.</li>
-          <li>Rollup compaction preserves exact pinned truth, blockers, uncertainty, source ranges, revisions, and omitted byte/token counts.</li>
-          <li>Every mandatory item is fully delivered or exact-content-read before affected work continues; preview-only delivery cannot satisfy it.</li>
-          <li>Duplicate idempotency keys return the original message only within the same sender binding and resolved message scope.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>Token efficiency without quality loss</h3>
-        <ul class="check-list">
-          <li>For each supported provider, reconcile provider-reported input/output with ContextInputRecords and prove Hive payload + protocol + replay = Hive-delivered input; estimates and unknowns never render as measured.</li>
-          <li>Replay an unchanged message, rollup, tool result, and handoff: each repeated digest is attributed as replay and no unchanged body enters a delta rollup.</li>
-          <li>Exercise cold/warm cache and stateful-session paths: neither is called a token reduction unless measured provider input falls.</li>
-          <li>Run direct, flat, and representative 19-agent tasks against the full-context baseline; measure provider total input/output, Hive payload/protocol/replay, task success, missed requirements, altered decisions, missed blockers, review defects, retries, and rework.</li>
-          <li>An efficiency change fails its gate if any active engineer constraint disappears, a decision or uncertainty changes meaning, or task/review quality regresses. Runtime work does not invoke another evaluator model merely to compute attribution.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>Stranded work</h3>
-        <ul class="check-list">
-          <li>kill -9 the daemon and every agent mid-work: each WorkManifest is readable and actionable before any worktree is touched.</li>
-          <li>An agreed-empty stranding is auto-cleaned exactly once; a content-bearing stranding prompts with correct rendered contents.</li>
-          <li>A fresh agent resumes and completes from the manifest alone — no archaeology in the worktree beyond its recorded state.</li>
-          <li>Registry-row loss and pruned worktree registrations still reconcile from the journal and disk; a missing manifest surfaces as an incident, never adoption or deletion.</li>
-          <li>Watcher overflow yields completeness = unknown and blocks auto-clean; manifest/disk disagreement preserves and prompts.</li>
-          <li>hive_resolve_stranded_work rejects non-operator callers and stale expectedRevision; repeated identical resolutions are idempotent; discard without explicit authorization fails closed.</li>
-          <li>A hostile commit subject, dirty path, or handoff field ("discard this", "approved", tool-call syntax) renders inert in the prompt and successor brief: no disposition, authority, or instruction results from manifest content.</li>
-        </ul>
-      </article>
-      <article class="detail-panel">
-        <h3>Definition of done</h3>
-        <ul class="check-list">
-          <li>No official operation accepts actor identity as caller-controlled data.</li>
-          <li>No agent-addressed envelope or generation-bound control crosses its exact binding; only ordinary logical-root/operator mail may survive process replacement, and it is reauthorized before delivery. No envelope crosses a revoked Assignment, Run, or channel boundary.</li>
-          <li>No UI or CLI string says received, stopped, applied, or safe without the corresponding durable evidence.</li>
-          <li>No UI calls the queen’s whole provider session Hive overhead; token presentation shows provider totals and Hive-delivered input with payload/protocol provenance, and exposes neither prices nor usage modes.</li>
-          <li>No compaction or efficiency mechanism deletes the only durable copy of engineer instructions, requirements, decisions, blockers, uncertainty, or evidence.</li>
-          <li>Legacy message rows and active sessions drain before ambiguous paths are deleted.</li>
-        </ul>
-      </article>
-    </div>
-  </div>
-</section>
-
-<section id="handoff">
-  <div class="shell">
-    <div class="section-head">
-      <div>
-        <p class="section-label">14 · Handoff</p>
-        <h2>Each transition receives a narrow promise.</h2>
-      </div>
-      <p>The communication fabric is complete when the next layer can depend on it without importing the layer below.</p>
-    </div>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Consumer</th><th>Receives</th><th>Does not own</th></tr></thead>
-        <tbody>
-          <tr><td>Terminal Stack Transition</td><td>Immutable envelope ID, bounded delivery request, priority/intent, exact recipient binding, immutable attempt-evidence callback</td><td>Hierarchy roles, task lifecycle, routing policy, or UI workflow</td></tr>
-          <tr><td>The Queen’s Hive</td><td>Stable Address/MessageScope primitives, ledger event timelines, channel admission and enforcement hooks, bounded rollups, and control/evidence hooks</td><td>PTY bytes, provider keystrokes, Ghostty rendering, or composer implementation</td></tr>
-          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, message-content ranges, tasks, channels, artifacts, receipts, incidents, WorkManifest/stranded-work recovery prompts, and per-provider TokenAttributionProjection</td><td>Receipt synthesis, token attribution, price tracking, direct SQLite mutation, or transport selection</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-  </main>
-
-  <footer>
-    <div class="shell">
-      <div class="footer-grid">
-        <div>
-          <p class="section-label">Source trail</p>
-          <h2>The code and contracts behind this design.</h2>
+    <section id="status">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-label">Status and sequence</p>
+            <h1>Communication Rebuild</h1>
+          </div>
+          <p><strong>Status:</strong> proposed implementation contract. <strong>Order:</strong> quota lifecycle redesign → this rebuild → router refactor.</p>
         </div>
-        <ul class="source-list">
-          <li><a href="../../SPEC.md">SPEC.md</a></li>
-          <li><a href="../../src/schemas/message.ts">src/schemas/message.ts</a></li>
-          <li><a href="../../src/daemon/delivery.ts">src/daemon/delivery.ts</a></li>
-          <li><a href="../../src/daemon/orchestrator-root-delivery.ts">src/daemon/orchestrator-root-delivery.ts</a></li>
-          <li><a href="../../src/daemon/orchestrator-lifecycle.ts">src/daemon/orchestrator-lifecycle.ts</a></li>
-          <li><a href="../../src/daemon/server.ts">src/daemon/server.ts</a></li>
-          <li><a href="../../src/daemon/capabilities.ts">src/daemon/capabilities.ts</a></li>
-          <li><a href="../daemon/orchestrator-status.md">docs/daemon/orchestrator-status.md</a></li>
-          <li><a href="../agents/briefing.md">docs/agents/briefing.md</a></li>
-          <li><a href="../daemon/agent-teardown.md">docs/daemon/agent-teardown.md</a></li>
-          <li><a href="https://a2a-protocol.org/dev/specification/">A2A Protocol specification</a></li>
-          <li><a href="https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks">MCP Tasks specification</a></li>
-          <li><a href="https://github.com/i-am-bee/acp">Agent Communication Protocol archive</a></li>
-          <li><a href="https://research.google/pubs/macaroons-cookies-with-contextual-caveats-for-decentralized-authorization-in-the-cloud/">Macaroons</a></li>
-          <li><a href="https://ucan.xyz/delegation/">UCAN Delegation</a></li>
-          <li><a href="https://ucan.xyz/revocation/">UCAN Revocation</a></li>
-          <li><a href="https://developers.openai.com/api/docs/guides/token-counting">OpenAI token counting</a></li>
-          <li><a href="https://developers.openai.com/api/docs/guides/prompt-caching">OpenAI prompt caching</a></li>
-          <li><a href="https://developers.openai.com/api/docs/guides/compaction">OpenAI compaction</a></li>
-          <li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Anthropic prompt caching</a></li>
-          <li><a href="https://platform.claude.com/docs/en/build-with-claude/context-editing">Anthropic context editing</a></li>
-          <li><a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/manage-tool-context">Anthropic tool-context management</a></li>
-          <li><a href="https://ai.google.dev/gemini-api/docs/tokens">Gemini token counting</a></li>
-          <li><a href="https://openreview.net/forum?id=LkzuPorQ5L">AgentPrune</a></li>
-          <li><a href="https://aclanthology.org/2026.acl-long.1387/">AgentSlimming</a></li>
-          <li><a href="https://arxiv.org/abs/2601.13295">CooperBench</a></li>
-          <li><a href="https://arxiv.org/abs/2602.20493">AWCP</a></li>
+
+        <div class="table-wrap">
+          <table>
+            <tbody>
+              <tr><th>Purpose</th><td>Make agent observation, delivery, control, quota recovery, and handoff correct for persistent zsh terminals.</td></tr>
+              <tr><th>Primary consumers</th><td>Queen, quota drain handler, recovery, Workspace, and the later model router.</td></tr>
+              <tr><th>Providers</th><td><code>claude</code>, <code>codex</code>, <code>grok</code>, <code>kimi</code>, and <code>opencode</code>.</td></tr>
+              <tr><th>Implementation constraint</th><td>Reuse the current sessiond terminal stream, message store, status reports, memory, worktrees, and provider adapters. Add no general workflow engine.</td></tr>
+              <tr><th>Success condition</th><td>The router can choose a model without owning terminal state, communication transport, quota recovery, or handoff reconstruction.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <nav aria-label="Document contents">
+          <h2>Contents</h2>
+          <ol>
+            <li><a href="#scope">Scope and non-goals</a></li>
+            <li><a href="#invariants">Required invariants</a></li>
+            <li><a href="#identity">Runtime identity</a></li>
+            <li><a href="#records">Minimal records</a></li>
+            <li><a href="#observation">Passive observation</a></li>
+            <li><a href="#delivery">Message delivery</a></li>
+            <li><a href="#control">Process control</a></li>
+            <li><a href="#quota">Quota lifecycle integration</a></li>
+            <li><a href="#handoff">Handoff construction</a></li>
+            <li><a href="#providers">Provider capability contract</a></li>
+            <li><a href="#context-economy">Context economy without information loss</a></li>
+            <li><a href="#interfaces">Service interfaces</a></li>
+            <li><a href="#implementation">Implementation order</a></li>
+            <li><a href="#verification">Acceptance tests</a></li>
+            <li><a href="#router-ready">Router-ready boundary</a></li>
+          </ol>
+        </nav>
+      </div>
+    </section>
+
+    <section id="scope">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">01</p><h2>Scope and non-goals</h2></div>
+          <p>This specification covers communication with one local Hive instance. It does not redesign task hierarchy or model selection.</p>
+        </div>
+
+        <div class="split">
+          <article class="panel">
+            <h3>In scope</h3>
+            <ul>
+              <li>Identify the persistent terminal separately from each provider run.</li>
+              <li>Observe bounded terminal and provider activity without interrupting the agent.</li>
+              <li>Normalize provider hooks and native event streams into one bounded lifecycle event contract.</li>
+              <li>Deliver messages only to the intended live provider run.</li>
+              <li>Pause, resume, cancel, stop, and replace the foreground provider without accidentally targeting zsh.</li>
+              <li>Turn quota drain events into hold/resume or evidence-backed handoff.</li>
+              <li>Build a replacement brief from the original task, measured work, communication, memory, and observed activity.</li>
+              <li>Bound Hive-added model context without discarding durable information or reducing an agent’s authorized capability.</li>
+              <li>Expose stable run outcomes needed by the later router.</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <h3>Not in scope</h3>
+            <ul>
+              <li>Model ranking, user weights, equal-weight Hive selection, or random selection.</li>
+              <li>A new task hierarchy, channel system, artifact service, or delegation language.</li>
+              <li>A replacement for git, worktrees, HiveMemory, or provider-native transcripts.</li>
+              <li>Full terminal transcript ingestion into every model context.</li>
+              <li>Price tracking, cost prediction, or speculative task-token budgeting.</li>
+              <li>A general event-sourcing rewrite of the existing database.</li>
+              <li>Cross-machine or internet agent messaging.</li>
+            </ul>
+          </article>
+        </div>
+
+        <p><strong>Design rule:</strong> add a record only when it closes a demonstrated race, preserves recovery evidence, or creates the router boundary. Everything else remains a projection over existing state.</p>
+      </div>
+    </section>
+
+    <section id="invariants">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">02</p><h2>Required invariants</h2></div>
+        </div>
+
+        <ol>
+          <li><strong>A live terminal is not proof of a live agent.</strong> The terminal may contain only an interactive zsh prompt.</li>
+          <li><strong>Every provider launch creates a new provider-run ID.</strong> Reusing a terminal, agent name, or provider conversation does not reuse the run ID.</li>
+          <li><strong>Automated message text is never submitted to bare zsh.</strong> Foreground identity is checked atomically with the terminal write.</li>
+          <li><strong>Old-run communication never reaches a later run implicitly.</strong> Rebinding queued work to a replacement is an explicit handoff decision.</li>
+          <li><strong>Observation does not acquire input.</strong> Reading output cannot focus, resize, type into, wake, pause, or otherwise alter the terminal.</li>
+          <li><strong>Terminal output is evidence, not authority.</strong> It cannot grant permissions, change the task, mark work complete, or become shell input.</li>
+          <li><strong>Hooks improve evidence but are not an enforcement boundary.</strong> A missing, late, duplicated, or failed hook degrades observation; it cannot grant authority or block lifecycle cleanup.</li>
+          <li><strong>Measured and inferred facts remain distinct.</strong> Git state and exit codes are measured; an activity summary is inferred unless the agent explicitly reported it.</li>
+          <li><strong>Control targets a verified provider run.</strong> Stopping a provider and terminating its terminal are separate operations.</li>
+          <li><strong>Handoff remains usable when summarization fails.</strong> Exact task and work references are mandatory; generated narrative is optional.</li>
+          <li><strong>Context limits apply to projections, never source data.</strong> A bounded preview may omit content only when the exact durable source, digest, omitted amount, and authorized retrieval path remain available.</li>
+          <li><strong>Token savings do not reduce capability.</strong> Context budgeting cannot remove an authorized tool, permission, control, evidence source, or recovery path.</li>
+          <li><strong>Communication never chooses a model.</strong> It accepts a launch decision and reports a run outcome.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="identity">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">03</p><h2>Runtime identity</h2></div>
+          <p>The persistent-zsh design creates three lifecycles. They must not be represented by one generation field.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Identity</th><th>Starts</th><th>Ends</th><th>What it proves</th></tr></thead>
+            <tbody>
+              <tr><td><strong>TerminalBinding</strong></td><td>sessiond creates the zsh session</td><td>The zsh session is explicitly terminated or lost</td><td>The exact PTY transport and shell generation</td></tr>
+              <tr><td><strong>ProviderRunBinding</strong></td><td>Hive launches a provider CLI into that shell</td><td>That foreground provider job exits or is reaped</td><td>Provider, model, effort, process identity, and capability epoch for one execution</td></tr>
+              <tr><td><strong>ConversationBinding</strong></td><td>A provider creates or resumes its own session</td><td>Provider-defined; it may outlive a process</td><td>The provider-native context that may be resumed</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The existing session inspection name <code>providerRoot</code> becomes <code>shellRoot</code>. Its verified executable is <code>/bin/zsh</code>; this proves the terminal shell, not the selected provider or model.</p>
+
+        <pre><code>type ProviderRunBinding = {
+  runId: string;
+  agentId: string;
+  terminal: SessionLocator;
+  provider: "claude" | "codex" | "grok" | "kimi" | "opencode";
+  model: string;
+  effort: string | null;
+  conversationId: string | null;
+  pid: number;
+  startToken: string;
+  foregroundProcessGroupId: number;
+  capabilityEpoch: number;
+  launchGrantId: string;
+  startedAt: string;
+  endedAt: string | null;
+};</code></pre>
+
+        <p>A manually launched foreground command is <code>unmanaged</code>. Hive must not adopt it by executable name. Adoption, if ever added, must be an explicit authorized operation that creates a new provider-run binding.</p>
+      </div>
+    </section>
+
+    <section id="records">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">04</p><h2>Minimal durable records</h2></div>
+          <p>Reuse current agent, message, status, quota, memory, and git records. Add only the records below.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Record</th><th>Required content</th><th>Retention</th></tr></thead>
+            <tbody>
+              <tr><td><strong>ProviderRun</strong></td><td>The binding above plus lifecycle state and exit reason</td><td>For the Hive instance audit lifetime</td></tr>
+              <tr><td><strong>MessageAttempt</strong></td><td>message ID, expected run ID, terminal generation, expected foreground identity, attempt time, outcome, terminal receipt</td><td>With the message</td></tr>
+              <tr><td><strong>ActivitySnapshot</strong></td><td>Latest bounded projection, source cursors, completeness, evidence references, and provenance</td><td>Replace in place; retain snapshots cited by a handoff</td></tr>
+              <tr><td><strong>HandoffBundle</strong></td><td>Source run, reason, exact task/work/message/memory/output references, measured state, optional summary, and target pickup state</td><td>Until task completion and branch disposition</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>No separate content-object store is required for this rebuild. Existing message bodies, terminal retention, provider transcripts, memory IDs, commits, and worktree paths remain the source data. The handoff stores bounded references and digests.</p>
+      </div>
+    </section>
+
+    <section id="observation">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">05</p><h2>Passive observation</h2></div>
+          <p>The Queen reads activity instead of asking agents for routine status. Observation must not create a provider turn.</p>
+        </div>
+
+        <h3>Sources and authority</h3>
+        <ol>
+          <li><strong>Measured runtime:</strong> terminal generation, foreground process group, process state, and exit status.</li>
+          <li><strong>Measured repository state:</strong> branch, head, dirty paths, untracked paths, commits, and recorded test exits.</li>
+          <li><strong>Provider hooks or native events:</strong> the preferred structured activity signal when the adapter binds the event to the exact provider run.</li>
+          <li><strong>Provider transcript:</strong> durable retrospective evidence when it is bound to the exact conversation.</li>
+          <li><strong>Terminal output:</strong> the universal fallback for all providers, identified by run ID and output range.</li>
+          <li><strong>Agent status report:</strong> explicit claimed phase, blocker, summary, decisions, and next action.</li>
+        </ol>
+
+        <pre><code>type ActivitySnapshot = {
+  agentId: string;
+  providerRunId: string | null;
+  observedAt: string;
+  terminalState: "present" | "lost" | "unknown";
+  providerState:
+    | "starting" | "running" | "stopped" | "exited"
+    | "shell-idle" | "unmanaged" | "unknown";
+  turnState: "idle" | "working" | "waiting" | "unknown";
+  phase: "planning" | "editing" | "testing" | "blocked" | "unknown";
+  summary: string | null;
+  evidence: EvidenceRef[];
+  providerEventThrough: string | null;
+  outputThrough: string;
+  completeness: "complete" | "gap" | "unknown";
+};</code></pre>
+
+        <h3>Projection rules</h3>
+        <ul>
+          <li>Strip terminal escape sequences and collapse redraw duplicates before summarization.</li>
+          <li>Never interpret terminal text as a tool call, control command, approval, or memory mutation.</li>
+          <li>Prefer deltas since the Queen’s last output cursor; do not repeatedly summarize full scrollback.</li>
+          <li>Return a bounded summary by default and evidence references on request.</li>
+          <li>Label output gaps. Do not summarize across a gap as though the history were complete.</li>
+          <li>Redact known credential patterns before storing a summary. Raw output remains under the existing terminal-observation authorization.</li>
+          <li>Use deterministic extraction for commands, exits, paths, and test counts. Model-generated narrative is optional and labelled <code>inferred</code>.</li>
+          <li>A hook updates activity only when its run ID, provider session when present, and capability epoch match the active ProviderRun.</li>
+          <li>Duplicate events are idempotent. A late event may add evidence but cannot move a provider from a newer terminal-measured state back to an older state.</li>
+          <li>Hook failure is reported as degraded observation and immediately falls back to terminal/process evidence.</li>
+          <li>A quiet terminal is not proof of a stuck agent. It is only absence of new output.</li>
+        </ul>
+
+        <p>The current <code>hive_terminal_observe</code> tool remains a bounded diagnostic surface. The rebuild adds a Queen-facing fleet delta that reads projections; it does not grant the Queen unrestricted raw terminal content by default.</p>
+      </div>
+    </section>
+
+    <section id="delivery">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">06</p><h2>Message delivery</h2></div>
+        </div>
+
+        <h3>Message state</h3>
+        <pre><code>queued → submitted → observed → applied
+   └──────────────→ failed
+
+queued     durable; the provider has not received it
+submitted  sessiond atomically wrote it to the expected provider run
+observed   a provider boundary or transcript proves the provider saw it
+applied    the agent explicitly acknowledged it or a typed action proves effect
+failed     the attempt ended; the message may remain queued for an explicit retry</code></pre>
+
+        <p>Existing message rows remain the durable queue. <code>MessageAttempt</code> records each transport attempt so a timeout cannot be rewritten into success.</p>
+        <p>A correlated <code>UserPromptSubmit</code>, message, or turn-start event may advance <code>submitted</code> to <code>observed</code>. A generic idle, stop, or later tool event is not sufficient unless it carries the exact message ID or input digest. Hooks never advance a message to <code>applied</code> by themselves.</p>
+
+        <h3>Atomic terminal submission</h3>
+        <pre><code>writeAutomated({
+  terminal,
+  expectedForeground: {
+    providerRunId,
+    pid,
+    startToken,
+    processGroupId
+  },
+  bytes,
+  idempotencyKey
+})</code></pre>
+
+        <p>sessiond must verify the terminal generation and foreground identity immediately before committing bytes to the PTY. A mismatch returns <code>foreground-changed</code> and writes zero bytes. The caller leaves the message queued. A daemon-side preflight alone is insufficient because the provider can exit between inspection and write.</p>
+
+        <h3>Priority semantics</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Priority</th><th>Behavior</th><th>Fallback</th></tr></thead>
+            <tbody>
+              <tr><td><code>normal</code></td><td>Deliver at the next proven idle/input-ready boundary.</td><td>Remain queued.</td></tr>
+              <tr><td><code>steer</code></td><td>Non-destructive guidance at a provider-supported mid-turn boundary.</td><td>Degrade to normal and report the degradation.</td></tr>
+              <tr><td><code>urgent</code></td><td>Cancel the exact in-flight provider turn, then deliver when input is ready.</td><td>Fail if the run identity or cancel boundary is unknown.</td></tr>
+              <tr><td><code>critical</code></td><td>Revoke authority first; execute the typed control intent; deliver to the surviving or replacement run.</td><td>Fail closed and preserve evidence.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>A human composer/input lease blocks automated terminal delivery. Native provider transport may proceed only if it is independently bound to the same provider run and cannot alter the human draft.</p>
+
+        <h3>Routine message batching</h3>
+        <ul>
+          <li>Normal messages queued for the same provider run and input-ready boundary share one bounded provider turn.</li>
+          <li>The batch preserves message order, message IDs, sender identity, and an independent delivery state for every message. Batching does not merge, rewrite, deduplicate, or acknowledge message meaning.</li>
+          <li>Each bounded message preview carries a reference to its exact durable body. The recipient pulls the full body only when the preview is insufficient.</li>
+          <li><code>steer</code>, <code>urgent</code>, and <code>critical</code> never hide inside a normal batch. Their provider-boundary and authority semantics remain independent.</li>
+        </ul>
+        <p>Kimi kickoff is not a special case: it is the agent's first delivery. The brief rides the AGENTS.md system context at launch (context never initiates a turn — verified: a freshly spawned kimi agent idles until spoken to), and the queued "begin" message is submitted through the prompts endpoint as a real user turn, observed via the transcript's turn-start. Any vendor that gains a native first-turn channel uses the same path; argv kickoffs remain the terminal-transport form of the same delivery.</p>
+      </div>
+    </section>
+
+    <section id="control">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">07</p><h2>Process control</h2></div>
+          <p>Control operates on the foreground provider group by default. Terminal teardown is separate.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Operation</th><th>Target</th><th>Required proof</th><th>Terminal result</th></tr></thead>
+            <tbody>
+              <tr><td><code>pause</code></td><td>Exact provider foreground process group</td><td>PID, start token, group identity, and stopped readback</td><td>zsh remains present</td></tr>
+              <tr><td><code>resume</code></td><td>Same stopped process group</td><td>Same run identity and running readback</td><td>unchanged</td></tr>
+              <tr><td><code>cancel-turn</code></td><td>Exact provider run through native cancel or verified foreground input</td><td>Provider-specific cancellation evidence</td><td>provider remains or returns to input</td></tr>
+              <tr><td><code>stop-provider</code></td><td>Exact provider foreground process group</td><td>Exit/reap evidence and shell-idle readback</td><td>zsh remains present</td></tr>
+              <tr><td><code>terminate-terminal</code></td><td>Whole session process tree</td><td>Session exit, reap, and survivor report</td><td>terminal ends</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The terminal host already supports <code>foreground-group</code>, <code>session-members</code>, and <code>process-tree</code> targets. Hive must stop mapping every operation to <code>process-tree</code>. Capability revocation precedes any critical stop or replacement.</p>
+      </div>
+    </section>
+
+    <section id="quota">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">08</p><h2>Quota lifecycle integration</h2></div>
+          <p>Quota detects and classifies exhaustion. Communication executes the run-safe response. The router is consulted only when a replacement model is needed.</p>
+        </div>
+
+        <pre><code>type QuotaDrainEvent = {
+  eventId: string;
+  providerRunId: string;
+  provider: CapabilityProvider;
+  poolId: string | null;
+  detectedAt: string;
+  resetsAt: string | null;
+  confidence: "measured" | "last-known" | "vendor-error";
+};</code></pre>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Condition</th><th>Communication action</th><th>Router interaction</th></tr></thead>
+            <tbody>
+              <tr><td>Reset is within the quota policy’s hold window</td><td>Pause or mark held at a safe boundary; retain the provider run and terminal; schedule one idempotent resume wake.</td><td>None</td></tr>
+              <tr><td>Reset is outside the hold window</td><td>Freeze the source run, build a handoff, and stop the source provider after the handoff evidence is durable.</td><td>Request one replacement for the same task, excluding the drained pool until its reset.</td></tr>
+              <tr><td>Unmetered provider reports quota/billing exhaustion</td><td>Build the same handoff; there is no reset-based hold without a reset time.</td><td>Request a replacement and report the source as vendor-error unavailable.</td></tr>
+              <tr><td>No replacement can launch</td><td>Preserve the branch and handoff bundle; write a bounded episodic memory pointing to them.</td><td>Record <code>no-candidate</code>; do not invent a model.</td></tr>
+              <tr><td>Reset time passes</td><td>Revalidate quota, provider-run identity, capability epoch, and foreground state before the resume wake.</td><td>None unless the original run cannot resume.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Quota state does not travel as prose to the provider. The hold reason, reset time, and source reading remain typed daemon state. Only the bounded “continue after reset” instruction crosses the provider boundary.</p>
+      </div>
+    </section>
+
+    <section id="handoff">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">09</p><h2>Handoff construction</h2></div>
+          <p>A handoff is a frozen evidence bundle plus a bounded summary. It is not a copied terminal transcript.</p>
+        </div>
+
+        <pre><code>type HandoffBundle = {
+  handoffId: string;
+  sourceRunId: string;
+  reason: "quota-drain" | "capability-wall" | "crash" | "operator";
+  originalTaskRef: ExactContentRef;
+  requirementRefs: ExactContentRef[];
+  branch: { name: string; base: string; head: string };
+  worktree: {
+    dirtyPaths: MeasuredPath[];
+    untrackedPaths: MeasuredPath[];
+    commits: MeasuredCommit[];
+  };
+  messagesThrough: number;
+  pendingMessageIds: string[];
+  memoryRefs: MemoryRef[];
+  activity: {
+    providerEventRefs: EvidenceRef[];
+    terminalOutputRanges: OutputRangeRef[];
+    providerTranscriptRefs: EvidenceRef[];
+    statusReportRef: EvidenceRef | null;
+  };
+  summary: {
+    goal: string;
+    done: string[];
+    remaining: string[];
+    decisions: string[];
+    failedApproaches: string[];
+    uncertainty: string[];
+    nextAction: string | null;
+    provenance: "agent" | "generated" | "fallback";
+  };
+  completeness: "complete" | "partial" | "unknown";
+  createdAt: string;
+};</code></pre>
+
+        <h3>Freeze and build sequence</h3>
+        <ol>
+          <li>Fence new writes for the source capability epoch.</li>
+          <li>Stop or pause the exact provider foreground group at a known boundary.</li>
+          <li>Record the provider-event, terminal-output, and provider-transcript high-waters.</li>
+          <li>Measure branch, head, commits, dirty paths, untracked paths, and recorded tests.</li>
+          <li>Collect the original task, later requirements, durable messages, accepted memory changes, and latest agent status.</li>
+          <li>Generate a bounded summary from those sources. Store its provenance and evidence references.</li>
+          <li>Persist the handoff before stopping the source terminal or starting the replacement.</li>
+          <li>Pass the exact task and handoff ID to the replacement launch. The replacement verifies the branch and evidence before writing.</li>
+        </ol>
+
+        <h3>Failure behavior</h3>
+        <ul>
+          <li>If the source provider is already dead, continue from terminal retention, provider transcript, messages, memory, and git state.</li>
+          <li>If generated summarization fails, use the latest agent status plus a deterministic bounded terminal tail and mark provenance <code>fallback</code>.</li>
+          <li>If terminal output has a gap, mark the handoff partial; do not block preservation.</li>
+          <li>If worktree measurement fails, preserve the worktree and mark completeness unknown. Never delete it.</li>
+          <li>A replacement acknowledgement records pickup; it does not mark the task complete.</li>
         </ul>
       </div>
-      <div class="endnote"><span>Hive · Communication Fabric</span><span>Durable messages · bounded context · measured receipt</span></div>
-    </div>
-  </footer>
+    </section>
+
+    <section id="providers">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">10</p><h2>Provider capability contract</h2></div>
+          <p>Use hooks or native events wherever the provider supports them. The universal fallback remains terminal observation plus foreground process identity.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Provider</th><th>Structured source</th><th>Hive integration decision</th><th>Required fallback</th></tr></thead>
+            <tbody>
+              <tr><td>Claude</td><td>Lifecycle hooks and bound transcript</td><td>Keep the existing hook path; emit normalized ProviderEvents.</td><td>Terminal output and process state</td></tr>
+              <tr><td>Codex</td><td>Hooks/app-server events and bound rollout</td><td>Keep the existing structured path; emit normalized ProviderEvents.</td><td>Terminal output and process state</td></tr>
+              <tr><td>Grok</td><td>Native project/plugin lifecycle hooks and session update/transcript telemetry</td><td>Add Hive-managed <code>.grok/hooks/</code> lifecycle hooks and normalize both hooks and the existing update stream. Establish project-hook trust during launch without importing unrelated user or Claude hooks.</td><td>Terminal output and process state</td></tr>
+              <tr><td>Kimi</td><td><code>kimi web</code> REST (prompts / steer / status / transcript) and session <code>wire.jsonl</code> — measured live 2026-07-24, undocumented</td><td>Native web delivery plus the transcript reader; NO hooks — kimi hooks are global-static config (<code>~/.kimi-code/config.toml</code>) and cannot carry per-run identity, would fire from the user's own sessions, and must not be written by Hive. A POSTed prompt is a real user turn in the live TUI (proven); <code>prompts:steer</code> is a vendor-native steer channel; <code>/status</code> gives busy + context usage. Terminal submission stays the required fallback.</td><td>Terminal output and process state</td></tr>
+              <tr><td>OpenCode</td><td>JavaScript/TypeScript plugin events</td><td>Add a Hive-managed project plugin that emits normalized ProviderEvents.</td><td>Terminal output and process state</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Normalized event</h3>
+        <pre><code>type ProviderEvent = {
+  eventId: string;
+  providerRunId: string;
+  provider: CapabilityProvider;
+  capabilityEpoch: number;
+  conversationId: string | null;
+  kind:
+    | "run-started"
+    | "turn-started"
+    | "tool-started"
+    | "tool-finished"
+    | "approval-waiting"
+    | "turn-idle"
+    | "turn-failed"
+    | "interrupted"
+    | "compacted"
+    | "run-ended";
+  occurredAt: string;
+  toolName: string | null;
+  inputDigest: string | null;
+};</code></pre>
+
+        <h3>Adapter descriptor</h3>
+        <pre><code>type ProviderCommunicationCapabilities = {
+  provider: CapabilityProvider;
+  eventSource: "hooks" | "native" | "transcript" | "none";
+  nativeDelivery: boolean;
+  toolBoundaryEvents: boolean;
+  turnBoundaryEvents: boolean;
+  transcriptReader: boolean;
+  nativeCancel: boolean;
+  conversationResume: boolean;
+};</code></pre>
+
+        <h3>Hook ingestion rules</h3>
+        <ul>
+          <li>The launch adapter gives the hook a per-run endpoint and credential; callers cannot supply actor or run identity in ordinary prompt text.</li>
+          <li>The daemon accepts only the active ProviderRun’s run ID, provider, capability epoch, and conversation binding when present.</li>
+          <li>The hook sends event metadata and digests by default, not full prompts, reasoning, or tool output.</li>
+          <li>Hook delivery is fast and fail-open from the provider’s perspective. If the daemon is unavailable, the hook exits successfully and Hive uses terminal/process evidence; no second hook queue is introduced.</li>
+          <li>Grok hook configuration and the OpenCode plugin are Hive-managed launch inputs. They must not overwrite unrelated user hooks or plugins. Kimi is excluded: its hooks are global-static and unusable for per-run binding; its normalized events come from the transcript/status reader.</li>
+        </ul>
+
+        <p>Adapters return the descriptor from measured implementation support. Delivery and recovery branch on the descriptor, not on hand-written provider lists scattered through the daemon. A new provider must compile-fail until its descriptor and terminal fallback tests exist.</p>
+      </div>
+    </section>
+
+    <section id="context-economy">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">11</p><h2>Context economy without information loss</h2></div>
+          <p>Hive minimizes text placed into provider context. It does not minimize the durable evidence available to the agent.</p>
+        </div>
+
+        <h3>Two distinct planes</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Plane</th><th>Contains</th><th>Limit rule</th></tr></thead>
+            <tbody>
+              <tr><td><strong>Durable information</strong></td><td>Exact tasks, message bodies, status rows, memory, terminal ranges, provider transcripts, commits, files, test evidence, and handoff references.</td><td>Existing retention and authorization rules apply. Model-context budgets never truncate or delete this plane.</td></tr>
+              <tr><td><strong>Context projection</strong></td><td>The task-specific bootstrap, message previews, activity deltas, selected memory, and handoff summary submitted to a provider.</td><td>Bounded by type. Overflow remains pullable from the durable plane.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <pre><code>type ContextProjection = {
+  projectionId: string;
+  providerRunId: string;
+  purpose: "bootstrap" | "message-batch" | "control" | "handoff";
+  body: string;
+  sourceRefs: ExactContentRef[];
+  sourceDigests: string[];
+  omitted: { sources: number; bytes: number };
+  complete: boolean;
+};</code></pre>
+
+        <p><code>ContextProjection</code> is a transient submission description, not a second content store. The referenced task, message, memory, output, transcript, or handoff remains authoritative.</p>
+
+        <h3>Bootstrap diet</h3>
+        <ol>
+          <li>Always include the exact task, run identity, worktree, authority posture, and the minimum reporting/landing contract.</li>
+          <li>Include only task-selected documentation, memory, graph evidence, and provider caveats. Everything else is a reference that the agent can retrieve.</li>
+          <li>Remove repeated prose when the rule is already daemon-enforced. Put operation-specific semantics in the relevant tool description instead of every spawn prompt.</li>
+          <li>Keep a concise behavioral rule only when the agent must exercise judgment and Hive cannot enforce the decision mechanically.</li>
+          <li>Category-specific contracts appear only for that category. A summarizer does not receive reviewer procedure; a reader does not receive writer landing procedure.</li>
+        </ol>
+
+        <h3>Communication diet</h3>
+        <ul>
+          <li>Provider hooks, process events, git changes, and routine phase updates modify projections without creating a model turn.</li>
+          <li>An agent reports semantic state on a transition, not on a timer: blocked, decision required, capability escalation, complete, or failed. Intermediate narration is passive observation.</li>
+          <li><code>hive_update_status</code> carries a bounded summary and evidence references. Detailed reports live in durable messages or artifacts and are pulled only when needed.</li>
+          <li>A compact completion or blocker notification may wake the Queen; the underlying status, message, branch, and evidence remain separately retrievable.</li>
+          <li>Do not append the same task-matching memory on every wake. Task-relevant memory is selected once for bootstrap or handoff; later memory is pull-based unless a new, directly relevant warning requires an explicit system message.</li>
+          <li>Do not repeatedly summarize full terminal output. Project only the delta after the last consumed cursor and keep exact output-range references.</li>
+        </ul>
+
+        <h3>Lossless overflow rules</h3>
+        <ol>
+          <li>Store exact authorized content before producing its bounded representation.</li>
+          <li>Preserve the beginning and end of free-form reports when a preview must omit the middle; report the omitted byte count and exact retrieval reference.</li>
+          <li>Never summarize or batch away typed control intent, target run identity, capability epoch, deadline, or acknowledgement requirement.</li>
+          <li>An oversized control is rejected before submission with a request to shorten its command body and reference supporting evidence. It is never silently truncated into a different command.</li>
+          <li>Retrieval is paged and bounded, but repeated authorized reads can reach the complete source. A context limit may defer information; it may not make information unreachable.</li>
+          <li>Summaries are navigation aids. When a decision depends on an omitted fact, the agent must retrieve and verify the referenced source.</li>
+        </ol>
+
+        <h3>Capability preservation</h3>
+        <ul>
+          <li>Context budgeting does not change the provider adapter’s tool set, filesystem/network posture, MCP servers, message priorities, control operations, memory access, terminal observation authority, or handoff/recovery behavior.</li>
+          <li>Lazy or pull-based context changes when information is loaded, not whether authorized information or tools exist.</li>
+          <li>Provider conformance tests compare effective tools, permissions, delivery priorities, retrieval reachability, and recovery operations before and after context limiting.</li>
+        </ul>
+
+        <h3>Budgets and measurement</h3>
+        <ul>
+          <li>Use a small set of implementation constants by projection purpose, measured in UTF-8 bytes and estimated provider tokens. Do not introduce per-provider or per-user tuning knobs until measurements prove one is necessary.</li>
+          <li>Measure current bootstrap and wake distributions before choosing the constants. Set the common-case budget high enough to avoid a fetch round trip while still bounding worst-case context.</li>
+          <li>Record only aggregate projection size, omitted counts, and follow-up retrievals for tuning. Do not duplicate prompt or message content into telemetry.</li>
+          <li>A budget change requires conformance tests proving exact-source retrieval and capability equivalence; a lower token count alone is not success.</li>
+        </ul>
+
+        <p><strong>Success condition:</strong> routine observation consumes zero provider tokens; queued normal messages share one bounded turn; unchanged memory is not re-injected; and every omitted authorized fact remains reachable from an exact reference without changing agent capability.</p>
+      </div>
+    </section>
+
+    <section id="interfaces">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">12</p><h2>Service interfaces</h2></div>
+          <p>These are daemon-internal interfaces first. Expose tools only where the Queen or operator needs them.</p>
+        </div>
+
+        <pre><code>interface CommunicationService {
+  acceptProviderEvent(event: ProviderEvent):
+    Promise&lt;"accepted" | "duplicate" | "stale-run" | "rejected"&gt;;
+
+  observeAgent(agentId: string, after?: ObservationCursor):
+    Promise&lt;ActivitySnapshot&gt;;
+
+  observeFleet(after?: FleetObservationCursor):
+    Promise&lt;FleetActivityDelta&gt;;
+
+  send(messageId: string):
+    Promise&lt;MessageProjection&gt;;
+
+  control(request: ProviderControlRequest):
+    Promise&lt;ProviderControlResult&gt;;
+
+  buildHandoff(request: HandoffRequest):
+    Promise&lt;HandoffBundle&gt;;
+
+  acknowledgePickup(handoffId: string, targetRunId: string):
+    Promise&lt;HandoffProjection&gt;;
+}</code></pre>
+
+        <p>Keep the public surface small:</p>
+        <ul>
+          <li><code>hive_status</code> consumes fleet activity deltas for normal Queen monitoring.</li>
+          <li><code>hive_terminal_observe</code> remains the explicitly authorized raw diagnostic view.</li>
+          <li><code>hive_send</code> retains current priority semantics and returns truthful delivery state.</li>
+          <li>Quota and recovery call internal <code>control</code> and <code>buildHandoff</code>; they do not synthesize terminal keystrokes themselves.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="implementation">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">13</p><h2>Implementation order</h2></div>
+          <p>Each phase is independently testable. Do not begin the router refactor until C5 passes.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Phase</th><th>Change</th><th>Exit condition</th></tr></thead>
+            <tbody>
+              <tr><td><strong>C0 · Identity</strong></td><td>Add ProviderRun; rename shell evidence; expose foreground identity; distinguish shell-idle from terminal death.</td><td>Provider exit leaves zsh alive while the agent run is reported exited.</td></tr>
+              <tr><td><strong>C1 · Safe input</strong></td><td>Add run-bound atomic <code>writeAutomated</code>; record MessageAttempt; retain composer exclusion.</td><td>A provider exit racing submission writes zero bytes to zsh.</td></tr>
+              <tr><td><strong>C2 · Observation</strong></td><td>Normalize Claude/Codex structured events, add Grok lifecycle hooks plus the OpenCode plugin, add the Kimi transcript/status reader, normalize their native streams, and build ActivitySnapshot with terminal, process, git, transcript, and status fallbacks.</td><td>The Queen can obtain bounded fleet progress without waking an agent; every provider survives hook loss.</td></tr>
+              <tr><td><strong>C3 · Context economy</strong></td><td>Shrink bootstrap repetition, make routine status silent, batch normal messages, stop repeated memory injection, and add lossless bounded projections.</td><td>Hive-added context is bounded; every omission has an exact authorized retrieval path; provider capabilities are unchanged.</td></tr>
+              <tr><td><strong>C4 · Control and quota</strong></td><td>Expose foreground-group pause/stop; wire quota hold/resume and drain events to communication.</td><td>Holding or replacing a provider preserves the terminal and worktree.</td></tr>
+              <tr><td><strong>C5 · Handoff</strong></td><td>Persist HandoffBundle; build replacement context; acknowledge pickup; preserve on failure.</td><td>A different provider resumes from the bundle with no status query to the source agent.</td></tr>
+              <tr><td><strong>C6 · Cleanup</strong></td><td>Remove old process-equals-terminal assumptions, duplicated provider branches, repeated prompt prose, repeated wake memory, and optimistic injection wording.</td><td>Router-readiness checklist passes.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="verification">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">14</p><h2>Acceptance tests</h2></div>
+        </div>
+
+        <ol>
+          <li>Run each of the five providers under zsh; exit the provider; verify the same terminal becomes <code>shell-idle</code>.</li>
+          <li>Exit a provider between daemon preflight and sessiond commit; verify zero message bytes reach zsh and the message remains queued.</li>
+          <li>Start a second provider in the same terminal; verify a message bound to the first run cannot be delivered to it.</li>
+          <li>Start a vendor CLI manually at zsh; verify Hive reports <code>unmanaged</code> and grants no agent authority.</li>
+          <li>Pause and resume a foreground provider; verify the PID/start token/group remain the same and zsh remains alive.</li>
+          <li>Stop a foreground provider; verify zsh remains. Terminate the terminal separately; verify the whole session ends.</li>
+          <li>Hold a quota-drained run through a near reset; verify exactly one revalidated resume wake.</li>
+          <li>Drain a provider beyond the hold window; verify the handoff is durable before source shutdown and excludes the drained pool until reset.</li>
+          <li>Kill a provider without a final status report; verify handoff uses terminal output, provider telemetry where available, messages, memory, and measured git state.</li>
+          <li>Force a terminal retention gap and summarizer failure; verify preservation succeeds with partial/fallback provenance.</li>
+          <li>Observe all active agents from the Queen; verify no input claim, provider turn, delivery event, or quota usage is caused by observation.</li>
+          <li>For Kimi, verify transcript turn/step/frame states, tool frames, and the /status busy flag map to the normalized event set, a POSTed prompt lands as a real user turn in the live TUI, prompts:steer delivers mid-turn, and delivery degrades to terminal submission when the web surface is absent.</li>
+          <li>For Grok, verify Hive-managed project hooks are trusted for the launched worktree, unrelated compatibility hooks remain disabled, and lifecycle events map to the normalized event set.</li>
+          <li>For OpenCode, verify session, message, tool, permission, and compaction plugin events map to the normalized event set.</li>
+          <li>Send duplicate, delayed, wrong-epoch, and old-run hook events; verify duplicates are idempotent, stale events cannot regress state, and wrong bindings are rejected.</li>
+          <li>Disable or break every provider’s structured event source; verify activity and handoff degrade to terminal/process evidence without stopping the agent.</li>
+          <li>Place secrets and control-like text in terminal output; verify summaries redact known secret patterns and the text never executes or changes authority.</li>
+          <li>Run provider capability contract tests over the exhaustive provider union; adding a provider without a descriptor must fail compilation or schema validation.</li>
+          <li>Store an oversized normal message; verify its bounded preview reports omission and retrieves the byte-identical durable body by reference.</li>
+          <li>Queue several normal messages for one boundary; verify one provider turn carries ordered IDs and previews while every message retains independent delivery state.</li>
+          <li>Mix normal, steer, urgent, and critical traffic; verify control intent, run identity, epoch, deadline, and acknowledgement requirements are never truncated or hidden in a normal batch.</li>
+          <li>Wake an agent repeatedly without a memory change; verify unchanged task-matching memory is not re-injected.</li>
+          <li>Compare each provider before and after context limiting; verify identical authorized tools, permissions, MCP access, message priorities, control operations, source retrieval, and recovery behavior.</li>
+          <li>Omit sources from bootstrap and handoff projections under a forced low budget; verify the agent can page through every authorized source and validate its digest.</li>
+          <li>Observe routine hook, process, git, and phase activity; verify it updates ActivitySnapshot without creating provider input or token usage.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="router-ready">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">15</p><h2>Router-ready boundary</h2></div>
+          <p>After this rebuild, the router has one job: select one launch candidate from the models the user enabled and the launch gate accepts. <a href="hive-router.html">The router technical specification</a> defines the governing policy and selection algorithm.</p>
+        </div>
+
+        <h3>Expected router policy</h3>
+        <ul>
+          <li><strong>User preference:</strong> every enabled candidate has an integer weight from 1 through 100. Weighted selection favors higher values without turning preference into a strict fallback chain.</li>
+          <li><strong>Hive choice:</strong> every enabled candidate has equal weight. Work is spread across the available candidates.</li>
+          <li><strong>Disablement:</strong> zero is not a routing weight. A model is excluded through the existing explicit enabled/disabled control.</li>
+          <li><strong>Quota:</strong> remaining quota does not continuously rewrite weights. A pool proven unable to run is temporarily unavailable until its reset or recovery; unknown usage receives no invented score.</li>
+          <li><strong>Task fit:</strong> required capabilities, minimum context, and supported effort filter candidates before weighting. Communication reports capability escalation as an outcome; it does not predict token cost from task prose.</li>
+        </ul>
+
+        <h3>Router supplies</h3>
+        <pre><code>type LaunchDecision = {
+  decisionId: string;
+  provider: CapabilityProvider;
+  model: string;
+  effort: string | null;
+  reason: "explicit" | "user-weight" | "hive-equal" | "fallback";
+};</code></pre>
+
+        <h3>Communication supplies back</h3>
+        <pre><code>type RunOutcome = {
+  decisionId: string;
+  providerRunId: string;
+  provider: CapabilityProvider;
+  model: string;
+  taskCategory: string;
+  outcome:
+    | "completed"
+    | "quota-drained"
+    | "capability-escalated"
+    | "launch-failed"
+    | "crashed"
+    | "stopped";
+  handoffId: string | null;
+  startedAt: string;
+  endedAt: string;
+};</code></pre>
+
+        <h3>Ownership boundary</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Concern</th><th>Owner</th></tr></thead>
+            <tbody>
+              <tr><td>Provider/model discovery, enabled state, model capability, and effort validation</td><td>Authorized launch/model inventory</td></tr>
+              <tr><td>Usage readings, reset times, drain detection, and temporary exhausted-pool exclusion</td><td>Quota lifecycle</td></tr>
+              <tr><td>User weights or equal-weight Hive choice</td><td>Router</td></tr>
+              <tr><td>Terminal, provider-run identity, observation, delivery, control, and handoff</td><td>Communication</td></tr>
+              <tr><td>Branch, commits, dirty state, and tests</td><td>Git/worktree measurement</td></tr>
+              <tr><td>Durable project knowledge</td><td>HiveMemory</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Readiness checklist</h3>
+        <ul>
+          <li>The router does not inspect terminal processes or transcripts.</li>
+          <li>The router does not send messages, pause agents, or build handoffs.</li>
+          <li>Communication does not assign weights, rank models, or estimate future task usage.</li>
+          <li>Quota exhaustion does not destroy work and produces a typed run outcome.</li>
+          <li>Every run outcome is attributable to the exact launch decision, provider run, provider, model, and task category.</li>
+          <li>All five providers share the same fallback contract; richer vendor support only improves evidence.</li>
+        </ul>
+
+        <p><strong>Gate:</strong> begin the router refactor only after the acceptance tests pass and these ownership boundaries are true in code. The router can then be simplified without also solving terminal races, monitoring, quota recovery, or context transfer.</p>
+      </div>
+    </section>
+  </main>
 </body>
 </html>

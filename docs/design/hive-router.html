@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en" class="doc-terminal doc-hierarchy">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Hive Router — Technical Specification</title>
+  <link rel="stylesheet" href="hive-design.css">
+</head>
+<body>
+  <header class="shell topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
+    <div class="doc-meta">ROUTER REFACTOR · TECHNICAL SPECIFICATION · 2026-07-24</div>
+  </header>
+
+  <main>
+    <div class="shell">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Model routing · post quota lifecycle and communication rebuild</p>
+          <h1>Preference without lock-in. <span>Distribution without hidden scoring.</span></h1>
+          <p class="hero-copy">The new router chooses one exact provider, model, and effort from a task’s eligible candidates. User mode applies integer relative weights. Hive mode gives every candidate equal weight. A smooth weighted scheduler prevents random streaks, while quota and communication handle proven drain, hold, and handoff outside the selection algorithm.</p>
+        </div>
+        <aside class="hero-aside" aria-label="Router decision summary">
+          <p class="kicker">Core decision</p>
+          <h2>Filter facts first. Distribute second. Launch through one gate.</h2>
+          <p>No ordered fallback ladder, quota-headroom score, inferred model strength, price model, task-token prediction, or outcome-learning loop belongs in the router.</p>
+          <div class="decision-line">Selection unit: exact provider + model + effort · weight: integer 1–100 · zero means disabled elsewhere</div>
+        </aside>
+      </div>
+
+      <nav aria-label="Document contents">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#status">Status and prerequisites</a></li>
+          <li><a href="#decisions">Decisions and non-goals</a></li>
+          <li><a href="#architecture">Architecture boundary</a></li>
+          <li><a href="#policy">Policy schema</a></li>
+          <li><a href="#eligibility">Candidate eligibility</a></li>
+          <li><a href="#selection">Weighted fair selection</a></li>
+          <li><a href="#spawn-flow">Spawn sequence</a></li>
+          <li><a href="#quota">Quota contract</a></li>
+          <li><a href="#handoff">Drain and handoff sequence</a></li>
+          <li><a href="#persistence">Persistence and concurrency</a></li>
+          <li><a href="#failures">Failure semantics</a></li>
+          <li><a href="#migration">Policy migration</a></li>
+          <li><a href="#interfaces">Service interfaces</a></li>
+          <li><a href="#implementation">Implementation order</a></li>
+          <li><a href="#verification">Acceptance tests</a></li>
+          <li><a href="#deletions">Required simplification</a></li>
+        </ol>
+      </nav>
+    </div>
+
+    <section id="status">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">01</p><h2>Status and prerequisites</h2></div>
+          <p>This specification is the third change in the required sequence. It consumes the earlier contracts; it does not reimplement them.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Order</th><th>Prerequisite</th><th>What the router receives</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><a href="quota-lifecycle-redesign.html">Quota lifecycle redesign</a></td><td>Provider usage observations, proven drain events, reset facts, and temporary pool exclusions. No ranking score.</td></tr>
+              <tr><td>2</td><td><a href="hive-communication.html">Communication rebuild</a></td><td>Provider-run identity, passive activity, truthful delivery, hold/resume, durable handoff, and typed run outcomes.</td></tr>
+              <tr><td>3</td><td><strong>This router refactor</strong></td><td>One small policy reader, eligibility pass, fair selector, launch decision, and outcome attribution.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warn"><strong>Prerequisite reconciliation.</strong> The quota draft currently permits headroom-based spawn ranking. This router forbids it. Quota may observe, hold, and temporarily exclude a pool after a proven drain; it may not continuously alter selection weights. The quota implementation must expose that narrower contract before this router lands.</div>
+      </div>
+    </section>
+
+    <section id="decisions">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">02</p><h2>Decisions and non-goals</h2></div>
+          <p>The router is intentionally a dispatcher, not a planner or optimization system.</p>
+        </div>
+
+        <div class="principles" aria-label="Router principles">
+          <article class="principle"><span class="num">R1 / EXACT</span><strong>Exact candidates only</strong><p>Every candidate names a provider, discovered model, and effort intent. No vendor default or name-shape inference.</p></article>
+          <article class="principle"><span class="num">R2 / USER</span><strong>User weights are relative</strong><p>Each candidate has an integer weight from 1 through 100. Values need not add to 100.</p></article>
+          <article class="principle"><span class="num">R3 / HIVE</span><strong>Hive means equal</strong><p>Hive mode uses effective weight 1 for every eligible candidate and preserves stored user weights for later use.</p></article>
+          <article class="principle"><span class="num">R4 / FAIR</span><strong>No random streaks</strong><p>Smooth weighted round-robin follows the requested ratio without repeatedly hammering one route by chance.</p></article>
+          <article class="principle"><span class="num">R5 / FACTS</span><strong>Gates filter; they do not score</strong><p>Consent, discovery, fit, context, effort, entitlement, health, and proven exclusions are yes/no facts.</p></article>
+          <article class="principle"><span class="num">R6 / OUTCOME</span><strong>Wrong choices hand off</strong><p>The router does not predict task token cost. Communication preserves work and routes a replacement after a drain or capability wall.</p></article>
+        </div>
+
+        <div class="split">
+          <article class="panel">
+            <h3>In scope</h3>
+            <ul>
+              <li>Resolve the task category to one configured candidate set.</li>
+              <li>Apply the existing authorized launch gates to every candidate.</li>
+              <li>Select with user weights or equal Hive weights.</li>
+              <li>Persist enough balance state to avoid streaks across restarts.</li>
+              <li>Emit an attributable launch decision and bounded refusal reasons.</li>
+              <li>Reroute a handoff while excluding its proven-drained quota pool.</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <h3>Not in scope</h3>
+            <ul>
+              <li>Price, value, quality, benchmark, latency, or quota-headroom scoring.</li>
+              <li>Estimating tokens from task prose or predicting whether a run will fit in a quota window.</li>
+              <li>Automatically changing weights from outcomes, escalations, or memory.</li>
+              <li>Choosing task categories, decomposing work, or deciding handoff timing.</li>
+              <li>Provider launch commands, terminal state, message delivery, or recovery.</li>
+              <li>Ensembles, voting, shadow runs, speculative launches, or parallel attempts.</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">03</p><h2>Architecture boundary</h2></div>
+          <p>Each concern contributes one narrow fact. Only the selector mutates distribution state.</p>
+        </div>
+
+        <figure class="diagram" aria-label="Router architecture showing task request, policy resolution, inventory and availability gates, weighted selector, launch decision, agent factory, and communication outcomes">
+          <svg viewBox="0 0 1160 610" role="img" aria-labelledby="router-architecture-title router-architecture-desc">
+            <title id="router-architecture-title">Hive router architecture</title>
+            <desc id="router-architecture-desc">A task request resolves one route policy. Model inventory, authorization, workflow constraints, route health, and proven quota exclusions filter its candidates. A smooth weighted selector chooses one candidate and records a launch decision. The agent factory launches it. Communication returns a run outcome and may request a handoff route without directly changing weights.</desc>
+            <defs>
+              <marker id="r-arch-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/></marker>
+              <marker id="r-arch-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/></marker>
+              <marker id="r-arch-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--purple)"/></marker>
+            </defs>
+
+            <text x="34" y="34" class="svg-label svg-muted">One path · no hidden scoring · one exact launch</text>
+
+            <rect x="34" y="62" width="210" height="78" rx="14" class="node node-engineer"/>
+            <text x="139" y="93" text-anchor="middle" class="svg-title">Task request</text>
+            <text x="139" y="116" text-anchor="middle" class="svg-copy">category · requirements · optional pin</text>
+
+            <rect x="292" y="62" width="220" height="78" rx="14" class="node node-queen"/>
+            <text x="402" y="93" text-anchor="middle" class="svg-title">Resolve route set</text>
+            <text x="402" y="116" text-anchor="middle" class="svg-copy">category override, else global</text>
+
+            <rect x="558" y="62" width="230" height="78" rx="14" class="node node-review"/>
+            <text x="673" y="93" text-anchor="middle" class="svg-title">Eligibility pass</text>
+            <text x="673" y="116" text-anchor="middle" class="svg-copy">facts only · reasons retained</text>
+
+            <rect x="834" y="62" width="276" height="78" rx="14" class="node node-lead"/>
+            <text x="972" y="93" text-anchor="middle" class="svg-title">Smooth weighted selector</text>
+            <text x="972" y="116" text-anchor="middle" class="svg-copy">user weight or equal weight · atomic</text>
+
+            <line x1="244" y1="101" x2="284" y2="101" class="connector" marker-end="url(#r-arch-arrow)"/>
+            <line x1="512" y1="101" x2="550" y2="101" class="connector" marker-end="url(#r-arch-arrow)"/>
+            <line x1="788" y1="101" x2="826" y2="101" class="connector" marker-end="url(#r-arch-arrow)"/>
+
+            <rect x="60" y="218" width="210" height="68" rx="12" class="node node-worker"/>
+            <text x="165" y="246" text-anchor="middle" class="svg-title">Policy store</text>
+            <text x="165" y="267" text-anchor="middle" class="svg-copy">candidate set · mode · weights</text>
+
+            <rect x="304" y="218" width="210" height="68" rx="12" class="node node-worker"/>
+            <text x="409" y="246" text-anchor="middle" class="svg-title">Model inventory</text>
+            <text x="409" y="267" text-anchor="middle" class="svg-copy">catalog · entitlement · context</text>
+
+            <rect x="548" y="218" width="210" height="68" rx="12" class="node node-worker"/>
+            <text x="653" y="246" text-anchor="middle" class="svg-title">Workflow constraints</text>
+            <text x="653" y="267" text-anchor="middle" class="svg-copy">category · reviewer separation</text>
+
+            <rect x="792" y="218" width="210" height="68" rx="12" class="node node-worker"/>
+            <text x="897" y="246" text-anchor="middle" class="svg-title">Availability facts</text>
+            <text x="897" y="267" text-anchor="middle" class="svg-copy">health · proven pool exclusion</text>
+
+            <line x1="165" y1="218" x2="165" y2="174" class="connector-dashed"/>
+            <line x1="165" y1="174" x2="402" y2="174" class="connector-dashed"/>
+            <line x1="402" y1="174" x2="402" y2="148" class="connector-dashed" marker-end="url(#r-arch-purple)"/>
+            <line x1="409" y1="218" x2="409" y2="190" class="connector-dashed"/>
+            <line x1="409" y1="190" x2="673" y2="190" class="connector-dashed"/>
+            <line x1="653" y1="218" x2="653" y2="148" class="connector-dashed" marker-end="url(#r-arch-purple)"/>
+            <line x1="897" y1="218" x2="897" y2="190" class="connector-dashed"/>
+            <line x1="897" y1="190" x2="706" y2="190" class="connector-dashed"/>
+            <line x1="706" y1="190" x2="706" y2="148" class="connector-dashed" marker-end="url(#r-arch-purple)"/>
+
+            <rect x="384" y="366" width="240" height="82" rx="14" class="node node-gate"/>
+            <text x="504" y="398" text-anchor="middle" class="svg-title">LaunchDecision</text>
+            <text x="504" y="421" text-anchor="middle" class="svg-copy">policy revision · route digest</text>
+            <text x="504" y="438" text-anchor="middle" class="svg-copy">provider · model · effort · reason</text>
+
+            <rect x="684" y="366" width="240" height="82" rx="14" class="node node-worker"/>
+            <text x="804" y="398" text-anchor="middle" class="svg-title">Agent factory</text>
+            <text x="804" y="421" text-anchor="middle" class="svg-copy">provider adapter prepares launch</text>
+
+            <line x1="972" y1="140" x2="972" y2="326" class="connector-strong"/>
+            <line x1="972" y1="326" x2="504" y2="326" class="connector-strong"/>
+            <line x1="504" y1="326" x2="504" y2="358" class="connector-strong" marker-end="url(#r-arch-green)"/>
+            <line x1="624" y1="407" x2="676" y2="407" class="connector-strong" marker-end="url(#r-arch-green)"/>
+
+            <rect x="384" y="518" width="240" height="62" rx="14" class="node node-review"/>
+            <text x="504" y="545" text-anchor="middle" class="svg-title">RunOutcome</text>
+            <text x="504" y="565" text-anchor="middle" class="svg-copy">completed · drained · failed · escalated</text>
+
+            <rect x="684" y="518" width="240" height="62" rx="14" class="node node-queen"/>
+            <text x="804" y="545" text-anchor="middle" class="svg-title">Communication</text>
+            <text x="804" y="565" text-anchor="middle" class="svg-copy">observe · hold · handoff · preserve</text>
+
+            <line x1="804" y1="448" x2="804" y2="510" class="connector" marker-end="url(#r-arch-arrow)"/>
+            <line x1="684" y1="549" x2="632" y2="549" class="connector" marker-end="url(#r-arch-arrow)"/>
+            <path d="M 504 518 L 504 486 L 972 486 L 972 148" class="connector-dashed" marker-end="url(#r-arch-purple)"/>
+            <text x="718" y="476" text-anchor="middle" class="svg-small">new request only after handoff · no automatic weight mutation</text>
+          </svg>
+        </figure>
+
+        <div class="callout"><strong>Ownership test.</strong> If a proposed router function reads terminal output, quota percentages, reset distance, transcript text, token counts, prices, or branch contents, it belongs in another subsystem.</div>
+      </div>
+    </section>
+
+    <section id="policy">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">04</p><h2>Policy schema</h2></div>
+          <p>A route is an explicit set of exact candidates. Order has no meaning.</p>
+        </div>
+
+        <pre><code>type RouterMode = "user-weighted" | "hive-equal";
+
+type RouteCandidate = {
+  provider: "claude" | "codex" | "grok" | "kimi" | "opencode";
+  model: string;
+  effort:
+    | { mode: "exact"; value: string }
+    | { mode: "hive-decides" }
+    | { mode: "provider-controlled" }
+    | { mode: "none" };
+  weight: number; // integer 1..100; preserved but ignored in hive-equal
+};
+
+type RoutePolicy = {
+  mode: RouterMode;
+  candidates: RouteCandidate[];
+};
+
+type RoutingPolicyV3 = {
+  schemaVersion: 3;
+  revision: number;
+  updatedAt: string;
+  provisional: boolean;
+  providers: Partial&lt;Record&lt;CapabilityProvider, "enabled" | "disabled"&gt;&gt;;
+  models: ModelPolicy[];
+  global: RoutePolicy | null;
+  categories: Partial&lt;Record&lt;RoutingCategory, RoutePolicy&gt;&gt;;
+};</code></pre>
+
+        <h3>Resolution rules</h3>
+        <ol>
+          <li>An explicit model in the spawn request is a pin. It bypasses weighted selection but passes every launch gate. Hive never substitutes another model for a pin.</li>
+          <li>Otherwise use the exact category route when present.</li>
+          <li>If the category has no route, use <code>global</code>.</li>
+          <li>A configured category whose candidates all refuse does not append the global route. The category was an explicit boundary, not the first half of a hidden fallback chain.</li>
+          <li>If neither category nor global is configured, automatic routing refuses with <code>never-configured</code>.</li>
+        </ol>
+
+        <h3>Weight semantics</h3>
+        <ul>
+          <li>Weights are relative ratings, not percentages. <code>60, 20, 20</code> and <code>3, 1, 1</code> express the same distribution.</li>
+          <li>Weight zero is illegal. Disablement remains the explicit provider/model enablement control.</li>
+          <li>In <code>user-weighted</code>, the effective weight is the stored integer.</li>
+          <li>In <code>hive-equal</code>, every eligible candidate has effective weight 1. Stored user weights remain intact so switching modes loses no preference information.</li>
+          <li>The selection unit is an exact model target. If one provider exposes three eligible models and another exposes one, Hive-equal gives the first provider three aggregate shares. The UI must show that projected provider share; the router must not secretly normalize by provider.</li>
+        </ul>
+
+        <div class="callout warn"><strong>Shared quota pools.</strong> Model-level weighting does not imply model-level quota. A proven exclusion names a quota pool; every candidate governed by that pool is temporarily ineligible together.</div>
+      </div>
+    </section>
+
+    <section id="eligibility">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">05</p><h2>Candidate eligibility</h2></div>
+          <p>Eligibility is an ordered diagnostic pass. It produces candidates and reasons, never scores.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Gate</th><th>Accepts when</th><th>Owner</th><th>Unknown behavior</th></tr></thead>
+            <tbody>
+              <tr><td>Policy membership</td><td>The exact target is in the resolved route set.</td><td>Router policy</td><td>Not a candidate.</td></tr>
+              <tr><td>Consent</td><td>Provider and model are explicitly enabled under existing inheritance rules.</td><td>Model Control Center</td><td>Refuse; unknown is not permission.</td></tr>
+              <tr><td>Catalog resolution</td><td>The provider’s readable catalog claims the exact model or alias.</td><td>Model inventory</td><td>Refuse unless the user supplied both an explicit model and provider pin under the existing explicit-pin rule.</td></tr>
+              <tr><td>Entitlement/vendor state</td><td>The model is entitled and not vendor-hidden when those facts are known.</td><td>Model inventory</td><td>Follow the existing AuthorizedLaunch rule; do not invent entitlement.</td></tr>
+              <tr><td>Task requirements</td><td>Measured context window and required provider capabilities satisfy the request.</td><td>AuthorizedLaunch/workflow</td><td>Requirements fail closed.</td></tr>
+              <tr><td>Reviewer separation</td><td>A review candidate satisfies the workflow’s author/provider separation constraint.</td><td>Workflow</td><td>Refuse when the workflow requires separation and author identity is unknown.</td></tr>
+              <tr><td>Effort</td><td>The exact or resolved effort is supported and launchable.</td><td>Model inventory + adapter</td><td>Provider-controlled remains honest; do not manufacture a level.</td></tr>
+              <tr><td>Route health</td><td>No active launch-failure cooldown exists for the exact route.</td><td>Launch health</td><td>No cooldown means eligible.</td></tr>
+              <tr><td>Proven pool exclusion</td><td>No active exclusion from a measured drain or vendor quota/billing error governs the target.</td><td>Quota lifecycle</td><td>Unknown or unmetered remains eligible.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <pre><code>type CandidateEvaluation = {
+  candidate: RouteCandidate;
+  eligible: boolean;
+  effectiveEffort: string | null;
+  refusal: {
+    gate: string;
+    detail: string;
+    retryAt: string | null;
+  } | null;
+};</code></pre>
+
+        <p>Every candidate is evaluated once per decision. The refusal report preserves one bounded reason per candidate so “no candidate” is actionable without exposing internal stacks or repeating the same provider failure.</p>
+      </div>
+    </section>
+
+    <section id="selection">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">06</p><h2>Weighted fair selection</h2></div>
+          <p>Weighted randomness is rejected because it permits long streaks. Smooth weighted round-robin gives bounded, deterministic distribution.</p>
+        </div>
+
+        <pre><code>// Runs in one database transaction for one resolved route digest.
+for (const candidate of eligible) {
+  balance[candidate].current += effectiveWeight(candidate);
+}
+
+const selected = eligible.toSorted((left, right) =&gt;
+  balance[right].current - balance[left].current ||
+  stableCandidateKey(left).localeCompare(stableCandidateKey(right))
+)[0];
+
+balance[selected].current -= sum(eligible.map(effectiveWeight));
+persist(balance, launchDecision);
+return selected;</code></pre>
+
+        <figure class="diagram" aria-label="Smooth weighted selection example with three models weighted 60, 25, and 15">
+          <svg viewBox="0 0 1160 500" role="img" aria-labelledby="weighted-selection-title weighted-selection-desc">
+            <title id="weighted-selection-title">Smooth weighted routing example</title>
+            <desc id="weighted-selection-desc">Three eligible exact models have user weights 60, 25, and 15. Across twenty decisions the smooth scheduler distributes twelve selections to model A, five to model B, and three to model C while interleaving them to avoid long random streaks. Hive-equal changes all effective weights to one.</desc>
+
+            <text x="36" y="36" class="svg-label svg-muted">User-weighted example · A 60 · B 25 · C 15</text>
+
+            <rect x="38" y="68" width="270" height="72" rx="14" class="node node-queen"/>
+            <text x="173" y="97" text-anchor="middle" class="svg-title">Model A · Claude</text>
+            <text x="173" y="120" text-anchor="middle" class="svg-copy">weight 60 · expected share 60%</text>
+
+            <rect x="38" y="164" width="270" height="72" rx="14" class="node node-lead"/>
+            <text x="173" y="193" text-anchor="middle" class="svg-title">Model B · Codex</text>
+            <text x="173" y="216" text-anchor="middle" class="svg-copy">weight 25 · expected share 25%</text>
+
+            <rect x="38" y="260" width="270" height="72" rx="14" class="node node-review"/>
+            <text x="173" y="289" text-anchor="middle" class="svg-title">Model C · Grok</text>
+            <text x="173" y="312" text-anchor="middle" class="svg-copy">weight 15 · expected share 15%</text>
+
+            <text x="358" y="80" class="svg-label svg-muted">Twenty consecutive decisions</text>
+            <g>
+              <rect x="358" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="375" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="398" y="100" width="34" height="56" rx="7" class="node node-lead"/><text x="415" y="134" text-anchor="middle" class="svg-copy">B</text>
+              <rect x="438" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="455" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="478" y="100" width="34" height="56" rx="7" class="node node-review"/><text x="495" y="134" text-anchor="middle" class="svg-copy">C</text>
+              <rect x="518" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="535" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="558" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="575" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="598" y="100" width="34" height="56" rx="7" class="node node-lead"/><text x="615" y="134" text-anchor="middle" class="svg-copy">B</text>
+              <rect x="638" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="655" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="678" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="695" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="718" y="100" width="34" height="56" rx="7" class="node node-lead"/><text x="735" y="134" text-anchor="middle" class="svg-copy">B</text>
+              <rect x="758" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="775" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="798" y="100" width="34" height="56" rx="7" class="node node-review"/><text x="815" y="134" text-anchor="middle" class="svg-copy">C</text>
+              <rect x="838" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="855" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="878" y="100" width="34" height="56" rx="7" class="node node-lead"/><text x="895" y="134" text-anchor="middle" class="svg-copy">B</text>
+              <rect x="918" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="935" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="958" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="975" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="998" y="100" width="34" height="56" rx="7" class="node node-review"/><text x="1015" y="134" text-anchor="middle" class="svg-copy">C</text>
+              <rect x="1038" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="1055" y="134" text-anchor="middle" class="svg-copy">A</text>
+              <rect x="1078" y="100" width="34" height="56" rx="7" class="node node-lead"/><text x="1095" y="134" text-anchor="middle" class="svg-copy">B</text>
+              <rect x="1118" y="100" width="34" height="56" rx="7" class="node node-queen"/><text x="1135" y="134" text-anchor="middle" class="svg-copy">A</text>
+            </g>
+
+            <text x="358" y="205" class="svg-label svg-muted">Observed allocation after twenty</text>
+            <rect x="358" y="228" width="720" height="44" rx="10" class="node node-worker"/>
+            <rect x="358" y="228" width="432" height="44" rx="10" fill="var(--green-2)" stroke="var(--green)"/>
+            <rect x="790" y="228" width="180" height="44" fill="var(--blue-2)" stroke="var(--blue)"/>
+            <rect x="970" y="228" width="108" height="44" rx="10" fill="var(--purple-2)" stroke="var(--purple)"/>
+            <text x="574" y="256" text-anchor="middle" class="svg-copy">A · 12 selections</text>
+            <text x="880" y="256" text-anchor="middle" class="svg-copy">B · 5</text>
+            <text x="1024" y="256" text-anchor="middle" class="svg-copy">C · 3</text>
+
+            <rect x="358" y="326" width="720" height="112" rx="14" class="node node-worker"/>
+            <text x="386" y="356" class="svg-title">Hive-equal mode</text>
+            <text x="386" y="381" class="svg-copy">Effective weights become A=1, B=1, C=1. Stored 60/25/15 values remain unchanged.</text>
+            <text x="386" y="406" class="svg-copy">The schedule rotates evenly among currently eligible exact models. An excluded candidate accrues no catch-up credit.</text>
+          </svg>
+        </figure>
+
+        <h3>Scheduler rules</h3>
+        <ul>
+          <li>Only currently eligible candidates receive weight in a decision. A temporarily excluded candidate does not accumulate credit while absent.</li>
+          <li>The balance key is a digest of the resolved route mode and candidate targets, efforts, and effective weights. A real route change starts a fresh balance; unrelated policy edits do not.</li>
+          <li>Ties use a stable candidate key only to make tests and diagnostics reproducible. The accumulated balance provides rotation.</li>
+          <li>A selection counts when Hive commits a launch decision, not when the run completes. Completion speed and outcome never feed back into weights.</li>
+          <li>Explicit pins do not mutate weighted balance.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="spawn-flow">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">07</p><h2>Spawn sequence</h2></div>
+          <p>Policy, gate, selection, and launch are separate steps with one revalidation before process creation.</p>
+        </div>
+
+        <figure class="diagram" aria-label="Sequence diagram for a normal routed spawn">
+          <svg viewBox="0 0 1160 650" role="img" aria-labelledby="spawn-sequence-title spawn-sequence-desc">
+            <title id="spawn-sequence-title">Normal routed spawn sequence</title>
+            <desc id="spawn-sequence-desc">The Queen asks the router to select for a task. The router reads policy and inventory, evaluates each candidate through AuthorizedLaunch and proven exclusions, commits fair balance and a launch decision, and sends the exact decision to the agent factory. The factory prepares the provider command. Immediately before process creation, the launch gate revalidates the decision. Communication binds the resulting provider run to the decision.</desc>
+            <defs>
+              <marker id="r-seq-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/></marker>
+              <marker id="r-seq-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/></marker>
+            </defs>
+
+            <text x="112" y="40" text-anchor="middle" class="svg-title">Queen</text>
+            <text x="330" y="40" text-anchor="middle" class="svg-title">Router</text>
+            <text x="560" y="40" text-anchor="middle" class="svg-title">Policy + inventory</text>
+            <text x="790" y="40" text-anchor="middle" class="svg-title">Launch gate</text>
+            <text x="1035" y="40" text-anchor="middle" class="svg-title">Agent factory</text>
+
+            <line x1="112" y1="60" x2="112" y2="620" class="lane"/>
+            <line x1="330" y1="60" x2="330" y2="620" class="lane"/>
+            <line x1="560" y1="60" x2="560" y2="620" class="lane"/>
+            <line x1="790" y1="60" x2="790" y2="620" class="lane"/>
+            <line x1="1035" y1="60" x2="1035" y2="620" class="lane"/>
+
+            <line x1="112" y1="98" x2="322" y2="98" class="connector-strong" marker-end="url(#r-seq-green)"/>
+            <text x="217" y="88" text-anchor="middle" class="svg-copy">select(task, category, requirements)</text>
+
+            <line x1="330" y1="150" x2="552" y2="150" class="connector" marker-end="url(#r-seq-arrow)"/>
+            <text x="441" y="140" text-anchor="middle" class="svg-copy">read policy revision + route set</text>
+
+            <line x1="560" y1="198" x2="338" y2="198" class="connector" marker-end="url(#r-seq-arrow)"/>
+            <text x="449" y="188" text-anchor="middle" class="svg-copy">exact candidates + catalog facts</text>
+
+            <line x1="330" y1="250" x2="782" y2="250" class="connector" marker-end="url(#r-seq-arrow)"/>
+            <text x="556" y="240" text-anchor="middle" class="svg-copy">evaluate every candidate once</text>
+
+            <line x1="790" y1="302" x2="338" y2="302" class="connector" marker-end="url(#r-seq-arrow)"/>
+            <text x="564" y="292" text-anchor="middle" class="svg-copy">eligible set + bounded refusals</text>
+
+            <rect x="258" y="332" width="144" height="72" rx="12" class="node node-lead"/>
+            <text x="330" y="360" text-anchor="middle" class="svg-copy">atomic selection</text>
+            <text x="330" y="381" text-anchor="middle" class="svg-copy">balance + decision</text>
+
+            <line x1="330" y1="442" x2="1027" y2="442" class="connector-strong" marker-end="url(#r-seq-green)"/>
+            <text x="678" y="432" text-anchor="middle" class="svg-copy">prepare exact provider/model/effort</text>
+
+            <line x1="1035" y1="494" x2="798" y2="494" class="connector" marker-end="url(#r-seq-arrow)"/>
+            <text x="916" y="484" text-anchor="middle" class="svg-copy">revalidate immediately before launch</text>
+
+            <line x1="790" y1="542" x2="1027" y2="542" class="connector-strong" marker-end="url(#r-seq-green)"/>
+            <text x="908" y="532" text-anchor="middle" class="svg-copy">authorized or exact refusal</text>
+
+            <line x1="1035" y1="590" x2="120" y2="590" class="connector" marker-end="url(#r-seq-arrow)"/>
+            <text x="578" y="580" text-anchor="middle" class="svg-copy">ProviderRun bound to decisionId · launch result returned</text>
+          </svg>
+        </figure>
+
+        <p>If revalidation fails, that decision records <code>launch-failed</code>. The router excludes the failed route for this request and selects again from the remaining already-evaluated candidates, at most once per candidate. It does not fall through an ordered list.</p>
+      </div>
+    </section>
+
+    <section id="quota">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">08</p><h2>Quota contract</h2></div>
+          <p>Quota provides observations and proven exclusions. It never supplies a preference multiplier.</p>
+        </div>
+
+        <pre><code>type PoolExclusion = {
+  poolId: string;
+  reason: "measured-drain" | "vendor-quota-error" | "vendor-billing-error";
+  observedAt: string;
+  retryAt: string | null;
+  sourceRunId: string | null;
+  confidence: "measured" | "vendor-error";
+};</code></pre>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Quota fact</th><th>Router behavior</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>20%, 50%, or 90% used</td><td>Ignore for selection.</td><td>Continuous headroom ranking is a hidden second weighting system.</td></tr>
+              <tr><td>Usage unknown or provider unmetered</td><td>Remain eligible.</td><td>Unknown is not zero and not exhaustion.</td></tr>
+              <tr><td>Last-known reading while API is down</td><td>Do not score or filter.</td><td>Quota may use it for its own drain response under the quota policy; the router does not.</td></tr>
+              <tr><td>Measured drain or vendor quota/billing failure</td><td>Exclude every candidate governed by the proven pool until <code>retryAt</code> or explicit recovery.</td><td>Avoid immediately selecting a route that just demonstrated it cannot work.</td></tr>
+              <tr><td>Reset within the hold window</td><td>No new selection for the held run.</td><td>Quota and communication resume the existing provider run.</td></tr>
+              <tr><td>Reset outside the hold window</td><td>Select a replacement from the task route with the drained pool excluded.</td><td>The handoff preserves work; the router only chooses its next exact launch.</td></tr>
+              <tr><td>Every eligible pool excluded</td><td>Return <code>no-candidate</code> with retry facts.</td><td>Quota lifecycle decides wait versus preserve; the router does not bypass proven exclusions.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Task complexity does not become a quota estimate. A simple task may finish on little remaining usage and a complex task may not; Hive makes no speculative adjustment. If the route drains, the communication handoff is the recovery mechanism.</p>
+      </div>
+    </section>
+
+    <section id="handoff">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">09</p><h2>Drain and handoff sequence</h2></div>
+          <p>Communication freezes and preserves first. Routing happens only after the handoff is durable.</p>
+        </div>
+
+        <figure class="diagram" aria-label="Sequence diagram for quota drain and cross-provider handoff">
+          <svg viewBox="0 0 1160 690" role="img" aria-labelledby="handoff-sequence-title handoff-sequence-desc">
+            <title id="handoff-sequence-title">Quota drain and router handoff sequence</title>
+            <desc id="handoff-sequence-desc">A provider reports drain. Quota creates a pool exclusion. Communication pauses or freezes the exact run and persists a handoff. If the reset is near, communication resumes the same run without routing. If the reset is far, it requests a replacement from the router with the handoff and exclusion. The router selects fairly among remaining eligible candidates, and the factory launches the replacement. The replacement acknowledges pickup before the source is closed.</desc>
+            <defs>
+              <marker id="r-hand-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/></marker>
+              <marker id="r-hand-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/></marker>
+              <marker id="r-hand-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--amber)"/></marker>
+            </defs>
+
+            <text x="105" y="40" text-anchor="middle" class="svg-title">Provider run</text>
+            <text x="315" y="40" text-anchor="middle" class="svg-title">Quota</text>
+            <text x="555" y="40" text-anchor="middle" class="svg-title">Communication</text>
+            <text x="795" y="40" text-anchor="middle" class="svg-title">Router</text>
+            <text x="1040" y="40" text-anchor="middle" class="svg-title">Replacement</text>
+
+            <line x1="105" y1="60" x2="105" y2="660" class="lane"/>
+            <line x1="315" y1="60" x2="315" y2="660" class="lane"/>
+            <line x1="555" y1="60" x2="555" y2="660" class="lane"/>
+            <line x1="795" y1="60" x2="795" y2="660" class="lane"/>
+            <line x1="1040" y1="60" x2="1040" y2="660" class="lane"/>
+
+            <line x1="105" y1="102" x2="307" y2="102" class="connector" marker-end="url(#r-hand-arrow)"/>
+            <text x="206" y="92" text-anchor="middle" class="svg-copy">measured drain or vendor error</text>
+
+            <line x1="315" y1="154" x2="547" y2="154" class="connector-strong" marker-end="url(#r-hand-green)"/>
+            <text x="431" y="144" text-anchor="middle" class="svg-copy">PoolExclusion + reset facts</text>
+
+            <line x1="555" y1="206" x2="113" y2="206" class="connector" marker-end="url(#r-hand-arrow)"/>
+            <text x="334" y="196" text-anchor="middle" class="svg-copy">pause/freeze exact run at safe boundary</text>
+
+            <rect x="476" y="238" width="158" height="70" rx="12" class="node node-review"/>
+            <text x="555" y="266" text-anchor="middle" class="svg-copy">persist exact refs</text>
+            <text x="555" y="287" text-anchor="middle" class="svg-copy">HandoffBundle</text>
+
+            <path d="M 555 326 L 420 326 L 420 388 L 555 388" fill="none" stroke="var(--green)" stroke-width="2" marker-end="url(#r-hand-green)"/>
+            <text x="408" y="350" text-anchor="end" class="svg-small">near reset:</text>
+            <text x="408" y="367" text-anchor="end" class="svg-small">hold then resume same run</text>
+
+            <line x1="555" y1="430" x2="787" y2="430" stroke="var(--amber)" stroke-width="2" marker-end="url(#r-hand-amber)"/>
+            <text x="671" y="420" text-anchor="middle" class="svg-copy">far reset: route handoff + exclusion</text>
+
+            <rect x="716" y="462" width="158" height="70" rx="12" class="node node-lead"/>
+            <text x="795" y="490" text-anchor="middle" class="svg-copy">gate remaining</text>
+            <text x="795" y="511" text-anchor="middle" class="svg-copy">select fairly</text>
+
+            <line x1="795" y1="558" x2="1032" y2="558" class="connector-strong" marker-end="url(#r-hand-green)"/>
+            <text x="914" y="548" text-anchor="middle" class="svg-copy">LaunchDecision + handoffId</text>
+
+            <line x1="1040" y1="608" x2="563" y2="608" class="connector" marker-end="url(#r-hand-arrow)"/>
+            <text x="802" y="598" text-anchor="middle" class="svg-copy">acknowledge pickup after verifying branch and refs</text>
+
+            <line x1="555" y1="644" x2="113" y2="644" class="connector" marker-end="url(#r-hand-arrow)"/>
+            <text x="334" y="634" text-anchor="middle" class="svg-copy">close source only after durable pickup or preservation</text>
+          </svg>
+        </figure>
+
+        <p>A capability escalation follows the same shape but has no quota exclusion unless a separate quota event proves one. The router does not automatically “upgrade” a model or edit weights; workflow supplies a different category, requirements, or explicit model when authorized.</p>
+      </div>
+    </section>
+
+    <section id="persistence">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">10</p><h2>Persistence and concurrency</h2></div>
+          <p>One small balance table makes distribution deterministic across concurrent spawns and daemon restarts.</p>
+        </div>
+
+        <pre><code>type RoutingBalance = {
+  routeDigest: string;
+  candidateKey: string;
+  current: number;
+  updatedAt: string;
+};
+
+type LaunchDecision = {
+  decisionId: string;
+  requestId: string;
+  policyRevision: number;
+  routeDigest: string | null; // null for explicit pin
+  category: RoutingCategory;
+  provider: CapabilityProvider;
+  model: string;
+  effort: string | null;
+  reason: "explicit" | "user-weight" | "hive-equal" | "fallback";
+  selectedAt: string;
+};</code></pre>
+
+        <h3>Transaction boundary</h3>
+        <ol>
+          <li>Read the current policy revision and resolved route.</li>
+          <li>Evaluate eligibility outside the write transaction using one inventory/availability snapshot.</li>
+          <li>Begin an immediate database transaction.</li>
+          <li>Confirm the policy revision and availability snapshot generation are still current.</li>
+          <li>Update eligible balances, choose one candidate, and insert <code>LaunchDecision</code>.</li>
+          <li>Commit before preparing the provider launch.</li>
+        </ol>
+
+        <ul>
+          <li>A stale policy or availability generation retries selection from a fresh snapshot. It never launches a decision authored against replaced facts.</li>
+          <li><code>requestId</code> is idempotent. A retry returns the existing decision instead of consuming another fair-selection slot.</li>
+          <li>Balance values are bounded by normalization after each decision; integer weights and candidate count impose a small deterministic range.</li>
+          <li>Balance is operational state, not user preference or historical truth. Old route digests may be removed after no decision or run references them.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="failures">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">11</p><h2>Failure semantics</h2></div>
+          <p>Every failure names its owner and whether retry can change the answer.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Failure</th><th>Result</th><th>Retry behavior</th></tr></thead>
+            <tbody>
+              <tr><td>Policy missing or corrupt</td><td>Refuse automatic routing. Preserve the stored document and report the read error.</td><td>Retry only after policy repair.</td></tr>
+              <tr><td>No configured category/global route</td><td><code>never-configured</code>.</td><td>User selects Hive-equal or user-weighted candidates.</td></tr>
+              <tr><td>Every candidate fails a gate</td><td><code>no-candidate</code> plus one bounded refusal per target.</td><td>Retry after the named fact changes.</td></tr>
+              <tr><td>Policy/availability changes during selection</td><td>No decision is committed.</td><td>Automatic fresh-snapshot retry.</td></tr>
+              <tr><td>Selected route fails before provider start</td><td>Decision outcome <code>launch-failed</code>; activate exact-route health cooldown.</td><td>Select once from remaining eligible targets for this request.</td></tr>
+              <tr><td>Provider starts, then quota drains</td><td>Run outcome <code>quota-drained</code>; communication hold or handoff.</td><td>Same run resumes or a new handoff request routes with pool exclusion.</td></tr>
+              <tr><td>Provider starts, then model changes itself</td><td>Communication records observed model drift; the decision remains the requested launch identity.</td><td>Policy decides whether drift is tolerated; router never rewrites history.</td></tr>
+              <tr><td>All targets temporarily excluded</td><td><code>no-candidate</code> with nearest retry facts.</td><td>Quota lifecycle waits or preserves; no busy retry loop.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="migration">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">12</p><h2>Policy migration</h2></div>
+          <p>An ordered rank cannot be losslessly converted into a numeric preference. Hive must not invent how much more “first” meant than “second.”</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>V2 state</th><th>V3 migration</th><th>Activation</th></tr></thead>
+            <tbody>
+              <tr><td><code>auto</code> category with explicit fit candidates</td><td>Create a <code>hive-equal</code> route containing the exact candidates and efforts.</td><td>Automatic; semantics become explicitly equal.</td></tr>
+              <tr><td><code>choice</code> ordered chain</td><td>Create an inactive migration draft preserving every target, effort, and original rank. Do not manufacture weights.</td><td>The Model Control Center asks the user for integer weights, previews expected model/provider shares, then atomically activates V3.</td></tr>
+              <tr><td><code>never-configured</code></td><td>Leave category/global route null.</td><td>No automatic routing until configured.</td></tr>
+              <tr><td>Provider/model enablement</td><td>Copy byte-for-byte through schema validation.</td><td>No new consent is created.</td></tr>
+              <tr><td>Historical V2 document and events</td><td>Retain as immutable migration evidence.</td><td>Never consumed by the V3 selector after activation.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Cutover rules</h3>
+        <ul>
+          <li>V2 remains active until every used <code>choice</code> route has a confirmed V3 weight set. There is no mixed V2/V3 selection inside one decision.</li>
+          <li>The UI may suggest weights but must label them suggestions and require confirmation. It shows normalized expected share even though stored values remain 1–100 ratings.</li>
+          <li>Activation is one compare-and-set mutation against the V2 revision. A concurrent policy edit invalidates the preview.</li>
+          <li>After activation, delete ordered-chain selection code. Do not keep a permanent compatibility router.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="interfaces">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">13</p><h2>Service interfaces</h2></div>
+          <p>The router exposes selection and inspection. It does not expose quota mutation, process control, or handoff construction.</p>
+        </div>
+
+        <pre><code>interface RouterService {
+  select(request: RouteRequest): Promise&lt;
+    | { outcome: "selected"; decision: LaunchDecision }
+    | { outcome: "refused"; reason: RouteRefusal }
+  &gt;;
+
+  inspect(request: RouteInspectionRequest): Promise&lt;RouteInspection&gt;;
+
+  recordLaunchResult(
+    decisionId: string,
+    result: "started" | "launch-failed"
+  ): Promise&lt;void&gt;;
+}
+
+type RouteRequest = {
+  requestId: string;
+  category: RoutingCategory;
+  requirements: {
+    minContextTokens: number | null;
+    reviewOfProvider: CapabilityProvider | null;
+  };
+  explicit: {
+    provider: CapabilityProvider | null;
+    model: string | null;
+    effort: string | null;
+  };
+  handoffId: string | null;
+  excludedPoolIds: string[];
+};</code></pre>
+
+        <h3>Inspection response</h3>
+        <p><code>inspect</code> returns the policy revision, resolved route, effective weights, normalized expected shares, candidate evaluations, active exclusions, and current balance. It performs no selection and mutates nothing.</p>
+
+        <h3>Integration changes</h3>
+        <ul>
+          <li>The spawner calls <code>RouterService.select</code>, then passes the exact decision to <code>getAgentAdapter(provider)</code>.</li>
+          <li>The quota service no longer owns <code>routeAndReserve</code>. Its replacement supplies pool observations/exclusions and drain events only.</li>
+          <li>Communication records <code>decisionId</code> on ProviderRun and returns it on RunOutcome.</li>
+          <li>The Model Control Center edits V3 routes with revision compare-and-set and previews effective shares through <code>inspect</code>.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="implementation">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">14</p><h2>Implementation order</h2></div>
+          <p>Each phase deletes or replaces one current responsibility. Do not retain both selectors after cutover.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Phase</th><th>Change</th><th>Exit condition</th></tr></thead>
+            <tbody>
+              <tr><td><strong>R0 · Contracts</strong></td><td>Land quota pool-exclusion and communication LaunchDecision/RunOutcome boundaries; remove quota score from the interface.</td><td>The router can be tested without importing quota percentages or terminal state.</td></tr>
+              <tr><td><strong>R1 · Policy V3</strong></td><td>Add route-set schema, CAS store, validation, inspection, and inactive V2 choice migration drafts.</td><td>Every active route is exact, unordered, and fully validated.</td></tr>
+              <tr><td><strong>R2 · Eligibility</strong></td><td>Extract the existing AuthorizedLaunch checks into one exhaustive candidate evaluator.</td><td>Every provider runs the same gates and returns one bounded reason.</td></tr>
+              <tr><td><strong>R3 · Fair selector</strong></td><td>Add route digest, balance table, idempotent request, atomic smooth selection, and decision ledger.</td><td>Concurrent/restarted selections match the required distribution without streaks.</td></tr>
+              <tr><td><strong>R4 · Spawner cutover</strong></td><td>Replace chain walking and quota-owned selection with RouterService; preserve immediate pre-launch revalidation.</td><td>All normal and handoff launches use one route path.</td></tr>
+              <tr><td><strong>R5 · UI migration</strong></td><td>Replace first/second chain editing with candidate membership, mode, 1–100 weight, effort, and provider-share preview.</td><td>No UI describes preference as order or fallback.</td></tr>
+              <tr><td><strong>R6 · Delete</strong></td><td>Remove V2 chain selector, strict/spread modes, quota ranking, remaining-enabled fallback, and compatibility branches.</td><td>One selector and one policy schema remain in executable code.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="verification">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">15</p><h2>Acceptance tests</h2></div>
+          <p>Distribution tests use exact counts and bounded gaps, not “looks random.”</p>
+        </div>
+
+        <ol>
+          <li>With three eligible candidates weighted 60/25/15, run 20 decisions and verify exact 12/5/3 allocation with no candidate receiving a random burst beyond the smooth schedule.</li>
+          <li>Switch the same route to Hive-equal; verify equal allocation while the stored 60/25/15 values remain byte-identical.</li>
+          <li>Restart the daemon halfway through a schedule; verify the combined sequence equals an uninterrupted run.</li>
+          <li>Issue concurrent route requests; verify serialization produces the same counts as sequential selection and no balance update is lost.</li>
+          <li>Retry one <code>requestId</code>; verify it returns the same decision and consumes no additional selection slot.</li>
+          <li>Temporarily exclude one candidate; verify it receives no selections and accrues no catch-up burst when restored.</li>
+          <li>Exclude one shared quota pool; verify every exact model governed by that pool becomes ineligible together.</li>
+          <li>Vary quota percentages without creating an exclusion; verify the complete decision sequence remains unchanged.</li>
+          <li>Make quota unknown or use OpenCode without a quota surface; verify the candidate remains eligible and receives its configured share.</li>
+          <li>Pin an exact model; verify no substitution, no weighted-balance mutation, and the same launch gates.</li>
+          <li>Configure a category route whose candidates all refuse while global has eligible candidates; verify Hive reports category refusal and does not silently append global.</li>
+          <li>Remove the category route; verify global then becomes the resolved route.</li>
+          <li>Fail a selected route before provider start; verify one launch-failed decision, cooldown activation, and a bounded retry among remaining candidates.</li>
+          <li>Drain a running route with a near reset; verify communication holds/resumes the same run and router selection is not invoked.</li>
+          <li>Drain a running route with a far reset; verify handoff is durable before a replacement route request and the drained pool is excluded.</li>
+          <li>Force every candidate ineligible; verify one bounded reason per target and no fallback to a disabled, unknown-consent, or out-of-policy model.</li>
+          <li>Attempt to migrate a V2 ordered choice without user weights; verify V3 stays inactive and every original target, effort, and rank remains inspectable.</li>
+          <li>Add a sixth provider to <code>CapabilityProvider</code>; verify policy validation, inventory evaluation, factory registration, and provider conformance fail until the provider is handled.</li>
+          <li>Assert the router module has no imports from terminal observation, provider transcripts, token accounting, price data, git worktree inspection, or message delivery.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="deletions">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">16</p><h2>Required simplification</h2></div>
+          <p>The refactor is complete only when the old routing behaviors are removed.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Current machinery</th><th>Fate</th><th>Replacement</th></tr></thead>
+            <tbody>
+              <tr><td>Ordered category/default chains</td><td><strong>Delete after confirmed migration</strong></td><td>One unordered route set per category or global.</td></tr>
+              <tr><td><code>strict</code> versus <code>spread</code></td><td><strong>Delete</strong></td><td><code>user-weighted</code> versus <code>hive-equal</code>.</td></tr>
+              <tr><td>Quota headroom rank and rank bias</td><td><strong>Delete from selection</strong></td><td>Pool exclusion only after proven drain.</td></tr>
+              <tr><td>Category chain → default chain → remaining enabled walk</td><td><strong>Delete</strong></td><td>Resolve category once, else global once.</td></tr>
+              <tr><td>Random weighted choice</td><td><strong>Do not add</strong></td><td>Smooth weighted round-robin.</td></tr>
+              <tr><td>Task-cost and future-token estimates</td><td><strong>Do not add</strong></td><td>Handoff when reality proves the choice wrong.</td></tr>
+              <tr><td>Outcome-driven automatic weight learning</td><td><strong>Do not add</strong></td><td>Expose measured outcomes to the user; only the user changes preference.</td></tr>
+              <tr><td>Provider-specific selection branches</td><td><strong>Delete</strong></td><td>Exhaustive provider inventory, gates, and agent factory.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout"><strong>Final implementation test.</strong> A reader should be able to describe the executable router in one sentence: resolve one configured candidate set, filter it through factual gates, select fairly using user or equal weights, and record the exact decision.</div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
