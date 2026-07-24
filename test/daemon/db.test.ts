@@ -20,6 +20,7 @@ import {
   listAgentsNamed,
 } from "../../src/daemon/testing";
 import type { AgentMessage, AgentRecord, HookEvent } from "../../src/schemas";
+import { required } from "../required";
 
 const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
 process.env.HIVE_HOME = home;
@@ -416,7 +417,7 @@ describe("HiveDatabase", () => {
 
       // A later write that keeps the agent closed must not slide the instant.
       const rewritten = db.upsertAgent({
-        ...dead!,
+        ...required(dead),
         failureReason: "killed by orchestrator",
         lastEventAt: "2026-07-09T12:30:00.000Z",
       });
@@ -643,7 +644,7 @@ describe("HiveDatabase", () => {
 
     const db = new HiveDatabase(path);
     try {
-      const migrated = db.getAgentByName("maya")!;
+      const migrated = required(db.getAgentByName("maya"));
       expect(migrated).toMatchObject({
         ...value,
         status: "dead",
@@ -984,7 +985,7 @@ describe("HiveDatabase", () => {
         resolvedAt: null,
       });
       db.upsertAgent({
-        ...db.getAgentByName("maya")!,
+        ...required(db.getAgentByName("maya")),
         status: "awaiting-approval",
       });
     } finally {
@@ -1177,7 +1178,10 @@ describe("contextPct can say 'unknown'", () => {
         agent({ id: "agent-lucas", name: "lucas", contextPct: null }),
       );
       expect(db.getAgentByName("lucas")?.contextPct).toBeNull();
-      db.upsertAgent({ ...db.getAgentByName("lucas")!, contextPct: 22 });
+      db.upsertAgent({
+        ...required(db.getAgentByName("lucas")),
+        contextPct: 22,
+      });
       expect(db.getAgentByName("lucas")?.contextPct).toBe(22);
     } finally {
       db.close();

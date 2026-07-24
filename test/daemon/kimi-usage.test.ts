@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -20,9 +27,9 @@ import {
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 const NOW = Date.parse("2026-07-24T12:00:00.000Z");
@@ -36,10 +43,17 @@ const USAGES_BODY = {
     remaining: "60",
     resetTime: "2026-07-29T21:38:00.343103Z",
   },
-  limits: [{
-    window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
-    detail: { limit: "100", used: "1", remaining: "99", resetTime: "2026-07-24T18:38:00Z" },
-  }],
+  limits: [
+    {
+      window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+      detail: {
+        limit: "100",
+        used: "1",
+        remaining: "99",
+        resetTime: "2026-07-24T18:38:00Z",
+      },
+    },
+  ],
   parallel: { limit: "30" },
   authentication: { method: "METHOD_ACCESS_TOKEN", scope: "FEATURE_CODING" },
 };
@@ -67,7 +81,10 @@ const freshCredentials = {
 const usagesResponse = (body: unknown = USAGES_BODY, status = 200) =>
   new Response(JSON.stringify(body), { status });
 
-function jsonRequestLog(): { calls: Array<{ url: string; init: RequestInit }>; fetchFn: typeof fetch } {
+function jsonRequestLog(): {
+  calls: Array<{ url: string; init: RequestInit }>;
+  fetchFn: typeof fetch;
+} {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), init: init ?? {} });
@@ -89,9 +106,10 @@ describe("kimi usage probe", () => {
     expect(result.status).toBe("ok");
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("https://api.kimi.com/coding/v1/usages");
-    expect(
-      (calls[0]?.init.headers as Record<string, string>).authorization,
-    ).toBe("Bearer live-token");
+    const headers = calls[0]?.init.headers as
+      | Record<string, string>
+      | undefined;
+    expect(headers?.authorization).toBe("Bearer live-token");
 
     const billing = accountBillingFromKimiUsage(
       (result as { response: unknown }).response,
@@ -117,16 +135,22 @@ describe("kimi usage probe", () => {
       custom_field: "preserved",
     });
     const calls: Array<{ url: string; init: RequestInit }> = [];
-    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+    const fetchFn = (async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       calls.push({ url: String(url), init: init ?? {} });
       if (String(url).endsWith("/api/oauth/token")) {
-        return new Response(JSON.stringify({
-          access_token: "fresh-token",
-          refresh_token: "rotated-refresh",
-          expires_in: 3600,
-          scope: "FEATURE_CODING",
-          token_type: "Bearer",
-        }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            access_token: "fresh-token",
+            refresh_token: "rotated-refresh",
+            expires_in: 3600,
+            scope: "FEATURE_CODING",
+            token_type: "Bearer",
+          }),
+          { status: 200 },
+        );
       }
       return usagesResponse();
     }) as typeof fetch;
@@ -158,9 +182,10 @@ describe("kimi usage probe", () => {
     expect(written.custom_field).toBe("preserved");
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 
-    expect(
-      (usageCall?.init.headers as Record<string, string>).authorization,
-    ).toBe("Bearer fresh-token");
+    const headers = usageCall?.init.headers as
+      | Record<string, string>
+      | undefined;
+    expect(headers?.authorization).toBe("Bearer fresh-token");
   });
 
   test("refresh failure is an honest unknown, and the file is left alone", async () => {
@@ -211,10 +236,12 @@ describe("kimi usage probe", () => {
     // A payload with windows whose numbers no longer parse is malformed too.
     const badNumbers = accountBillingFromKimiUsage(
       {
-        limits: [{
-          window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
-          detail: { limit: "zero", used: "1" },
-        }],
+        limits: [
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "zero", used: "1" },
+          },
+        ],
       },
       new Date(NOW).toISOString(),
     );

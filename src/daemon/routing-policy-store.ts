@@ -772,25 +772,23 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     const mode = policy.selection.categories[category];
     if (mode !== undefined) selectionCategories[category] = mode;
   }
-  return (
-    JSON.stringify(
-      {
-        schemaVersion: policy.schemaVersion,
-        revision: policy.revision,
-        updatedAt: policy.updatedAt,
-        provisional: policy.provisional,
-        selection: {
-          global: policy.selection.global,
-          categories: selectionCategories,
-        },
-        providers,
-        models,
-        chains,
+  return `${JSON.stringify(
+    {
+      schemaVersion: policy.schemaVersion,
+      revision: policy.revision,
+      updatedAt: policy.updatedAt,
+      provisional: policy.provisional,
+      selection: {
+        global: policy.selection.global,
+        categories: selectionCategories,
       },
-      null,
-      2,
-    ) + "\n"
-  );
+      providers,
+      models,
+      chains,
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 /**

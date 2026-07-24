@@ -153,11 +153,11 @@ test("positive control: the capture server records a deliberately sent kill", as
   const agent = liveSessiondAgent();
   await killAgentCli(
     agent.name,
-    server!.port,
+    server?.port,
     agent.sessionLocator,
     killOrigin("stop"),
   );
   expect(killRequests).toHaveLength(1);
-  expect(killRequests[0]!.url).toBe("/agents/maya/kill");
-  expect(killRequests[0]!.origin).toStartWith("hive stop pid=");
+  expect(killRequests[0]?.url).toBe("/agents/maya/kill");
+  expect(killRequests[0]?.origin).toStartWith("hive stop pid=");
 });

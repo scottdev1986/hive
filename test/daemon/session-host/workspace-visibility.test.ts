@@ -5,6 +5,7 @@ import {
   WorkspaceVisibilityAuthority,
   type WorkspaceVisibilitySnapshot,
 } from "../../../src/daemon/session-host/workspace-visibility";
+import { required } from "../../required";
 
 const instanceId = "instance-probe";
 const engineBuildId = "engine-build";
@@ -92,7 +93,7 @@ describe("WorkspaceVisibilityAuthority", () => {
 
   test("rejects duplicate ownership and mismatched exact locators", () => {
     const host = authority();
-    const repeated = snapshot("1").terminals[0]!;
+    const repeated = required(snapshot("1").terminals[0]);
     expect(
       host.value.publish(
         snapshot("1", {
@@ -139,7 +140,9 @@ describe("WorkspaceVisibilityAuthority", () => {
     expect(
       host.value.publish(
         snapshot("2", {
-          terminals: [{ ...snapshot("2").terminals[0]!, state: "closing" }],
+          terminals: [
+            { ...required(snapshot("2").terminals[0]), state: "closing" },
+          ],
         }),
       ),
     ).toMatchObject({ state: "accepted" });
@@ -203,7 +206,7 @@ describe("WorkspaceVisibilityAuthority", () => {
         snapshot("1", {
           terminals: [
             {
-              ...snapshot("1").terminals[0]!,
+              ...required(snapshot("1").terminals[0]),
               geometry: null,
             },
           ],

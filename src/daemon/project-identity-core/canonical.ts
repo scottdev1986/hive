@@ -85,5 +85,5 @@ export function isAtOrBeneath(
 ): boolean {
   const d = foldIdentityKey(descendant, volume);
   const a = foldIdentityKey(ancestor, volume);
-  return d === a || d.startsWith(a.endsWith("/") ? a : a + "/");
+  return d === a || d.startsWith(a.endsWith("/") ? a : `${a}/`);
 }

@@ -411,7 +411,10 @@ export const splitVariant = (
 ): { base: string; variant: string | null } => {
   const match = VARIANT_PATTERN.exec(name);
   if (match === null) return { base: name, variant: null };
-  return { base: name.slice(0, match.index), variant: match[1]! };
+  const variant = match[1];
+  return variant === undefined
+    ? { base: name, variant: null }
+    : { base: name.slice(0, match.index), variant };
 };
 
 /**

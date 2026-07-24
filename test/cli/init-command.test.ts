@@ -45,7 +45,9 @@ async function installFakeGraphify(home: string): Promise<void> {
     'if (process.argv[2] === "--help") process.exit(0);',
     'if (process.argv[2] !== "extract") process.exit(2);',
     "const root = process.argv[3];",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: This line is written to the fake executable.
     "mkdirSync(`${root}/graphify-out`, { recursive: true });",
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: This line is written to the fake executable.
     'await Bun.write(`${root}/graphify-out/graph.json`, \'{"nodes":[],"links":[]}\\n\');',
     'console.log("[graphify extract] wrote graphify-out/graph.json: 0 nodes, 0 edges, 0 communities");',
     "",
@@ -73,7 +75,7 @@ describe("hive init command boundary", () => {
       ...process.env,
       HOME: home,
     };
-    delete commandEnv["HIVE_HOME"];
+    delete commandEnv.HIVE_HOME;
     const child = Bun.spawn([process.execPath, CLI, "init"], {
       cwd: repo,
       env: commandEnv,

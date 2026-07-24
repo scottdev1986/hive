@@ -22,6 +22,7 @@ import {
   QuotaConfigSchema,
   type QuotaLimit,
 } from "../../src/schemas";
+import { required } from "../required";
 import {
   authorizeForQuotaTest,
   CatalogedQuotaLedger as QuotaLedger,
@@ -510,7 +511,8 @@ describe("quota persistence and reservations", () => {
       throw new Error("missing accepted reservation");
 
     const owner = accepted.value.reservation.instanceId;
-    const sibling = owner === "instance-a" ? services[1]! : services[0]!;
+    const sibling =
+      owner === "instance-a" ? required(services[1]) : required(services[0]);
     expect(
       await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")),
     ).toEqual(0);
@@ -880,7 +882,7 @@ describe("quota-aware routing", () => {
       agentName: "measured-wins",
       category: "complex_coding",
       selection: "spread",
-      candidates: [grok!, claude!],
+      candidates: [required(grok), required(claude)],
     });
     expect(decision.tool).toBe("claude");
     db.close();
@@ -923,7 +925,7 @@ describe("quota-aware routing", () => {
       agentName: "only-claude",
       category: "complex_coding",
       selection: "spread",
-      candidates: [claude!],
+      candidates: [required(claude)],
     });
     const firstRealChoice = await service.routeAndReserve({
       agentName: "choice",
@@ -1212,7 +1214,7 @@ describe("quota telemetry and alerts", () => {
       source: "provider",
       confidence: "authoritative",
     });
-    const status = service.statuses()[0]!;
+    const status = required(service.statuses()[0]);
     expect("configured" in status).toEqual(false);
     if (!("configured" in status)) {
       expect(status.confidence).toEqual("stale");

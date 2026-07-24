@@ -166,7 +166,7 @@ export function nonSystemMachODependencies(otoolOutput: string): string[] {
         .split("\n")
         .filter((line) => /^\s+(?:\/|@)/.test(line))
         .map((line) => line.trim())
-        .map((line) => line.split(" (compatibility version", 1)[0]!)
+        .map((line) => line.split(" (compatibility version", 1)[0] ?? "")
         .filter(
           (path) =>
             !path.startsWith("/System/Library/") &&
@@ -369,11 +369,15 @@ async function compileWorkspace(options: Options): Promise<string> {
   // Bundle.module resolves against Bundle.main.resourceURL in a bundled app,
   // so the generated bundle must ship inside Contents/Resources. The bundle
   // is architecture-independent; either slice's copy is the same bytes.
+  const resourceBinPath = binPaths[0];
+  if (resourceBinPath === undefined) {
+    throw new Error("Swift build produced no binary path");
+  }
   await sh(
     [
       "cp",
       "-R",
-      join(binPaths[0]!, "HiveWorkspace_HiveWorkspace.bundle"),
+      join(resourceBinPath, "HiveWorkspace_HiveWorkspace.bundle"),
       resources,
     ],
     options.repoRoot,

@@ -164,13 +164,13 @@ describe("runMemoryConsolidation — report mode", () => {
       expect(report.embedded).toBe(5);
       expect(report.scanned).toBe(5);
       expect(report.identical).toHaveLength(1);
-      expect(report.identical[0]!.olderId).toBe(IDENTICAL_OLDER.id);
-      expect(report.identical[0]!.newerId).toBe(IDENTICAL_NEWER.id);
-      expect(report.identical[0]!.score).toBeCloseTo(1, 5);
+      expect(report.identical[0]?.olderId).toBe(IDENTICAL_OLDER.id);
+      expect(report.identical[0]?.newerId).toBe(IDENTICAL_NEWER.id);
+      expect(report.identical[0]?.score).toBeCloseTo(1, 5);
       expect(report.similar).toHaveLength(1);
-      expect(report.similar[0]!.olderId).toBe(SIMILAR_OLDER.id);
-      expect(report.similar[0]!.newerId).toBe(SIMILAR_NEWER.id);
-      expect(report.similar[0]!.score).toBeCloseTo(0.9, 5);
+      expect(report.similar[0]?.olderId).toBe(SIMILAR_OLDER.id);
+      expect(report.similar[0]?.newerId).toBe(SIMILAR_NEWER.id);
+      expect(report.similar[0]?.score).toBeCloseTo(0.9, 5);
       // Report mode: nothing applied, every identical pair skipped.
       expect(report.applied).toHaveLength(0);
       expect(report.skipped.map((pair) => pair.olderId)).toEqual([
@@ -179,7 +179,7 @@ describe("runMemoryConsolidation — report mode", () => {
       expect(report.failures).toHaveLength(0);
       const after = await readMemoryFact(repo, "repo", IDENTICAL_OLDER.id);
       expect(after).not.toBeNull();
-      expect(after!.body).toBe(before!.body);
+      expect(after?.body).toBe(before?.body);
     } finally {
       store.close();
     }
@@ -237,10 +237,10 @@ describe("runMemoryConsolidation — apply mode", () => {
       expect(await readMemoryFact(repo, "repo", IDENTICAL_OLDER.id)).toBeNull();
       const newer = await readMemoryFact(repo, "repo", IDENTICAL_NEWER.id);
       expect(newer).not.toBeNull();
-      expect(newer!.body).toBe(newerBefore!.body);
-      expect(newer!.supersedes).toContain(IDENTICAL_OLDER.id);
-      for (const raw of olderBefore!.raw) {
-        expect(newer!.raw).toContain(raw);
+      expect(newer?.body).toBe(newerBefore?.body);
+      expect(newer?.supersedes).toContain(IDENTICAL_OLDER.id);
+      for (const raw of required(olderBefore?.raw)) {
+        expect(newer?.raw).toContain(raw);
       }
       // The scope log records the consolidation write.
       const log = await readFile(
@@ -257,7 +257,7 @@ describe("runMemoryConsolidation — apply mode", () => {
         await readMemoryFact(repo, "repo", SIMILAR_OLDER.id),
       ).not.toBeNull();
       expect(
-        (await readMemoryFact(repo, "repo", SIMILAR_NEWER.id))!.supersedes,
+        (await readMemoryFact(repo, "repo", SIMILAR_NEWER.id))?.supersedes,
       ).toHaveLength(0);
     } finally {
       store.close();
@@ -296,9 +296,9 @@ describe("runMemoryConsolidation — apply mode", () => {
 
       expect(report.failures).toHaveLength(0);
       expect(report.applied).toHaveLength(1);
-      expect(report.applied[0]!.kind).toBe("fact");
-      expect(report.applied[0]!.olderId).toBe(older.id);
-      expect(report.applied[0]!.newerId).toBe(newer.id);
+      expect(report.applied[0]?.kind).toBe("fact");
+      expect(report.applied[0]?.olderId).toBe(older.id);
+      expect(report.applied[0]?.newerId).toBe(newer.id);
       // Bi-temporal semantics: the row stays, it just stops being current.
       expect(store.currentFacts().map((fact) => fact.id)).toEqual([newer.id]);
       expect(
@@ -357,3 +357,5 @@ describe("consolidation candidate counting (retention sweep wiring)", () => {
     }
   });
 });
+
+import { required } from "../required";

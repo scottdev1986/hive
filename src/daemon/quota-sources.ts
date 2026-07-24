@@ -1,14 +1,14 @@
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { QuotaMeterState } from "../schemas";
+import { HIVE_VERSION } from "../version";
 import {
   KimiHttpUsageTransport,
   KimiUsagesResponseSchema,
+  type KimiUsageTransport,
   kimiUsageWindowMinutes,
   kimiUsageWindowPercent,
-  type KimiUsageTransport,
 } from "./kimi-usage";
-import { HIVE_VERSION } from "../version";
 import type { CodexRateLimitSnapshot, CodexRateLimitsResponse } from "./quota";
 
 /**
@@ -154,30 +154,36 @@ export function orderRateLimitWindows(snapshot: CodexRateLimitSnapshot): {
   // that says which bucket it describes. Dropping it is the whole point — a
   // window sorted by a guessed duration lands in the wrong bucket silently.
   const windows = [snapshot.primary, snapshot.secondary]
-    .filter((window) => window !== null && window !== undefined)
     .filter(
-      (window) =>
-        Number.isFinite(window!.usedPercent) &&
-        window!.usedPercent >= 0 &&
-        window!.usedPercent <= 100 &&
-        typeof window!.windowDurationMins === "number" &&
-        Number.isFinite(window!.windowDurationMins) &&
-        window!.windowDurationMins > 0,
+      (
+        window,
+      ): window is NonNullable<typeof window> & {
+        windowDurationMins: number;
+      } =>
+        window != null &&
+        Number.isFinite(window.usedPercent) &&
+        window.usedPercent >= 0 &&
+        window.usedPercent <= 100 &&
+        typeof window.windowDurationMins === "number" &&
+        Number.isFinite(window.windowDurationMins) &&
+        window.windowDurationMins > 0,
     )
     .map((window) => ({
-      usedPct: window!.usedPercent,
-      windowMinutes: window!.windowDurationMins!,
-      resetsAt: unixSecondsToIso(window!.resetsAt),
+      usedPct: window.usedPercent,
+      windowMinutes: window.windowDurationMins,
+      resetsAt: unixSecondsToIso(window.resetsAt),
     }))
     .sort((left, right) => left.windowMinutes - right.windowMinutes);
   if (windows.length === 0) return { fiveHour: null, weekly: null };
+  const first = windows[0];
+  if (first === undefined) return { fiveHour: null, weekly: null };
   if (windows.length === 1) {
-    const only = windows[0]!;
+    const only = first;
     return only.windowMinutes <= 24 * 60
       ? { fiveHour: only, weekly: null }
       : { fiveHour: null, weekly: only };
   }
-  return { fiveHour: windows[0]!, weekly: windows.at(-1)! };
+  return { fiveHour: first, weekly: windows.at(-1) ?? first };
 }
 
 /**
@@ -1256,17 +1262,16 @@ export function readingsFromKimiUsages(
   if (parsed.data.usage == null && parsed.data.limits == null) return [];
 
   const weeklyDetail = parsed.data.usage;
-  const weeklyPercent = weeklyDetail == null
-    ? null
-    : kimiUsageWindowPercent(weeklyDetail);
-  const weekly: DiscoveredWindow | null = weeklyPercent === null ||
-      weeklyDetail == null
-    ? null
-    : {
-      usedPct: weeklyPercent,
-      windowMinutes: KIMI_WEEKLY_MINUTES,
-      resetsAt: kimiIsoOrNull(weeklyDetail.resetTime),
-    };
+  const weeklyPercent =
+    weeklyDetail == null ? null : kimiUsageWindowPercent(weeklyDetail);
+  const weekly: DiscoveredWindow | null =
+    weeklyPercent === null || weeklyDetail == null
+      ? null
+      : {
+          usedPct: weeklyPercent,
+          windowMinutes: KIMI_WEEKLY_MINUTES,
+          resetsAt: kimiIsoOrNull(weeklyDetail.resetTime),
+        };
 
   const fiveHourEntry = (parsed.data.limits ?? [])
     .map((entry) => ({
@@ -1276,19 +1281,23 @@ export function readingsFromKimiUsages(
       ),
       detail: entry.detail,
     }))
-    .filter((entry) => entry.minutes !== null)
-    .sort((left, right) => left.minutes! - right.minutes!)[0];
-  const fiveHourPercent = fiveHourEntry === undefined
-    ? null
-    : kimiUsageWindowPercent(fiveHourEntry.detail);
-  const fiveHour: DiscoveredWindow | null = fiveHourEntry === undefined ||
-      fiveHourPercent === null
-    ? null
-    : {
-      usedPct: fiveHourPercent,
-      windowMinutes: fiveHourEntry.minutes,
-      resetsAt: kimiIsoOrNull(fiveHourEntry.detail.resetTime),
-    };
+    .filter(
+      (entry): entry is typeof entry & { minutes: number } =>
+        entry.minutes !== null,
+    )
+    .sort((left, right) => left.minutes - right.minutes)[0];
+  const fiveHourPercent =
+    fiveHourEntry === undefined
+      ? null
+      : kimiUsageWindowPercent(fiveHourEntry.detail);
+  const fiveHour: DiscoveredWindow | null =
+    fiveHourEntry === undefined || fiveHourPercent === null
+      ? null
+      : {
+          usedPct: fiveHourPercent,
+          windowMinutes: fiveHourEntry.minutes,
+          resetsAt: kimiIsoOrNull(fiveHourEntry.detail.resetTime),
+        };
 
   if (fiveHour === null && weekly === null) return [];
   return [
@@ -1315,8 +1324,7 @@ export class KimiQuotaProbe implements QuotaProbe {
   readonly provider = "kimi";
 
   constructor(
-    private readonly transport: KimiUsageTransport =
-      new KimiHttpUsageTransport(),
+    private readonly transport: KimiUsageTransport = new KimiHttpUsageTransport(),
     private readonly clock: () => Date = () => new Date(),
     private readonly account = "default",
   ) {}

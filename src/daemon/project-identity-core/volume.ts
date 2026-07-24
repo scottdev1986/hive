@@ -51,7 +51,7 @@ function withComponent(
 ): string {
   const parts = path.split("/").filter((p) => p.length > 0);
   parts[index] = replacement;
-  return "/" + parts.join("/");
+  return `/${parts.join("/")}`;
 }
 
 /**

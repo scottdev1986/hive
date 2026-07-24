@@ -118,7 +118,7 @@ function fakeVersion(version: string, exitOk = true): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     cliPath(dir),
-    `#!/bin/sh\n${exitOk ? "echo hive " + version : "exit 1"}\n`,
+    `#!/bin/sh\n${exitOk ? `echo hive ${version}` : "exit 1"}\n`,
   );
   chmodSync(cliPath(dir), 0o755);
   writeFileSync(sessiondPath(dir), "#!/bin/sh\necho sessiond\n");

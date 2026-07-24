@@ -63,7 +63,7 @@ export function probeOpencodeDefaultModel(
       continue;
     }
     const match = /"model"\s*:\s*"([^"]+)"/.exec(source);
-    if (match !== null) return match[1]!;
+    if (match?.[1] !== undefined) return match[1];
   }
   return null;
 }

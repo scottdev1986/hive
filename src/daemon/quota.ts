@@ -116,12 +116,22 @@ function add(date: Date, milliseconds: number): string {
   return new Date(date.getTime() + milliseconds).toISOString();
 }
 
-function unixSecondsToIso(value: number | null): string | null {
+function _unixSecondsToIso(value: number | null): string | null {
   if (value === null || !Number.isFinite(value) || value < 0) return null;
   return new Date(value * 1_000).toISOString();
 }
 
-function zonedParts(date: Date, timeZone: string): Record<string, number> {
+type ZonedParts = Readonly<{
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  weekday: number;
+}>;
+
+function zonedParts(date: Date, timeZone: string): ZonedParts {
   const values: Record<string, number> = {};
   for (const part of new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -149,7 +159,20 @@ function zonedParts(date: Date, timeZone: string): Record<string, number> {
       values[part.type] = Number(part.value);
     }
   }
-  return values;
+  const { year, month, day, hour, minute, second, weekday } = values;
+  if (
+    year === undefined ||
+    month === undefined ||
+    day === undefined ||
+    hour === undefined ||
+    minute === undefined ||
+    second === undefined ||
+    weekday === undefined ||
+    weekday < 0
+  ) {
+    throw new Error(`Unable to read calendar parts in timezone ${timeZone}`);
+  }
+  return { year, month, day, hour, minute, second, weekday };
 }
 
 function zonedToUtc(
@@ -165,12 +188,12 @@ function zonedToUtc(
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const parts = zonedParts(new Date(guess), timeZone);
     const observed = Date.UTC(
-      parts.year!,
-      parts.month! - 1,
-      parts.day!,
-      parts.hour!,
-      parts.minute!,
-      parts.second!,
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
     );
     const difference = desired - observed;
     if (difference === 0) break;
@@ -201,7 +224,7 @@ function zonedToUtc(
       parts.year === year &&
       parts.month === month &&
       parts.day === day &&
-      parts.hour! * 60 + parts.minute! >= hour * 60 + minute
+      parts.hour * 60 + parts.minute >= hour * 60 + minute
     ) {
       return new Date(candidate);
     }
@@ -219,14 +242,14 @@ export function calendarWeekBounds(
   end: string;
 } {
   const local = zonedParts(now, limit.timezone);
-  let daysBack = (local.weekday! - limit.resetWeekday + 7) % 7;
+  let daysBack = (local.weekday - limit.resetWeekday + 7) % 7;
   const beforeReset =
     daysBack === 0 &&
-    (local.hour! < limit.resetHour ||
-      (local.hour === limit.resetHour && local.minute! < limit.resetMinute));
+    (local.hour < limit.resetHour ||
+      (local.hour === limit.resetHour && local.minute < limit.resetMinute));
   if (beforeReset) daysBack = 7;
   const localDate = new Date(
-    Date.UTC(local.year!, local.month! - 1, local.day! - daysBack),
+    Date.UTC(local.year, local.month - 1, local.day - daysBack),
   );
   const start = zonedToUtc(
     localDate.getUTCFullYear(),
@@ -1398,7 +1421,8 @@ export class QuotaService {
             : unverified > 0
               ? "estimated"
               : (observation?.[`${window}Confidence`] ??
-                observation!.confidence);
+                observation?.confidence ??
+                "missing");
       return {
         availability: unmeasured ? "unknown" : "available",
         unit: limit.unit,
@@ -1414,7 +1438,9 @@ export class QuotaService {
           ? "none"
           : !observationValid
             ? "ledger"
-            : (observation?.[`${window}Source`] ?? observation!.source),
+            : (observation?.[`${window}Source`] ??
+              observation?.source ??
+              "none"),
         observedAt: observationValid ? observedAt : null,
         windowMinutes,
       };
@@ -1771,8 +1797,11 @@ export class QuotaService {
           })),
         );
         if (fair.ok) {
-          const item = autoCandidates[fair.candidateIndex]!;
-          const primary = fair.reservations[0]!;
+          const item = autoCandidates[fair.candidateIndex];
+          const primary = fair.reservations[0];
+          if (item === undefined || primary === undefined) {
+            throw new Error("Quota fairness returned an empty reservation");
+          }
           const governing = this.tightest(item.entries);
           for (const entry of item.entries)
             await this.alertPool(entry.limit, now);
@@ -1794,7 +1823,10 @@ export class QuotaService {
           };
         }
         for (const blocked of fair.blocked) {
-          const item = autoCandidates[blocked.candidateIndex]!;
+          const item = autoCandidates[blocked.candidateIndex];
+          if (item === undefined) {
+            throw new Error("Quota fairness returned an unknown candidate");
+          }
           failures.push(
             `${item.candidate.tool}/${item.candidate.model}: ${blocked.blockedBy.pool} has no safe headroom`,
           );
@@ -1804,7 +1836,10 @@ export class QuotaService {
     let safeFallback: QuotaRouteCandidate | undefined;
     for (const item of request.selection === "spread" ? [] : attemptable) {
       if (item.unknown) {
-        const fallbackEstimate = this.config.estimates[request.category]!;
+        const fallbackEstimate =
+          this.config.estimates[request.category] ??
+          this.config.estimates.default ??
+          10;
         const reservation = this.ledger.insertUnboundedReservation({
           id: crypto.randomUUID(),
           agentName: request.agentName,
@@ -1867,7 +1902,10 @@ export class QuotaService {
         );
         continue;
       }
-      const primary = reserved.reservations[0]!;
+      const primary = reserved.reservations[0];
+      if (primary === undefined) {
+        throw new Error("Quota ledger returned an empty reservation");
+      }
       const governing = this.tightest(item.entries);
       if (
         request.explicitTool === undefined ||
@@ -1984,7 +2022,10 @@ export class QuotaService {
         model: request.model,
         effort: request.effort ?? null,
         category: request.category,
-        estimatedUnits: this.config.estimates[request.category]!,
+        estimatedUnits:
+          this.config.estimates[request.category] ??
+          this.config.estimates.default ??
+          10,
         now: iso(now),
         expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
         purpose: "control",
@@ -2016,7 +2057,7 @@ export class QuotaService {
     const group = this.ledger.tryReserveGroup(inputs);
     const governing = this.tightest(entries);
     const limit = governing.limit;
-    const status = governing.status;
+    const _status = governing.status;
     if (!group.ok) {
       const blocked =
         entries.find(
@@ -2036,7 +2077,10 @@ export class QuotaService {
           "the worktree is preserved, and Hive will not switch models.",
       );
     }
-    const reservation = group.reservations[0]!;
+    const reservation = group.reservations[0];
+    if (reservation === undefined) {
+      throw new Error("Quota ledger returned an empty control reservation");
+    }
     const matched = this.requireMatchingControlReservation(
       reservation,
       request,
@@ -2293,12 +2337,18 @@ export class QuotaService {
       discoveredAt: observedAt,
       source: "statusline",
     });
-    return this.resolvedLimits().find(
+    const limit = this.resolvedLimits().find(
       (limit) =>
         limit.provider === provider &&
         limit.pool === "subscription" &&
         limit.account === "default",
-    )!;
+    );
+    if (limit === undefined) {
+      throw new Error(
+        `Statusline quota pool was not registered for ${provider}`,
+      );
+    }
+    return limit;
   }
 
   async observe(observation: QuotaObservationInput): Promise<QuotaObservation> {
@@ -2429,6 +2479,7 @@ export class QuotaService {
       // thresholding a number Hive invented.
       if (
         value.remainingPct === null ||
+        value.remaining === null ||
         value.allowance === null ||
         value.reserved === null
       )
@@ -2465,7 +2516,7 @@ export class QuotaService {
       if (notify) {
         await this.sendAlert(
           `Hive quota ${current}: ${status.provider}/${status.account}/${status.pool} ` +
-            `${window} capacity has ${value.remaining!.toFixed(1)}${unit} of ` +
+            `${window} capacity has ${value.remaining.toFixed(1)}${unit} of ` +
             `${value.allowance.toFixed(1)}${unit} remaining ` +
             `(${(value.remainingPct * 100).toFixed(0)}%), ` +
             `${value.reserved.toFixed(1)}${unit} reserved (estimated)` +

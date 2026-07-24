@@ -9,6 +9,7 @@ import {
   sha256,
   verifyManifest,
 } from "../../src/release/manifest";
+import { required } from "../required";
 
 const manifest: ReleaseManifest = {
   schema: 1,
@@ -114,7 +115,7 @@ describe("manifest parsing", () => {
   });
 
   test("repeated universal asset names must describe the same bytes", () => {
-    const universal = manifest.artifacts[2]!;
+    const universal = required(manifest.artifacts[2]);
     const x64 = { ...universal, arch: "x64" as const };
     expect(
       parseReleaseManifest({
@@ -162,7 +163,7 @@ describe("artifact selection", () => {
   test("matches bytes only when both size and digest agree", () => {
     const bytes = new TextEncoder().encode("hive");
     const artifact = {
-      ...manifest.artifacts[0]!,
+      ...required(manifest.artifacts[0]),
       size: bytes.byteLength,
       sha256: sha256(bytes),
     };

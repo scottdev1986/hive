@@ -626,7 +626,10 @@ export class CrashRecovery {
 
     const identity = record.executionIdentity;
     const model = identity?.model ?? record.model;
-    const worktreePath = record.worktreePath!;
+    const worktreePath = record.worktreePath;
+    if (worktreePath === null) {
+      throw new Error(`Cannot recover ${record.name} without a worktree path`);
+    }
     // A resumed writer takes the current autonomy setting — the same one the
     // next spawn would get — or an unattended crash-recovered dangerous agent
     // would silently stall on the first prompt.

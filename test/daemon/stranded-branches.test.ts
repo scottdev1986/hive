@@ -41,7 +41,7 @@ class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
 
   async sendSessionMessage(agent: AgentRecord): Promise<void> {
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -195,3 +195,5 @@ describe("stranded-branch reconciliation", () => {
     }
   });
 });
+
+import { required } from "../required";

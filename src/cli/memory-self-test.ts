@@ -121,12 +121,17 @@ const CONFLICTED_INDEX = 7;
 
 function buildCanaries(): Canary[] {
   return CANARY_TOKENS.map((token, index) => {
-    const { topic, phrase } = CANARY_TOPICS[index % CANARY_TOPICS.length]!;
-    const capitalized = token[0]!.toUpperCase() + token.slice(1);
+    const topicEntry = CANARY_TOPICS[index % CANARY_TOPICS.length];
+    if (topicEntry === undefined)
+      throw new Error("Canary topic fixture is empty");
+    const { topic, phrase } = topicEntry;
+    const capitalized = token.charAt(0).toUpperCase() + token.slice(1);
+    const fixtureStatus = CANARY_STATUSES[index % CANARY_STATUSES.length];
+    if (fixtureStatus === undefined) {
+      throw new Error("Canary status fixture is empty");
+    }
     const status: MemoryVerificationStatus =
-      index === CONFLICTED_INDEX
-        ? "conflicted"
-        : CANARY_STATUSES[index % CANARY_STATUSES.length]!;
+      index === CONFLICTED_INDEX ? "conflicted" : fixtureStatus;
     const kind: MemoryKind = PITFALL_INDICES.has(index) ? "pitfall" : "article";
     let body =
       `Self-test canary ${token} covering ${phrase}. ` +
@@ -338,6 +343,8 @@ export async function probeMemorySelfTest(
 ): Promise<SelfTestAssertion[]> {
   const index = new MemoryIndex(new Database(":memory:"));
   await index.rebuild(root);
+  const primaryCanary = CANARIES[0];
+  if (primaryCanary === undefined) throw new Error("Canary fixture is empty");
 
   const recall = await attempt("recall@5", async () => {
     const missing: string[] = [];
@@ -390,7 +397,7 @@ export async function probeMemorySelfTest(
   });
 
   const dedupLayer1 = await attempt("dedup-layer-1", async () => {
-    const canary = CANARIES[0]!;
+    const canary = primaryCanary;
     const { id: _plantedId, ...planted } = canaryWriteInput(canary);
     try {
       await writeMemoryFact(root, {
@@ -412,7 +419,7 @@ export async function probeMemorySelfTest(
   });
 
   const dedupLayer2 = await attempt("dedup-layer-2", async () => {
-    const canary = CANARIES[0]!;
+    const canary = primaryCanary;
     // Different normalized title (layer 1 lets it through), overlapping
     // terms: the write succeeds and the lookalike comes back as an advisory
     // candidate — the exact query the daemon's memory_write runs.
@@ -459,12 +466,12 @@ export async function probeMemorySelfTest(
   // embedding service is unavailable both print SKIP and do not fail the run
   // — the exit code reflects only what was provable here, and the real-model
   // proof lives in test/memory-embedding-live.test.ts.
-  const embedder =
-    options.service === undefined ? null : await options.service.embedder();
+  const service = options.service;
+  const embedder = service === undefined ? null : await service.embedder();
   const skippedDetail = "embeddings unavailable";
   let semanticRecall: SelfTestAssertion;
   let consolidationDryRun: SelfTestAssertion;
-  if (embedder === null) {
+  if (embedder === null || service === undefined) {
     semanticRecall = {
       name: "semantic-recall",
       passed: false,
@@ -485,7 +492,7 @@ export async function probeMemorySelfTest(
     try {
       const semanticIndex = new MemoryEmbeddingIndex({
         store: vectorStore,
-        service: options.service!,
+        service,
       });
       for (const scope of ["repo", "global"] as const) {
         for (const fact of await discoverMemoryFacts(root, scope)) {
@@ -531,7 +538,7 @@ export async function probeMemorySelfTest(
         const report = await runMemoryConsolidation({
           repoRoot: root,
           episodic: vectorStore,
-          service: options.service!,
+          service,
         });
         const pair = [...report.identical, ...report.similar].find(
           (candidate) =>
@@ -652,7 +659,7 @@ export async function runMemorySelfTest(
               : assertion.passed
                 ? "PASS"
                 : "FAIL"
-          } ${assertion.name} — ` + assertion.detail,
+          } ${assertion.name} — ${assertion.detail}`,
       ),
     };
   } finally {

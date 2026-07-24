@@ -23,6 +23,7 @@ import {
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
 } from "../../src/daemon/sessiond-broker";
+import { required } from "../required";
 
 const repoRoot = resolve(import.meta.dir, "../..");
 const binary = resolveSessiondBinary({
@@ -102,7 +103,7 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     await acquireDaemonLock();
 
     supervisor = new SessiondBrokerSupervisor({
-      binary: binary!,
+      binary: required(binary),
       hiveHome: home,
       repoRoot,
       readyTimeoutMs: 15_000,
@@ -139,7 +140,7 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     process.env.HIVE_PORT = "0";
 
     // Orphan: a real hive-sessiond serve that holds broker.sock (and lock).
-    const orphan = Bun.spawn([binary!, "serve"], {
+    const orphan = Bun.spawn([required(binary), "serve"], {
       env: { ...process.env, HIVE_HOME: home },
       stdin: "ignore",
       stdout: "ignore",
@@ -160,7 +161,7 @@ describeIfBinary("sessiond broker live lifecycle", () => {
 
     await acquireDaemonLock();
     supervisor = new SessiondBrokerSupervisor({
-      binary: binary!,
+      binary: required(binary),
       hiveHome: home,
       repoRoot,
       readyTimeoutMs: 5_000,
@@ -219,7 +220,7 @@ describeIfBinary("sessiond broker live lifecycle", () => {
 
     const fatals: string[] = [];
     supervisor = new SessiondBrokerSupervisor({
-      binary: binary!,
+      binary: required(binary),
       hiveHome: home,
       repoRoot,
       maxRestarts: 2,
@@ -244,7 +245,7 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     const firstPid = supervisor.pid;
     expect(firstPid).not.toBeNull();
 
-    process.kill(firstPid!, "SIGKILL");
+    process.kill(required(firstPid), "SIGKILL");
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
       if (

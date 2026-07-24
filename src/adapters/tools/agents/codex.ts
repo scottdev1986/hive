@@ -38,8 +38,9 @@ export const codexAgentAdapter: AgentAdapter = {
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
     });
+    const sessionId = context.sessionId;
     const withInstructions =
-      context.instructionPath !== undefined && context.sessionId !== undefined;
+      context.instructionPath !== undefined && sessionId !== undefined;
     const options: CodexSpawnOptions = {
       daemonPort: context.daemonPort,
       effort: context.effort ?? "medium",
@@ -54,7 +55,7 @@ export const codexAgentAdapter: AgentAdapter = {
       excludeMcpServers: context.excludeMcpServers ?? [],
       withCapabilityToken: context.capabilityToken !== undefined,
       ...(withInstructions
-        ? { profile: codexInstructionProfileName(context.sessionId!) }
+        ? { profile: codexInstructionProfileName(sessionId) }
         : {}),
       ...(context.graphifyUrl === undefined
         ? {}
@@ -71,7 +72,7 @@ export const codexAgentAdapter: AgentAdapter = {
       command = wrapCodexSpawnWithCapabilityEnv(command, context.worktreePath);
     }
     if (withInstructions) {
-      command = wrapCodexWithInstructionProfile(command, context.sessionId!);
+      command = wrapCodexWithInstructionProfile(command, sessionId);
     }
     return { argv, command };
   },

@@ -49,7 +49,6 @@ import {
   HookEventSchema,
   isOrchestratorName,
   isTerminalAgentStatus,
-  type MemoryFact,
   type MemoryScope,
   MemoryScopeSchema,
   type MemoryWriteInput,
@@ -1185,6 +1184,8 @@ export class HiveDaemon {
             .filter((instance) => instance.running)
             .map((instance) => instance.instanceId),
         ));
+    const createRecoverySession = this.spawner.createRecoverySession;
+    const autonomy = options.autonomy;
     this.recovery = new CrashRecovery({
       db: this.db,
       terminalHost: this.terminalHost,
@@ -1200,7 +1201,7 @@ export class HiveDaemon {
           this.capabilities.revokeSubject(agent.name);
           removeCredential(agent.name);
         }),
-      ...(this.spawner.createRecoverySession === undefined
+      ...(createRecoverySession === undefined
         ? {}
         : {
             createRecoverySession: (
@@ -1209,7 +1210,7 @@ export class HiveDaemon {
               expectedExecutable,
               launchGrantId,
             ) =>
-              this.spawner.createRecoverySession!(
+              createRecoverySession(
                 agent,
                 command,
                 expectedExecutable,
@@ -1225,9 +1226,7 @@ export class HiveDaemon {
       // A thunk, not a value: a resume launched after the user flips the
       // Agents-menu dial must match the setting the user can see, not the one
       // the daemon booted with.
-      ...(options.autonomy === undefined
-        ? {}
-        : { autonomy: () => options.autonomy!.get() }),
+      ...(autonomy === undefined ? {} : { autonomy: () => autonomy.get() }),
       ...(options.recovery?.resolveClaudeSessionId === undefined
         ? {}
         : { resolveClaudeSessionId: options.recovery.resolveClaudeSessionId }),
@@ -3625,15 +3624,30 @@ export class HiveDaemon {
       /^\/token-usage\/sessions\/([^/]+)\/(orchestrators|end)$/,
     );
     if (tokenSession !== null && request.method === "POST") {
-      return tokenSession[2] === "orchestrators"
-        ? this.startTokenUsageOrchestrator(tokenSession[1]!, request)
-        : this.endTokenUsageSession(tokenSession[1]!, request);
+      const sessionId = tokenSession[1];
+      const action = tokenSession[2];
+      if (sessionId === undefined || action === undefined) {
+        return json(
+          { error: "invalid token usage session path" },
+          { status: 400 },
+        );
+      }
+      return action === "orchestrators"
+        ? this.startTokenUsageOrchestrator(sessionId, request)
+        : this.endTokenUsageSession(sessionId, request);
     }
     const tokenSubject = url.pathname.match(
       /^\/token-usage\/subjects\/([^/]+)\/end$/,
     );
     if (tokenSubject !== null && request.method === "POST") {
-      return this.endTokenUsageSubject(tokenSubject[1]!, request);
+      const subjectId = tokenSubject[1];
+      if (subjectId === undefined) {
+        return json(
+          { error: "invalid token usage subject path" },
+          { status: 400 },
+        );
+      }
+      return this.endTokenUsageSubject(subjectId, request);
     }
     if (url.pathname === "/recover" && request.method === "POST") {
       return this.recoverEndpoint(request);
@@ -4119,13 +4133,15 @@ export class HiveDaemon {
       | null
     >
   > {
+    const workspaceVisibility = this.workspaceVisibility;
+    if (workspaceVisibility == null) return terminals.map(() => null);
     return await Promise.all(
       terminals.map(async (terminal) => {
         const binding = this.db.getTerminalHostBindingByLocator(
           terminal.locator,
         );
         if (binding?.createEvidence === undefined) return null;
-        const admission = await this.workspaceVisibility!.admit({
+        const admission = await workspaceVisibility.admit({
           agentId: terminal.agentId,
           agentName: terminal.agentName,
         });
@@ -4169,9 +4185,11 @@ export class HiveDaemon {
    * is separated from "the Workspace is gone".
    */
   async renewWorkspaceVisibility(): Promise<number> {
-    const snapshot = this.workspaceVisibility?.currentSnapshot() ?? null;
+    const workspaceVisibility = this.workspaceVisibility;
+    if (workspaceVisibility == null) return 0;
+    const snapshot = workspaceVisibility.currentSnapshot();
     if (snapshot === null) return 0;
-    const renewals = this.workspaceVisibility!.sourceVerified()
+    const renewals = workspaceVisibility.sourceVerified()
       ? await this.renewVisibleTerminals(snapshot.terminals)
       : [];
     await this.recordVisibilityExpiryAudits(snapshot);
@@ -5307,8 +5325,9 @@ export class HiveDaemon {
             .list(hiveInstanceSuffix())
             .catch(() => null);
         }
-        let agents = storedAgents.map(
-          (agent): AgentRecord => ({
+        let agents = storedAgents.map((agent): AgentRecord => {
+          const deliveryBlocked = blocked.get(agent.name);
+          return {
             ...this.statusLiveness(agent, sessions),
             ...(this.graphify === undefined
               ? {}
@@ -5319,11 +5338,9 @@ export class HiveDaemon {
             // Only when blocked, so a healthy `detail:"full"` record stays the
             // agent row verbatim. The compact team view — what queen reads —
             // always carries the field, null included.
-            ...(blocked.has(agent.name)
-              ? { deliveryBlocked: blocked.get(agent.name)! }
-              : {}),
-          }),
-        );
+            ...(deliveryBlocked !== undefined ? { deliveryBlocked } : {}),
+          };
+        });
         if (history !== true) {
           agents = agents.filter(
             (agent) => !["dead", "done", "failed"].includes(agent.status),

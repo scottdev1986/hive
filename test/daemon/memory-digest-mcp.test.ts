@@ -23,6 +23,7 @@ import {
   submitPaste,
 } from "../../src/daemon/testing";
 import type { AgentRecord } from "../../src/schemas";
+import { required } from "../required";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -171,11 +172,13 @@ describe("memory_digest MCP tool", () => {
       type: "agent.branch-landed",
       summary: "Landed the digest compiler",
     });
-    const compiled = compileDigest(episodic, {
-      agent: "agent-maya",
-      sessionId: "session-1",
-      compiledAt: T1,
-    })!;
+    const compiled = required(
+      compileDigest(episodic, {
+        agent: "agent-maya",
+        sessionId: "session-1",
+        compiledAt: T1,
+      }),
+    );
 
     const client = await connectedClient(
       actingAs(daemon, "operator", "operator"),
@@ -183,15 +186,15 @@ describe("memory_digest MCP tool", () => {
     try {
       const byId = await readDigest(client, { digestId: compiled.id });
       expect(byId.state).toBe("ok");
-      expect(byId.digest!.id).toBe(compiled.id);
-      expect(byId.digest!.sessionId).toBe("session-1");
-      expect(byId.digest!.body).toContain("hint-not-authority");
-      expect(byId.digest!.provenance.eventIds).toHaveLength(1);
+      expect(byId.digest?.id).toBe(compiled.id);
+      expect(byId.digest?.sessionId).toBe("session-1");
+      expect(byId.digest?.body).toContain("hint-not-authority");
+      expect(byId.digest?.provenance.eventIds).toHaveLength(1);
 
       // The caller-facing agent name resolves to the daemon's agent id.
       const byName = await readDigest(client, { agent: "maya" });
       expect(byName.state).toBe("ok");
-      expect(byName.digest!.id).toBe(compiled.id);
+      expect(byName.digest?.id).toBe(compiled.id);
     } finally {
       await client.close().catch(() => undefined);
     }
@@ -212,11 +215,13 @@ describe("memory_digest MCP tool", () => {
       type: "agent.branch-landed",
       summary: "Landed tip 0123456789abcdef0123456789abcdef01234567",
     });
-    const compiled = compileDigest(episodic, {
-      agent: "agent-maya",
-      sessionId: null,
-      compiledAt: T1,
-    })!;
+    const compiled = required(
+      compileDigest(episodic, {
+        agent: "agent-maya",
+        sessionId: null,
+        compiledAt: T1,
+      }),
+    );
 
     const client = await connectedClient(actingAs(daemon, "maya", "writer"));
     try {
@@ -225,7 +230,7 @@ describe("memory_digest MCP tool", () => {
         eventId: landed.id,
       });
       expect(result.state).toBe("ok");
-      expect(result.digest!.id).toBe(compiled.id);
+      expect(result.digest?.id).toBe(compiled.id);
       expect(result.events).toHaveLength(1);
       expect(result.events[0]).toMatchObject({
         id: landed.id,
@@ -268,11 +273,13 @@ describe("memory_digest MCP tool", () => {
         type: "agent.status-reported",
         summary: "did work",
       });
-      const compiled = compileDigest(episodic, {
-        agent: "agent-maya",
-        sessionId: null,
-        compiledAt: T1,
-      })!;
+      const compiled = required(
+        compileDigest(episodic, {
+          agent: "agent-maya",
+          sessionId: null,
+          compiledAt: T1,
+        }),
+      );
       const ok = await readDigest(clientWith, { digestId: compiled.id });
       expect(ok.state).toBe("ok");
     } finally {
@@ -295,11 +302,13 @@ describe("memory_digest MCP tool", () => {
       type: "agent.status-reported",
       summary: "did work",
     });
-    const compiled = compileDigest(episodic, {
-      agent: "agent-maya",
-      sessionId: null,
-      compiledAt: T1,
-    })!;
+    const compiled = required(
+      compileDigest(episodic, {
+        agent: "agent-maya",
+        sessionId: null,
+        compiledAt: T1,
+      }),
+    );
 
     const client = await connectedClient(
       actingAs(daemon, "operator", "operator"),
@@ -322,7 +331,7 @@ describe("memory_digest MCP tool", () => {
 class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
   async sendSessionMessage(agent: AgentRecord): Promise<void> {
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -358,7 +367,11 @@ async function reapToKill(daemon: HiveDaemon, db: HiveDatabase): Promise<void> {
   // The idle-reap two-step drives killAgentTeardown, the session-end hook.
   await daemon.reapIdleAgents();
   const warning = db.listMessages().find((message) => message.to === "maya");
-  db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+  db.transitionMessage(
+    required(warning?.id),
+    "applied",
+    new Date().toISOString(),
+  );
   await daemon.reapIdleAgents();
 }
 
@@ -389,8 +402,8 @@ describe("daemon digest compile triggers", () => {
     // already exists and cites the pre-kill event.
     const digest = episodic.digestFor({ agent: "agent-maya" });
     expect(digest).not.toBeNull();
-    expect(digest!.body).toContain("work awaiting the session-end digest");
-    expect(digest!.body).toContain("hint-not-authority");
+    expect(digest?.body).toContain("work awaiting the session-end digest");
+    expect(digest?.body).toContain("hint-not-authority");
   });
 
   test("a completion status report re-synthesizes the rolling digest", async () => {
@@ -402,7 +415,7 @@ describe("daemon digest compile triggers", () => {
       episodic,
       agents: [agent("maya")],
     });
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     daemon.status.appendAgentReport(
       {
         subject: "maya",
@@ -451,8 +464,8 @@ describe("daemon digest compile triggers", () => {
 
     const digest = episodic.digestFor({ agent: "agent-maya" });
     expect(digest).not.toBeNull();
-    expect(digest!.sessionId).toBe(assignment.assignmentId);
-    expect(digest!.body).toContain("Task complete, digest me");
+    expect(digest?.sessionId).toBe(assignment.assignmentId);
+    expect(digest?.body).toContain("Task complete, digest me");
     expect(db.getAgentByName("maya")?.status).toBe("working");
   });
 

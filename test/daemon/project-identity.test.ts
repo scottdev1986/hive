@@ -55,7 +55,7 @@ describe("durable project identity", () => {
       throw new Error("project was not created");
 
     const snapshot = registry.snapshot();
-    snapshot.records[0]!.evidence.dev += 1;
+    required(snapshot.records[0]).evidence.dev += 1;
     writeFileSync(
       join(hiveHome, "project-registry.json"),
       JSON.stringify(snapshot),
@@ -84,7 +84,7 @@ describe("durable project identity", () => {
       throw new Error("project was not created");
 
     const snapshot = registry.snapshot();
-    snapshot.records[0]!.evidence.dev += 1;
+    required(snapshot.records[0]).evidence.dev += 1;
     writeFileSync(
       join(hiveHome, "project-registry.json"),
       JSON.stringify(snapshot),
@@ -98,7 +98,9 @@ describe("durable project identity", () => {
       left.dev === right.dev &&
       left.ino === right.ino &&
       left.birthtimeMs === right.birthtimeMs;
-    expect(legacyMatches(snapshot.records[0]!.evidence, current)).toBe(false);
+    expect(legacyMatches(required(snapshot.records[0]).evidence, current)).toBe(
+      false,
+    );
 
     expect(repairLegacyMountEvidence(project)).toBe(true);
     const repaired = JSON.parse(
@@ -135,3 +137,5 @@ describe("durable project identity", () => {
     );
   });
 });
+
+import { required } from "../required";

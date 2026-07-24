@@ -100,7 +100,10 @@ describe("hive opens the installed release Workspace", () => {
     const opened: string[] = [];
     await launchWorkspace({
       root,
-      open: async (app) => (opened.push(app), 0),
+      open: async (app) => {
+        opened.push(app);
+        return 0;
+      },
     });
     expect(opened).toEqual([join(root, "current", "HiveWorkspace.app")]);
   });
@@ -110,7 +113,10 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
-      open: async (_app, args) => (argLists.push(args), 0),
+      open: async (_app, args) => {
+        argLists.push(args);
+        return 0;
+      },
     });
     expect(argLists).toEqual([[]]);
   });
@@ -120,7 +126,10 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
-      open: async (_app, args) => (argLists.push(args), 0),
+      open: async (_app, args) => {
+        argLists.push(args);
+        return 0;
+      },
       session: { cwd: "/tmp/proj", port: 4567, hivePath: "/opt/hive/bin/hive" },
     });
     expect(argLists).toEqual([
@@ -144,7 +153,10 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
-      open: async (_app, args) => (argLists.push(args), 0),
+      open: async (_app, args) => {
+        argLists.push(args);
+        return 0;
+      },
       session: {
         cwd: "/tmp/proj",
         port: 4567,
@@ -175,7 +187,10 @@ describe("hive opens the installed release Workspace", () => {
     const argLists: (readonly string[])[] = [];
     await launchWorkspace({
       root,
-      open: async (_app, args) => (argLists.push(args), 0),
+      open: async (_app, args) => {
+        argLists.push(args);
+        return 0;
+      },
       session: { cwd: "/tmp/proj", port: 4567 },
     });
     expect(argLists).toEqual([
@@ -234,7 +249,10 @@ describe("bare hive opens the project you're in", () => {
     const launches: LaunchDeps[] = [];
     await runWorkspace({
       cwd: "/repo/root/some/subdir",
-      resolveRoot: (cwd) => (resolved.push(cwd), "/repo/root"),
+      resolveRoot: (cwd) => {
+        resolved.push(cwd);
+        return "/repo/root";
+      },
       isInitialized: () => true,
       start: async (deps) => {
         started.push(deps.cwd);
@@ -245,7 +263,10 @@ describe("bare hive opens the project you're in", () => {
         // check here would print it twice.
         throw new Error("the forced update check must not run in-project");
       },
-      launch: async (deps) => (launches.push(deps), 0),
+      launch: async (deps) => {
+        launches.push(deps);
+        return 0;
+      },
     });
     expect(resolved).toEqual(["/repo/root/some/subdir"]);
     expect(started).toEqual(["/repo/root"]);
@@ -300,9 +321,10 @@ describe("bare hive opens the project you're in", () => {
         inits.push(root);
         order.push("init");
       },
-      start: async () => (
-        order.push("start"), { port: 4483, cwd: "/repo/root" }
-      ),
+      start: async () => {
+        order.push("start");
+        return { port: 4483, cwd: "/repo/root" };
+      },
       write: (line) => lines.push(line),
       launch: async () => 0,
     });
@@ -345,7 +367,10 @@ describe("bare hive opens the project you're in", () => {
         stale: false,
       }),
       write: (line) => lines.push(line),
-      launch: async (deps) => (launches.push(deps), 0),
+      launch: async (deps) => {
+        launches.push(deps);
+        return 0;
+      },
     });
     expect(lines.join("\n")).toContain("hive 0.0.4 available");
     expect(launches).toEqual([{}]);

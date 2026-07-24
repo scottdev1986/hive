@@ -123,7 +123,7 @@ describe("GraphifyService", () => {
     try {
       await service.start();
       child = (service as unknown as { child: Subprocess }).child;
-      expect(() => process.kill(child!.pid, 0)).not.toThrow();
+      expect(() => process.kill(required(child?.pid), 0)).not.toThrow();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
 
       const stopping = service.stop();
@@ -137,7 +137,7 @@ describe("GraphifyService", () => {
       }
 
       expect(stopped).toBe(true);
-      expect(() => process.kill(child!.pid, 0)).toThrow();
+      expect(() => process.kill(required(child?.pid), 0)).toThrow();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
       expect(service.serverUrl()).toBeNull();
     } finally {
@@ -182,3 +182,5 @@ describe("GraphifyService", () => {
     await rm(root, { recursive: true, force: true });
   });
 });
+
+import { required } from "../required";

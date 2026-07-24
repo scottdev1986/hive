@@ -799,7 +799,7 @@ export function grokModelsProvedLive(stderr: string): boolean {
 function grokDefaultFromStdout(stdout: string): string | null {
   for (const line of stdout.split("\n")) {
     const match = /^\s*\*\s+(\S+)\s+\(default\)\s*$/.exec(line);
-    if (match !== null) return match[1]!;
+    if (match?.[1] !== undefined) return match[1];
   }
   return null;
 }
@@ -1053,35 +1053,41 @@ export function recordsFromKimiProviderList(
       grouped.set(entry.model, { aliases: [alias], entry });
     else group.aliases.push(alias);
   }
-  return [...grouped.entries()].map(([_model, { aliases, entry }]) => ({
-    provider: "kimi" as const,
-    accountFingerprint,
-    cliVersion: payload.cliVersion,
-    canonicalId: aliases[0]!,
-    variant: null,
-    launchToken: aliases[0]!,
-    displayName: entry.displayName ?? null,
-    aliases: aliases.slice(1),
-    entitled: known(true, KIMI_PROVIDER_LIST, observedAt),
-    hidden: unknown("surface-silent", KIMI_PROVIDER_LIST, observedAt),
-    supportsEffort:
-      entry.supportEfforts == null
-        ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
-        : known(
-            entry.supportEfforts.length > 0,
-            KIMI_PROVIDER_LIST,
-            observedAt,
-          ),
-    supportedEffortLevels:
-      entry.supportEfforts == null
-        ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
-        : known(entry.supportEfforts, KIMI_PROVIDER_LIST, observedAt),
-    defaultEffort:
-      entry.defaultEffort == null
-        ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
-        : known(entry.defaultEffort, KIMI_PROVIDER_LIST, observedAt),
-    observedAt,
-  }));
+  return [...grouped.entries()].flatMap(([_model, { aliases, entry }]) => {
+    const [canonicalId, ...otherAliases] = aliases;
+    if (canonicalId === undefined) return [];
+    return [
+      {
+        provider: "kimi" as const,
+        accountFingerprint,
+        cliVersion: payload.cliVersion,
+        canonicalId,
+        variant: null,
+        launchToken: canonicalId,
+        displayName: entry.displayName ?? null,
+        aliases: otherAliases,
+        entitled: known(true, KIMI_PROVIDER_LIST, observedAt),
+        hidden: unknown("surface-silent", KIMI_PROVIDER_LIST, observedAt),
+        supportsEffort:
+          entry.supportEfforts == null
+            ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+            : known(
+                entry.supportEfforts.length > 0,
+                KIMI_PROVIDER_LIST,
+                observedAt,
+              ),
+        supportedEffortLevels:
+          entry.supportEfforts == null
+            ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+            : known(entry.supportEfforts, KIMI_PROVIDER_LIST, observedAt),
+        defaultEffort:
+          entry.defaultEffort == null
+            ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+            : known(entry.defaultEffort, KIMI_PROVIDER_LIST, observedAt),
+        observedAt,
+      },
+    ];
+  });
 }
 
 export class KimiCapabilityProbe implements CapabilityProbe {
@@ -1200,7 +1206,7 @@ export function recordsFromOpencodeModels(
     .map((line) => line.trim())
     .filter((line) => /^[^\s/]+\/[^\s]+$/.test(line));
   const providers = [
-    ...new Set(lines.map((line) => line.split("/")[0]!)),
+    ...new Set(lines.map((line) => line.split("/", 1)[0] ?? "")),
   ].sort();
   const accountFingerprint = fingerprintAccount("opencode", providers);
   return lines.map((line) => ({

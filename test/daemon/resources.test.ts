@@ -10,6 +10,7 @@ import {
   processCommandName,
   treeRunsCommand,
 } from "../../src/daemon/resources";
+import { required } from "../required";
 
 const sample = (
   pid: number,
@@ -83,7 +84,7 @@ describe("foregroundJobState", () => {
   test("reports a suspended foreground job", () => {
     expect(
       foregroundJobState(
-        [...samples.slice(0, 1), { ...samples[1]!, stat: "T+" }],
+        [...samples.slice(0, 1), { ...required(samples[1]), stat: "T+" }],
         100,
       ),
     ).toBe("stopped");

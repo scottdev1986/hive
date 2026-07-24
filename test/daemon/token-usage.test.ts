@@ -10,6 +10,7 @@ import {
   type TokenUsageAdapter,
   TokenUsageStore,
 } from "../../src/daemon/token-usage";
+import { required } from "../required";
 
 const at = "2026-07-13T12:00:00.000Z";
 
@@ -29,7 +30,7 @@ describe("TokenUsageStore", () => {
     const codexPath = join(codexDirectory, "rollout-test.jsonl");
     writeFileSync(
       codexPath,
-      [
+      `${[
         JSON.stringify({
           type: "session_meta",
           payload: { id: "codex-session", cwd: resolve(repo) },
@@ -48,14 +49,14 @@ describe("TokenUsageStore", () => {
             },
           },
         }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
     const codex = store.startOrchestrator(session, "codex", repo, at);
     store.registerOrchestratorProviderSession("codex-session", repo);
     await store.refreshSubject(codex);
     appendFileSync(
       codexPath,
-      JSON.stringify({
+      `${JSON.stringify({
         timestamp: "2026-07-13T12:01:00.000Z",
         payload: {
           type: "token_count",
@@ -68,7 +69,7 @@ describe("TokenUsageStore", () => {
             },
           },
         },
-      }) + "\n",
+      })}\n`,
     );
     await store.endSubject(codex);
 
@@ -77,7 +78,7 @@ describe("TokenUsageStore", () => {
     const claudePath = join(claudeDirectory, "claude-session.jsonl");
     writeFileSync(
       claudePath,
-      JSON.stringify({
+      `${JSON.stringify({
         type: "assistant",
         uuid: "entry-1",
         timestamp: at,
@@ -90,14 +91,14 @@ describe("TokenUsageStore", () => {
             output_tokens: 4,
           },
         },
-      }) + "\n",
+      })}\n`,
     );
     const claude = store.startOrchestrator(session, "claude", repo, at);
     store.registerOrchestratorProviderSession("claude-session", repo);
     await store.refreshSubject(claude);
     appendFileSync(
       claudePath,
-      JSON.stringify({
+      `${JSON.stringify({
         type: "assistant",
         uuid: "entry-2",
         timestamp: "2026-07-13T12:02:00.000Z",
@@ -110,7 +111,7 @@ describe("TokenUsageStore", () => {
             output_tokens: 6,
           },
         },
-      }) + "\n",
+      })}\n`,
     );
     await store.endSubject(claude);
 
@@ -132,7 +133,7 @@ describe("TokenUsageStore", () => {
     );
     writeFileSync(
       join(grokDirectory, "updates.jsonl"),
-      JSON.stringify({
+      `${JSON.stringify({
         timestamp: 1_752_408_000,
         params: {
           update: {
@@ -146,14 +147,14 @@ describe("TokenUsageStore", () => {
             },
           },
         },
-      }) + "\n",
+      })}\n`,
     );
     const grok = store.startOrchestrator(session, "grok", repo, at);
     store.registerOrchestratorProviderSession(grokSession, repo);
     await store.endSubject(grok);
 
     const snapshot = await store.snapshot(repo);
-    const current = snapshot.sessions[0]!;
+    const current = required(snapshot.sessions[0]);
     expect(current.complete).toBe(true);
     expect(current.hiveControl.counts).toEqual({
       inputTokens: 250,
@@ -184,7 +185,7 @@ describe("TokenUsageStore", () => {
     const directory = claudeProjectDirectory(repo, home);
     mkdirSync(directory, { recursive: true });
     const assistant = (id: string, input: number, output: number) =>
-      JSON.stringify({
+      `${JSON.stringify({
         type: "assistant",
         uuid: id,
         timestamp: at,
@@ -197,7 +198,7 @@ describe("TokenUsageStore", () => {
             output_tokens: output,
           },
         },
-      }) + "\n";
+      })}\n`;
     writeFileSync(
       join(directory, "dead-predecessor.jsonl"),
       assistant("predecessor-message", 1_000, 100),
@@ -211,8 +212,8 @@ describe("TokenUsageStore", () => {
     const subject = store.startOrchestrator(session, "claude", repo, at);
 
     await store.refreshSubject(subject);
-    let reading = (await store.snapshot(repo)).sessions[0]!.subjects[0]!
-      .reading;
+    let reading = (await store.snapshot(repo)).sessions[0]?.subjects[0]
+      ?.reading;
     expect(reading).toEqual({
       state: "unknown",
       reason: "claude provider session id has not been observed",
@@ -224,7 +225,8 @@ describe("TokenUsageStore", () => {
     );
     store.registerOrchestratorProviderSession("current-session", repo);
     await store.refreshSubject(subject);
-    reading = (await store.snapshot(repo)).sessions[0]!.subjects[0]!.reading;
+    reading = (await store.snapshot(repo)).sessions[0]?.subjects[0]?.reading;
+    reading = required(reading);
     expect(reading.state).toBe("measured");
     if (reading.state === "measured") {
       expect(reading.counts.totalTokens).toBe(7);
@@ -260,8 +262,8 @@ describe("TokenUsageStore", () => {
     store.registerOrchestratorProviderSession("opencode-session", repo);
 
     const snapshot = await store.snapshot(repo);
-    expect(snapshot.sessions[0]!.subjects[0]!.provider).toBe("opencode");
-    expect(snapshot.sessions[0]!.fleet.counts?.totalTokens).toBe(15);
+    expect(snapshot.sessions[0]?.subjects[0]?.provider).toBe("opencode");
+    expect(snapshot.sessions[0]?.fleet.counts?.totalTokens).toBe(15);
   });
 
   test("backup orchestrators and workers stay in one fleet session with separate buckets", async () => {
@@ -317,7 +319,7 @@ describe("TokenUsageStore", () => {
     });
 
     const snapshot = await store.snapshot(repo);
-    const current = snapshot.sessions[0]!;
+    const current = required(snapshot.sessions[0]);
     expect(current.subjects.map((subject) => subject.role)).toEqual([
       "orchestrator",
       "worker",
@@ -341,12 +343,12 @@ describe("TokenUsageStore", () => {
     store.registerOrchestratorProviderSession("quiet-session", repo);
 
     const snapshot = await store.snapshot(repo);
-    expect(snapshot.sessions[0]!.complete).toBe(false);
-    expect(snapshot.sessions[0]!.fleet.counts).toBeNull();
-    expect(snapshot.sessions[0]!.unknownSubjects).toEqual([
+    expect(snapshot.sessions[0]?.complete).toBe(false);
+    expect(snapshot.sessions[0]?.fleet.counts).toBeNull();
+    expect(snapshot.sessions[0]?.unknownSubjects).toEqual([
       "Orchestrator (quiet-cli)",
     ]);
-    expect(snapshot.sessions[0]!.subjects[0]!.reading).toEqual({
+    expect(snapshot.sessions[0]?.subjects[0]?.reading).toEqual({
       state: "unknown",
       reason: "quiet-cli has not produced a token artifact for this session",
     });
@@ -387,9 +389,9 @@ describe("TokenUsageStore", () => {
     readable = false;
 
     const snapshot = await store.snapshot(repo);
-    expect(snapshot.sessions[0]!.complete).toBe(false);
-    expect(snapshot.sessions[0]!.fleet.counts).toBeNull();
-    expect(snapshot.sessions[0]!.subjects[0]!.reading).toEqual({
+    expect(snapshot.sessions[0]?.complete).toBe(false);
+    expect(snapshot.sessions[0]?.fleet.counts).toBeNull();
+    expect(snapshot.sessions[0]?.subjects[0]?.reading).toEqual({
       state: "unknown",
       reason: "Could not read flaky-cli token artifact: artifact disappeared",
     });
@@ -580,7 +582,7 @@ describe("TokenUsageStore", () => {
         db.database.query("PRAGMA foreign_keys").all() as {
           foreign_keys: number;
         }[]
-      )[0]!.foreign_keys,
+      )[0]?.foreign_keys,
     ).toBe(1);
   });
 });

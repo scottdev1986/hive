@@ -180,6 +180,7 @@ export function compactActiveTeam(
             ),
         )
         .map((other) => other.name);
+      const latestInstruction = observed.instructions.at(-1);
       return {
         name: agent.name,
         readOnly: agent.readOnly,
@@ -195,11 +196,11 @@ export function compactActiveTeam(
           MAX_TASK_CODE_POINTS,
         ),
         instructionCount: observed.instructions.length,
-        ...(observed.instructions.at(-1) === undefined
+        ...(latestInstruction === undefined
           ? {}
           : {
               latestInstruction: truncateCodePoints(
-                observed.instructions.at(-1)!.replaceAll(/\s+/g, " ").trim(),
+                latestInstruction.replaceAll(/\s+/g, " ").trim(),
                 MAX_TASK_CODE_POINTS,
               ),
             }),

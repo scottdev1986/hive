@@ -17,6 +17,7 @@ import {
   HiveConfigSchema,
   type MemoryRetentionConfig,
 } from "../../src/schemas";
+import { required } from "../required";
 
 // One fixed clock for every sweep assertion below.
 const NOW = new Date("2026-07-22T00:00:00.000Z");
@@ -384,7 +385,7 @@ describe("[memory.retention] config", () => {
   });
 
   test("a bad section fails the loader loudly", async () => {
-    const home = Bun.env.HIVE_HOME!;
+    const home = required(Bun.env.HIVE_HOME);
     await writeFile(
       join(home, "config.toml"),
       "[memory.retention]\nevents_hot_days = -5\n",
@@ -445,7 +446,7 @@ class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
 
   async sendSessionMessage(agent: AgentRecord): Promise<void> {
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -575,7 +576,11 @@ describe("daemon retention wiring", () => {
       const warning = db
         .listMessages()
         .find((message) => message.to === "maya");
-      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      db.transitionMessage(
+        required(warning?.id),
+        "applied",
+        new Date().toISOString(),
+      );
       await daemon.reapIdleAgents();
       expect(db.getAgentByName("maya")?.status).toBe("dead");
 

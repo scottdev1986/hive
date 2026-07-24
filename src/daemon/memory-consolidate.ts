@@ -80,10 +80,8 @@ interface ScannedSource {
 // otherwise score nonsense cosine).
 function candidatePairs(rows: ScannedSource[]): ConsolidationCandidate[] {
   const pairs: ConsolidationCandidate[] = [];
-  for (let i = 0; i < rows.length; i += 1) {
-    for (let j = i + 1; j < rows.length; j += 1) {
-      const a = rows[i]!;
-      const b = rows[j]!;
+  for (const [i, a] of rows.entries()) {
+    for (const b of rows.slice(i + 1)) {
       if (a.row.dimensions !== b.row.dimensions) continue;
       const score = cosineSimilarity(a.row.vector, Array.from(b.row.vector));
       if (score < CONSOLIDATION_SIMILAR_THRESHOLD) continue;
@@ -122,10 +120,8 @@ export function countConsolidationCandidates(episodic: EpisodicStore): number {
   }
   let count = 0;
   for (const group of groups.values()) {
-    for (let i = 0; i < group.length; i += 1) {
-      for (let j = i + 1; j < group.length; j += 1) {
-        const a = group[i]!;
-        const b = group[j]!;
+    for (const [i, a] of group.entries()) {
+      for (const b of group.slice(i + 1)) {
         if (a.dimensions !== b.dimensions) continue;
         if (
           cosineSimilarity(a.vector, Array.from(b.vector)) >=

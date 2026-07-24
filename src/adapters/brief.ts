@@ -74,9 +74,11 @@ export function parseDocOutline(source: string): DocSection[] {
   for (const [index, line] of lines.entries()) {
     const match = HEADING.exec(line ?? "");
     if (match !== null) {
+      const [, markers, heading] = match;
+      if (markers === undefined || heading === undefined) continue;
       starts.push({
-        level: match[1]!.length,
-        heading: match[2]!.trim(),
+        level: markers.length,
+        heading: heading.trim(),
         index,
       });
     }
@@ -147,7 +149,8 @@ export function findTaskDocReferences(
 ): DocReference[] {
   const references = new Map<string, (number | string)[]>();
   for (const match of task.matchAll(DOC_PATH)) {
-    const path = match[1]!;
+    const path = match[1];
+    if (path === undefined) continue;
     if (!isBriefable(path, config)) {
       continue;
     }
@@ -165,7 +168,8 @@ export function findTaskDocReferences(
       }
     }
     for (const quoted of window.matchAll(QUOTED_HEADING)) {
-      sections.push(quoted[1]!.trim());
+      const heading = quoted[1];
+      if (heading !== undefined) sections.push(heading.trim());
     }
     references.set(path, sections);
   }

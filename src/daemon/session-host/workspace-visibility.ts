@@ -253,7 +253,8 @@ export class WorkspaceVisibilityAuthority {
         terminal.agentName === candidate.agentName,
     );
     if (matches.length !== 1) return null;
-    const terminal = matches[0]!;
+    const terminal = matches[0];
+    if (terminal === undefined) return null;
     if (!ADMITTING_STATES.has(terminal.state)) return null;
     if (terminal.locator.engineBuildId === null) return null;
     if (

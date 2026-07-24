@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import {
   buildCodexAppServerCommand,
-  CodexAppServerClient,
   CodexAppServerManager,
   type CodexAppServerTransport,
   codexAgentHostPidfile,
@@ -15,14 +14,17 @@ import {
 } from "../../../src/adapters/tools/codex-app-server";
 import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 import type { AgentRecord, HookEvent } from "../../../src/schemas";
+import { required } from "../../required";
+
+type RpcMessage = Parameters<CodexAppServerTransport["send"]>[0];
 
 class FakeTransport implements CodexAppServerTransport {
-  readonly sent: any[] = [];
-  private messageHandler: (message: any) => void = () => undefined;
+  readonly sent: RpcMessage[] = [];
+  private messageHandler: (message: RpcMessage) => void = () => undefined;
   private closeHandler: (error?: Error) => void = () => undefined;
   rateRead = 0;
 
-  send(message: any): void {
+  send(message: RpcMessage): void {
     this.sent.push(message);
     if (message.id === undefined) return;
     let result: unknown = {};
@@ -33,7 +35,7 @@ class FakeTransport implements CodexAppServerTransport {
     } else if (message.method === "turn/start") {
       result = { turn: { id: `turn-${this.sent.length}` } };
     } else if (message.method === "turn/steer") {
-      result = { turnId: message.params.expectedTurnId };
+      result = { turnId: message.params?.expectedTurnId };
     } else if (message.method === "account/rateLimits/read") {
       this.rateRead += 1;
       result = {
@@ -56,7 +58,7 @@ class FakeTransport implements CodexAppServerTransport {
     queueMicrotask(() => this.messageHandler({ id: message.id, result }));
   }
 
-  emit(message: any): void {
+  emit(message: RpcMessage): void {
     this.messageHandler(message);
   }
 
@@ -64,7 +66,7 @@ class FakeTransport implements CodexAppServerTransport {
     this.closeHandler();
   }
 
-  onMessage(handler: (message: any) => void): void {
+  onMessage(handler: (message: RpcMessage) => void): void {
     this.messageHandler = handler;
   }
 
@@ -326,7 +328,7 @@ describe("codexAgentSocketPath", () => {
       writeRevoked: false,
     };
     const path = codexAgentSocketPath(agent);
-    const filename = path.split("/").pop()!;
+    const filename = required(path.split("/").pop());
     expect(filename).toContain("agent-with-special-chars");
     expect(filename).not.toContain("@");
     expect(filename).not.toContain(":");
@@ -401,7 +403,7 @@ describe("codexAgentSocketPath", () => {
       readOnly: false,
       writeRevoked: false,
     };
-    const path1 = codexAgentSocketPath(agent);
+    const _path1 = codexAgentSocketPath(agent);
     const path2 = codexAgentSocketPath(agent, "/some/hive/home");
     const path3 = codexAgentSocketPath(agent, "/some/hive/home");
     expect(path2).toEqual(path3);

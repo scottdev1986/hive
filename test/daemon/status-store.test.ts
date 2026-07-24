@@ -10,6 +10,7 @@ import {
   HiveUpdateStatusAdvertisedSchema,
   HiveUpdateStatusInputSchema,
 } from "../../src/schemas/status-envelope";
+import { required } from "../required";
 
 const AT = "2026-07-16T12:00:00.000Z";
 const REQUEST = "req_018f1e90-7b5a-7cc0-8000-000000000001";
@@ -116,7 +117,7 @@ describe("StatusStore", () => {
       ),
     ).toThrow(StatusRequestConflictError);
 
-    const report = store.listEvents()[0]!;
+    const report = required(store.listEvents()[0]);
     expect(report.data.binding).toEqual({
       agentId: "agent-fixture",
       incarnationGeneration: 7,
@@ -183,7 +184,7 @@ describe("StatusStore", () => {
       reason: "capability:fixture",
       observedAt: AT,
     });
-    const audit = store.listEvents()[0]!;
+    const audit = required(store.listEvents()[0]);
     expect(audit.data).toEqual({
       reader: "maya",
       subject: "agent-fixture",

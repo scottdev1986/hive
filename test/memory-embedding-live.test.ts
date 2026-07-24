@@ -1,3 +1,4 @@
+import { required } from "./required";
 // The HM-5 honest gate evidence (board #122, plan D4/A7): the REAL local
 // embedding model (fastembed bge-small-en-v1.5, no mocks) recalls a canary
 // article from a PARAPHRASE query that the porter-tokenizer FTS cannot
@@ -92,7 +93,7 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
   const realModelsDir = memoryModelsDir();
   /** Article ids as the wiki write actually slugged them (slugs truncate). */
   const idByTitle = new Map<string, string>();
-  const canaryId = (): string => idByTitle.get(CANARY.title)!;
+  const canaryId = (): string => required(idByTitle.get(CANARY.title));
 
   beforeAll(async () => {
     tempRoot = await mkdtemp(join(tmpdir(), "hive-hm5-live-"));
@@ -128,7 +129,7 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
     for (const article of [CANARY, ...DISTRACTORS]) {
       await index.upsertArticle(
         "repo",
-        idByTitle.get(article.title)!,
+        required(idByTitle.get(article.title)),
         MemoryEmbeddingIndex.articleText(article),
       );
     }
@@ -148,7 +149,7 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
     await gated(async () => {
       const embedder = await service.embedder();
       expect(embedder).not.toBeNull();
-      expect(embedder!.dimensions).toBe(384);
+      expect(embedder?.dimensions).toBe(384);
     });
   }, 120_000);
 
@@ -161,7 +162,7 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
       // The semantic leg can.
       const semantic = await index.searchArticles(PARAPHRASE_QUERY, 8);
       expect(semantic).not.toBeNull();
-      expect(semantic![0]!.id).toBe(canaryId());
+      expect(semantic?.[0]?.id).toBe(canaryId());
 
       // And the hybrid bundle surfaces what FTS-only recall provably misses.
       const ftsOnly = await buildMemoryRecallBundle(PARAPHRASE_QUERY, {
@@ -198,12 +199,12 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
         line.includes("semantic-recall"),
       );
       expect(semantic).toBeDefined();
-      expect(semantic!.startsWith("PASS ")).toBe(true);
+      expect(semantic?.startsWith("PASS ")).toBe(true);
       const dryRun = report.lines.find((line) =>
         line.includes("consolidation-dry-run"),
       );
       expect(dryRun).toBeDefined();
-      expect(dryRun!.startsWith("PASS ")).toBe(true);
+      expect(dryRun?.startsWith("PASS ")).toBe(true);
       expect(report.ok).toBe(true);
     });
   }, 120_000);

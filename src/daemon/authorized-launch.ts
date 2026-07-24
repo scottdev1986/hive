@@ -43,7 +43,6 @@ export interface LaunchGateChecks {
  * makes a raw candidate unlaunchable: callers must run the complete gate.
  */
 export class AuthorizedLaunch {
-  readonly #authorized = true;
   readonly tool: CapabilityProvider;
   readonly model: string;
   readonly effort?: string;

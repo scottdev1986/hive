@@ -12,6 +12,7 @@ import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { type AuthorizedFetch, actingAs } from "../../src/daemon/testing";
 import type { AgentRecord } from "../../src/schemas";
+import { required } from "../required";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -192,7 +193,7 @@ describe("memory_query MCP tool", () => {
       episodic,
       agents: [agent("maya")],
     });
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     daemon.status.appendAgentReport(
       {
         subject: "maya",
@@ -238,7 +239,7 @@ describe("memory_query MCP tool", () => {
         rows: Array<{ agent: string }>;
       };
       expect(summary.agents).toBe(1);
-      expect(summary.rows[0]!.agent).toBe("agent-maya");
+      expect(summary.rows[0]?.agent).toBe("agent-maya");
     } finally {
       await client.close().catch(() => undefined);
     }

@@ -34,7 +34,7 @@ const firstSegment = (path: string): string => {
   // Split on the first unquoted dot so `hive.http_headers` → `hive` while
   // `"odd.name"` stays whole (and is later rejected as unaddressable).
   if (path.startsWith('"') || path.startsWith("'")) {
-    const quote = path[0]!;
+    const quote = path.charAt(0);
     const end = path.indexOf(quote, 1);
     return end === -1 ? path : path.slice(1, end);
   }
@@ -53,13 +53,13 @@ export function parseCodexMcpServerNames(source: string): string[] {
       continue;
     }
     const header = TABLE_HEADER.exec(line);
-    if (header !== null) {
-      names.add(firstSegment(header[1]!));
+    if (header?.[1] !== undefined) {
+      names.add(firstSegment(header[1]));
       continue;
     }
     const inline = INLINE_ASSIGNMENT.exec(line);
-    if (inline !== null) {
-      names.add(inline[1]!);
+    if (inline?.[1] !== undefined) {
+      names.add(inline[1]);
     }
   }
   return [...names];

@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
@@ -945,7 +944,8 @@ export function selectAgentName(
   const closed = agents
     .filter((agent) => inPool.has(agent.name) && !taken(agent.name))
     .sort((a, b) => closureInstant(a).localeCompare(closureInstant(b)));
-  if (closed.length > 0) return closed[0]!.name;
+  const [available] = closed;
+  if (available !== undefined) return available.name;
 
   throw new Error(
     `Hive agent name pool exhausted: all ${NAME_POOL.length} names are held by ` +
@@ -1051,7 +1051,7 @@ export const HIVE_PROTOCOL_RULES = [
 
 export function buildLandingProtocol(
   branch: string,
-  repoRoot: string,
+  _repoRoot: string,
   mainBranch = "main",
   agentName = branch.split("/")[1]?.split("-")[0] ?? "agent",
   capabilityEpoch = 0,
@@ -1312,7 +1312,7 @@ export class HiveSpawner implements Spawner {
   private async createSession(
     record: AgentRecord,
     command: string,
-    expectedExecutable: string,
+    _expectedExecutable: string,
     launchGrantId: string,
   ): Promise<void> {
     const admission = await this.requireSessiondCreationPolicy(record);
@@ -1386,7 +1386,7 @@ export class HiveSpawner implements Spawner {
   }
 
   private requireSessiondHost(
-    record: AgentRecord,
+    _record: AgentRecord,
   ): SessiondSpawnAdmission["terminalHost"] {
     return this.dependencies.sessiond.terminalHost;
   }
@@ -1783,7 +1783,12 @@ export class HiveSpawner implements Spawner {
           `Critical control ${message.id} restart failed: ${reason}; ` +
             `quota release could not be verified: ${detail}`,
         );
-        throw new Error(stuck.failureReason!, { cause: cancelError });
+        if (stuck.failureReason === null) {
+          throw new Error("Failed to preserve the critical control failure", {
+            cause: cancelError,
+          });
+        }
+        throw new Error(stuck.failureReason, { cause: cancelError });
       }
       this.dependencies.db.insertAgent({
         ...stopped,
@@ -2440,11 +2445,12 @@ export class HiveSpawner implements Spawner {
         authorized: AuthorizedLaunch;
         reservationId?: string;
       } | null> => {
-        if (eligible.length === 0) return null;
+        const [firstEligible] = eligible;
+        if (firstEligible === undefined) return null;
         if (this.dependencies.quota?.config.enabled !== true) {
           // Without quota there is no headroom to spread by; rank order is
           // the only honest signal left, for either mode.
-          return { authorized: eligible[0]! };
+          return { authorized: firstEligible };
         }
         try {
           const decision = await this.dependencies.quota.routeAndReserve({

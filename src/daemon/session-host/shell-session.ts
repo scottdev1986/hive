@@ -2,6 +2,7 @@ export const TERMINAL_SHELL = "/bin/zsh";
 
 const SHELL_BOOTSTRAP = [
   'hive_terminal_command="$1"',
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: This is a literal zsh expression.
   'if [[ -n "${HISTFILE:-}" ]]; then',
   '  print -s -- "$hive_terminal_command"',
   '  fc -AI "$HISTFILE" 2>/dev/null || true',

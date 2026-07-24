@@ -8,6 +8,7 @@ import {
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { StatusStore } from "../../src/daemon/status-store";
 import { TokenUsageStore } from "../../src/daemon/token-usage";
+import { required } from "../required";
 
 const T0 = "2026-07-22T10:00:00.000Z";
 const T1 = "2026-07-22T11:00:00.000Z";
@@ -124,7 +125,7 @@ describe("L0 projections", () => {
 
   test("agent-now falls back to the latest episodic event when no report exists", async () => {
     const { episodic, deps } = harness();
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T3,
       agent: "agent-lena",
       type: "agent.status-reported",
@@ -187,19 +188,19 @@ describe("L0 projections", () => {
 
   test("what-landed returns landing/completion events newest-first with since filter", async () => {
     const { episodic, deps } = harness();
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T0,
       agent: "agent-maya",
       type: "agent.landed",
       summary: "WP1 landed",
     });
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T1,
       agent: "agent-maya",
       type: "agent.status-reported",
       summary: "Still going",
     });
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T2,
       agent: "agent-lena",
       type: "task.completed",
@@ -325,7 +326,7 @@ describe("L0 projections", () => {
       source: string;
     }>;
     expect(rows).toHaveLength(2);
-    const maya = rows.find((row) => row.agentId === "agent-maya")!;
+    const maya = required(rows.find((row) => row.agentId === "agent-maya"));
     expect(maya).toMatchObject({
       inputTokens: 3000,
       outputTokens: 750,
@@ -354,13 +355,13 @@ describe("L0 projections", () => {
 describe("L1 point search", () => {
   test("finds bounded excerpts across episodic events and current facts", async () => {
     const { episodic, deps } = harness();
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T1,
       agent: "agent-maya",
       type: "agent.status-reported",
       summary: "Touched the quota tables during the rebase",
     });
-    episodic!.recordFact({
+    required(episodic).recordFact({
       topic: "billing",
       title: "Quota resets at midnight",
       body: "The provider quota tables roll over at 00:00 UTC",
@@ -388,7 +389,7 @@ describe("L1 point search", () => {
 
   test("an invalidated fact leaves the point-search surface", async () => {
     const { episodic, deps } = harness();
-    const fact = episodic!.recordFact({
+    const fact = required(episodic).recordFact({
       topic: "deploy",
       title: "Deploys are manual",
       body: "Manual deploys only",
@@ -406,10 +407,10 @@ describe("L1 point search", () => {
     );
     expect(before.state).toBe("ok");
 
-    episodic!.invalidateFact(fact.id, { at: T1 });
+    required(episodic).invalidateFact(required(fact).id, { at: T1 });
     // A bare invalidation moves no row counts, so nudge the index with any
     // append — the disposable index then rebuilds without the dead fact.
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T2,
       agent: null,
       type: "tick",
@@ -432,7 +433,7 @@ describe("token ceilings", () => {
   test("an over-budget result is truncated with loud in-band markers", async () => {
     const { episodic, deps } = harness();
     for (let index = 0; index < 20; index += 1) {
-      episodic!.appendEvent({
+      required(episodic).appendEvent({
         ts: T1,
         agent: "agent-maya",
         type: "agent.status-reported",
@@ -457,7 +458,7 @@ describe("token ceilings", () => {
   test("a caller budget larger than the ceiling is clamped; a lower one is honored", async () => {
     const { episodic, deps } = harness();
     for (let index = 0; index < 10; index += 1) {
-      episodic!.appendEvent({
+      required(episodic).appendEvent({
         ts: T1,
         agent: "agent-maya",
         type: "agent.status-reported",
@@ -493,13 +494,13 @@ describe("token ceilings", () => {
 describe("identity scoping", () => {
   test("my-history derives the agent from the caller subject and ignores input.agent", async () => {
     const { episodic, deps } = harness();
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T1,
       agent: "agent-maya",
       type: "agent.status-reported",
       summary: "Maya's own note",
     });
-    episodic!.appendEvent({
+    required(episodic).appendEvent({
       ts: T2,
       agent: "agent-lena",
       type: "agent.status-reported",

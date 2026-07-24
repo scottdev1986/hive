@@ -11,6 +11,7 @@ import type {
 } from "../../../src/daemon/session-host/terminal-host-contract";
 import type { AgentRecord } from "../../../src/schemas";
 import type { SessionLocator } from "../../../src/schemas/session-protocol";
+import { required } from "../../required";
 
 /**
  * The 2026-07-21 messaging regression, at the layer that has to end it.
@@ -154,7 +155,7 @@ function injector(
     async issueAttach() {
       return {
         schemaVersion: 1 as const,
-        locator: agent().sessionLocator!,
+        locator: required(agent().sessionLocator),
         viewerId: "hive-daemon:test",
         token: "grant-token",
         geometry: {
@@ -270,7 +271,7 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
       async issueAttach() {
         return {
           schemaVersion: 1 as const,
-          locator: agent().sessionLocator!,
+          locator: required(agent().sessionLocator),
           viewerId: "hive-daemon:test",
           token: "grant-token",
           geometry: {

@@ -41,7 +41,7 @@ class RecordingSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
   async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
     this.calls.push([agent.name, text]);
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -265,3 +265,5 @@ describe("priority control messages", () => {
     }
   });
 });
+
+import { required } from "../required";

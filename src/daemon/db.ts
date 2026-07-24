@@ -886,7 +886,7 @@ export class HiveDatabase {
       const columns = z
         .array(z.object({ name: z.string() }))
         .parse(this.database.query(`PRAGMA index_info(${index.name})`).all());
-      return columns.length === 1 && columns[0]!.name === "name";
+      return columns.length === 1 && columns[0]?.name === "name";
     });
     if (legacy === undefined) return;
 
@@ -1278,15 +1278,15 @@ export class HiveDatabase {
 
   upsertAgent(agent: AgentRecord): AgentRecord {
     const parsed = AgentRecordSchema.parse(agent);
-    const stored = this.database
+    const existingLocator = this.database
       .query("SELECT sessionLocator FROM agents WHERE id = ?")
       .get(parsed.id) as { sessionLocator: string | null } | null;
     const value =
       parsed.sessionLocator === undefined
         ? AgentRecordSchema.parse({
             ...parsed,
-            sessionLocator: stored?.sessionLocator
-              ? JSON.parse(stored.sessionLocator)
+            sessionLocator: existingLocator?.sessionLocator
+              ? JSON.parse(existingLocator.sessionLocator)
               : mintSessionLocator(
                   sessionInstanceId(getHiveHome()),
                   { kind: "agent", agentId: parsed.id },
@@ -1365,7 +1365,10 @@ export class HiveDatabase {
         value.writeRevoked ? 1 : 0,
         closedAt,
       );
-    return this.getAgentById(value.id)!;
+    const result = this.getAgentById(value.id);
+    if (result === null)
+      throw new Error(`Agent disappeared after upsert: ${value.id}`);
+    return result;
   }
 
   /**
@@ -1558,7 +1561,10 @@ export class HiveDatabase {
         value.idempotencyKey,
         value.capabilityEpoch,
       );
-    return this.getMessage(value.id)!;
+    const stored = this.getMessage(value.id);
+    if (stored === null)
+      throw new Error(`Message disappeared after insert: ${value.id}`);
+    return stored;
   }
 
   getMessage(id: string): AgentMessage | null {
@@ -1628,7 +1634,9 @@ export class HiveDatabase {
   ): AgentMessage | null {
     if (senders.length === 0) return null;
     if (senders.length === 1) {
-      return this.findMessageByIdempotency(senders[0]!, idempotencyKey);
+      const [sender] = senders;
+      if (sender === undefined) return null;
+      return this.findMessageByIdempotency(sender, idempotencyKey);
     }
     const placeholders = senders.map(() => "?").join(", ");
     const row = this.database
@@ -2162,7 +2170,11 @@ export class HiveDatabase {
         value.createdAt,
         value.resolvedAt,
       );
-    return this.getApproval(value.id)!;
+    const stored = this.getApproval(value.id);
+    if (stored === null) {
+      throw new Error(`Approval disappeared after insert: ${value.id}`);
+    }
+    return stored;
   }
 
   getApproval(id: string): Approval | null {

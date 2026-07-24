@@ -20,6 +20,7 @@ import type {
   SessionRef,
   TerminationResult,
 } from "../../../src/daemon/session-host/terminal-host-contract";
+import { required } from "../../required";
 
 const session: SessionRef = {
   key: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
@@ -195,7 +196,7 @@ class MemoryBindings implements TerminalHostBindingStore {
       (binding) => binding.locator.sessionId === locator.sessionId,
     );
     if (index < 0) throw new Error("missing binding");
-    const completed = { ...this.values[index]!, createEvidence };
+    const completed = { ...required(this.values[index]), createEvidence };
     this.values[index] = completed;
     return completed;
   }
@@ -210,14 +211,14 @@ class MemoryBindings implements TerminalHostBindingStore {
     const index = this.values.findIndex(
       (binding) => binding.locator.sessionId === locator.sessionId,
     );
-    if (index < 0 || this.values[index]!.createEvidence === undefined) {
+    if (index < 0 || this.values[index]?.createEvidence === undefined) {
       throw new Error("missing completed binding");
     }
     const renewed = {
-      ...this.values[index]!,
+      ...required(this.values[index]),
       visibility,
       createEvidence: {
-        ...this.values[index]!.createEvidence!,
+        ...required(this.values[index]?.createEvidence),
         visibility: {
           state: "visible" as const,
           workspaceSessionId: visibility.workspaceSessionId,
@@ -238,7 +239,7 @@ class MemoryBindings implements TerminalHostBindingStore {
       (binding) => binding.locator.sessionId === locator.sessionId,
     );
     if (index < 0) throw new Error("missing binding");
-    const recorded = { ...this.values[index]!, terminationAudit };
+    const recorded = { ...required(this.values[index]), terminationAudit };
     this.values[index] = recorded;
     return recorded;
   }

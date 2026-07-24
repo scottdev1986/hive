@@ -33,7 +33,7 @@
  *      cdhash with Apple) and rely on Gatekeeper's online ticket lookup; only
  *      the .app is stapled and works offline.
  */
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 

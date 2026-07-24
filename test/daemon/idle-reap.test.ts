@@ -45,7 +45,7 @@ class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
 
   async sendSessionMessage(agent: AgentRecord): Promise<void> {
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -128,7 +128,11 @@ describe("idle-agent reap sweep", () => {
         .listMessages()
         .find((message) => message.to === "maya");
       expect(warning?.body).toContain("Persist any findings");
-      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      db.transitionMessage(
+        required(warning?.id),
+        "applied",
+        new Date().toISOString(),
+      );
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("dead");
@@ -175,7 +179,11 @@ describe("idle-agent reap sweep", () => {
       const warning = db
         .listMessages()
         .find((message) => message.to === "maya");
-      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      db.transitionMessage(
+        required(warning?.id),
+        "applied",
+        new Date().toISOString(),
+      );
       await daemon.reapIdleAgents();
 
       const standing = await listWorktrees(repoRoot);
@@ -213,7 +221,11 @@ describe("idle-agent reap sweep", () => {
       const warning = db
         .listMessages()
         .find((message) => message.to === "maya");
-      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      db.transitionMessage(
+        required(warning?.id),
+        "applied",
+        new Date().toISOString(),
+      );
       await daemon.reapIdleAgents();
 
       const notice = (await daemon.delivery.orchestratorInbox())[0];
@@ -405,7 +417,11 @@ describe("idle-agent reap sweep", () => {
       const warning = db
         .listMessages()
         .find((message) => message.to === "maya");
-      db.transitionMessage(warning!.id, "applied", new Date().toISOString());
+      db.transitionMessage(
+        required(warning?.id),
+        "applied",
+        new Date().toISOString(),
+      );
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("dead");
@@ -436,3 +452,5 @@ describe("idle-agent reap sweep", () => {
     }
   });
 });
+
+import { required } from "../required";

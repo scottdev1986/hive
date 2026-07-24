@@ -26,15 +26,17 @@ const KIMI_API_BASE_URL = "https://api.kimi.com/coding/v1";
 /** The CLI's own public OAuth client id, from the 0.28.1 binary. */
 const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 
-const KimiCredentialsSchema = z.object({
-  access_token: z.string().min(1),
-  refresh_token: z.string().min(1),
-  /** Epoch seconds. */
-  expires_at: z.number(),
-  expires_in: z.number().optional(),
-  scope: z.string().optional(),
-  token_type: z.string().optional(),
-}).passthrough();
+const KimiCredentialsSchema = z
+  .object({
+    access_token: z.string().min(1),
+    refresh_token: z.string().min(1),
+    /** Epoch seconds. */
+    expires_at: z.number(),
+    expires_in: z.number().optional(),
+    scope: z.string().optional(),
+    token_type: z.string().optional(),
+  })
+  .passthrough();
 
 export type KimiUsageProbeResult =
   | { status: "ok"; response: unknown }
@@ -48,31 +50,44 @@ export function kimiCredentialsPath(home: string = kimiHome()): string {
   return join(home, "credentials", "kimi-code.json");
 }
 
-const KimiUsageWindowSchema = z.object({
-  limit: z.string(),
-  used: z.string(),
-  resetTime: z.string().optional(),
-}).passthrough();
+const KimiUsageWindowSchema = z
+  .object({
+    limit: z.string(),
+    used: z.string(),
+    resetTime: z.string().optional(),
+  })
+  .passthrough();
 
 /** The verified 2026-07-24 /usages shape, shared by the billing display
  * parser (usage-credits.ts) and the quota pool parser (quota-sources.ts). */
-export const KimiUsagesResponseSchema = z.object({
-  user: z.object({
-    membership: z.object({ level: z.string() }).passthrough().nullish(),
-  }).passthrough().nullish(),
-  /** The weekly quota window. */
-  usage: KimiUsageWindowSchema.nullish(),
-  /** Rate-limit windows; the 300-minute one is the rolling five-hour window. */
-  limits: z.array(
-    z.object({
-      window: z.object({
-        duration: z.number(),
-        timeUnit: z.string(),
-      }).passthrough(),
-      detail: KimiUsageWindowSchema,
-    }).passthrough(),
-  ).nullish(),
-}).passthrough();
+export const KimiUsagesResponseSchema = z
+  .object({
+    user: z
+      .object({
+        membership: z.object({ level: z.string() }).passthrough().nullish(),
+      })
+      .passthrough()
+      .nullish(),
+    /** The weekly quota window. */
+    usage: KimiUsageWindowSchema.nullish(),
+    /** Rate-limit windows; the 300-minute one is the rolling five-hour window. */
+    limits: z
+      .array(
+        z
+          .object({
+            window: z
+              .object({
+                duration: z.number(),
+                timeUnit: z.string(),
+              })
+              .passthrough(),
+            detail: KimiUsageWindowSchema,
+          })
+          .passthrough(),
+      )
+      .nullish(),
+  })
+  .passthrough();
 
 /** A window's duration in minutes, or null when the unit is not one we can
  * place — an unplaceable window is dropped, never sorted into a guessed
@@ -95,25 +110,31 @@ export function kimiUsageWindowMinutes(
 
 /** Percent consumed of one window, or null when the string numbers do not
  * describe one — a malformed window is unknown, never a confident zero. */
-export function kimiUsageWindowPercent(
-  detail: { limit: string; used: string },
-): number | null {
+export function kimiUsageWindowPercent(detail: {
+  limit: string;
+  used: string;
+}): number | null {
   const limit = Number(detail.limit);
   const used = Number(detail.used);
   if (
-    !Number.isFinite(limit) || limit <= 0 ||
-    !Number.isFinite(used) || used < 0
-  ) return null;
+    !Number.isFinite(limit) ||
+    limit <= 0 ||
+    !Number.isFinite(used) ||
+    used < 0
+  )
+    return null;
   return (used / limit) * 100;
 }
 
-const KimiRefreshResponseSchema = z.object({
-  access_token: z.string().min(1),
-  refresh_token: z.string().min(1),
-  expires_in: z.number().positive(),
-  scope: z.string().optional(),
-  token_type: z.string().optional(),
-}).passthrough();
+const KimiRefreshResponseSchema = z
+  .object({
+    access_token: z.string().min(1),
+    refresh_token: z.string().min(1),
+    expires_in: z.number().positive(),
+    scope: z.string().optional(),
+    token_type: z.string().optional(),
+  })
+  .passthrough();
 
 export class KimiHttpUsageTransport implements KimiUsageTransport {
   constructor(
@@ -169,7 +190,9 @@ export class KimiHttpUsageTransport implements KimiUsageTransport {
       // What the CLI itself does on refresh, so the CLI stays in sync.
       await writeFile(path, `${JSON.stringify(credentials, null, 2)}\n`, {
         mode: 0o600,
-      }).then(() => chmod(path, 0o600)).catch(() => undefined);
+      })
+        .then(() => chmod(path, 0o600))
+        .catch(() => undefined);
     }
 
     const baseUrl = this.options.baseUrl ?? KIMI_API_BASE_URL;
@@ -208,16 +231,16 @@ export class KimiHttpUsageTransport implements KimiUsageTransport {
     fetchFn: typeof fetch,
   ): Promise<
     | {
-      status: "ok";
-      tokens: {
-        access_token: string;
-        refresh_token: string;
-        expires_at: number;
-        expires_in: number;
-        scope?: string;
-        token_type?: string;
-      };
-    }
+        status: "ok";
+        tokens: {
+          access_token: string;
+          refresh_token: string;
+          expires_at: number;
+          expires_in: number;
+          scope?: string;
+          token_type?: string;
+        };
+      }
     | { status: "unavailable"; reason: string }
   > {
     const oauthHost = this.options.oauthHost ?? KIMI_OAUTH_HOST;
@@ -265,7 +288,9 @@ export class KimiHttpUsageTransport implements KimiUsageTransport {
         refresh_token: parsed.data.refresh_token,
         expires_at: Math.floor(now() / 1_000) + parsed.data.expires_in,
         expires_in: parsed.data.expires_in,
-        ...(parsed.data.scope === undefined ? {} : { scope: parsed.data.scope }),
+        ...(parsed.data.scope === undefined
+          ? {}
+          : { scope: parsed.data.scope }),
         ...(parsed.data.token_type === undefined
           ? {}
           : { token_type: parsed.data.token_type }),

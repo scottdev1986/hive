@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { getDatabasePath, HiveDatabase } from "../../src/daemon/db";
+import { HiveDatabase } from "../../src/daemon/db";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
@@ -530,7 +530,7 @@ describe("memory MCP tools", () => {
       });
       // The article itself is never its own candidate.
       expect(
-        second.similarCandidates!.map((candidate) => candidate.id),
+        second.similarCandidates?.map((candidate) => candidate.id),
       ).not.toContain("quota-token-spend");
 
       // A write with no lookalikes carries no candidates.

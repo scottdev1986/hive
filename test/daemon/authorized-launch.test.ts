@@ -30,9 +30,15 @@ describe("AuthorizedLaunch", () => {
       "availability",
       "capabilityFloor",
     ] as const) {
-      checks[key] = async () => (order.push(key), null);
+      checks[key] = async () => {
+        order.push(key);
+        return null;
+      };
     }
-    checks.effort = async () => (order.push("effort"), { refusal: null });
+    checks.effort = async () => {
+      order.push("effort");
+      return { refusal: null };
+    };
 
     const result = await AuthorizedLaunch.gate(
       { tool: "codex", model: "gpt-test" },

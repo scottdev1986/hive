@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/db";
 import { CrashRecovery } from "../../src/daemon/recovery";
 import type { AgentRecord } from "../../src/schemas";
+import { required } from "../required";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 /**
@@ -127,7 +128,7 @@ describe("hive MCP reachability at resume (#57)", () => {
     };
     const recovery = new CrashRecovery({
       authorizeLaunch: async (identity) =>
-        (await authorizeForQuotaTest([identity]))[0]!,
+        required((await authorizeForQuotaTest([identity]))[0]),
       ...deps(db, sessions, {
         // The dead port: nothing the agent reports can ever arrive.
         mcpClientSeen: () => false,
@@ -138,7 +139,7 @@ describe("hive MCP reachability at resume (#57)", () => {
     const outcomes = await recovery.sweep();
 
     expect(outcomes).toHaveLength(1);
-    const outcome = outcomes[0]!;
+    const outcome = required(outcomes[0]);
     expect(outcome.action).toBe("marked-dead");
     if (outcome.action !== "marked-dead") {
       throw new Error(`expected marked-dead, got ${outcome.action}`);
@@ -159,7 +160,7 @@ describe("hive MCP reachability at resume (#57)", () => {
     };
     const recovery = new CrashRecovery({
       authorizeLaunch: async (identity) =>
-        (await authorizeForQuotaTest([identity]))[0]!,
+        required((await authorizeForQuotaTest([identity]))[0]),
       ...deps(db, sessions, {
         mcpClientSeen: () => true,
         mcpReportingTimeoutMs: 0,

@@ -9,6 +9,7 @@ import {
 } from "../../src/daemon/teardown";
 import type { AgentRecord } from "../../src/schemas";
 import { TerminationRequestSchema } from "../../src/schemas/session-protocol";
+import { required } from "../required";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -155,7 +156,7 @@ describe("reapProcessTree", () => {
 
     // The terminal host stops the session. The shell dies; the nohup'ed child is reparented.
     alive.delete(100);
-    const orphan = alive.get(101)!;
+    const orphan = required(alive.get(101));
     orphan.ppid = 1;
 
     const outcome = await reapCapturedTree(captured, dependencies, 1);
@@ -191,7 +192,7 @@ describe("reapProcessTree", () => {
 
       const captured = await captureProcessTree([shell.pid]);
       expect(captured.map((entry) => entry.pid)).toContain(shell.pid);
-      expect(captured.map((entry) => entry.pid)).toContain(childPid!);
+      expect(captured.map((entry) => entry.pid)).toContain(required(childPid));
 
       shell.kill("SIGKILL");
       await shell.exited;
@@ -206,7 +207,9 @@ describe("reapProcessTree", () => {
       const outcome = await reapCapturedTree(captured);
 
       expect(outcome.survivors).toEqual([]);
-      expect(outcome.killed.map((entry) => entry.pid)).toContain(childPid!);
+      expect(outcome.killed.map((entry) => entry.pid)).toContain(
+        required(childPid),
+      );
       expect(
         await waitForProcess(
           (processes) => !processes.some((entry) => entry.pid === childPid),
@@ -389,7 +392,7 @@ describe("reapProcessTree", () => {
     ]);
 
     alive.delete(100);
-    alive.get(101)!.ppid = 1;
+    required(alive.get(101)).ppid = 1;
 
     await expect(captureProcessTree([100], dependencies, 1)).rejects.toThrow(
       "did not contain root pid 100",

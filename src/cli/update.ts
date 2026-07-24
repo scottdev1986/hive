@@ -330,7 +330,7 @@ export interface StagedUpdateActivationDeps {
 }
 
 export async function activateStagedUpdate(
-  version: string,
+  _version: string,
   deps: StagedUpdateActivationDeps,
 ): Promise<void> {
   const lease = await deps.acquireLease("update");

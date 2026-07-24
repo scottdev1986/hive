@@ -193,7 +193,7 @@ export async function installShippedSkills(
       throw error;
     });
 
-    if (existing !== null && existing.isSymbolicLink()) {
+    if (existing?.isSymbolicLink()) {
       report.userOwned.push(skill.name);
       continue;
     }

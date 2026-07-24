@@ -1,3 +1,4 @@
+import { required } from "../required";
 // Trigger protocol (HiveMemory HM-3 WP7, board #120, plan §3 item 3, article
 // lesson A1): queen/operator trigger words execute memory recall/writes at
 // the daemon and the labeled result replaces the delivered body; agent
@@ -79,7 +80,7 @@ class SubmittingSessionSender implements SessionSender {
 
   async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
     this.calls.push([agent.name, text]);
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -215,7 +216,7 @@ describe("recall trigger", () => {
       );
       expect(message.deliveredAt === null).toBe(false);
       expect(harness.sender.calls).toHaveLength(1);
-      const text = harness.sender.calls[0]![1];
+      const text = harness.sender.calls[0]?.[1];
       // The trigger is a command, not content: the raw text is gone.
       expect(text).not.toContain("recall: urgent turn");
       expect(text).toContain("🧠 Hive memory recall for 'urgent turn' — ");
@@ -231,7 +232,7 @@ describe("recall trigger", () => {
         .eventsFor({ agent: "maya" })
         .filter((event) => event.type === "memory-trigger");
       expect(audit).toHaveLength(1);
-      const provenance = JSON.parse(audit[0]!.provenance) as Record<
+      const provenance = JSON.parse(required(audit[0]?.provenance)) as Record<
         string,
         unknown
       >;
@@ -257,13 +258,13 @@ describe("recall trigger", () => {
         "recall: nonexistent zzzqxwv topic",
       );
       expect(message.deliveredAt === null).toBe(false);
-      const text = harness.sender.calls[0]![1];
+      const text = harness.sender.calls[0]?.[1];
       expect(text).toContain(
         "🧠 Hive memory recall for 'nonexistent zzzqxwv topic' — no matching memory",
       );
       expect(text).toContain("honest empty result");
       const audit = harness.episodic.eventsFor({ agent: "maya" });
-      expect(JSON.parse(audit[0]!.provenance)).toMatchObject({
+      expect(JSON.parse(required(audit[0]?.provenance))).toMatchObject({
         sender: "operator",
         kind: "recall",
         outcome: "empty",
@@ -284,7 +285,7 @@ describe("note this trigger", () => {
         "maya",
         "note this: terminal write success only means the terminal accepted the input",
       );
-      const text = harness.sender.calls[0]![1];
+      const text = harness.sender.calls[0]?.[1];
       expect(text).toContain(
         '🧠 Hive noted: "terminal write success only means the terminal accepted the input" [unverified]',
       );
@@ -292,14 +293,18 @@ describe("note this trigger", () => {
       expect(text).not.toContain("📨 message from queen");
       const written = harness.index.search("terminal input");
       expect(written).toHaveLength(1);
-      const fact = await readMemoryFact(harness.repo, "repo", written[0]!.id);
+      const fact = await readMemoryFact(
+        harness.repo,
+        "repo",
+        required(written[0]?.id),
+      );
       expect(fact).toMatchObject({
         topic: "notes",
         source: "orchestrator",
         status: "unverified",
       });
       const audit = harness.episodic.eventsFor({ agent: "maya" });
-      expect(JSON.parse(audit[0]!.provenance)).toMatchObject({
+      expect(JSON.parse(required(audit[0]?.provenance))).toMatchObject({
         sender: "queen",
         target: "maya",
         kind: "note",
@@ -320,8 +325,12 @@ describe("note this trigger", () => {
         "note this: the floor is 16 GB",
       );
       const written = harness.index.search("floor");
-      const fact = await readMemoryFact(harness.repo, "repo", written[0]!.id);
-      expect(fact!.source).toBe("human");
+      const fact = await readMemoryFact(
+        harness.repo,
+        "repo",
+        required(written[0]?.id),
+      );
+      expect(fact?.source).toBe("human");
     } finally {
       harness.db.close();
       harness.episodic.close();
@@ -336,21 +345,23 @@ describe("note this trigger", () => {
         "maya",
         "note this: quota reads tighten",
       );
-      const first = harness.index.search("quota reads")[0]!;
+      const first = required(harness.index.search("quota reads")[0]);
       // Same normalized title, different punctuation/case and a refined body.
       await harness.delivery.send(
         "queen",
         "maya",
         "Note this: Quota reads, tighten!",
       );
-      expect(harness.sender.calls[1]![1]).toContain("updated existing article");
+      expect(harness.sender.calls[1]?.[1]).toContain(
+        "updated existing article",
+      );
       const facts = harness.index.search("quota reads");
       expect(facts).toHaveLength(1);
-      expect(facts[0]!.id).toBe(first.id);
+      expect(facts[0]?.id).toBe(first.id);
       const fact = await readMemoryFact(harness.repo, "repo", first.id);
-      expect(fact!.supersedes).toContain(first.id);
+      expect(fact?.supersedes).toContain(first.id);
       const audit = harness.episodic.eventsFor({ agent: "maya" });
-      expect(JSON.parse(audit[1]!.provenance)).toMatchObject({
+      expect(JSON.parse(required(audit[1]?.provenance))).toMatchObject({
         kind: "note",
         action: "updated",
         id: first.id,
@@ -371,7 +382,7 @@ describe("document this trigger", () => {
         "maya",
         "document this: Delivery Boundary Semantics",
       );
-      const text = harness.sender.calls[0]![1];
+      const text = harness.sender.calls[0]?.[1];
       expect(text).toContain(
         '🧠 Hive documented: "Delivery Boundary Semantics" [unverified]',
       );
@@ -380,7 +391,11 @@ describe("document this trigger", () => {
       );
       const written = harness.index.search("Delivery Boundary Semantics");
       expect(written).toHaveLength(1);
-      const fact = await readMemoryFact(harness.repo, "repo", written[0]!.id);
+      const fact = await readMemoryFact(
+        harness.repo,
+        "repo",
+        required(written[0]?.id),
+      );
       expect(fact).toMatchObject({
         topic: "delivery-boundary-semantics",
         source: "orchestrator",
@@ -388,8 +403,8 @@ describe("document this trigger", () => {
         kind: "article",
       });
       // The scaffold prompts verification instead of asserting authority.
-      expect(fact!.body).toContain("## Verification");
-      expect(fact!.body).toContain("UNVERIFIED");
+      expect(fact?.body).toContain("## Verification");
+      expect(fact?.body).toContain("UNVERIFIED");
     } finally {
       harness.db.close();
       harness.episodic.close();
@@ -407,7 +422,7 @@ describe("authority and failure isolation", () => {
         "note this: agents should not write this",
       );
       expect(message.deliveredAt === null).toBe(false);
-      expect(harness.sender.calls[0]![1]).toBe(
+      expect(harness.sender.calls[0]?.[1]).toBe(
         "📨 message from sam: note this: agents should not write this",
       );
       // No wiki write, no audit row.
@@ -435,7 +450,7 @@ describe("authority and failure isolation", () => {
         "note this: this write will fail",
       );
       expect(message.deliveredAt === null).toBe(false);
-      const text = harness.sender.calls[0]![1];
+      const text = harness.sender.calls[0]?.[1];
       expect(text).toContain(
         "📨 message from queen: note this: this write will fail",
       );
@@ -456,7 +471,7 @@ describe("authority and failure isolation", () => {
       const delivery = new MessageDelivery(db, sender);
       db.insertAgent(agent());
       await delivery.send("queen", "maya", "recall: anything");
-      expect(sender.calls[0]![1]).toBe(
+      expect(sender.calls[0]?.[1]).toBe(
         "📨 message from queen: recall: anything",
       );
     } finally {
@@ -489,7 +504,7 @@ describe("authority and failure isolation", () => {
         createMemoryTriggerExecutor(harness.deps),
       );
       await delivery.send("queen", "maya", "note this: delta rides along");
-      const text = sender.calls[0]![1];
+      const text = sender.calls[0]?.[1];
       expect(text).toContain("🧠 Hive noted:");
       expect(text).toContain("🧠 Hive memory update since your last turn");
     } finally {

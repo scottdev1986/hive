@@ -78,7 +78,10 @@ export function identifyModelVendor(
     );
     if (claimed) claims.push(provider);
   }
-  if (claims.length === 1) return { state: "claimed", provider: claims[0]! };
+  const [provider] = claims;
+  if (claims.length === 1 && provider !== undefined) {
+    return { state: "claimed", provider };
+  }
   // Two vendors claiming one name is not an answer, it is a collision. Saying
   // "unreadable" keeps it from being resolved by whichever happened to be first.
   if (claims.length > 1) {

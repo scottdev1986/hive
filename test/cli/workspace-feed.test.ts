@@ -6,7 +6,6 @@ import {
 } from "../../scripts/test-fixtures/workspace-feed-snapshot";
 import {
   FEED_GIVE_UP_MS,
-  FEED_HEARTBEAT_MS,
   FEED_POLL_MS,
   FEED_RETRY_MAX_MS,
   parseOrchestratorStatus,
@@ -163,8 +162,8 @@ describe("runWorkspaceFeed", () => {
       },
     );
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.url).toBe("http://127.0.0.1:4483/workspace-visibility");
-    expect(await requests[0]!.json()).toEqual({
+    expect(requests[0]?.url).toBe("http://127.0.0.1:4483/workspace-visibility");
+    expect(await requests[0]?.json()).toEqual({
       schemaVersion: 1,
       source: {
         sessionId: "workspace-launch",

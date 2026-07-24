@@ -379,12 +379,17 @@ export async function writeMemoryFact(
 ): Promise<MemoryWriteFileResult> {
   input = MemoryWriteInputSchema.parse(input);
   const date = input.date ?? todayIsoDate();
-  if (input.status === "verified" && input.verified! < date) {
+  const verified = input.verified;
+  if (
+    input.status === "verified" &&
+    verified !== undefined &&
+    verified < date
+  ) {
     throw new Error(
       "verified date predates the article update; use status stale",
     );
   }
-  if (input.status === "stale" && input.verified! >= date) {
+  if (input.status === "stale" && verified !== undefined && verified >= date) {
     throw new Error(
       "stale status requires verified to predate the article update",
     );
@@ -580,6 +585,7 @@ function parseLegacyFile(path: string, contents: string): LegacyFact {
     }
   }
   const source = MemorySourceSchema.safeParse(fields.get("source"));
+  const fieldDate = fields.get("date");
   return {
     id,
     title: fields.get("title") ?? id,
@@ -588,9 +594,10 @@ function parseLegacyFile(path: string, contents: string): LegacyFact {
       .join("\n")
       .trim(),
     tags: parseList(fields.get("tags") ?? "[]"),
-    date: ISO_DATE.test(fields.get("date") ?? "")
-      ? fields.get("date")!
-      : todayIsoDate(),
+    date:
+      fieldDate !== undefined && ISO_DATE.test(fieldDate)
+        ? fieldDate
+        : todayIsoDate(),
     source: source.success ? source.data : undefined,
     verified: ISO_DATE.test(fields.get("verified") ?? "")
       ? fields.get("verified")
@@ -887,11 +894,11 @@ async function migrateLegacyScope(
     await rebuildScopeIndex(root, scope);
     await writeFile(
       join(wikiRoot(root, scope), LEGACY_MIGRATION_MARKER),
-      JSON.stringify(
+      `${JSON.stringify(
         { completedAt: new Date().toISOString(), backup },
         null,
         2,
-      ) + "\n",
+      )}\n`,
       { flag: "wx" },
     );
     return {

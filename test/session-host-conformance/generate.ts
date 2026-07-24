@@ -111,7 +111,7 @@ const swiftIntConstants = (
 /** Shared HVTCP001 layout body used by both Swift projections. */
 function renderSwiftCheckpointNested(indent: string, access = ""): string {
   const a = access ? `${access} ` : "";
-  const inner = indent + "    ";
+  const inner = `${indent}    `;
   return `${indent}/// HVTCP001 checkpoint envelope (§23 / CHECKPOINT_HEADER).
 ${indent}${a}enum Checkpoint {
 ${indent}    ${a}static let magic = "${CHECKPOINT_HEADER.magic}"
@@ -121,10 +121,10 @@ ${indent}    ${a}static let flags: UInt32 = ${CHECKPOINT_HEADER.flags}
 ${indent}    ${a}static let engineBuildIdBytes = ${CHECKPOINT_HEADER.engineBuildIdBytes}
 ${indent}    ${a}static let payloadSha256Bytes = ${CHECKPOINT_HEADER.payloadSha256Bytes}
 ${indent}    ${a}enum Offset {
-${swiftIntConstants(CHECKPOINT_HEADER.offsets, inner + "    ", a)}
+${swiftIntConstants(CHECKPOINT_HEADER.offsets, `${inner}    `, a)}
 ${indent}    }
 ${indent}    ${a}enum Width {
-${swiftIntConstants(CHECKPOINT_HEADER.widths, inner + "    ", a)}
+${swiftIntConstants(CHECKPOINT_HEADER.widths, `${inner}    `, a)}
 ${indent}    }
 ${indent}}`;
 }

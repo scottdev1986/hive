@@ -55,7 +55,7 @@ describe("EpisodicStore location and lifecycle", () => {
       const reopened = track(EpisodicStore.forProjectRoot(root));
       const facts = reopened.currentFacts();
       expect(facts).toHaveLength(1);
-      expect(facts[0]!.title).toBe("WP1 landed");
+      expect(facts[0]?.title).toBe("WP1 landed");
     } finally {
       if (previousHome === undefined) delete process.env.HIVE_HOME;
       else process.env.HIVE_HOME = previousHome;
@@ -148,7 +148,7 @@ describe("EpisodicStore bi-temporal facts", () => {
     expect(current.map((fact) => fact.id)).toEqual([replacement.id]);
     const before = store.factsAsOf(T0);
     expect(before.map((fact) => fact.id)).toEqual([old.id]);
-    expect(before[0]!.invalidAt).toBe(T1);
+    expect(before[0]?.invalidAt).toBe(T1);
     expect(store.factsAsOf(T2).map((fact) => fact.id)).toEqual([
       replacement.id,
     ]);
@@ -173,8 +173,8 @@ describe("EpisodicStore bi-temporal facts", () => {
     store.invalidateFact(old.id, { supersededBy: next.id, at: T1 });
     const after = store.factsAsOf(T2);
     expect(after).toHaveLength(1);
-    expect(after[0]!.id).toBe(next.id);
-    expect(after[0]!.supersedesId).toBe(old.id);
+    expect(after[0]?.id).toBe(next.id);
+    expect(after[0]?.supersedesId).toBe(old.id);
   });
 });
 
@@ -275,8 +275,8 @@ describe("daemon ingestion into the episodic store", () => {
       },
       {
         requestId: "req_018f1e90-7b5a-7cc0-8000-0000000000e1",
-        assignmentId: assignment!.assignmentId,
-        assignmentGeneration: assignment!.assignmentGeneration,
+        assignmentId: required(assignment).assignmentId,
+        assignmentGeneration: required(assignment).assignmentGeneration,
         phase: "implementing",
         summary: "Halfway through WP1",
         blocker: null,
@@ -288,10 +288,10 @@ describe("daemon ingestion into the episodic store", () => {
 
     const events = episodic.eventsFor({ agent: "agent-maya" });
     expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("agent.status-reported");
-    expect(events[0]!.summary).toBe("Halfway through WP1");
-    expect(events[0]!.ts).toBe(T1);
-    const provenance = JSON.parse(events[0]!.provenance) as {
+    expect(events[0]?.type).toBe("agent.status-reported");
+    expect(events[0]?.summary).toBe("Halfway through WP1");
+    expect(events[0]?.ts).toBe(T1);
+    const provenance = JSON.parse(required(events[0]?.provenance)) as {
       eventId: string;
       seq: string;
     };
@@ -312,7 +312,7 @@ describe("daemon ingestion into the episodic store", () => {
     });
     const events = episodic.eventsFor({ agent: "agent-maya" });
     expect(events).toHaveLength(1);
-    expect(events[0]!.type).toBe("terminal.content-observed");
+    expect(events[0]?.type).toBe("terminal.content-observed");
   });
 
   test("an episodic write failure never breaks the status write", () => {
@@ -353,3 +353,5 @@ describe("daemon ingestion into the episodic store", () => {
     expect(() => episodic.currentFacts()).toThrow();
   });
 });
+
+import { required } from "../required";

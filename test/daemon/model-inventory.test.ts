@@ -11,6 +11,7 @@ import {
   type RoutingPolicy,
   unknown,
 } from "../../src/schemas";
+import { required } from "../required";
 
 const AT = "2026-07-11T12:00:00.000Z";
 
@@ -138,7 +139,9 @@ describe("model inventory", () => {
     );
     const unroutedPolicy = {
       ...policy,
-      chains: { complex_coding: [policy.chains.complex_coding![0]!] },
+      chains: {
+        complex_coding: [required(policy.chains.complex_coding?.[0])],
+      },
     };
     const unrouted = buildModelInventory({ discovery, policy: unroutedPolicy });
     expect(
@@ -187,9 +190,9 @@ describe("model inventory", () => {
       policy,
       now: new Date(AT),
     });
-    const model = inventory.models.find(
-      (entry) => entry.canonicalId === "claude-fable-5",
-    )!;
+    const model = required(
+      inventory.models.find((entry) => entry.canonicalId === "claude-fable-5"),
+    );
     expect(model.routedCandidate).toBeTrue();
     expect(model.roles).toContainEqual(
       expect.objectContaining({ category: "complex_coding", position: 0 }),
@@ -263,9 +266,9 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
       (entry) => entry.canonicalId === "acme-omega-1",
     );
     expect(model).toBeDefined();
-    expect(model!.roles).toEqual([]);
-    expect(model!.when).toContain("Not in any category chain");
-    expect(model!.effortLevels).toMatchObject({ state: "known-none" });
+    expect(model?.roles).toEqual([]);
+    expect(model?.when).toContain("Not in any category chain");
+    expect(model?.effortLevels).toMatchObject({ state: "known-none" });
     const text = formatModelInventory(inventory);
     expect(text).toContain("acme — 1 discovered");
     expect(text).toContain("acme-omega-1");
@@ -321,9 +324,9 @@ describe("effort is three-valued at the inventory edge", () => {
       policy,
       now: new Date(AT),
     });
-    const model = inventory.models.find(
-      (entry) => entry.canonicalId === "gpt-flat",
-    )!;
+    const model = required(
+      inventory.models.find((entry) => entry.canonicalId === "gpt-flat"),
+    );
     expect(model.effortLevels).toMatchObject({ state: "known-none" });
     expect(formatModelInventory(inventory)).toContain("effort      none —");
   });
@@ -338,9 +341,9 @@ describe("effort is three-valued at the inventory edge", () => {
       policy,
       now: new Date(AT),
     });
-    const model = inventory.models.find(
-      (entry) => entry.canonicalId === "gpt-bare",
-    )!;
+    const model = required(
+      inventory.models.find((entry) => entry.canonicalId === "gpt-bare"),
+    );
     expect(model.effortLevels).toEqual({ state: "known", values: [] });
     expect(formatModelInventory(inventory)).toContain("none advertised");
   });
@@ -351,9 +354,9 @@ describe("effort is three-valued at the inventory edge", () => {
       policy,
       now: new Date(AT),
     });
-    const model = inventory.models.find(
-      (entry) => entry.canonicalId === "gpt-spare",
-    )!;
+    const model = required(
+      inventory.models.find((entry) => entry.canonicalId === "gpt-spare"),
+    );
     expect(model.effortLevels).toEqual({
       state: "unknown",
       reason: "field-absent",

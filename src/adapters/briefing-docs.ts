@@ -128,13 +128,16 @@ async function inventoryDocPaths(root: string): Promise<{
 function citedPaths(text: string): string[] {
   const targets: string[] = [];
   for (const match of text.matchAll(/\]\(\s*<?([^)<>\s]+)/g)) {
-    targets.push(match[1]!);
+    const target = match[1];
+    if (target !== undefined) targets.push(target);
   }
   for (const match of text.matchAll(/^\s*\[[^\]]+\]:\s*<?([^\s<>]+)/gm)) {
-    targets.push(match[1]!);
+    const target = match[1];
+    if (target !== undefined) targets.push(target);
   }
   return targets
-    .map((target) => target.split("#")[0]!.split("?")[0]!)
+    .map((target) => target.split("#", 1)[0] ?? "")
+    .map((target) => target.split("?", 1)[0] ?? "")
     .filter((target) => target.length > 0);
 }
 
@@ -167,8 +170,11 @@ export function rankPrimaryDoc(
       : 0;
     score.set(doc, inbound + roleBoost);
   }
-  const ranked = [...docs].sort((a, b) => score.get(b)! - score.get(a)!);
-  const best = ranked[0]!;
+  const ranked = [...docs].sort(
+    (a, b) => (score.get(b) ?? 0) - (score.get(a) ?? 0),
+  );
+  const best = ranked[0];
+  if (best === undefined) return null;
   return (score.get(best) ?? 0) > 0 ? best : null;
 }
 

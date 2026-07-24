@@ -29,6 +29,7 @@ import { HiveDaemon } from "../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../src/daemon/spawner";
 import type { AgentRecord } from "../src/schemas";
 import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
+import { required } from "./required";
 
 const tempRoots: string[] = [];
 const daemons: HiveDaemon[] = [];
@@ -111,7 +112,7 @@ async function makeLiveDaemon(
 function lineFor(lines: string[], name: string): string {
   const line = lines.find((candidate) => candidate.includes(` ${name} —`));
   expect(line, `expected a line for ${name}`).toBeDefined();
-  return line!;
+  return required(line);
 }
 
 describe("hive memory self-test --live (defect D3)", () => {

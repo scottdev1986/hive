@@ -66,7 +66,7 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
 
   test("a Codex/Grok worker keeps a headline from cache reads with null cache-creation", () => {
     const snapshot = TokenUsageSnapshotSchema.parse(fixture);
-    const bucket = snapshot.sessions[0]!.workerSessions;
+    const bucket = required(snapshot.sessions[0]?.workerSessions);
     // The null-cache-subset lesson: a provider that reports cache READS but not
     // cache CREATION must not null the whole bucket. Reads survive; creation is
     // an honest null; the headline derives from reads alone.
@@ -75,3 +75,5 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
     expect(bucket.counts?.cacheCreationInputTokens).toBeNull();
   });
 });
+
+import { required } from "../required";

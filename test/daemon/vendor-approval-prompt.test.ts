@@ -14,6 +14,7 @@ import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-c
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
 import type { AgentRecord } from "../../src/schemas";
+import { required } from "../required";
 
 /**
  * #102: a codex agent parked on its own TUI approval popup was unreachable by
@@ -144,7 +145,7 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 function pendingApprovalId(db: HiveDatabase): string {
   const pending = db.listApprovals("pending");
   expect(pending).toHaveLength(1);
-  return pending[0]!.id;
+  return required(pending[0]?.id);
 }
 
 function deferred(): {
@@ -232,7 +233,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
 
       await client.callTool({
         name: "hive_approve",
-        arguments: { id: approvals[0]!.id, decision: "approve" },
+        arguments: { id: approvals[0]?.id, decision: "approve" },
       });
 
       // The decision reached the pane: "y" is the shortcut codex prints on its
@@ -442,7 +443,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
           name: "remy",
           status: "awaiting-approval",
           sessionLocator: {
-            ...blockedCodexAgent().sessionLocator!,
+            ...required(blockedCodexAgent().sessionLocator),
             subject: { kind: "agent" as const, agentId: "agent-remy" },
             sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000001bb",
           },
@@ -456,7 +457,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
           name: "nina",
           status: "working",
           sessionLocator: {
-            ...blockedCodexAgent().sessionLocator!,
+            ...required(blockedCodexAgent().sessionLocator),
             subject: { kind: "agent" as const, agentId: "agent-nina" },
             sessionId: "ses_018f1e90-7b5a-7cc0-8000-0000000001cc",
           },

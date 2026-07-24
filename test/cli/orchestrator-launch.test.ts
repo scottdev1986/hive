@@ -26,6 +26,7 @@ import {
   OPERATOR_SUBJECT,
   writeCredential,
 } from "../../src/daemon/credentials";
+import { required } from "../required";
 
 let hiveHome: string;
 let previousHiveHome: string | undefined;
@@ -147,8 +148,8 @@ describe("orchestrator launch", () => {
     const path = await provisionCodexRootToken(4317, async () => "token");
     expect(path).not.toBeNull();
     expect(path).toContain(CODEX_ROOT_TOKEN_SUBJECT);
-    expect((await stat(path!)).mode & 0o777).toBe(0o600);
-    expect((await stat(dirname(path!))).mode & 0o777).toBe(0o700);
+    expect((await stat(required(path))).mode & 0o777).toBe(0o600);
+    expect((await stat(dirname(required(path)))).mode & 0o777).toBe(0o700);
 
     const command = buildOrchestratorCommand(
       "codex",
@@ -156,9 +157,9 @@ describe("orchestrator launch", () => {
       "",
       "",
       "/opt/tools/codex",
-      path!,
+      required(path),
     );
-    expect(command.join(" ")).not.toContain(path!);
+    expect(command.join(" ")).not.toContain(required(path));
     expect(command).toContain(
       'mcp_servers.hive.bearer_token_env_var="HIVE_CAPABILITY_TOKEN"',
     );

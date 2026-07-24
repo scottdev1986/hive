@@ -667,8 +667,9 @@ export function buildTargetedGraphBrief(
   const header =
     `Graph locate: ${selected.length} files matched to the task ` +
     `(name/symbol match + import structure; strongest first)`;
-  const parts = [header, nodeLines.join("\n")];
-  let used = header.length + parts[1]!.length;
+  const nodeText = nodeLines.join("\n");
+  const parts = [header, nodeText];
+  let used = header.length + nodeText.length;
   const keptEdges: string[] = [];
   for (const line of edgeLines) {
     if (used + line.length + 1 > GRAPH_BRIEF_MAX_CHARS) break;

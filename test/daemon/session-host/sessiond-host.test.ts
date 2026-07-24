@@ -12,7 +12,6 @@ import {
   encodeSessiondFrame,
   type SessiondBrokerClient,
   SessiondBrokerUnavailableError,
-  type SessiondControlClient,
   type SessiondControlRequest,
   SessiondCreateAdmissionDisabledError,
   type SessiondFrame,
@@ -43,6 +42,7 @@ import {
   HelloPayloadSchema,
   SessionSpecSchema,
 } from "../../../src/schemas/session-protocol";
+import { required } from "../../required";
 
 const session: SessionRef = {
   key: "neutral-session-key",
@@ -723,7 +723,7 @@ describe("sessiond wire framing", () => {
               encodeSessiondFrame({
                 type: "WELCOME",
                 flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-                requestId: helloRequestId!,
+                requestId: required(helloRequestId),
                 streamSeq: 0n,
                 payload: new TextEncoder().encode(
                   JSON.stringify({
@@ -1091,7 +1091,7 @@ describe("SessiondHost landed frozen operations", () => {
     );
     const brokers = [first, second];
     const host = new SessiondHost({
-      connectBroker: async () => brokers.shift()!,
+      connectBroker: async () => required(brokers.shift()),
     });
 
     await expect(host.discoverEngineBuildId()).resolves.toBe("engine-first");
@@ -1123,7 +1123,7 @@ describe("SessiondHost landed frozen operations", () => {
     });
     const brokers = [discovered, changed];
     const changedHost = new SessiondHost({
-      connectBroker: async () => brokers.shift()!,
+      connectBroker: async () => required(brokers.shift()),
       pendingBindings,
     });
 

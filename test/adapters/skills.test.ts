@@ -18,6 +18,7 @@ import {
   skillReaders,
 } from "../../src/adapters/skills";
 import { shippedSkillsFor } from "../../src/skills/shipped";
+import { required } from "../required";
 
 const tempRoots: string[] = [];
 
@@ -118,9 +119,9 @@ describe("skill provisioning", () => {
     tempRoots.push(root);
     const worktree = join(root, "worktree");
     const native = join(worktree, ".agents", "skills");
-    const foreign = shippedSkillsFor("claude").find(
-      (skill) => skill.name === "hive-claude",
-    )!;
+    const foreign = required(
+      shippedSkillsFor("claude").find((skill) => skill.name === "hive-claude"),
+    );
 
     // Plant a byte-identical foreign contract in the shared reader directory.
     await mkdir(join(native, foreign.name), { recursive: true });
@@ -162,12 +163,12 @@ describe("skill provisioning", () => {
   });
 
   test("a skill is withheld from a directory a reader it is not addressed to would see", () => {
-    const contract = shippedSkillsFor("codex").find(
-      (skill) => skill.name === "hive-codex",
-    )!;
-    const neutral = shippedSkillsFor("codex").find(
-      (skill) => skill.name === "hive-memory",
-    )!;
+    const contract = required(
+      shippedSkillsFor("codex").find((skill) => skill.name === "hive-codex"),
+    );
+    const neutral = required(
+      shippedSkillsFor("codex").find((skill) => skill.name === "hive-memory"),
+    );
 
     expect(skillAddressesEveryReader(contract, ["codex"])).toBe(true);
     expect(skillAddressesEveryReader(neutral, ["codex"])).toBe(true);
@@ -212,9 +213,9 @@ describe("skill provisioning", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-drift-"));
     tempRoots.push(root);
     const edited = join(root, ".claude", "skills", "hive-claude", "SKILL.md");
-    const shipped = shippedSkillsFor("claude").find(
-      (skill) => skill.name === "hive-claude",
-    )!;
+    const shipped = required(
+      shippedSkillsFor("claude").find((skill) => skill.name === "hive-claude"),
+    );
 
     const first = await installShippedSkills(root, "claude");
     expect(first.installed).toContain("hive-claude");
@@ -262,8 +263,10 @@ describe("skill provisioning", () => {
     expect(
       await readFile(join(native, "hive-claude", "SKILL.md"), "utf8"),
     ).toEqual(
-      shippedSkillsFor("claude").find((skill) => skill.name === "hive-claude")!
-        .content,
+      required(
+        shippedSkillsFor("claude").find((skill) => skill.name === "hive-claude")
+          ?.content,
+      ),
     );
   });
 });

@@ -106,19 +106,26 @@ export function resolveAutoEffort(
     );
   }
   const orderedLevels = advertised.sort(
-    (left, right) => rank.get(left)! - rank.get(right)!,
+    (left, right) => (rank.get(left) ?? 0) - (rank.get(right) ?? 0),
   );
+  const first = orderedLevels[0];
+  const last = orderedLevels.at(-1);
+  if (first === undefined || last === undefined) {
+    throw new Error(
+      `Hive-decides effort found no levels for ${record.canonicalId}`,
+    );
+  }
   const tier = codingTierForCategory(category);
   let effort: string;
-  if (tier === "simple") effort = orderedLevels[0]!;
-  else if (tier === "complex") effort = orderedLevels.at(-1)!;
+  if (tier === "simple") effort = first;
+  else if (tier === "complex") effort = last;
   else if (
     record.defaultEffort.state === "known" &&
     orderedLevels.includes(record.defaultEffort.value)
   ) {
     effort = record.defaultEffort.value;
   } else {
-    effort = orderedLevels[Math.floor(orderedLevels.length / 2)]!;
+    effort = orderedLevels[Math.floor(orderedLevels.length / 2)] ?? first;
   }
   return {
     effort,

@@ -11,6 +11,7 @@ import type {
   HiveTerminalBinding,
   TerminalHostBindingStore,
 } from "../../src/daemon/session-host/terminal-host-binding";
+import { required } from "../required";
 
 class MemoryBindings implements TerminalHostBindingStore {
   values: HiveTerminalBinding[] = [];
@@ -40,7 +41,7 @@ class MemoryBindings implements TerminalHostBindingStore {
     const index = this.values.findIndex(
       (binding) => binding.locator.sessionId === locator.sessionId,
     );
-    const value = { ...this.values[index]!, createEvidence: evidence };
+    const value = { ...required(this.values[index]), createEvidence: evidence };
     this.values[index] = value;
     return value;
   }

@@ -528,12 +528,12 @@ describe("codex model/list → capability records", () => {
       CODEX_CLI,
       OBSERVED_AT,
     );
-    expect(records[0]!.supportedEffortLevels).toMatchObject({
+    expect(records[0]?.supportedEffortLevels).toMatchObject({
       state: "unknown",
       reason: "malformed",
     });
     // A field the entry simply omitted is a different unknown.
-    expect(records[0]!.defaultEffort).toMatchObject({
+    expect(records[0]?.defaultEffort).toMatchObject({
       state: "unknown",
       reason: "field-absent",
     });
@@ -660,8 +660,8 @@ describe("probes degrade to unknown, never to a guess", () => {
     const result = await probe.read();
     if (result.status !== "ok") throw new Error("expected ok");
     expect(result.records).toHaveLength(4);
-    expect(result.records[0]!.cliVersion).toBe(CLAUDE_CLI);
-    expect(result.records[0]!.observedAt).toBe("2026-07-11T12:00:00.000Z");
+    expect(result.records[0]?.cliVersion).toBe(CLAUDE_CLI);
+    expect(result.records[0]?.observedAt).toBe("2026-07-11T12:00:00.000Z");
   });
 
   const at2026 = () => new Date("2026-07-11T12:00:00.000Z");
@@ -700,7 +700,7 @@ describe("the effective default: what an unflagged launch actually runs", () => 
       },
       AT,
     );
-    expect(records[0]!.canonicalId).toBe("gpt-5.5");
+    expect(records[0]?.canonicalId).toBe("gpt-5.5");
     expect(effective.model.state === "known" && effective.model.value).toBe(
       "gpt-5.6-sol",
     );

@@ -516,11 +516,10 @@ async function executeWrite(
       ? `wrote article [${written.scope}/${written.topic}] ${written.id}`
       : `updated existing article [${written.scope}/${written.topic}] ${written.id}`;
   const embedding = written.embedding;
-  const embeddingWarning =
-    embedding !== undefined && embedding.startsWith("unavailable:")
-      ? `\n⚠ semantic index unavailable (${embedding.slice("unavailable:".length)})` +
-        " — this write is keyword-searchable only."
-      : "";
+  const embeddingWarning = embedding?.startsWith("unavailable:")
+    ? `\n⚠ semantic index unavailable (${embedding.slice("unavailable:".length)})` +
+      " — this write is keyword-searchable only."
+    : "";
   return {
     body:
       `🧠 ${verb}: "${written.title}" [unverified] (${SYSTEM_NOTE(context.from, trigger)} ` +

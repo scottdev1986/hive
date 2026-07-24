@@ -27,6 +27,7 @@ import type {
   TerminationResult,
   WindowSize,
 } from "../../src/daemon/session-host/terminal-host-contract";
+import { required } from "../required";
 
 export const NEUTRAL_FIXTURE_VERSION = "1.0.0" as const;
 export type FreezeCase =
@@ -539,7 +540,9 @@ export class NeutralTerminalHostFixture implements TerminalHost {
         unacknowledged >= fixtureSubscriptionLimits.unacknowledgedEventHighWater
       )
         return;
-      const event = record.events[sequence - record.retainedEventStart]!;
+      const event = required(
+        record.events[sequence - record.retainedEventStart],
+      );
       // The cursor commits at the delivery boundary, BEFORE the event is handed
       // over. Committing after the consumer asks for the next item would leave
       // a subscriber that cancels mid-drain positioned on an event it has

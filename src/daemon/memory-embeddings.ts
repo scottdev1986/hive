@@ -389,14 +389,19 @@ export class MemoryEmbeddingService {
 }
 
 const dot = (a: Float32Array, b: readonly number[]): number => {
+  if (a.length !== b.length) {
+    throw new Error(
+      "Cannot compare embedding vectors with different dimensions",
+    );
+  }
   let sum = 0;
-  for (let i = 0; i < a.length; i += 1) sum += a[i]! * b[i]!;
+  for (const [i, value] of a.entries()) sum += value * (b[i] ?? 0);
   return sum;
 };
 
 const norm = (a: Float32Array | readonly number[]): number => {
   let sum = 0;
-  for (let i = 0; i < a.length; i += 1) sum += a[i]! * a[i]!;
+  for (const value of a) sum += value * value;
   return Math.sqrt(sum);
 };
 

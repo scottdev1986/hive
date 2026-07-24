@@ -2135,6 +2135,7 @@ type Equals<Left, Right> =
 // The §20 transport-only payload schemas above have no §19 SessionHost
 // counterparts and are intentionally exempt from these Equals assertions.
 
+// biome-ignore-start lint/correctness/noUnusedVariables: These aliases fail typechecking when schemas drift from their contracts.
 type SessionSubjectSchemaMatchesContract = Assert<
   Equals<
     z.infer<typeof SessionSubjectSchema>,
@@ -2357,6 +2358,7 @@ type TerminationResultSchemaMatchesContract = Assert<
 type SessionEventSchemaMatchesContract = Assert<
   Equals<z.infer<typeof SessionEventSchema>, SessionHostContract.SessionEvent>
 >;
+// biome-ignore-end lint/correctness/noUnusedVariables: End compile-time schema assertions.
 
 export const SESSION_HOST_PERMISSIONS = {
   inspect: ["authorized-instance"],

@@ -129,11 +129,12 @@ export class CodexAppServerClient {
       );
       return;
     }
+    const id = message.id;
     void this.handlers.request(message).then(
-      (result) => this.transport.send({ id: message.id!, result }),
+      (result) => this.transport.send({ id, result }),
       (error) =>
         this.transport.send({
-          id: message.id!,
+          id,
           error: {
             code: -32603,
             message:
@@ -673,7 +674,10 @@ export class CodexAppServerManager {
     agentName: string,
     message: RpcMessage,
   ): Promise<unknown> {
-    const method = message.method!;
+    const method = message.method;
+    if (method === undefined) {
+      throw new Error("Codex app-server request is missing a method");
+    }
     const params = message.params ?? {};
     const description = describeApproval(method, params);
     if (description === null) {
@@ -889,8 +893,13 @@ export async function runCodexAppServerHost(
   });
   await chmod(options.socket, 0o600);
   process.stdout.write(`Hive Codex app-server for ${options.agentName}\n`);
-  const stdout = new Response(child.stdout).body!.getReader();
-  const stderr = new Response(child.stderr).body!.getReader();
+  const stdoutBody = new Response(child.stdout).body;
+  const stderrBody = new Response(child.stderr).body;
+  if (stdoutBody === null || stderrBody === null) {
+    throw new Error("Codex app-server child streams are unavailable");
+  }
+  const stdout = stdoutBody.getReader();
+  const stderr = stderrBody.getReader();
   const decode = new TextDecoder();
   const relayStdout = async (): Promise<void> => {
     while (true) {

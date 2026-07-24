@@ -1,3 +1,4 @@
+import { required } from "../required";
 // Wake-delta memory injection (HiveMemory HM-3 WP6, board #120, plan D6):
 // the delta composer (wiki-log parsing, pitfall section, token budget), the
 // per-agent high-water mark, and the delivery-lane integration that carries
@@ -104,7 +105,7 @@ class SubmittingSessionSender implements SessionSender {
 
   async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
     this.calls.push([agent.name, text]);
-    submitPaste(this.db, agent.sessionLocator!.sessionId);
+    submitPaste(this.db, required(agent.sessionLocator?.sessionId));
   }
 }
 
@@ -195,30 +196,30 @@ describe("composeMemoryDelta", () => {
       memory: null,
     });
     expect(delta).not.toBeNull();
-    expect(delta!.block).toContain(
+    expect(delta?.block).toContain(
       "Hive memory update since your last turn — 2 changes",
     );
-    expect(delta!.block).toContain("system-injected by the Hive daemon");
-    expect(delta!.block).toContain("not authority");
-    expect(delta!.block).toContain("new/updated: Beta article");
-    expect(delta!.block).toContain("demoted to stale: Alpha article");
+    expect(delta?.block).toContain("system-injected by the Hive daemon");
+    expect(delta?.block).toContain("not authority");
+    expect(delta?.block).toContain("new/updated: Beta article");
+    expect(delta?.block).toContain("demoted to stale: Alpha article");
     // Alpha's original ingest is behind the mark: it is not re-reported.
-    expect(delta!.block).not.toContain("new/updated: Alpha article");
-    expect(delta!.advanceTo).toEqual({ repo: 3, global: 0 });
+    expect(delta?.block).not.toContain("new/updated: Alpha article");
+    expect(delta?.advanceTo).toEqual({ repo: 3, global: 0 });
 
     // Advance the mark, write more: the next delta has only the newer change.
     await writeMemoryFact(repo, input({ id: "gamma", title: "Gamma article" }));
     const second = await composeMemoryDelta({
       repoRoot: repo,
-      highWater: delta!.advanceTo,
+      highWater: required(delta?.advanceTo),
       budgetTokens: 300,
       memory: null,
     });
     expect(second).not.toBeNull();
-    expect(second!.block).toContain("— 1 change ");
-    expect(second!.block).toContain("Gamma article");
-    expect(second!.block).not.toContain("Beta article");
-    expect(second!.block).not.toContain("Alpha article");
+    expect(second?.block).toContain("— 1 change ");
+    expect(second?.block).toContain("Gamma article");
+    expect(second?.block).not.toContain("Beta article");
+    expect(second?.block).not.toContain("Alpha article");
   });
 
   test("a task-matching pitfall appears even when older than the mark; non-matching articles do not", async () => {
@@ -252,11 +253,11 @@ describe("composeMemoryDelta", () => {
       memory: index,
     });
     expect(delta).not.toBeNull();
-    expect(delta!.block).toContain("— 0 changes");
-    expect(delta!.block).toContain("Pitfalls matching your current task:");
-    expect(delta!.block).toContain("sqlite-pitfall");
-    expect(delta!.block).toContain("[verified]");
-    expect(delta!.block).not.toContain("garden");
+    expect(delta?.block).toContain("— 0 changes");
+    expect(delta?.block).toContain("Pitfalls matching your current task:");
+    expect(delta?.block).toContain("sqlite-pitfall");
+    expect(delta?.block).toContain("[verified]");
+    expect(delta?.block).not.toContain("garden");
 
     // A brief that matches no pitfall and no changes composes to nothing.
     const empty = await composeMemoryDelta({
@@ -301,22 +302,24 @@ describe("composeMemoryDelta", () => {
     });
     expect(delta).not.toBeNull();
     // 31 log entries (the pitfall's own ingest + 30 floods) are all changes.
-    expect(delta!.block).toContain("— 31 changes");
+    expect(delta?.block).toContain("— 31 changes");
     // The pitfall section is composed first and survives the truncation.
-    expect(delta!.block).toContain("Pitfalls matching your current task:");
-    expect(delta!.block).toContain("sqlite-pitfall");
+    expect(delta?.block).toContain("Pitfalls matching your current task:");
+    expect(delta?.block).toContain("sqlite-pitfall");
     // Loud truncation: the marker names how many changes were cut, and
     // shown + omitted accounts for every change.
-    const marker = delta!.block.match(
+    const marker = delta?.block.match(
       /… (\d+) more changes — use memory_search or memory_query/,
     );
     expect(marker).not.toBeNull();
-    const shown = delta!.block
+    const shown = delta?.block
       .split("\n")
       .filter((line) => line.startsWith("- [repo]")).length;
-    expect(shown + Number(marker![1])).toBe(31);
+    expect(required(shown) + Number(marker?.[1])).toBe(31);
     // The ceiling holds (chars/4 estimate; a handful of join newlines of slack).
-    expect(Math.ceil(delta!.block.length / 4)).toBeLessThanOrEqual(310);
+    expect(Math.ceil(required(delta?.block).length / 4)).toBeLessThanOrEqual(
+      310,
+    );
   });
 
   test("an empty delta composes to null — inject nothing", async () => {
@@ -378,7 +381,7 @@ describe("wake-delta delivery integration", () => {
       const message = await delivery.send("sam", "maya", "Please review this.");
       expect(message.deliveredAt === null).toBe(false);
       expect(sender.calls).toHaveLength(1);
-      const deliveredText = sender.calls[0]![1];
+      const deliveredText = sender.calls[0]?.[1];
       expect(deliveredText).toContain(
         "📨 message from sam: Please review this.",
       );
@@ -395,7 +398,7 @@ describe("wake-delta delivery integration", () => {
       // sent without any memory machinery — an empty delta injects nothing.
       await delivery.send("sam", "maya", "Second pass.");
       expect(sender.calls).toHaveLength(2);
-      expect(sender.calls[1]![1]).toBe("📨 message from sam: Second pass.");
+      expect(sender.calls[1]?.[1]).toBe("📨 message from sam: Second pass.");
     } finally {
       db.close();
       store.close();
@@ -422,15 +425,15 @@ describe("wake-delta delivery integration", () => {
       db.insertAgent(agent());
 
       await delivery.send("sam", "maya", "First contact.");
-      expect(sender.calls[0]![1]).toBe("📨 message from sam: First contact.");
+      expect(sender.calls[0]?.[1]).toBe("📨 message from sam: First contact.");
       expect(store.memoryHighWater("maya")).toEqual({ repo: 1, global: 0 });
 
       // The next change after baselining is a normal delta.
       await writeMemoryFact(repo, input({ id: "beta", title: "Beta article" }));
       await delivery.send("sam", "maya", "Second contact.");
-      expect(sender.calls[1]![1]).toContain("— 1 change ");
-      expect(sender.calls[1]![1]).toContain("Beta article");
-      expect(sender.calls[1]![1]).not.toContain("Alpha article");
+      expect(sender.calls[1]?.[1]).toContain("— 1 change ");
+      expect(sender.calls[1]?.[1]).toContain("Beta article");
+      expect(sender.calls[1]?.[1]).not.toContain("Alpha article");
     } finally {
       db.close();
       store.close();
@@ -438,7 +441,7 @@ describe("wake-delta delivery integration", () => {
   });
 
   test("a failing delta never blocks delivery: the plain message still goes out", async () => {
-    const repo = await makeRepo();
+    const _repo = await makeRepo();
     const db = new HiveDatabase(":memory:");
     try {
       const failing: WakeDeltaProvider = {
@@ -484,8 +487,8 @@ describe("wake-delta delivery integration", () => {
       db.insertAgent(agent());
       await daemon.delivery.send("sam", "maya", "Wired through the daemon.");
       expect(sender.calls).toHaveLength(1);
-      expect(sender.calls[0]![1]).toContain("🧠 Hive memory update");
-      expect(sender.calls[0]![1]).toContain("Alpha article");
+      expect(sender.calls[0]?.[1]).toContain("🧠 Hive memory update");
+      expect(sender.calls[0]?.[1]).toContain("Alpha article");
       expect(store.memoryHighWater("maya")).toEqual({ repo: 1, global: 0 });
     } finally {
       await daemon.stop();
@@ -548,7 +551,7 @@ describe("[memory] wake_budget_tokens config", () => {
   });
 
   test("round-trips through config.toml and a bad value fails the loader loudly", async () => {
-    const home = Bun.env.HIVE_HOME!;
+    const home = required(Bun.env.HIVE_HOME);
     await writeFile(
       join(home, "config.toml"),
       "[memory]\nwake_budget_tokens = 222\n",

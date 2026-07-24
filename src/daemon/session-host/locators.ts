@@ -89,7 +89,10 @@ function uuidV7(now: number): string {
   }
   const timestamp = now.toString(16).padStart(12, "0");
   const random = randomBytes(10).toString("hex");
-  const variant = ((Number.parseInt(random[3]!, 16) & 0x3) | 0x8).toString(16);
+  const variant = (
+    (Number.parseInt(random.charAt(3), 16) & 0x3) |
+    0x8
+  ).toString(16);
   const body = `${timestamp}7${random.slice(0, 3)}${variant}${random.slice(4, 19)}`;
   return `${body.slice(0, 8)}-${body.slice(8, 12)}-${body.slice(12, 16)}-${body.slice(16, 20)}-${body.slice(20, 32)}`;
 }

@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   createProductionTerminalComposition,
-  exitAfterDaemonStartupFailure,
   startBrokerAndDiscoverEngineBuildId,
   stopSpawnSession,
 } from "../../src/cli/daemon";

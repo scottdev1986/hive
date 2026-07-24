@@ -210,7 +210,9 @@ export class HiveTerminalHostAdapter {
       );
       if (matches.length === 0) continue;
       if (matches.length !== 1) throw new TerminalHostBindingMismatchError();
-      let inspection = matches[0]!;
+      const [matchedInspection] = matches;
+      if (matchedInspection === undefined) continue;
+      let inspection = matchedInspection;
       if (
         inspection.checkpoints.retained > 0 &&
         inspection.checkpoints.newest === null
@@ -481,7 +483,9 @@ export class HiveTerminalHostAdapter {
     );
     if (matches.length === 0) throw new TerminalHostBindingNotFoundError();
     if (matches.length !== 1) throw new TerminalHostBindingMismatchError();
-    return { binding, session: matches[0]!.session };
+    const [inspection] = matches;
+    if (inspection === undefined) throw new TerminalHostBindingNotFoundError();
+    return { binding, session: inspection.session };
   }
 
   private requireBinding(

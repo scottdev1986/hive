@@ -355,7 +355,7 @@ async function assertH(host: NeutralTerminalHostFixture): Promise<void> {
     Uint8Array.of(0x98, 0x80, 0x1b, 0x5b, 0x30, 0x6d),
   ];
   for (const chunk of chunks) host.appendOutput(session, chunk);
-  const cursorOffset = chunks[0]!.byteLength + chunks[1]!.byteLength;
+  const cursorOffset = chunks[0]?.byteLength + chunks[1]?.byteLength;
   const attached = await host.attach({
     session,
     cursor: {

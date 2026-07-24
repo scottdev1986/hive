@@ -17,6 +17,7 @@ import {
   FRAME_FLAGS,
   type FRAME_TYPES,
 } from "../../../src/schemas/session-protocol";
+import { required } from "../../required";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -242,7 +243,7 @@ function respond(
 
 const hosts: FakeHost[] = [];
 afterEach(async () => {
-  while (hosts.length > 0) await hosts.pop()!.close();
+  while (hosts.length > 0) await required(hosts.pop()).close();
 });
 
 async function attachTo(options: FakeHostOptions = {}): Promise<{
@@ -286,10 +287,10 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   // The claim holds and is cleanly released on the same connection.
   expect(types).toContain("CLAIM_RELEASE");
 
-  const claim = host.received.find((f) => f.type === "CLAIM_ACQUIRE")!;
+  const claim = required(host.received.find((f) => f.type === "CLAIM_ACQUIRE"));
   expect(JSON.parse(textDecoder.decode(claim.payload)).kind).toBe("automation");
 
-  const submit = host.received.find((f) => f.type === "INPUT_SUBMIT")!;
+  const submit = required(host.received.find((f) => f.type === "INPUT_SUBMIT"));
   expect(submit.flags).toBe(FRAME_FLAGS.contentSensitive);
   const submitBody = JSON.parse(textDecoder.decode(submit.payload));
   expect(submitBody.operation.encoding).toBe("base64");
@@ -371,7 +372,7 @@ test("acknowledges a streamed OUTPUT frame with the APPLIED high-water so the ho
       JSON.parse(textDecoder.decode(f.payload)).resultKind === "output",
   );
   expect(acks.length).toBeGreaterThanOrEqual(1);
-  expect(JSON.parse(textDecoder.decode(acks[0]!.payload)).throughSeq).toBe(
+  expect(JSON.parse(textDecoder.decode(acks[0]?.payload)).throughSeq).toBe(
     String(output.byteLength),
   );
 });

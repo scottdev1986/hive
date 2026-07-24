@@ -20,6 +20,7 @@ import {
   writeMemoryFact,
 } from "../../src/adapters/memory";
 import type { MemoryWriteInput } from "../../src/schemas";
+import { required } from "../required";
 
 const roots: string[] = [];
 const previousHome = process.env.HIVE_HOME;
@@ -159,7 +160,7 @@ describe("raw observations and compiled articles", () => {
     expect(canonical.supersededIds).toEqual(["duplicate"]);
     expect(
       canonical.raw.some((path) =>
-        path.endsWith(duplicate.rawPath.split("/").at(-1)!),
+        path.endsWith(required(duplicate.rawPath.split("/").at(-1))),
       ),
     ).toBe(true);
   });
@@ -578,14 +579,18 @@ describe("legacy flat-memory migration", () => {
     expect(article?.topic).toBe("routing");
     expect(article?.source).toBe("legacy");
     expect(article?.status).toBe("unverified");
-    const preserved = join(article!.path, "..", article!.raw[0]!);
+    const preserved = join(
+      required(article?.path),
+      "..",
+      required(article?.raw[0]),
+    );
     expect(await readFile(preserved, "utf8")).toBe(original);
     expect(await readFile(join(directory, "corrected-router.md"), "utf8")).toBe(
       original,
     );
     expect(
       await readFile(
-        join(report.backups[0]!.path, "corrected-router.md"),
+        join(required(report.backups[0]?.path), "corrected-router.md"),
         "utf8",
       ),
     ).toBe(original);
@@ -671,7 +676,13 @@ describe("legacy flat-memory migration", () => {
     expect(backups).toHaveLength(1);
     expect(
       await readFile(
-        join(root, ".hive", "memory-backups", backups[0]!, "router.md"),
+        join(
+          root,
+          ".hive",
+          "memory-backups",
+          required(backups[0]),
+          "router.md",
+        ),
         "utf8",
       ),
     ).toBe(original);

@@ -180,7 +180,10 @@ export class SessiondViewerAgentInput
             : `session ${locator.sessionId} is ambiguous on the sessiond host`,
       };
     }
-    const inspection: SessionInspection = matches[0]!;
+    const inspection = matches[0];
+    if (inspection === undefined) {
+      return { outcome: "declined", reason: "session inspection disappeared" };
+    }
     if (inspection.lifecycle !== "running") {
       return {
         outcome: "declined",

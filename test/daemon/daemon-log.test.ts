@@ -138,7 +138,7 @@ describe("HiveDaemon daemon-log wiring (defect D2)", () => {
         tags: [],
         supersedes: [],
       });
-      await daemon.embeddingIndex!.settle();
+      await required(daemon.embeddingIndex).settle();
     } finally {
       await daemon.stop();
     }
@@ -176,9 +176,11 @@ describe("HiveDaemon daemon-log wiring (defect D2)", () => {
         supersedes: [],
       });
       expect(written.embedding).toBe("queued");
-      await daemon.embeddingIndex!.settle();
+      await required(daemon.embeddingIndex).settle();
     } finally {
       await daemon.stop();
     }
   });
 });
+
+import { required } from "../required";

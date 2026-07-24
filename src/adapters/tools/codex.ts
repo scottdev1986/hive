@@ -352,7 +352,8 @@ async function listCodexRollouts(
   const rollouts: { path: string; mtimeMs: number }[] = [];
   const pending = [codexSessionsDirectory(home)];
   while (pending.length > 0) {
-    const directory = pending.pop()!;
+    const directory = pending.pop();
+    if (directory === undefined) break;
     let entries: Dirent[];
     try {
       entries = await readdir(directory, { withFileTypes: true });

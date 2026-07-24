@@ -53,7 +53,7 @@ describe("claude transcript telemetry", () => {
     const directory = claudeProjectDir(home);
     writeFileSync(
       join(directory, "session-1.jsonl"),
-      [
+      `${[
         transcriptLine({ input_tokens: 8, cache_read_input_tokens: 30_000 }),
         transcriptLine({
           input_tokens: 8,
@@ -61,7 +61,7 @@ describe("claude transcript telemetry", () => {
           cache_creation_input_tokens: 1_121,
           output_tokens: 753,
         }),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     const telemetry = await readClaudeTelemetry(WORKTREE, "session-1", home);
@@ -77,11 +77,11 @@ describe("claude transcript telemetry", () => {
     const directory = claudeProjectDir(home);
     writeFileSync(
       join(directory, "session-1.jsonl"),
-      [
+      `${[
         transcriptLine({ input_tokens: 5, cache_read_input_tokens: 90_000 }),
         JSON.stringify({ type: "user", message: { role: "user" } }),
         transcriptLine({ input_tokens: 2, output_tokens: 9 }, true),
-      ].join("\n") + "\n",
+      ].join("\n")}\n`,
     );
 
     const telemetry = await readClaudeTelemetry(WORKTREE, "session-1", home);
@@ -114,7 +114,7 @@ describe("claude transcript telemetry", () => {
     const directory = claudeProjectDir(home);
     writeFileSync(
       join(directory, "session-1.jsonl"),
-      transcriptLine({ input_tokens: 10 }) + "\n",
+      `${transcriptLine({ input_tokens: 10 })}\n`,
     );
     utimesSync(
       join(directory, "session-1.jsonl"),
@@ -148,7 +148,7 @@ describe("codex rollout telemetry", () => {
       type: "session_meta",
       payload: { id: "thread-1", cwd: resolve(WORKTREE) },
     });
-    writeFileSync(path, [meta, ...lines].join("\n") + "\n");
+    writeFileSync(path, `${[meta, ...lines].join("\n")}\n`);
     return path;
   }
 
@@ -279,8 +279,7 @@ describe("grok session telemetry", () => {
   test("a turn still streaming is working, not idle", async () => {
     const home = makeHome();
     // The same session with its terminal record not yet written.
-    const streaming =
-      GROK_UPDATES.trimEnd().split("\n").slice(0, -1).join("\n") + "\n";
+    const streaming = `${GROK_UPDATES.trimEnd().split("\n").slice(0, -1).join("\n")}\n`;
     writeGrokSession(home, "session-1", streaming, GROK_SIGNALS);
 
     const telemetry = await readGrokTelemetry(WORKTREE, "session-1", home);
@@ -336,22 +335,22 @@ describe("graphify call counting", () => {
     });
 
   test("counts claude graphify tool_use entries, not sidechains or other servers", () => {
-    const slice =
-      [
-        toolUseLine("mcp__graphify__query_graph"),
-        toolUseLine("mcp__graphify__get_node"),
-        toolUseLine("mcp__graphify__god_nodes", true),
-        toolUseLine("mcp__hive__hive_send"),
-        "not json at all",
-      ].join("\n") + "\n";
+    const slice = `${[
+      toolUseLine("mcp__graphify__query_graph"),
+      toolUseLine("mcp__graphify__get_node"),
+      toolUseLine("mcp__graphify__god_nodes", true),
+      toolUseLine("mcp__hive__hive_send"),
+      "not json at all",
+    ].join("\n")}\n`;
     expect(countGraphifyCallLines(slice, "claude")).toEqual(2);
   });
 
   test("counts codex mcp_tool_call_end events for the graphify server only", () => {
-    const slice =
-      [mcpEndLine("graphify"), mcpEndLine("hive"), mcpEndLine("graphify")].join(
-        "\n",
-      ) + "\n";
+    const slice = `${[
+      mcpEndLine("graphify"),
+      mcpEndLine("hive"),
+      mcpEndLine("graphify"),
+    ].join("\n")}\n`;
     expect(countGraphifyCallLines(slice, "codex")).toEqual(2);
   });
 
@@ -359,9 +358,9 @@ describe("graphify call counting", () => {
     const home = makeHome();
     const directory = claudeProjectDir(home);
     const path = join(directory, "session-g.jsonl");
-    const first = toolUseLine("mcp__graphify__query_graph") + "\n";
+    const first = `${toolUseLine("mcp__graphify__query_graph")}\n`;
     // A complete line plus the torn beginning of the next write.
-    writeFileSync(path, first + '{"type":"assist');
+    writeFileSync(path, `${first}{"type":"assist`);
     const one = await readGraphifyCalls(
       "claude",
       WORKTREE,
@@ -442,12 +441,12 @@ describe("graphify call counting", () => {
   test("every vendor's counter still sees its own graph calls", () => {
     expect(
       countGraphifyCallLines(
-        toolUseLine("mcp__graphify__query_graph") + "\n",
+        `${toolUseLine("mcp__graphify__query_graph")}\n`,
         "claude",
       ),
     ).toEqual(1);
     expect(
-      countGraphifyCallLines(mcpEndLine("graphify") + "\n", "codex"),
+      countGraphifyCallLines(`${mcpEndLine("graphify")}\n`, "codex"),
     ).toEqual(1);
     expect(countGraphifyCallLines(GROK_UPDATES, "grok")).toBeGreaterThan(0);
   });

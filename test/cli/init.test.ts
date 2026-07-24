@@ -109,9 +109,10 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
 
       const facts = await discoverMemoryFacts(root, "repo");
       expect(facts).toHaveLength(1);
+      const fact = required(facts[0]);
       // Re-read the raw file: provenance is persisted per david's contract.
-      const raw = await readFile(facts[0]!.path, "utf8");
-      const parsed = parseMemoryFile(facts[0]!.id, "repo", facts[0]!.path, raw);
+      const raw = await readFile(fact.path, "utf8");
+      const parsed = parseMemoryFile(fact.id, "repo", fact.path, raw);
       expect(parsed.source).toBe("init");
       expect(parsed.verified).toBe("2026-07-10");
       expect(parsed.scope).toBe("repo");
@@ -130,9 +131,11 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
       );
       const after = await discoverMemoryFacts(root, "repo");
       expect(after).toHaveLength(1);
-      const reRaw = await readFile(after[0]!.path, "utf8");
+      const updatedFact = required(after[0]);
+      const reRaw = await readFile(updatedFact.path, "utf8");
       expect(
-        parseMemoryFile(after[0]!.id, "repo", after[0]!.path, reRaw).verified,
+        parseMemoryFile(updatedFact.id, "repo", updatedFact.path, reRaw)
+          .verified,
       ).toBe("2026-08-01");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -404,10 +407,10 @@ describe("runInit — installing the shipped skills", () => {
       // Vendor-verified paths: Claude Code reads .claude/skills, Codex .agents/skills.
       expect(
         await readFile(skillFile(root, ".claude", "hive-claude"), "utf8"),
-      ).toEqual(shippedSkillsFor("claude")[0]!.content);
+      ).toEqual(required(shippedSkillsFor("claude")[0]?.content));
       expect(
         await readFile(skillFile(root, ".agents", "hive-codex"), "utf8"),
-      ).toEqual(shippedSkillsFor("codex")[0]!.content);
+      ).toEqual(required(shippedSkillsFor("codex")[0]?.content));
       // The shared skill goes to both; the vendor-specific ones do not cross over.
       expect(
         await Bun.file(
@@ -544,7 +547,7 @@ describe("runInit — installing the shipped skills", () => {
       expect(
         await Bun.file(skillFile(root, ".claude", "hive-claude")).exists(),
       ).toBe(true);
-      expect(result.skills[0]!.createdDirectory).toBe(false);
+      expect(result.skills[0]?.createdDirectory).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -558,7 +561,7 @@ describe("runInit — installing the shipped skills", () => {
       await writeFile(edited, "# my own rules\n");
 
       const second = await runInit(root, {}, machineWith("claude"));
-      expect(second.skills[0]!.drifted).toEqual(["karpathy-guidelines"]);
+      expect(second.skills[0]?.drifted).toEqual(["karpathy-guidelines"]);
       expect(await readFile(edited, "utf8")).toEqual("# my own rules\n");
       expect(second.messages.some((m) => m.includes("--force"))).toBe(true);
 
@@ -567,7 +570,7 @@ describe("runInit — installing the shipped skills", () => {
         { force: true },
         machineWith("claude"),
       );
-      expect(forced.skills[0]!.installed).toContain("karpathy-guidelines");
+      expect(forced.skills[0]?.installed).toContain("karpathy-guidelines");
       expect(await readFile(edited, "utf8")).not.toEqual("# my own rules\n");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -621,7 +624,10 @@ describe("Graphify in init", () => {
     const provisioned: string[] = [];
     const deps: typeof defaultInitDeps = {
       ...testDeps(),
-      provisionGraphify: async (root) => (provisioned.push(root), 0),
+      provisionGraphify: async (root) => {
+        provisioned.push(root);
+        return 0;
+      },
       ...overrides,
     };
     return { deps, provisioned };
@@ -751,3 +757,5 @@ describe("the embeddings step in init", () => {
     }
   });
 });
+
+import { required } from "../required";

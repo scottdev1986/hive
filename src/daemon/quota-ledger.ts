@@ -1208,7 +1208,10 @@ export class QuotaLedger {
           .map((row) => row.provider),
       ),
     ];
-    if (claims.length === 1) return { state: "claimed", provider: claims[0]! };
+    if (claims.length === 1) {
+      const [provider] = claims;
+      if (provider !== undefined) return { state: "claimed", provider };
+    }
     if (claims.length > 1) {
       return {
         state: "unreadable",
@@ -1259,7 +1262,8 @@ export class QuotaLedger {
 
   tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
     const result = this.tryReserveGroup([input]);
-    return result.ok ? result.reservations[0]! : null;
+    if (!result.ok) return null;
+    return result.reservations[0] ?? null;
   }
 
   /**
@@ -1281,7 +1285,10 @@ export class QuotaLedger {
       throw new Error("a reservation must name at least one pool");
     }
     return this.immediate(() => {
-      const primary = inputs[0]!;
+      const primary = inputs[0];
+      if (primary === undefined) {
+        throw new Error("a reservation must name at least one pool");
+      }
       if (primary.controlMessageId !== undefined) {
         const existing = this.getActiveControlReservation(
           primary.controlMessageId,
@@ -1298,7 +1305,7 @@ export class QuotaLedger {
       for (const input of inputs) this.insert(input, primary.id);
       return {
         ok: true as const,
-        reservations: inputs.map((input) => this.getReservation(input.id)!),
+        reservations: inputs.map((input) => this.requireReservation(input.id)),
       };
     });
   }
@@ -1328,6 +1335,9 @@ export class QuotaLedger {
     if (candidates.length === 0)
       throw new Error("fair dispatch requires a candidate");
     return this.immediate(() => {
+      if (candidates.some((candidate) => candidate.inputs.length === 0)) {
+        throw new Error("a fair reservation must name at least one pool");
+      }
       const active = candidates.map((candidate, candidateIndex) => ({
         ...candidate,
         candidateIndex,
@@ -1368,23 +1378,41 @@ export class QuotaLedger {
           const relevant = eligible.filter((provider) => deficit.has(provider));
           if (relevant.length === 0) continue;
           for (const provider of relevant) {
-            deficit.set(provider, deficit.get(provider)! + 1 / relevant.length);
+            const current = deficit.get(provider);
+            if (current === undefined) {
+              throw new Error(`Missing quota deficit for ${provider}`);
+            }
+            deficit.set(provider, current + 1 / relevant.length);
           }
           if (deficit.has(selected)) {
-            deficit.set(selected, deficit.get(selected)! - 1);
+            const current = deficit.get(selected);
+            if (current === undefined) {
+              throw new Error(`Missing quota deficit for ${selected}`);
+            }
+            deficit.set(selected, current - 1);
           }
         }
         for (const provider of providers) {
-          deficit.set(provider, deficit.get(provider)! + 1 / providers.length);
+          const current = deficit.get(provider);
+          if (current === undefined) {
+            throw new Error(`Missing quota deficit for ${provider}`);
+          }
+          deficit.set(provider, current + 1 / providers.length);
         }
-        const providerOrder = [...providers].sort(
-          (left, right) =>
-            deficit.get(right)! - deficit.get(left)! ||
-            providers.indexOf(left) - providers.indexOf(right),
-        );
+        const providerOrder = [...providers].sort((left, right) => {
+          const leftDeficit = deficit.get(left) ?? 0;
+          const rightDeficit = deficit.get(right) ?? 0;
+          return (
+            rightDeficit - leftDeficit ||
+            providers.indexOf(left) - providers.indexOf(right)
+          );
+        });
         const chosen = providerOrder.flatMap((provider) =>
           active.filter((candidate) => candidate.provider === provider),
-        )[0]!;
+        )[0];
+        if (chosen === undefined) {
+          throw new Error("Fair quota selection produced no candidate");
+        }
         const blockedInput = chosen.inputs.find((input) => !this.fits(input));
         if (blockedInput !== undefined) {
           blocked.push({
@@ -1394,7 +1422,10 @@ export class QuotaLedger {
           active.splice(active.indexOf(chosen), 1);
           continue;
         }
-        const primary = chosen.inputs[0]!;
+        const primary = chosen.inputs[0];
+        if (primary === undefined) {
+          throw new Error("a fair reservation must name at least one pool");
+        }
         for (const input of chosen.inputs) this.insert(input, primary.id);
         this.db.database
           .query(`
@@ -1411,8 +1442,8 @@ export class QuotaLedger {
         return {
           ok: true as const,
           candidateIndex: chosen.candidateIndex,
-          reservations: chosen.inputs.map(
-            (input) => this.getReservation(input.id)!,
+          reservations: chosen.inputs.map((input) =>
+            this.requireReservation(input.id),
           ),
         };
       }
@@ -1454,7 +1485,7 @@ export class QuotaLedger {
         },
         input.id,
       );
-      return this.getReservation(input.id)!;
+      return this.requireReservation(input.id);
     });
   }
 
@@ -1574,9 +1605,10 @@ export class QuotaLedger {
   reserveGroupUnchecked(inputs: ReserveQuotaInput[]): QuotaReservation[] {
     if (inputs.length === 0) return [];
     return this.immediate(() => {
-      const primary = inputs[0]!;
+      const primary = inputs[0];
+      if (primary === undefined) return [];
       for (const input of inputs) this.insert(input, primary.id);
-      return inputs.map((input) => this.getReservation(input.id)!);
+      return inputs.map((input) => this.requireReservation(input.id));
     });
   }
 
@@ -1649,6 +1681,14 @@ export class QuotaLedger {
       .query("SELECT * FROM quota_reservations WHERE id = ?")
       .get(id);
     return row === null ? null : ReservationSchema.parse(row);
+  }
+
+  private requireReservation(id: string): QuotaReservation {
+    const reservation = this.getReservation(id);
+    if (reservation === null) {
+      throw new Error(`Quota reservation disappeared after write: ${id}`);
+    }
+    return reservation;
   }
 
   getActiveReservationForAgent(agentName: string): QuotaReservation | null {
@@ -1895,7 +1935,13 @@ export class QuotaLedger {
             merged.weeklyObservedAt,
           ),
         );
-      return this.getObservation(merged)!;
+      const observation = this.getObservation(merged);
+      if (observation === null) {
+        throw new Error(
+          `Quota observation disappeared after write: ${merged.provider}/${merged.account}/${merged.pool}`,
+        );
+      }
+      return observation;
     });
   }
 

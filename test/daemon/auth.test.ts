@@ -25,6 +25,7 @@ import { AUTO_REARM_BUDGET, HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { deleteAgentRow, listAuditEntries } from "../../src/daemon/testing";
 import type { AgentRecord } from "../../src/schemas";
+import { required } from "../required";
 
 const home = mkdtempSync(join(tmpdir(), "hive-auth-test-"));
 process.env.HIVE_HOME = home;
@@ -594,7 +595,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
     // Approval re-arms exactly one landing: the next land succeeds, the one
     // after is refused again.
     const approved = await callTool(daemon, operator.token, "hive_approve", {
-      id: pending[0]!.id,
+      id: pending[0]?.id,
       decision: "approve",
     });
     expect(approved.ok).toBe(true);
@@ -607,7 +608,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
       .find(
         (message) => message.from === "hive-approvals" && message.to === "maya",
       );
-    expect(notice?.body).toContain(pending[0]!.description);
+    expect(notice?.body).toContain(pending[0]?.description);
     expect(notice?.body).toContain("approved");
     expect(notice?.body).toContain("retry hive_land now");
 
@@ -662,7 +663,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
     expect(
       (
         await callTool(daemon, operator.token, "hive_approve", {
-          id: pending[0]!.id,
+          id: pending[0]?.id,
           decision: "deny",
         })
       ).ok,
@@ -675,7 +676,7 @@ describe("a one-shot landing grant cannot be replayed", () => {
       .find(
         (message) => message.from === "hive-approvals" && message.to === "maya",
       );
-    expect(notice?.body).toContain(pending[0]!.description);
+    expect(notice?.body).toContain(pending[0]?.description);
     expect(notice?.body).toContain("denied");
     expect(notice?.body).toContain("report back");
 
@@ -975,7 +976,7 @@ describe("audit", () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
     const { token } = daemon.capabilities.mint("maya", "writer");
-    const secret = token.split(".")[2]!;
+    const secret = required(token.split(".")[2]);
 
     await callTool(daemon, token, "hive_spawn", {
       task: "denied",
@@ -1006,7 +1007,7 @@ describe("audit", () => {
   test("the database stores only a hash of the secret", () => {
     const { daemon, db } = harness();
     const { token, capability } = daemon.capabilities.mint("maya", "writer");
-    const secret = token.split(".")[2]!;
+    const secret = required(token.split(".")[2]);
     const row = db.database
       .query("SELECT secretHash FROM capabilities WHERE id = ?")
       .get(capability.id) as { secretHash: string };

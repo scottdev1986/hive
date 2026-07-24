@@ -10,6 +10,7 @@ import {
   SECTION_MAX_CHARS,
   selectSections,
 } from "../../src/adapters/brief";
+import { required } from "../required";
 
 // The brief inputs on-demand doc discovery produces for this repo. Passing them
 // explicitly keeps the unit tests independent of a live tree walk while
@@ -61,7 +62,7 @@ describe("parseDocOutline", () => {
       "7. What happens when a context fills up",
       "Open questions",
     ]);
-    const model = outline.find((section) => section.ordinal === 6)!;
+    const model = required(outline.find((section) => section.ordinal === 6));
     expect(model.level).toBe(3);
     expect(model.startLine).toBe(11);
     expect(SPEC.split("\n")[model.startLine - 1]).toBe(
@@ -74,7 +75,7 @@ describe("parseDocOutline", () => {
   });
 
   test("prose before the first heading is not addressable", () => {
-    expect(parseDocOutline(SPEC)[0]!.startLine).toBe(1);
+    expect(parseDocOutline(SPEC)[0]?.startLine).toBe(1);
     expect(parseDocOutline("no headings here")).toEqual([]);
   });
 });
@@ -149,7 +150,7 @@ describe("findTaskDocReferences", () => {
 
   test("strips trailing punctuation from a path", () => {
     expect(
-      findTaskDocReferences("Read SPEC.md, then stop.", CONFIG)[0]!.path,
+      findTaskDocReferences("Read SPEC.md, then stop.", CONFIG)[0]?.path,
     ).toBe("SPEC.md");
   });
 

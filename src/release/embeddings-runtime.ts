@@ -88,7 +88,9 @@ export async function collectFastembedClosure(
     { name: "fastembed", optional: false },
   ];
   while (queue.length > 0) {
-    const { name, optional } = queue.shift()!;
+    const dependency = queue.shift();
+    if (dependency === undefined) break;
+    const { name, optional } = dependency;
     if (resolved.has(name)) continue;
     const dir = join(sourceNodeModules, name);
     const manifest = await readPackageJson(dir);

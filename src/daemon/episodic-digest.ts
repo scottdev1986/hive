@@ -113,13 +113,18 @@ export function extractExactValues(
     if (!match[0].includes("://")) push("path", match[0]);
   }
   for (const match of text.matchAll(EXIT_CODE_PATTERN)) {
-    push("exit-code", match[1]!);
+    if (match[1] !== undefined) push("exit-code", match[1]);
   }
   for (const match of text.matchAll(ERROR_PATTERN)) {
-    push("error", `${match[1]!}: ${match[2]!}`.replace(/:\s*$/, "").trim());
+    const [, name, message] = match;
+    if (name !== undefined && message !== undefined) {
+      push("error", `${name}: ${message}`.replace(/:\s*$/, "").trim());
+    }
   }
   for (const match of text.matchAll(COUNT_PATTERN)) {
-    push("count", `${match[1]!} ${match[2]!}`);
+    const [, count, unit] = match;
+    if (count !== undefined && unit !== undefined)
+      push("count", `${count} ${unit}`);
   }
 }
 
@@ -148,8 +153,11 @@ function renderDigest(input: {
 }): RenderedDigest {
   const { agent, sessionId, events } = input;
   const eventIds = events.map((event) => event.id);
-  const first = events[0]!;
-  const last = events[events.length - 1]!;
+  const first = events[0];
+  const last = events.at(-1);
+  if (first === undefined || last === undefined) {
+    throw new Error("Cannot render an episodic digest without events");
+  }
 
   const outcomes = events.filter((event) => OUTCOME_PATTERN.test(event.type));
   const failures = events.filter((event) =>

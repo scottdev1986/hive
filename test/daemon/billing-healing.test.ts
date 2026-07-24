@@ -10,6 +10,7 @@ import {
   spendRisk,
 } from "../../src/daemon/usage-credits";
 import { known, unknown } from "../../src/schemas/capability";
+import { required } from "../required";
 
 /**
  * The availability fix, and the outage that motivated it.
@@ -113,10 +114,10 @@ describe("the billing reader heals itself", () => {
     expect(calls).toBe(2);
     // And it recovered the fact that decides everything: credits are OFF, so
     // nothing can be charged and there is no reason to refuse the launch.
-    expect(healed!.creditsEnabled).toEqual(
+    expect(healed?.creditsEnabled).toEqual(
       known(false, "claude.get_usage", AT),
     );
-    expect(spendRisk(healed!, "Fable").state).toBe("no-spend");
+    expect(spendRisk(required(healed), "Fable").state).toBe("no-spend");
     // Loudly, once — not silently, and not on every spawn.
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("5m old");
@@ -134,7 +135,7 @@ describe("the billing reader heals itself", () => {
       warn: () => {},
     });
     // Not a confident guess dressed as a measurement: unknown, so the guard asks.
-    expect(stale!.creditsEnabled.state).toBe("unknown");
+    expect(stale?.creditsEnabled.state).toBe("unknown");
   });
 
   test("with no memory at all, a quiet surface stays honestly unknown", async () => {
@@ -143,7 +144,7 @@ describe("the billing reader heals itself", () => {
       now: () => NOW,
       warn: () => {},
     });
-    expect(cold!.creditsEnabled.state).toBe("unknown");
+    expect(cold?.creditsEnabled.state).toBe("unknown");
   });
 
   test("it climbs back up by itself when the surface answers again", async () => {
@@ -164,7 +165,7 @@ describe("the billing reader heals itself", () => {
         billing({ generalUtilization: known(44, "claude.get_usage", AT) }),
       now: () => NOW,
     });
-    expect(recovered!.generalUtilization).toEqual(
+    expect(recovered?.generalUtilization).toEqual(
       known(44, "claude.get_usage", AT),
     );
   });

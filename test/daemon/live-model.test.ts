@@ -32,8 +32,7 @@ describe("lastAssistantModel", () => {
   test("a tail that begins mid-line survives it", () => {
     // We read the last 64KB of a possibly-huge file, so the first line is
     // routinely a fragment. It must be skipped, not throw.
-    const tail =
-      `{"type":"assist` + "\n" + turn("assistant", "claude-opus-4-8");
+    const tail = `{"type":"assist\n${turn("assistant", "claude-opus-4-8")}`;
     expect(lastAssistantModel(tail)).toBe("claude-opus-4-8");
   });
 

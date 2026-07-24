@@ -1,3 +1,4 @@
+import { required } from "../required";
 // HiveMemory HM-2 WP5 (board #72): the mistake-harvest pipeline. Unit-level
 // coverage of harvestPitfalls (clustering, dedup contract, advisory links,
 // clean sessions) plus MCP-level coverage of the memory_pitfall tool and the
@@ -119,11 +120,13 @@ describe("harvestPitfalls", () => {
       type: "agent.command-failed",
       summary: "bun test exited with code 1",
     });
-    const digest = compileDigest(store, {
-      agent: "agent-ada",
-      sessionId: "session-1",
-      compiledAt: T2,
-    })!;
+    const digest = required(
+      compileDigest(store, {
+        agent: "agent-ada",
+        sessionId: "session-1",
+        compiledAt: T2,
+      }),
+    );
 
     const report = await harvestPitfalls({
       store,
@@ -135,14 +138,18 @@ describe("harvestPitfalls", () => {
     // The repeat clusters into the first failure: two candidates, no errors.
     expect(report.errors).toEqual([]);
     expect(report.candidates).toHaveLength(2);
-    const typeError = report.candidates.find((candidate) =>
-      candidate.title.includes("TypeError"),
-    )!;
+    const typeError = required(
+      report.candidates.find((candidate) =>
+        candidate.title.includes("TypeError"),
+      ),
+    );
     expect(typeError.action).toBe("created");
     expect(typeError.eventIds).toEqual([first.id, repeat.id]);
-    const exitCode = report.candidates.find((candidate) =>
-      candidate.title.includes("exit code 1"),
-    )!;
+    const exitCode = required(
+      report.candidates.find((candidate) =>
+        candidate.title.includes("exit code 1"),
+      ),
+    );
     expect(exitCode.eventIds).toEqual([second.id]);
 
     // Both candidates are unverified, provenance-bearing pitfall articles in
@@ -160,16 +167,16 @@ describe("harvestPitfalls", () => {
       expect(article.body).toContain("Session: session-1");
       expect(article.body).toContain("UNVERIFIED");
     }
-    const typeErrorArticle = articles.find((article) =>
-      article.title.includes("TypeError"),
-    )!;
+    const typeErrorArticle = required(
+      articles.find((article) => article.title.includes("TypeError")),
+    );
     expect(typeErrorArticle.body).toContain(`[e${first.id}]`);
     expect(typeErrorArticle.body).toContain(`[e${repeat.id}]`);
     // The exact-values side table rides along.
     expect(typeErrorArticle.body).toContain("src/config/loader.ts");
-    const exitArticle = articles.find((article) =>
-      article.title.includes("exit code 1"),
-    )!;
+    const exitArticle = required(
+      articles.find((article) => article.title.includes("exit code 1")),
+    );
     expect(exitArticle.body).toContain("| exit-code | `1` |");
     store.close();
   });
@@ -197,8 +204,8 @@ describe("harvestPitfalls", () => {
     });
     expect(firstHarvest.errors).toEqual([]);
     expect(firstHarvest.candidates).toHaveLength(1);
-    expect(firstHarvest.candidates[0]!.action).toBe("created");
-    const articleId = firstHarvest.candidates[0]!.id;
+    expect(firstHarvest.candidates[0]?.action).toBe("created");
+    const articleId = firstHarvest.candidates[0]?.id;
 
     // A later session burns itself on the same signature.
     const later = store.appendEvent({
@@ -222,15 +229,15 @@ describe("harvestPitfalls", () => {
     // An UPDATE of the existing id (supersedes), not a duplicate, not an error.
     expect(secondHarvest.errors).toEqual([]);
     expect(secondHarvest.candidates).toHaveLength(1);
-    expect(secondHarvest.candidates[0]!.action).toBe("updated");
-    expect(secondHarvest.candidates[0]!.id).toBe(articleId);
+    expect(secondHarvest.candidates[0]?.action).toBe("updated");
+    expect(secondHarvest.candidates[0]?.id).toBe(articleId);
     const articles = await discoverMemoryFacts(repoRoot, "repo");
     expect(articles).toHaveLength(1);
-    expect(articles[0]!.id).toBe(articleId);
+    expect(articles[0]?.id).toBe(articleId);
     // The refreshed body carries the later session's provenance.
-    expect(articles[0]!.body).toContain(`[e${later.id}]`);
-    expect(articles[0]!.body).toContain("Session: session-2");
-    expect(articles[0]!.status).toBe("unverified");
+    expect(articles[0]?.body).toContain(`[e${later.id}]`);
+    expect(articles[0]?.body).toContain("Session: session-2");
+    expect(articles[0]?.status).toBe("unverified");
     store.close();
   });
 
@@ -270,18 +277,22 @@ describe("harvestPitfalls", () => {
 
     expect(report.errors).toEqual([]);
     expect(report.candidates).toHaveLength(1);
-    expect(report.candidates[0]!.action).toBe("created");
-    expect(report.candidates[0]!.related).toEqual([
+    expect(report.candidates[0]?.action).toBe("created");
+    expect(report.candidates[0]?.related).toEqual([
       { scope: "repo", id: seeded.id, title: seeded.title },
     ]);
     // Appended and linked — the seeded article is untouched, both exist.
     const articles = await discoverMemoryFacts(repoRoot, "repo");
     expect(articles).toHaveLength(2);
-    const candidate = articles.find((article) => article.id !== seeded.id)!;
+    const candidate = required(
+      articles.find((article) => article.id !== seeded.id),
+    );
     expect(candidate.body).toContain(
       `Possibly related: [repo] ${seeded.id} — ${seeded.title}`,
     );
-    const untouched = articles.find((article) => article.id === seeded.id)!;
+    const untouched = required(
+      articles.find((article) => article.id === seeded.id),
+    );
     expect(untouched.body).toBe(
       "A rebase retried mid-conflict silently drops commits.",
     );
@@ -449,7 +460,7 @@ describe("memory_pitfall MCP tool", () => {
           arguments: {
             action: "get",
             scope: "repo",
-            id: searched.pitfalls[0]!.id,
+            id: searched.pitfalls[0]?.id,
           },
         }),
       );
@@ -503,7 +514,7 @@ describe("memory_pitfall MCP tool", () => {
     });
     expect(harvest.errors).toEqual([]);
     expect(harvest.candidates).toHaveLength(1);
-    const candidateId = harvest.candidates[0]!.id;
+    const candidateId = harvest.candidates[0]?.id;
 
     const beth = await connectedClient(actingAs(daemon, "beth", "writer"));
     try {
@@ -517,7 +528,7 @@ describe("memory_pitfall MCP tool", () => {
       );
       expect(unverified.state).toBe("ok");
       expect(unverified.pitfalls).toHaveLength(1);
-      expect(unverified.pitfalls[0]!.status).toBe("unverified");
+      expect(unverified.pitfalls[0]?.status).toBe("unverified");
 
       // The queen/human verification promotion: an ordinary memory_write
       // self-supersede on the same id.
@@ -529,10 +540,10 @@ describe("memory_pitfall MCP tool", () => {
             id: candidateId,
             topic: "pitfalls",
             kind: "pitfall",
-            title: harvest.candidates[0]!.title,
+            title: harvest.candidates[0]?.title,
             body: "VERIFIED against the cited events: the sessiond broker dies on protolog sequence overflow; restart the broker before reattaching.",
             source: "human",
-            evidence: `Verified against ${harvest.candidates[0]!.title} provenance events`,
+            evidence: `Verified against ${harvest.candidates[0]?.title} provenance events`,
             status: "verified",
             verified: TODAY,
             date: TODAY,
@@ -564,10 +575,10 @@ describe("memory_pitfall MCP tool", () => {
 
     // And the spawn-injected memory index ranks the pitfall class first.
     const injected = await buildMemoryIndex(repoRoot);
-    const firstRow = injected
-      .split("\n")
-      .find((line) => line.startsWith("- ["))!;
+    const firstRow = required(
+      injected.split("\n").find((line) => line.startsWith("- [")),
+    );
     expect(firstRow).toContain("[pitfall]");
-    expect(firstRow).toContain(candidateId);
+    expect(firstRow).toContain(required(candidateId));
   });
 });

@@ -1,3 +1,4 @@
+import { required } from "../required";
 // HiveMemory HM-2 WP4: the deterministic session-digest compiler, rolling
 // re-synthesis, the drift audit, and retention-reference compatibility.
 
@@ -28,26 +29,26 @@ function seededStore(): {
 } {
   const store = new EpisodicStore(":memory:");
   const ids: Record<string, number> = {};
-  ids["status"] = store.appendEvent({
+  ids.status = store.appendEvent({
     ts: T0,
     agent: "agent-maya",
     type: "agent.status-reported",
     summary: `Implementing the digest compiler in src/daemon/episodic-digest.ts`,
   }).id;
-  ids["error"] = store.appendEvent({
+  ids.error = store.appendEvent({
     ts: T1,
     agent: "agent-maya",
     type: "agent.status-reported",
     summary: `Typecheck failed: TypeError: boom while compiling; exit code 2`,
   }).id;
-  ids["landed"] = store.appendEvent({
+  ids.landed = store.appendEvent({
     ts: T2,
     agent: "agent-maya",
     type: "agent.branch-landed",
     summary: `Landed 3 commits on main, tip ${SHA}`,
     provenance: { seq: 7, source: "test" },
   }).id;
-  ids["otherAgent"] = store.appendEvent({
+  ids.otherAgent = store.appendEvent({
     ts: T3,
     agent: "agent-lena",
     type: "agent.status-reported",
@@ -66,7 +67,7 @@ describe("compileDigest", () => {
         compiledAt: T4,
       });
       expect(digest).not.toBeNull();
-      const body = digest!.body;
+      const body = required(digest?.body);
 
       // Header: hint-not-authority label and the event range.
       expect(body).toContain(
@@ -77,38 +78,40 @@ describe("compileDigest", () => {
 
       // Timeline: every listed line carries its event-id pointer.
       expect(body).toContain("## Timeline");
-      expect(body).toContain(`- [e${ids["status"]}] ${T0}`);
-      expect(body).toContain(`- [e${ids["landed"]}] ${T2}`);
+      expect(body).toContain(`- [e${ids.status}] ${T0}`);
+      expect(body).toContain(`- [e${ids.landed}] ${T2}`);
 
       // Outcomes: the landing event, with its pointer.
-      const outcomes = body.split("## Outcomes")[1]!.split("##")[0]!;
-      expect(outcomes).toContain(`[e${ids["landed"]}]`);
-      expect(outcomes).not.toContain(`[e${ids["error"]}]`);
+      const outcomes = required(body.split("## Outcomes")[1]?.split("##")[0]);
+      expect(outcomes).toContain(`[e${ids.landed}]`);
+      expect(outcomes).not.toContain(`[e${ids.error}]`);
 
       // Failures: the error event, with its pointer (WP5 harvester input).
-      const failures = body.split("## Failures")[1]!.split("##")[0]!;
-      expect(failures).toContain(`[e${ids["error"]}]`);
+      const failures = required(body.split("## Failures")[1]?.split("##")[0]);
+      expect(failures).toContain(`[e${ids.error}]`);
       expect(failures).toContain("TypeError");
-      expect(failures).not.toContain(`[e${ids["landed"]}]`);
+      expect(failures).not.toContain(`[e${ids.landed}]`);
 
       // Open threads: the latest non-outcome non-failure status.
-      const threads = body.split("## Open threads")[1]!.split("##")[0]!;
-      expect(threads).toContain(`[e${ids["status"]}]`);
+      const threads = required(
+        body.split("## Open threads")[1]?.split("##")[0],
+      );
+      expect(threads).toContain(`[e${ids.status}]`);
 
       // The other agent's events are not folded in.
-      expect(body).not.toContain(`e${ids["otherAgent"]}`);
+      expect(body).not.toContain(`e${ids.otherAgent}`);
       expect(body).not.toContain("Unrelated agent");
 
       // Persisted provenance is the WP3 retention reference-check shape.
-      const provenance = JSON.parse(digest!.provenance) as {
+      const provenance = JSON.parse(required(digest?.provenance)) as {
         eventIds: number[];
         sessionId: string;
         agent: string;
       };
       expect(provenance.eventIds).toEqual([
-        ids["status"]!,
-        ids["error"]!,
-        ids["landed"]!,
+        required(ids.status),
+        required(ids.error),
+        required(ids.landed),
       ]);
       expect(provenance.sessionId).toBe("session-1");
       expect(provenance.agent).toBe("agent-maya");
@@ -120,23 +123,25 @@ describe("compileDigest", () => {
   test("extracts SHAs, paths, error strings and exit codes into typed rows", () => {
     const { store, ids } = seededStore();
     try {
-      const digest = compileDigest(store, {
-        agent: "agent-maya",
-        sessionId: null,
-        compiledAt: T4,
-      })!;
-      const table = digest.body.split("## Exact values")[1]!;
-      expect(table).toContain(`| sha | \`${SHA}\` | e${ids["landed"]} |`);
-      expect(table).toContain(
-        `| path | \`src/daemon/episodic-digest.ts\` | e${ids["status"]} |`,
+      const digest = required(
+        compileDigest(store, {
+          agent: "agent-maya",
+          sessionId: null,
+          compiledAt: T4,
+        }),
       );
-      expect(table).toContain(`| exit-code | \`2\` | e${ids["error"]} |`);
+      const table = required(digest.body.split("## Exact values")[1]);
+      expect(table).toContain(`| sha | \`${SHA}\` | e${ids.landed} |`);
+      expect(table).toContain(
+        `| path | \`src/daemon/episodic-digest.ts\` | e${ids.status} |`,
+      );
+      expect(table).toContain(`| exit-code | \`2\` | e${ids.error} |`);
       const errorRow = table
         .split("\n")
         .find((line) => line.startsWith("| error |"));
       expect(errorRow).toContain("TypeError: boom");
-      expect(errorRow).toContain(`e${ids["error"]}`);
-      expect(table).toContain(`| count | \`3 commits\` | e${ids["landed"]} |`);
+      expect(errorRow).toContain(`e${ids.error}`);
+      expect(table).toContain(`| count | \`3 commits\` | e${ids.landed} |`);
     } finally {
       store.close();
     }
@@ -156,11 +161,13 @@ describe("compileDigest", () => {
   test("rolling re-synthesis reflects the delta and replaces the row", () => {
     const { store } = seededStore();
     try {
-      const first = compileDigest(store, {
-        agent: "agent-maya",
-        sessionId: "session-1",
-        compiledAt: T3,
-      })!;
+      const first = required(
+        compileDigest(store, {
+          agent: "agent-maya",
+          sessionId: "session-1",
+          compiledAt: T3,
+        }),
+      );
       expect(first.body).not.toContain("killed");
 
       const killedId = store.appendEvent({
@@ -169,20 +176,24 @@ describe("compileDigest", () => {
         type: "agent.killed",
         summary: "Killed by operator after landing",
       }).id;
-      const second = compileDigest(store, {
-        agent: "agent-maya",
-        sessionId: "session-1",
-        compiledAt: T4,
-      })!;
+      const second = required(
+        compileDigest(store, {
+          agent: "agent-maya",
+          sessionId: "session-1",
+          compiledAt: T4,
+        }),
+      );
 
       // The delta is in: the kill event appears in the re-synthesized digest.
       expect(second.body).toContain(`[e${killedId}]`);
-      const failures = second.body.split("## Failures")[1]!.split("##")[0]!;
+      const failures = required(
+        second.body.split("## Failures")[1]?.split("##")[0],
+      );
       expect(failures).toContain(`[e${killedId}]`);
 
       // Replace, not merge: still exactly one row for this agent+session.
       expect(
-        store.digestFor({ agent: "agent-maya", sessionId: "session-1" })!.id,
+        store.digestFor({ agent: "agent-maya", sessionId: "session-1" })?.id,
       ).toBe(second.id);
       expect(store.digestProvenanceBlobs()).toHaveLength(1);
 
@@ -208,11 +219,13 @@ describe("auditDigestDrift", () => {
           type: "agent.status-reported",
           summary: "did some work",
         });
-        const digest = compileDigest(store, {
-          agent: "agent-maya",
-          sessionId: "session-1",
-          compiledAt: T4,
-        })!;
+        const digest = required(
+          compileDigest(store, {
+            agent: "agent-maya",
+            sessionId: "session-1",
+            compiledAt: T4,
+          }),
+        );
         // Tamper with the stored body out from under the compiler (there is
         // deliberately no digest-mutation API; go through the file).
         const tamper = new Database(storePath);
@@ -235,11 +248,13 @@ describe("auditDigestDrift", () => {
   test("fails when a referenced source event is gone", () => {
     const { store } = seededStore();
     try {
-      const digest = compileDigest(store, {
-        agent: "agent-maya",
-        sessionId: "session-1",
-        compiledAt: T4,
-      })!;
+      const digest = required(
+        compileDigest(store, {
+          agent: "agent-maya",
+          sessionId: "session-1",
+          compiledAt: T4,
+        }),
+      );
       // A retention pass that wrongly ignores the digest's references.
       store.sweepEvents("2026-07-23T00:00:00.000Z", new Set());
 
@@ -338,8 +353,8 @@ describe("runMemoryDigest", () => {
         { agent: "agent-maya" },
       );
       expect(ok.state).toBe("ok");
-      expect(ok.digest!.sessionId).toBe("session-1");
-      expect(ok.digest!.body).toContain("hint-not-authority");
+      expect(ok.digest?.sessionId).toBe("session-1");
+      expect(ok.digest?.body).toContain("hint-not-authority");
       expect(ok.truncated).toBe(false);
     } finally {
       store.close();
@@ -349,25 +364,27 @@ describe("runMemoryDigest", () => {
   test("drill-down returns the exact source event rows behind a pointer", () => {
     const { store, ids } = seededStore();
     try {
-      const digest = compileDigest(store, {
-        agent: "agent-maya",
-        sessionId: "session-1",
-        compiledAt: T4,
-      })!;
+      const digest = required(
+        compileDigest(store, {
+          agent: "agent-maya",
+          sessionId: "session-1",
+          compiledAt: T4,
+        }),
+      );
       const result = runMemoryDigest(
         { episodic: store, resolveAgentId: noResolution },
-        { digestId: digest.id, eventId: ids["landed"]! },
+        { digestId: digest.id, eventId: required(ids.landed) },
       );
       expect(result.state).toBe("ok");
-      expect(result.digest!.id).toBe(digest.id);
+      expect(result.digest?.id).toBe(digest.id);
       expect(result.events).toHaveLength(1);
       expect(result.events[0]).toMatchObject({
-        id: ids["landed"],
+        id: ids.landed,
         type: "agent.branch-landed",
       });
-      expect(result.events[0]!.summary).toContain(SHA);
+      expect(result.events[0]?.summary).toContain(SHA);
       // The drill-down row carries its own provenance JSON (authority).
-      expect(JSON.parse(result.events[0]!.provenance)).toMatchObject({
+      expect(JSON.parse(required(result.events[0]?.provenance))).toMatchObject({
         seq: 7,
       });
     } finally {
@@ -388,11 +405,13 @@ describe("runMemoryDigest", () => {
           summary: `error ${index}: ${"n".repeat(200)}`,
         });
       }
-      const digest = compileDigest(store, {
-        agent: "agent-maya",
-        sessionId: null,
-        compiledAt: T4,
-      })!;
+      const digest = required(
+        compileDigest(store, {
+          agent: "agent-maya",
+          sessionId: null,
+          compiledAt: T4,
+        }),
+      );
       expect(digest.body.length).toBeGreaterThan(1200 * 4);
 
       const inflated = runMemoryDigest(
@@ -401,7 +420,7 @@ describe("runMemoryDigest", () => {
       );
       expect(inflated.budget).toBe(1200);
       expect(inflated.truncated).toBe(true);
-      expect(inflated.digest!.body).toContain("[truncated");
+      expect(inflated.digest?.body).toContain("[truncated");
       expect(inflated.tokens).toBeLessThanOrEqual(inflated.budget);
     } finally {
       store.close();

@@ -278,7 +278,8 @@ export async function composeMemoryDelta(
     used + estimateTokens(text) > budget &&
     kept.length > 0
   ) {
-    const dropped = kept.pop()!;
+    const dropped = kept.pop();
+    if (dropped === undefined) break;
     used -= estimateTokens(dropped.text);
     if (dropped.kind === "pitfall") omittedPitfalls += 1;
     if (dropped.kind === "change") omittedChanges += 1;

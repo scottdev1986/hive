@@ -19,6 +19,7 @@ import {
   QuotaConfigSchema,
   type QuotaLimit,
 } from "../../src/schemas";
+import { required } from "../required";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 /**
@@ -98,7 +99,7 @@ test("crash recovery refuses to resolve an unknown vendor's session with the cod
   let codexResolves = 0;
   const recovery = new CrashRecovery({
     authorizeLaunch: async (identity) =>
-      (await authorizeForQuotaTest([identity]))[0]!,
+      required((await authorizeForQuotaTest([identity]))[0]),
     ...deps(db, sessions),
     resolveClaudeSessionId: async () => "claude-session",
     resolveCodexSessionId: async () => {
@@ -126,7 +127,7 @@ test("crash recovery refuses to resume an unknown vendor with codex's config and
   let codexConfigs = 0;
   const recovery = new CrashRecovery({
     authorizeLaunch: async (identity) =>
-      (await authorizeForQuotaTest([identity]))[0]!,
+      required((await authorizeForQuotaTest([identity]))[0]),
     ...deps(db, sessions),
     writeCodexConfig: async () => {
       codexConfigs += 1;

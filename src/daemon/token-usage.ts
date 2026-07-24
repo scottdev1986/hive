@@ -8,7 +8,6 @@ import { claudeProjectDirectory } from "../adapters/tools/claude";
 import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
 import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
 import {
-  type AgentRecord,
   isLiveAgent,
   type TokenCounts,
   type TokenUsageBreakdown,
@@ -117,7 +116,8 @@ async function jsonlFiles(directory: string): Promise<string[]> {
   const files: string[] = [];
   const pending = [directory];
   while (pending.length > 0) {
-    const current = pending.pop()!;
+    const current = pending.pop();
+    if (current === undefined) break;
     let entries: Dirent[];
     try {
       entries = await readdir(current, { withFileTypes: true });
@@ -861,9 +861,13 @@ export class TokenUsageStore {
         : null;
     const inputTokens = rows.reduce((sum, row) => sum + row.inputTokens, 0);
     const outputTokens = rows.reduce((sum, row) => sum + row.outputTokens, 0);
+    const first = rows[0];
+    if (first === undefined) {
+      throw new Error(`Token usage rows disappeared for ${subject.id}`);
+    }
     const observedAt = rows.reduce(
       (latest, row) => (row.observedAt > latest ? row.observedAt : latest),
-      rows[0]!.observedAt,
+      first.observedAt,
     );
     return {
       id: subject.id,

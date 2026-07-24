@@ -103,7 +103,7 @@ export function liveSelfTestReport(
             : assertion.passed
               ? "PASS"
               : "FAIL"
-        } ${assertion.name} — ` + assertion.detail,
+        } ${assertion.name} — ${assertion.detail}`,
     ),
   };
 }

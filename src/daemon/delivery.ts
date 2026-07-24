@@ -50,6 +50,7 @@ export interface SessionSender {
     recipient: AgentRecord,
     text: string,
     options: { messageId: string; interrupt?: boolean },
+    // biome-ignore lint/suspicious/noConfusingVoidType: Implementations may intentionally return no receipt.
   ): Promise<InputReceipt | void>;
 }
 
@@ -735,8 +736,12 @@ export class MessageDelivery {
         .claimUndeliveredMessages(agentName, deliveredAt)
         .map((message) =>
           message.priority === "normal"
-            ? this.db.transitionMessage(message.id, "applied", deliveredAt)!
-            : this.db.transitionMessage(message.id, "injected", deliveredAt)!,
+            ? this.requireMessageTransition(message.id, "applied", deliveredAt)
+            : this.requireMessageTransition(
+                message.id,
+                "injected",
+                deliveredAt,
+              ),
         );
     };
     if (recipient === null) return claim();
@@ -753,11 +758,11 @@ export class MessageDelivery {
         this.db.claimUndeliveredMessages(name, deliveredAt),
       );
       return claimed.map((message) => {
-        const applied = this.db.transitionMessage(
+        const applied = this.requireMessageTransition(
           message.id,
           "applied",
-          message.deliveredAt!,
-        )!;
+          message.deliveredAt ?? deliveredAt,
+        );
         return createOrchestratorEnvelope(applied);
       });
     });
@@ -867,7 +872,7 @@ export class MessageDelivery {
         `Message disappeared during root delivery: ${message.id}`,
       );
     }
-    return this.db.transitionMessage(message.id, "injected", now)!;
+    return this.requireMessageTransition(message.id, "injected", now);
   }
 
   private async deliverCritical(
@@ -1145,7 +1150,11 @@ export class MessageDelivery {
       replacement === null ? this.formatAgentMessage(message) : replacement;
     const delta = await this.composeWakeDelta(agent);
     const text = delta === null ? base : `${base}\n\n${delta.block}`;
-    await this.nativeControl!.deliver(agent, text, {
+    const nativeControl = this.nativeControl;
+    if (nativeControl === undefined) {
+      throw new Error(`Native delivery is unavailable for ${agent.name}`);
+    }
+    await nativeControl.deliver(agent, text, {
       interrupt: message.priority === "urgent",
     });
     const delivered = this.markInjected(message);
@@ -1191,13 +1200,13 @@ export class MessageDelivery {
       throw new Error(`Stale capability epoch for message ${messageId}`);
     }
     const now = new Date().toISOString();
-    let updated = this.db.transitionMessage(
+    let updated = this.requireMessageTransition(
       messageId,
       "agent-acknowledged",
       now,
-    )!;
+    );
     if (applied || message.priority === "critical") {
-      updated = this.db.transitionMessage(messageId, "applied", now)!;
+      updated = this.requireMessageTransition(messageId, "applied", now);
     }
     return updated;
   }
@@ -1579,7 +1588,8 @@ export class MessageDelivery {
   }
 
   async recoverCriticalControls(): Promise<number> {
-    if (this.controls === undefined) return 0;
+    const controls = this.controls;
+    if (controls === undefined) return 0;
     let recovered = 0;
     for (const queued of this.db.listQueuedCriticalMessages()) {
       let message = queued;
@@ -1592,10 +1602,12 @@ export class MessageDelivery {
           new Date().toISOString(),
         );
         if (recipient === null) continue;
-        message = this.db.assignMessageCapabilityEpoch(
+        const assigned = this.db.assignMessageCapabilityEpoch(
           message.id,
           recipient.capabilityEpoch,
-        )!;
+        );
+        if (assigned === null) continue;
+        message = assigned;
       }
       try {
         const acted = await this.withSessionLock(
@@ -1610,7 +1622,7 @@ export class MessageDelivery {
             if (current === null || current.state !== "queued") return false;
             const latest = this.db.getAgentByName(message.to);
             if (latest === null) return false;
-            await this.controls!.interruptAndRestart(latest, current);
+            await controls.interruptAndRestart(latest, current);
             this.markInjected(current);
             return true;
           },
@@ -1654,14 +1666,15 @@ export class MessageDelivery {
     if (injected === null) {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
     }
-    const stored = this.db.transitionMessage(message.id, "injected", now)!;
+    const stored = this.requireMessageTransition(message.id, "injected", now);
 
     // The acknowledgement clock starts when the agent could first have seen it,
     // not when the sender pressed send. Charging a recipient for time its message
     // spent queued is how a control expired seventeen minutes before it arrived.
-    if (stored.deadlineAt !== null && this.ackBudgetMs(stored) !== null) {
+    const ackBudgetMs = this.ackBudgetMs(stored);
+    if (stored.deadlineAt !== null && ackBudgetMs !== null) {
       const deadline = new Date(
-        new Date(now).getTime() + this.ackBudgetMs(stored)!,
+        new Date(now).getTime() + ackBudgetMs,
       ).toISOString();
       return this.db.setMessageDeadline(message.id, deadline) ?? stored;
     }
@@ -1678,6 +1691,18 @@ export class MessageDelivery {
     const message = this.db.getMessage(id);
     if (message === null) {
       throw new Error(`Message not found: ${id}`);
+    }
+    return message;
+  }
+
+  private requireMessageTransition(
+    id: string,
+    state: AgentMessage["state"],
+    at: string,
+  ): AgentMessage {
+    const message = this.db.transitionMessage(id, state, at);
+    if (message === null) {
+      throw new Error(`Message disappeared during ${state} transition: ${id}`);
     }
     return message;
   }

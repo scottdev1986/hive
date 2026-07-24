@@ -19,6 +19,7 @@ import { EMBEDDINGS_RUNTIME_ASSET } from "../../src/release/embeddings-runtime";
 import type { ReleaseManifest } from "../../src/release/manifest";
 import type { ReleaseSource } from "../../src/update/source";
 import { HIVE_VERSION } from "../../src/version";
+import { required } from "../required";
 
 const tempRoots: string[] = [];
 
@@ -120,7 +121,7 @@ function depsFor(
     version: fixture.manifest.version,
     arch: "arm64",
     publicKey: RELEASE_KEY.publicKey,
-    source: async (version) => {
+    source: async (_version) => {
       const source: ReleaseSource = {
         manifest: fixture.manifest,
         manifestBytes: fixture.manifestBytes,
@@ -173,10 +174,10 @@ describe("installEmbeddingsFromRelease", () => {
     // staging dir is gone after the swap.
     expect(probedDirs).toHaveLength(1);
     expect(probedDirs[0]).not.toBe(fixture.runtimeDir);
-    expect(probedDirs[0]!.startsWith(`${fixture.runtimeDir}.staging-`)).toBe(
+    expect(probedDirs[0]?.startsWith(`${fixture.runtimeDir}.staging-`)).toBe(
       true,
     );
-    expect(await Bun.file(probedDirs[0]!).exists()).toBe(false);
+    expect(await Bun.file(required(probedDirs[0])).exists()).toBe(false);
   });
 
   test("a dev build has no release to pin to and is refused before any download", async () => {

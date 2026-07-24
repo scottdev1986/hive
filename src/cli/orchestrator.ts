@@ -206,7 +206,7 @@ export function buildOrchestratorCommand(
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
-  const brief = buildOrchestratorInstructions(
+  const _brief = buildOrchestratorInstructions(
     memoryIndex,
     docGuidance,
     recoveryBrief,

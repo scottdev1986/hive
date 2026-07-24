@@ -16,6 +16,7 @@ import {
   TERMINAL_LIMITS,
 } from "../../src/schemas/session-protocol";
 import type { WorkspaceEventV2 } from "../../src/schemas/status-envelope";
+import { required } from "../required";
 
 export const FIXTURE_TIME = "2026-07-16T12:00:00.000Z";
 export const FIXTURE_IDS = {
@@ -1257,7 +1258,7 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "spec rejects empty argv",
     schema: "sessionSpec",
-    value: { ...(validCases[2]!.value as object), argv: [] },
+    value: { ...(validCases[2]?.value as object), argv: [] },
   },
   {
     name: "inspection rejects invented presence",
@@ -1289,7 +1290,7 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "capture rejects malformed digest",
     schema: "captureResult",
-    value: { ...(validCases[6]!.value as object), sha256: "bad" },
+    value: { ...(validCases[6]?.value as object), sha256: "bad" },
   },
   {
     name: "attach rejects unknown operation",
@@ -1299,17 +1300,17 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "grant requires endpoint",
     schema: "attachGrant",
-    value: { ...(validCases[8]!.value as object), endpoint: "" },
+    value: { ...(validCases[8]?.value as object), endpoint: "" },
   },
   {
     name: "visibility rejects invalid pid",
     schema: "visibilityRequest",
-    value: { ...(validCases[9]!.value as object), workspacePid: 0 },
+    value: { ...(validCases[9]?.value as object), workspacePid: 0 },
   },
   {
     name: "lease rejects inactive state",
     schema: "visibilityLease",
-    value: { ...(validCases[10]!.value as object), state: "expired" },
+    value: { ...(validCases[10]?.value as object), state: "expired" },
   },
   {
     name: "resize rejects negative revision",
@@ -1332,12 +1333,12 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "automation rejects unknown submit",
     schema: "automatedInputMetadata",
-    value: { ...(validCases[12]!.value as object), submit: "enter" },
+    value: { ...(validCases[12]?.value as object), submit: "enter" },
   },
   {
     name: "receipt rejects false read evidence",
     schema: "inputReceipt",
-    value: { ...(validCases[13]!.value as object), state: "read" },
+    value: { ...(validCases[13]?.value as object), state: "read" },
   },
   {
     name: "termination rejects detach",
@@ -1358,13 +1359,13 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "session event rejects wrong version",
     schema: "sessionEvent",
-    value: { ...(validCases[16]!.value as object), schemaVersion: 2 },
+    value: { ...(validCases[16]?.value as object), schemaVersion: 2 },
   },
   {
     name: "workspace event rejects screen source",
     schema: "workspaceEventV2",
     value: {
-      ...(validCases[17]!.value as object),
+      ...(validCases[17]?.value as object),
       source: {
         kind: "terminal-screen",
         id: "screen",
@@ -1401,7 +1402,7 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "terminal attempt rejects recipient acknowledgment",
     schema: "terminalDeliveryAttempt",
     value: {
-      ...(validCases[20]!.value as object),
+      ...(validCases[20]?.value as object),
       evidence: "recipient-acknowledged",
     },
   },
@@ -1409,7 +1410,7 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "terminal attempt requires one receipt form",
     schema: "terminalDeliveryAttempt",
     value: {
-      ...(validCases[20]!.value as object),
+      ...(validCases[20]?.value as object),
       byteRange: null,
       nativeEndpointReceipt: null,
     },
@@ -1417,22 +1418,22 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "snapshot rejects malformed digest",
     schema: "workspaceSnapshotV2",
-    value: { ...(validCases[21]!.value as object), contentSha256: "bad" },
+    value: { ...(validCases[21]?.value as object), contentSha256: "bad" },
   },
   {
     name: "assignment generation starts at one",
     schema: "flatAssignment",
-    value: { ...(validCases[22]!.value as object), assignmentGeneration: "0" },
+    value: { ...(validCases[22]?.value as object), assignmentGeneration: "0" },
   },
   {
     name: "operator scope requires subjects",
     schema: "hv1CapabilityRecord",
-    value: { ...(validCases[23]!.value as object), subjects: undefined },
+    value: { ...(validCases[23]?.value as object), subjects: undefined },
   },
   {
     name: "status update requires stable request id",
     schema: "hiveUpdateStatusInput",
-    value: { ...(validCases[18]!.value as object), requestId: undefined },
+    value: { ...(validCases[18]?.value as object), requestId: undefined },
   },
   {
     name: "HELLO rejects unknown field",
@@ -2291,26 +2292,37 @@ export function buildReducerCorpus() {
       prefixes: prefixesFor(events),
     };
   });
-  const duplicateEvents = [baseReducerEvents[0]!, baseReducerEvents[0]!];
+  const duplicateEvents = [
+    required(baseReducerEvents[0]),
+    required(baseReducerEvents[0]),
+  ];
   const lowerRevision = [
-    { ...baseReducerEvents[1]!, eventId: FIXTURE_IDS.events[0], seq: "1" },
-    { ...baseReducerEvents[0]!, eventId: FIXTURE_IDS.events[1], seq: "2" },
+    {
+      ...required(baseReducerEvents[1]),
+      eventId: FIXTURE_IDS.events[0],
+      seq: "1",
+    },
+    {
+      ...required(baseReducerEvents[0]),
+      eventId: FIXTURE_IDS.events[1],
+      seq: "2",
+    },
   ];
   const conflictingDuplicate = [
-    baseReducerEvents[0]!,
-    { ...baseReducerEvents[0]!, data: { phase: "complete" } },
+    required(baseReducerEvents[0]),
+    { ...required(baseReducerEvents[0]), data: { phase: "complete" } },
   ];
-  const gap = [{ ...baseReducerEvents[0]!, seq: "2" }];
+  const gap = [{ ...required(baseReducerEvents[0]), seq: "2" }];
   const caseOrdering = [
     {
-      ...baseReducerEvents[0]!,
+      ...required(baseReducerEvents[0]),
       eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000009",
       data: { B: "upper", a: "lower" },
     },
   ];
   const numericOrdering = [
     {
-      ...baseReducerEvents[0]!,
+      ...required(baseReducerEvents[0]),
       eventId: "evt_018f1e90-7b5a-7cc0-8000-00000000000a",
       data: { a10: "ten", a9: "nine" },
     },

@@ -5,6 +5,7 @@ import {
   superviseOrchestratorSession,
 } from "../../src/cli/orchestrator-supervisor";
 import type { AgentRecord } from "../../src/schemas";
+import { required } from "../required";
 
 function agent(
   name: string,
@@ -102,7 +103,7 @@ describe("orchestrator session supervisor", () => {
     const exitCode = await superviseOrchestratorSession({
       launch: async (brief) => {
         launches.push(brief);
-        return exitCodes.shift()!;
+        return required(exitCodes.shift());
       },
       fetchAgents: async () =>
         launches.length === 1

@@ -60,8 +60,8 @@ const uuidV7 = (prefix: "asg" | "evt"): string => {
     bytes[index] = Number(timestamp & 0xffn);
     timestamp >>= 8n;
   }
-  bytes[6] = (bytes[6]! & 0x0f) | 0x70;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  bytes.writeUInt8((bytes.readUInt8(6) & 0x0f) | 0x70, 6);
+  bytes.writeUInt8((bytes.readUInt8(8) & 0x3f) | 0x80, 8);
   const hex = bytes.toString("hex");
   return `${prefix}_${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };

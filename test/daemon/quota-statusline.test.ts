@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/db";
 import { QuotaService } from "../../src/daemon/quota";
 import { QuotaConfigSchema, type QuotaLimit } from "../../src/schemas";
+import { required } from "../required";
 import { CatalogedQuotaLedger as QuotaLedger } from "./authorized-launch.test-support";
 
 const roots: string[] = [];
@@ -47,7 +48,7 @@ async function service(): Promise<{ quota: QuotaService; db: HiveDatabase }> {
 const claude = { tool: "claude" as const, model: "claude-fable-5" };
 
 const poolStatus = (quota: QuotaService) => {
-  const status = quota.statuses(now)[0]!;
+  const status = required(quota.statuses(now)[0]);
   if (!("fiveHour" in status)) throw new Error("expected a configured pool");
   return status;
 };
@@ -309,7 +310,7 @@ describe("statusLine quota telemetry", () => {
         fiveHour: { usedPct: 30, resetsAt: null },
         observedAt: new Date(now.getTime() + 1_000).toISOString(),
       });
-      expect(second?.observedAt).toBe(first!.observedAt);
+      expect(second?.observedAt).toBe(first?.observedAt);
 
       // A changed reading writes immediately.
       const third = await quota.observeStatusline(claude, {

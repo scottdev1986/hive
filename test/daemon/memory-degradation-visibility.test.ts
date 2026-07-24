@@ -255,6 +255,7 @@ async function makeDaemon(
   return { daemon, repoRoot };
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: MCP JSON is intentionally decoded loosely in this test.
 type ToolValue = any;
 
 async function connectedClient(
@@ -308,7 +309,7 @@ describe("write responses (defect D2)", () => {
     const client = await connectedClient(daemon);
     const cold = await seedArticle(client, "Cold write projection");
     expect(cold.embedding).toBe("queued");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const warm = await seedArticle(client, "Warm write projection");
     expect(warm.embedding).toBe("indexed");
     expect(episodic.memoryEmbeddings({ kind: "article" })).toHaveLength(2);
@@ -321,7 +322,7 @@ describe("write responses (defect D2)", () => {
     const client = await connectedClient(daemon);
     // Trip the lazy load once so the failure is memoized.
     await seedArticle(client, "First write trips the load");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const second = await seedArticle(client, "Second write sees the state");
     expect(second.embedding).toBe("unavailable:embedding-runtime-missing");
     expect(episodic.memoryEmbeddings({ kind: "article" })).toHaveLength(0);
@@ -347,7 +348,7 @@ describe("write responses (defect D2)", () => {
     );
     expect(cold.state).toBe("recorded");
     expect(cold.embedding).toBe("queued");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const second = textValue(
       await client.callTool({
         name: "memory_note",
@@ -365,7 +366,7 @@ describe("memory_recall envelope (defect D2)", () => {
     const { daemon } = await makeDaemon({ episodic });
     const client = await connectedClient(daemon);
     await seedArticle(client, "Database fixtures layout");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const result = await client.callTool({
       name: "memory_recall",
       arguments: { query: "database" },
@@ -383,7 +384,7 @@ describe("memory_recall envelope (defect D2)", () => {
     const { daemon } = await makeDaemon({ episodic, failingLoad: true });
     const client = await connectedClient(daemon);
     await seedArticle(client, "Database fixtures layout");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const result = await client.callTool({
       name: "memory_recall",
       arguments: { query: "database", budget: 1 },
@@ -402,7 +403,7 @@ describe("memory_recall envelope (defect D2)", () => {
       }
     ).content;
     expect(blocks).toHaveLength(2);
-    expect(blocks[1]!.text).toBe(value.warning);
+    expect(blocks[1]?.text).toBe(value.warning);
     episodic.close();
   });
 
@@ -427,7 +428,7 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
     const { daemon } = await makeDaemon({ episodic });
     const client = await connectedClient(daemon);
     await seedArticle(client, "Status surface check");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const result = await client.callTool({
       name: "hive_status",
       arguments: {},
@@ -451,7 +452,7 @@ describe("hive_status memory.embeddings section (defect D2)", () => {
     const { daemon } = await makeDaemon({ episodic, failingLoad: true });
     const client = await connectedClient(daemon);
     await seedArticle(client, "Trips the load");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const down = (await client.callTool({
       name: "hive_status",
       arguments: {},
@@ -492,3 +493,5 @@ describe("CLI printer (defect D2)", () => {
     expect(unavailable).toContain("keyword-searchable only");
   });
 });
+
+import { required } from "../required";

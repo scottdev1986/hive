@@ -150,15 +150,13 @@ function whenUsed(
       ? "Not used automatically: the vendor marks this model hidden."
       : "Not in any category chain; an explicit user request may still select it.";
   }
-  return (
-    roles
-      .map((role) =>
-        role.position === 0
-          ? `Primary for ${role.category}`
-          : `Fallback ${role.position} for ${role.category}`,
-      )
-      .join("; ") + "."
-  );
+  return `${roles
+    .map((role) =>
+      role.position === 0
+        ? `Primary for ${role.category}`
+        : `Fallback ${role.position} for ${role.category}`,
+    )
+    .join("; ")}.`;
 }
 
 function planStatus(

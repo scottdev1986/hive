@@ -53,15 +53,15 @@ export class FoundationBookmarkProvider implements BookmarkProvider {
 
   create(path: string): string | null {
     const result = this.run(["bookmark-create", path]);
-    const bookmark = result?.["bookmark"];
+    const bookmark = result?.bookmark;
     return typeof bookmark === "string" ? bookmark : null;
   }
 
   resolve(bookmark: string): BookmarkResolution | null {
     const result = this.run(["bookmark-resolve", bookmark]);
     if (!result) return null;
-    const path = result["path"];
-    const isStale = result["isStale"];
+    const path = result.path;
+    const isStale = result.isStale;
     if (typeof path !== "string" || typeof isStale !== "boolean") return null;
     return { path, isStale };
   }

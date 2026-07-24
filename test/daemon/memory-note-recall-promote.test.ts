@@ -52,6 +52,7 @@ class UnusedSpawner implements Spawner {
 }
 
 // The MCP text payload is JSON; tests index into it loosely by design.
+// biome-ignore lint/suspicious/noExplicitAny: MCP JSON is intentionally decoded loosely in this test.
 type ToolValue = any;
 
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): ToolValue {

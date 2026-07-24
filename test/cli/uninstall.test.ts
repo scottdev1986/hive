@@ -17,6 +17,7 @@ import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 import { projectStateDir } from "../../src/daemon/project-state";
 import { shippedSkillsFor } from "../../src/skills/shipped";
+import { required } from "../required";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -154,7 +155,7 @@ describe("hive uninstall --repo", () => {
       // Hive's full repo footprint, laid down the way Hive lays it down.
       const shipped = shippedSkillsFor("claude");
       expect(shipped.length).toBeGreaterThan(1);
-      const [ours, theirs] = [shipped[0]!, shipped[1]!];
+      const [ours, theirs] = [required(shipped[0]), required(shipped[1])];
       await mkdir(join(root, ".claude", "skills", ours.name), {
         recursive: true,
       });

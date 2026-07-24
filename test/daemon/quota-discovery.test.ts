@@ -17,10 +17,10 @@ import {
   catalogFromGrokInitialize,
   type GrokBillingResponse,
   GrokQuotaProbe,
+  KimiQuotaProbe,
   orderRateLimitWindows,
   type QuotaProbe,
   type QuotaProbeResult,
-  KimiQuotaProbe,
   readingsFromClaudeUsage,
   readingsFromCodexResponse,
   readingsFromGrokBilling,
@@ -31,6 +31,7 @@ import {
   type QuotaLimit,
   type QuotaPoolStatus,
 } from "../../src/schemas";
+import { required } from "../required";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 const roots: string[] = [];
@@ -1348,7 +1349,7 @@ describe("pools gate the models they actually meter", () => {
       selection: "spread",
       explicitTool: "claude",
       explicitCandidate: true,
-      candidates: await authorizeForQuotaTest([candidates[0]!]),
+      candidates: await authorizeForQuotaTest([required(candidates[0])]),
     });
     expect(explicit.tool).toBe("claude");
     expect(explicit.warnings.join(" ")).toContain("weekly:Renamed");
@@ -1702,7 +1703,7 @@ describe("a route that cannot start is not a route", () => {
       category: "complex_coding",
       selection: "strict",
       explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([both[1]!]),
+      candidates: await authorizeForQuotaTest([required(both[1])]),
     });
     quota.markStarted(pinned.reservation.id, now.toISOString());
 
@@ -1725,7 +1726,7 @@ describe("a route that cannot start is not a route", () => {
       category: "complex_coding",
       selection: "strict",
       explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([both[1]!]),
+      candidates: await authorizeForQuotaTest([required(both[1])]),
     });
     await quota.cancel(
       failed.reservation.id,
@@ -1741,7 +1742,7 @@ describe("a route that cannot start is not a route", () => {
       category: "complex_coding",
       selection: "strict",
       explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([both[1]!]),
+      candidates: await authorizeForQuotaTest([required(both[1])]),
     });
     expect(pinned.tool).toBe("codex");
     expect(pinned.warnings.join(" ")).toContain("no alternative");
@@ -1894,23 +1895,29 @@ describe("kimi usage probe", () => {
       remaining: "60",
       resetTime: "2026-07-29T21:38:00.343103Z",
     },
-    limits: [{
-      window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
-      detail: {
-        limit: "100",
-        used: "1",
-        remaining: "99",
-        resetTime: "2026-07-24T18:38:00Z",
+    limits: [
+      {
+        window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+        detail: {
+          limit: "100",
+          used: "1",
+          remaining: "99",
+          resetTime: "2026-07-24T18:38:00Z",
+        },
       },
-    }],
+    ],
     parallel: { limit: "30" },
     authentication: { method: "METHOD_ACCESS_TOKEN", scope: "FEATURE_CODING" },
   };
 
   test("maps /usages onto a reported subscription pool with both windows", async () => {
-    const probe = new KimiQuotaProbe({
-      readUsage: () => Promise.resolve({ status: "ok", response: KIMI_USAGES }),
-    }, () => now);
+    const probe = new KimiQuotaProbe(
+      {
+        readUsage: () =>
+          Promise.resolve({ status: "ok", response: KIMI_USAGES }),
+      },
+      () => now,
+    );
     const result = await probe.read();
     if (result.status !== "ok") throw new Error("expected a reading");
     expect(result.catalog).toEqual([]);
@@ -1939,28 +1946,38 @@ describe("kimi usage probe", () => {
   });
 
   test("the shortest rate window is the five-hour one, wherever it sits in the array", () => {
-    const pools = readingsFromKimiUsages({
-      usage: KIMI_USAGES.usage,
-      limits: [
-        {
-          window: { duration: 3, timeUnit: "TIME_UNIT_DAY" },
-          detail: { limit: "100", used: "90" },
-        },
-        {
-          window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
-          detail: { limit: "100", used: "1" },
-        },
-      ],
-    }, "default", now.toISOString());
+    const pools = readingsFromKimiUsages(
+      {
+        usage: KIMI_USAGES.usage,
+        limits: [
+          {
+            window: { duration: 3, timeUnit: "TIME_UNIT_DAY" },
+            detail: { limit: "100", used: "90" },
+          },
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "100", used: "1" },
+          },
+        ],
+      },
+      "default",
+      now.toISOString(),
+    );
     expect(pools[0]?.fiveHour?.usedPct).toBe(1);
     expect(pools[0]?.fiveHour?.windowMinutes).toBe(300);
     // A window whose unit cannot be placed is dropped, never guessed.
-    const unplaceable = readingsFromKimiUsages({
-      limits: [{
-        window: { duration: 7, timeUnit: "TIME_UNIT_FORTNIGHT" },
-        detail: { limit: "100", used: "50" },
-      }],
-    }, "default", now.toISOString());
+    const unplaceable = readingsFromKimiUsages(
+      {
+        limits: [
+          {
+            window: { duration: 7, timeUnit: "TIME_UNIT_FORTNIGHT" },
+            detail: { limit: "100", used: "50" },
+          },
+        ],
+      },
+      "default",
+      now.toISOString(),
+    );
     expect(unplaceable).toEqual([]);
   });
 
@@ -1987,12 +2004,18 @@ describe("kimi usage probe", () => {
       reason: "kimi /usages returned no usable usage reading",
     });
     // Unparseable window numbers are not a reading either.
-    const pools = readingsFromKimiUsages({
-      limits: [{
-        window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
-        detail: { limit: "zero", used: "1" },
-      }],
-    }, "default", now.toISOString());
+    const pools = readingsFromKimiUsages(
+      {
+        limits: [
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "zero", used: "1" },
+          },
+        ],
+      },
+      "default",
+      now.toISOString(),
+    );
     expect(pools).toEqual([]);
   });
 

@@ -24,6 +24,7 @@ import {
   ROUTING_CATEGORIES,
   type RoutingPolicy,
 } from "../../src/schemas";
+import { required } from "../required";
 
 const NOW = new Date("2026-07-12T12:00:00.000Z");
 
@@ -535,7 +536,7 @@ describe("mutations and compare-and-set", () => {
       operation: "set-provider",
       revision: 1,
     });
-    expect(events[0]!.after).toContain('"claude": "enabled"');
+    expect(events[0]?.after).toContain('"claude": "enabled"');
   });
 });
 
@@ -561,8 +562,8 @@ describe("first-boot seeding — consent is never seeded, entries are exact ids"
     for (const category of ROUTING_CATEGORIES) {
       const chain = policy.chains[category];
       expect(chain).toBeDefined();
-      expect(chain!.length).toBe(5);
-      for (const entry of chain!) {
+      expect(chain?.length).toBe(5);
+      for (const entry of required(chain)) {
         // Every entry names the specific model that will run — no mode field,
         // no indirection of any kind.
         expect(entry.model).toBe(DEFAULTS[entry.provider]);
@@ -878,7 +879,7 @@ describe("legacy routing.toml retirement", () => {
     const target = retireLegacyRoutingToml(home);
     expect(target).toBe(join(home, "routing.toml.legacy"));
     expect(existsSync(join(home, "routing.toml"))).toBeFalse();
-    expect(readFileSync(target!, "utf8")).toContain("whatever");
+    expect(readFileSync(required(target), "utf8")).toContain("whatever");
   });
 
   test("does nothing when there is no file, and never overwrites an earlier retirement", () => {
@@ -890,7 +891,7 @@ describe("legacy routing.toml retirement", () => {
     expect(readFileSync(join(home, "routing.toml.legacy"), "utf8")).toBe(
       "older retirement\n",
     );
-    expect(readFileSync(target!, "utf8")).toBe("newer file\n");
+    expect(readFileSync(required(target), "utf8")).toBe("newer file\n");
   });
 });
 

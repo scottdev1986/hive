@@ -186,7 +186,7 @@ export function startDownload(
     };
   }
 
-  write(dim(`downloading ${name}${size}`) + "\n");
+  write(`${dim(`downloading ${name}${size}`)}\n`);
 
   const startedAt = now();
   let samples: RateSample[] = [{ at: startedAt, read: 0 }];

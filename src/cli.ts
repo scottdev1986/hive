@@ -901,10 +901,10 @@ export function createProgram(): Command {
       try {
         // Claude hooks deliver session identity on stdin; explicit CLI and
         // payload options always win over the captured value.
-        await verifyDaemonInstance(
-          parsePort(options.port),
-          options.instanceId!,
-        );
+        if (options.instanceId === undefined) {
+          throw new Error("--instance-id is required");
+        }
+        await verifyDaemonInstance(parsePort(options.port), options.instanceId);
         const captured = await readHookStdin();
         await runHiveEvent(kind, parsePort(options.port), {
           ...captured,

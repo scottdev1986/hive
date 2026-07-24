@@ -11,7 +11,6 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  brokerSocketPath,
   connectUnixSocket,
   readLocalPeerPid,
   resolveSessiondBinary,

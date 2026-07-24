@@ -79,5 +79,7 @@ export function selectRecoverySessionId(
       `Ambiguous ${provider} recovery artifacts: ${eligible.map((artifact) => artifact.path).join(", ")}`,
     );
   }
-  return eligible[0]!.sessionId;
+  const [artifact] = eligible;
+  if (artifact === undefined) return null;
+  return artifact.sessionId;
 }

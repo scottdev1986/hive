@@ -370,10 +370,7 @@ export async function runUninstallRepo(
   // Hive's to delete; a user-authored one stays — the same rule purge obeys.
   const ignorePath = join(root, ".graphifyignore");
   const ignoreContent = await readFile(ignorePath, "utf8").catch(() => null);
-  if (
-    ignoreContent !== null &&
-    ignoreContent.startsWith(GRAPHIFY_IGNORE_MARKER)
-  ) {
+  if (ignoreContent?.startsWith(GRAPHIFY_IGNORE_MARKER)) {
     await rm(ignorePath, { force: true });
     deps.log("Removed the generated .graphifyignore.");
   }

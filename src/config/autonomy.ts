@@ -40,8 +40,8 @@ export function upsertAutonomy(text: string, value: Autonomy): string {
   const assignment = `autonomy = "${value}"`;
   const lines = text.split("\n");
   let replaced = false;
-  for (let index = 0; index < lines.length; index++) {
-    const trimmed = lines[index]!.trim();
+  for (const [index, line] of lines.entries()) {
+    const trimmed = line.trim();
     if (trimmed.startsWith("[")) break;
     if (/^autonomy\s*=/.test(trimmed)) {
       lines[index] = assignment;

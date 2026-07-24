@@ -159,7 +159,7 @@ describe("EpisodicStore vector store", () => {
       model: "bge-small-en-v1.5",
       dimensions: 4,
     });
-    expect([...rows[0]!.vector]).toEqual([0.5, -0.25, 1, 0]);
+    expect([...required(rows[0]?.vector)]).toEqual([0.5, -0.25, 1, 0]);
     store.close();
   });
 
@@ -174,7 +174,7 @@ describe("EpisodicStore vector store", () => {
     store.upsertMemoryEmbedding({ ...base, vector: Float32Array.from([1, 0]) });
     store.upsertMemoryEmbedding({ ...base, vector: Float32Array.from([0, 1]) });
     expect(store.memoryEmbeddings()).toHaveLength(1);
-    expect([...store.memoryEmbeddings()[0]!.vector]).toEqual([0, 1]);
+    expect([...required(store.memoryEmbeddings()[0]?.vector)]).toEqual([0, 1]);
     store.removeMemoryEmbedding("fact", "", "f1");
     expect(store.memoryEmbeddings()).toHaveLength(0);
     store.close();
@@ -418,8 +418,10 @@ describe("MemoryEmbeddingIndex", () => {
     expect(store.memoryEmbeddings({ kind: "article" })).toHaveLength(2);
     const hits = await index.searchArticles("anything", 10);
     expect(hits).not.toBeNull();
-    expect(hits!.map((hit) => hit.id)).toEqual(["near", "far"]);
-    expect(hits![0]!.score).toBeGreaterThan(hits![1]!.score);
+    expect(hits?.map((hit) => hit.id)).toEqual(["near", "far"]);
+    expect(required(hits?.[0]?.score)).toBeGreaterThan(
+      required(hits?.[1]?.score),
+    );
     store.close();
   });
 
@@ -431,7 +433,7 @@ describe("MemoryEmbeddingIndex", () => {
     await index.settle();
     const hits = await index.searchArticles("q", 2);
     // All vectors identical (mock fallback) → score ties break on scope/id.
-    expect(hits!.map((hit) => hit.id)).toEqual(["a", "b"]);
+    expect(hits?.map((hit) => hit.id)).toEqual(["a", "b"]);
     store.close();
   });
 
@@ -509,7 +511,7 @@ describe("MemoryEmbeddingIndex", () => {
     await index.upsertArticle("repo", "right-width", "right text");
     await index.settle();
     const hits = await index.searchArticles("q", 10);
-    expect(hits!.map((hit) => hit.id)).toEqual(["right-width"]);
+    expect(hits?.map((hit) => hit.id)).toEqual(["right-width"]);
     store.close();
   });
 });
@@ -614,8 +616,8 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
       (row) => row.id === "lease-renewal-blocks-overlapping-agents",
     );
     expect(lease).toBeDefined();
-    expect(lease!.title).toBe("Lease renewal blocks overlapping agents");
-    expect(lease!.snippet.length).toBeGreaterThan(0);
+    expect(lease?.title).toBe("Lease renewal blocks overlapping agents");
+    expect(lease?.snippet.length).toBeGreaterThan(0);
     // The pitfall semantic hit lands in the pitfall partition.
     expect(bundle.pitfalls.map((row) => row.id)).toContain(
       "unrelated-pitfall-about-ports",
@@ -715,7 +717,7 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
     // The first write queues the projection behind the model load; settle
     // drains it.
     expect(written.embedding).toBe("queued");
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     const rows = episodic.memoryEmbeddings({ kind: "article" });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -737,11 +739,11 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
       id: first.id,
       supersedes: [first.id],
     });
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     // Same id re-embedded once — exactly one row, newest write wins.
     const rows = episodic.memoryEmbeddings({ kind: "article" });
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.sourceId).toBe(first.id);
+    expect(rows[0]?.sourceId).toBe(first.id);
   });
 
   test("rebuildMemoryIndex prunes vector rows whose source disappeared", async () => {
@@ -772,10 +774,12 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
       vector: Float32Array.from([1, 0, 0, 0]),
     });
     episodic.invalidateFact(fact.id);
-    await daemon.embeddingIndex!.settle();
+    await required(daemon.embeddingIndex).settle();
     await daemon.rebuildMemoryIndex();
     const rows = episodic.memoryEmbeddings();
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.sourceId).toBe(written.id);
+    expect(rows[0]?.sourceId).toBe(written.id);
   });
 });
+
+import { required } from "../required";

@@ -70,9 +70,10 @@ const GROK_VERSION_PATTERN = /^grok (\S+) \(([0-9a-f]+)\)(?: \[(\w+)\])?$/;
 
 export function parseGrokCliVersion(output: string): GrokCliIdentity | null {
   const match = GROK_VERSION_PATTERN.exec(output.trim());
-  return match === null
-    ? null
-    : { version: match[1]!, buildHash: match[2]!, channel: match[3] ?? null };
+  if (match === null) return null;
+  const [, version, buildHash, channel] = match;
+  if (version === undefined || buildHash === undefined) return null;
+  return { version, buildHash, channel: channel ?? null };
 }
 
 export function probeGrokCliVersion(
@@ -120,7 +121,7 @@ export function probeGrokDefaultModel(executable = "grok"): string | null {
     if (result.exitCode !== 0) return null;
     for (const line of result.stdout.toString().split("\n")) {
       const match = /^\s*\*\s+(\S+)\s+\(default\)\s*$/.exec(line);
-      if (match !== null) return match[1]!;
+      if (match?.[1] !== undefined) return match[1];
     }
     return null;
   } catch {

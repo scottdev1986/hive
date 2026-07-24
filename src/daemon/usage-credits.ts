@@ -11,6 +11,13 @@ import {
   unknownVendor,
 } from "../schemas/capability";
 import {
+  KimiHttpUsageTransport,
+  KimiUsagesResponseSchema,
+  type KimiUsageTransport,
+  kimiUsageWindowMinutes,
+  kimiUsageWindowPercent,
+} from "./kimi-usage";
+import {
   type ClaudeProbeTransport,
   ClaudeStdioProbeTransport,
   type CodexProbeTransport,
@@ -18,13 +25,6 @@ import {
   type GrokProbeTransport,
   GrokStdioProbeTransport,
 } from "./quota-sources";
-import {
-  KimiHttpUsageTransport,
-  KimiUsagesResponseSchema,
-  kimiUsageWindowMinutes,
-  kimiUsageWindowPercent,
-  type KimiUsageTransport,
-} from "./kimi-usage";
 
 /**
  * What it costs this account to run a model, measured — never inferred from a
@@ -186,8 +186,9 @@ export function accountBillingFromUsage(
   const flags = [extra?.is_enabled, spend?.enabled].filter(
     (flag): flag is boolean => typeof flag === "boolean",
   );
+  const [firstFlag] = flags;
   const creditsEnabled: Discovered<boolean> =
-    flags.length === 0
+    firstFlag === undefined
       ? // The surface answered and carried no credit flag. That is not "off".
         unknown(
           limits === null || limits === undefined
@@ -196,8 +197,8 @@ export function accountBillingFromUsage(
           USAGE,
           observedAt,
         )
-      : flags.every((flag) => flag === flags[0])
-        ? known(flags[0]!, USAGE, observedAt)
+      : flags.every((flag) => flag === firstFlag)
+        ? known(firstFlag, USAGE, observedAt)
         : unknown("malformed", USAGE, observedAt);
 
   const utilization = (value: unknown): number | null =>
@@ -473,8 +474,11 @@ export function accountBillingFromKimiUsage(
       ),
       detail: entry.detail,
     }))
-    .filter((entry) => entry.minutes !== null)
-    .sort((left, right) => left.minutes! - right.minutes!);
+    .filter(
+      (entry): entry is typeof entry & { minutes: number } =>
+        entry.minutes !== null,
+    )
+    .sort((left, right) => left.minutes - right.minutes);
   const shortest = windows[0];
   if (shortest === undefined) return quiet("field-absent");
   const percent = kimiUsageWindowPercent(shortest.detail);
@@ -836,7 +840,11 @@ function billingReader(
           // A quiet surface is an all-unknown billing, never a zero: the
           // billing memory then serves the last real reading at its true age.
           return {
-            creditsEnabled: unknown("surface-silent", "kimi.usages", observedAt),
+            creditsEnabled: unknown(
+              "surface-silent",
+              "kimi.usages",
+              observedAt,
+            ),
             disabledReason: null,
             generalUtilization: unknown(
               "surface-silent",

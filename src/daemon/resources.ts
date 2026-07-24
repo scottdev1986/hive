@@ -59,12 +59,12 @@ export function parseProcessTable(raw: string): ProcessSample[] {
   const samples: ProcessSample[] = [];
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-    if (match === null) continue;
+    if (match === null || match[4] === undefined) continue;
     samples.push({
       pid: Number(match[1]),
       ppid: Number(match[2]),
       rssMb: Number(match[3]) / 1024,
-      command: match[4]!.trim(),
+      command: match[4].trim(),
     });
   }
   return samples;
@@ -112,7 +112,8 @@ export function descendantsOf<T extends { pid: number; ppid: number }>(
   const result: T[] = [];
   const queue = [...rootPids];
   while (queue.length > 0) {
-    const pid = queue.shift()!;
+    const pid = queue.shift();
+    if (pid === undefined) break;
     if (seen.has(pid)) continue;
     seen.add(pid);
     const sample = byPid.get(pid);
@@ -162,11 +163,11 @@ export function parseStateTable(raw: string): ProcessStateSample[] {
   const samples: ProcessStateSample[] = [];
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)/.exec(line);
-    if (match === null) continue;
+    if (match === null || match[3] === undefined) continue;
     samples.push({
       pid: Number(match[1]),
       ppid: Number(match[2]),
-      stat: match[3]!,
+      stat: match[3],
     });
   }
   return samples;
@@ -178,13 +179,13 @@ export function parseForegroundProcessTable(
   const samples: ForegroundProcessSample[] = [];
   for (const line of raw.split("\n")) {
     const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)/.exec(line);
-    if (match === null) continue;
+    if (match === null || match[5] === undefined) continue;
     samples.push({
       pid: Number(match[1]),
       ppid: Number(match[2]),
       processGroupId: Number(match[3]),
       foregroundProcessGroupId: Number(match[4]),
-      stat: match[5]!,
+      stat: match[5],
     });
   }
   return samples;

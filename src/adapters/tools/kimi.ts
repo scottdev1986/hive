@@ -209,9 +209,7 @@ export async function writeKimiAgentConfig(
   await chmod(path, 0o600);
 }
 
-export function kimiSessionsDirectory(
-  home = kimiHome(),
-): string {
+export function kimiSessionsDirectory(home = kimiHome()): string {
   return join(home, "sessions");
 }
 

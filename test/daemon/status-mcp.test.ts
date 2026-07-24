@@ -20,6 +20,7 @@ import {
 import { StatusStore } from "../../src/daemon/status-store";
 import { type AgentRecord, ORCHESTRATOR_NAME } from "../../src/schemas";
 import { HiveUpdateStatusAdvertisedSchema } from "../../src/schemas/status-envelope";
+import { required } from "../required";
 
 const AT = "2026-07-16T12:00:00.000Z";
 const SESSION_ID = "ses_018f1e90-7b5a-7cc0-8000-000000000001";
@@ -229,7 +230,10 @@ describe("WP7 MCP status tools", () => {
       timestamp: "2026-07-16T12:00:01.000Z",
       toolSessionId: "tool-fixture",
     });
-    state = reduceStatusEvent(state, daemon.status.listEvents().at(-1)!);
+    state = reduceStatusEvent(
+      state,
+      required(daemon.status.listEvents().at(-1)),
+    );
     expect(Object.keys(state.entities)).toEqual(["agent:agent-maya"]);
   });
 
@@ -282,7 +286,7 @@ describe("WP7 MCP status tools", () => {
     const token = daemon.capabilities.mint("maya", "reader", {
       epoch: 0,
     }).token;
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     const stringified = await callTool(daemon, token, "hive_update_status", {
       requestId: REQUEST_ID,
       assignmentId: assignment.assignmentId,
@@ -305,7 +309,7 @@ describe("WP7 MCP status tools", () => {
     const token = daemon.capabilities.mint("maya", "reader", {
       epoch: 0,
     }).token;
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     const accepted = await callTool(daemon, token, "hive_update_status", {
       assignmentId: assignment.assignmentId,
       assignmentGeneration: assignment.assignmentGeneration,
@@ -315,7 +319,7 @@ describe("WP7 MCP status tools", () => {
       evidenceRefs: ["commit:fcc06d68"],
     });
     expect(accepted.isError).not.toBeTrue();
-    const reported = daemon.status.listEvents().at(-1)!;
+    const reported = required(daemon.status.listEvents().at(-1));
     expect(reported.kind).toBe("agent.status-reported");
     expect(reported.data.requestId).toMatch(
       /^req_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -329,7 +333,7 @@ describe("WP7 MCP status tools", () => {
     const token = daemon.capabilities.mint("maya", "reader", {
       epoch: 0,
     }).token;
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     const args = {
       requestId: REQUEST_ID,
       assignmentId: assignment.assignmentId,
@@ -360,7 +364,7 @@ describe("WP7 MCP status tools", () => {
     const token = daemon.capabilities.mint("maya", "reader", {
       epoch: 0,
     }).token;
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     const valid = {
       requestId: REQUEST_ID,
       assignmentId: assignment.assignmentId,
@@ -402,7 +406,7 @@ describe("WP7 MCP status tools", () => {
     const token = daemon.capabilities.mint("maya", "reader", {
       epoch: 0,
     }).token;
-    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const assignment = required(daemon.status.currentAssignment("agent-maya"));
     const result = await callTool(daemon, token, "hive_update_status", {
       requestId: "req_018f1e90-7b5a-7cc0-8000-000000000099",
       assignmentId: assignment.assignmentId,
@@ -568,7 +572,7 @@ describe("WP7 MCP status tools", () => {
   });
 
   test("requires operator scope and an explicit subject allowlist for cross-agent text", async () => {
-    const { daemon, db } = harness();
+    const { db } = harness();
     db.insertAgent(agent("zara"));
     let scoped!: HiveDaemon;
     const crossLocator = (): SessionLocator => ({

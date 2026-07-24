@@ -234,7 +234,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             db,
             handshake.instanceId,
           );
-          const engineBuildId = await host.discoverEngineBuildId();
+          const _engineBuildId = await host.discoverEngineBuildId();
           const visibility = {
             workspaceSessionId: "workspace-sessiond-live-harness",
             workspacePid: workspacePublisher.pid,
@@ -464,7 +464,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               inspection.session.key === sessiondLocator.sessionId,
           );
           expect(neutralMatches).toHaveLength(1);
-          const neutralSession = neutralMatches[0]!.session;
+          const neutralSession = neutralMatches[0]?.session;
+          expect(neutralSession).toBeDefined();
+          if (neutralSession === undefined) return;
           expect(neutralSession.incarnation).not.toBe(
             String(sessiondLocator.generation),
           );
