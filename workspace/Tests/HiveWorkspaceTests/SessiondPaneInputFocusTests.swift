@@ -38,16 +38,16 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             sessionLocator: first))
         let provisionalView = try XCTUnwrap(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID))
-        XCTAssertFalse(controller.sessiondTerminalHasStarted(
+        XCTAssertTrue(controller.sessiondTerminalHasStarted(
             pane: ProjectState.orchestratorPaneID),
-            "the provisional surface measures geometry but never attaches")
+            "an exact locator always starts the shared terminal lifecycle")
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
             status: nil, host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
         XCTAssertTrue(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID) === provisionalView)
-        XCTAssertFalse(controller.sessiondTerminalHasStarted(
+        XCTAssertTrue(controller.sessiondTerminalHasStarted(
             pane: ProjectState.orchestratorPaneID))
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
@@ -106,6 +106,10 @@ final class SessiondPaneInputFocusTests: XCTestCase {
                 sessionLocator: locator
             ),
         ])
+        XCTAssertTrue(
+            controller.sessiondTerminalHasStarted(pane: paneID),
+            "agent panes must start through the same exact-locator path as Queen"
+        )
 
         let window = try XCTUnwrap(controller.window)
         let root = try XCTUnwrap(window.contentView)

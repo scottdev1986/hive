@@ -2,8 +2,7 @@ import XCTest
 @testable import HiveWorkspace
 import WorkspaceCore
 
-/// Startup failure is final because no renderer ever went live. Only a proven
-/// live renderer may reconnect after a later transport loss.
+/// Initial host availability and later transport loss use one attach loop.
 final class SessiondPaneReattachTests: XCTestCase {
     private func makeTerminal() -> SessiondPaneTerminal {
         SessiondPaneTerminal(
@@ -22,20 +21,24 @@ final class SessiondPaneReattachTests: XCTestCase {
         )
     }
 
-    func testFailureBeforeFirstLiveAttachStopsWithoutReconnect() {
+    func testFailureBeforeFirstLiveAttachRemainsPendingAndRetries() {
         let terminal = makeTerminal()
+        defer { terminal.detach() }
         var degraded: [String] = []
         var failures: [String] = []
         terminal.onDegraded = { degraded.append($0) }
         terminal.onFailure = { failures.append($0) }
 
         terminal.recordReconnectFailureForTesting("host refused")
+        for _ in 0..<(terminal.failuresBeforeDegraded + 1) {
+            terminal.recordReconnectFailureForTesting("host still starting")
+        }
 
         XCTAssertFalse(terminal.degraded)
-        XCTAssertEqual(terminal.lastFailure, "host refused")
+        XCTAssertEqual(terminal.lastFailure, "host still starting")
         XCTAssertEqual(degraded, [])
-        XCTAssertTrue(terminal.gaveUp, "there was never a connection to reconnect")
-        XCTAssertEqual(failures, ["host refused"])
+        XCTAssertFalse(terminal.gaveUp)
+        XCTAssertEqual(failures, [])
     }
 
     /// The other half of #90: recovery must actually re-engage. A live attach

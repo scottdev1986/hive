@@ -95,7 +95,10 @@ final class SessiondPaneTerminal {
     }
 
     /// Starts immediately with the surface's current size or a conventional
-    /// 80×24 terminal. Later layout changes use the normal resize path.
+    /// 80×24 terminal. A locator may be published just before its host becomes
+    /// attachable, so the same fixed attach loop covers initial availability
+    /// and later transport loss. Later layout changes use the normal resize
+    /// path.
     func start() {
         guard !hasStarted, !detached else { return }
         hasStarted = true
@@ -252,23 +255,20 @@ final class SessiondPaneTerminal {
 
     private func recordRecoverableFailure(_ evidence: String) {
         guard !gaveUp, !detached else { return }
-        // Before the first live attach there is nothing to reconnect. The
-        // daemon publishes a root as running only after host creation, so an
-        // initial refusal is a real launch/contract failure and retrying it
-        // forever merely hides the evidence.
-        guard hasAttachedSuccessfully else {
-            failAttach(evidence)
-            return
-        }
-        reconnectFailures += 1
         lastFailure = evidence
-        if reconnectFailures >= failuresBeforeDegraded, !degraded {
-            degraded = true
-            NSLog(
-                "sessiond pane %@ degraded after %d failed attaches: %@; retrying every %.0fs",
-                agentName, reconnectFailures, evidence, reconnectDelay
-            )
-            onDegraded?(evidence)
+        // Before the first successful frame this is still the initial attach,
+        // not a disconnected renderer. Keep it pending and retry without
+        // presenting a false reconnect state.
+        if hasAttachedSuccessfully {
+            reconnectFailures += 1
+            if reconnectFailures >= failuresBeforeDegraded, !degraded {
+                degraded = true
+                NSLog(
+                    "sessiond pane %@ degraded after %d failed attaches: %@; retrying every %.0fs",
+                    agentName, reconnectFailures, evidence, reconnectDelay
+                )
+                onDegraded?(evidence)
+            }
         }
         scheduleReconnect()
     }

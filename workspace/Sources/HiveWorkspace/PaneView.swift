@@ -43,16 +43,13 @@ final class PaneView: NSView {
     /// without waiting for the next feed tick.
     private var feedHeaderDescription = ""
 
-    /// Installs the sessiond renderer over the content area. Worker panes leave
-    /// the underlying pty unscheduled; the root keeps its local supervisor
-    /// there while this exact-generation renderer is disposable (§26).
-    func installSessiondTerminal(
-        _ terminal: SessiondPaneTerminal,
-        start: Bool
-    ) {
+    /// Installs the same exact-generation sessiond terminal for Queen or an
+    /// agent. Role changes the session's command and metadata, never the pane
+    /// lifecycle (§26).
+    func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
         if let current = sessiondTerminal {
             guard current.paneLocator != terminal.paneLocator else {
-                if start { current.start() }
+                current.start()
                 return
             }
             current.detach()
@@ -80,7 +77,7 @@ final class PaneView: NSView {
                     badge: "Terminal renderer disconnected",
                     evidence: evidence)
             }
-            if start { terminal.start() }
+            terminal.start()
         } catch {
             NSLog("sessiond terminal surface for pane %@ failed: %@",
                   titleLabel.stringValue, "\(error)")

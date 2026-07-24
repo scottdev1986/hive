@@ -275,7 +275,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
               let view = paneViews[paneID],
               let locator = pane.sessionLocator,
               locator.hostKind == "sessiond" else { return }
-        // Feed locators are ready-to-attach for both root and agent panes.
         view.installSessiondTerminal(
             SessiondPaneTerminal(
                 agentName: pane.kind == .orchestrator
@@ -283,8 +282,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
                 locator: locator,
                 hivePath: hivePath,
                 daemonPort: daemonPort,
-                instanceHome: instanceHome),
-            start: pane.terminalHostState == "running")
+                instanceHome: instanceHome))
     }
 
     /// A closed agent keeps its pane (final status border) for the grace

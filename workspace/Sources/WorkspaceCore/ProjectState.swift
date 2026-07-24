@@ -416,6 +416,7 @@ public final class ProjectState {
             || pane.model != agent.model
             || pane.taskDescription != agent.taskDescription
             || pane.contextPct != agent.contextPct
+            || pane.sessionLocator != agent.sessionLocator
             || pane.closePending
 
         pane.tool = agent.tool

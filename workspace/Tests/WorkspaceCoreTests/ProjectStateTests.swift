@@ -98,6 +98,35 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(state.panes[paneID]).headerDescription.hasSuffix("ctx 63%"))
     }
 
+    func testLocatorOnlyChangeReattachesThePane() {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        let paneID = ProjectState.paneID(forAgent: "reviewer")
+        func snapshot(generation: Int) -> AgentSnapshot {
+            AgentSnapshot(
+                id: "agent-reviewer",
+                name: "reviewer",
+                tool: "codex",
+                model: "gpt",
+                status: "working",
+                taskDescription: "review",
+                contextPct: 12,
+                sessionLocator: AgentSessionLocator(
+                    instanceId: "instance",
+                    subject: AgentSessionSubject(
+                        kind: "agent", agentId: "agent-reviewer"),
+                    generation: generation,
+                    sessionId: "ses_\(generation)",
+                    hostKind: "sessiond",
+                    engineBuildId: "engine"))
+        }
+        state.apply(feed: [snapshot(generation: 1)], now: 1)
+
+        let changes = state.apply(feed: [snapshot(generation: 2)], now: 2)
+
+        XCTAssertTrue(changes.contains(.statusChanged(paneID)))
+        XCTAssertEqual(state.panes[paneID]?.sessionLocator?.generation, 2)
+    }
+
     func testStatusWordsMapToSemanticStatus() {
         let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
