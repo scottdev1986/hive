@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getVendorAdapter } from "../../../src/adapters/tools/adapter";
+import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
 import { CAPABILITY_PROVIDERS } from "../../../src/schemas/capability";
 
 const roots: string[] = [];
@@ -17,16 +17,16 @@ afterEach(async () => {
   ));
 });
 
-describe("vendor adapter registry", () => {
+describe("agent adapter factory", () => {
   test("every capability provider resolves to an adapter with a matching id", () => {
     for (const provider of CAPABILITY_PROVIDERS) {
-      expect(getVendorAdapter(provider).id).toBe(provider);
+      expect(getAgentAdapter(provider).id).toBe(provider);
     }
   });
 
   test("claude prepares config, argv, and a kickoff-bearing command", async () => {
     const path = await worktree();
-    const prepared = await getVendorAdapter("claude").prepareSpawn({
+    const prepared = await getAgentAdapter("claude").prepareSpawn({
       name: "maya",
       model: "claude-opus-4-8",
       worktreePath: path,
@@ -55,7 +55,7 @@ describe("vendor adapter registry", () => {
 
   test("codex wraps the token through the shell and installs its profile", async () => {
     const path = await worktree();
-    const prepared = await getVendorAdapter("codex").prepareSpawn({
+    const prepared = await getAgentAdapter("codex").prepareSpawn({
       name: "maya",
       model: "gpt-5.3-codex",
       worktreePath: path,
@@ -78,7 +78,7 @@ describe("vendor adapter registry", () => {
 
   test("codex resume carries no profile or token wrap without instructions", async () => {
     const path = await worktree();
-    const prepared = await getVendorAdapter("codex").prepareSpawn({
+    const prepared = await getAgentAdapter("codex").prepareSpawn({
       name: "maya",
       model: "gpt-5.3-codex",
       worktreePath: path,
@@ -94,7 +94,7 @@ describe("vendor adapter registry", () => {
 
   test("grok takes no positional kickoff; instructions ride the rules wrap", async () => {
     const path = await worktree();
-    const prepared = await getVendorAdapter("grok").prepareSpawn({
+    const prepared = await getAgentAdapter("grok").prepareSpawn({
       name: "maya",
       model: "grok-4",
       worktreePath: path,

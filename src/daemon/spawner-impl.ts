@@ -4,7 +4,7 @@ import { buildMemoryIndex } from "../adapters/memory";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
 import { probeGrokCliVersion } from "../adapters/tools/grok";
-import { getVendorAdapter } from "../adapters/tools/adapter";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
@@ -1138,7 +1138,7 @@ export class HiveSpawner implements Spawner {
       : [];
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
-      const adapter = getVendorAdapter(identity.tool);
+      const adapter = getAgentAdapter(identity.tool);
       const assignmentAt = new Date().toISOString();
       this.dependencies.assignments?.close(prepared.record.id, assignmentAt);
       const assignment = this.dependencies.assignments?.open(
@@ -2100,7 +2100,7 @@ export class HiveSpawner implements Spawner {
         this.requireAgentLocator(record).sessionId,
         prompt,
       );
-      const adapter = getVendorAdapter(tool);
+      const adapter = getAgentAdapter(tool);
       await adapter.writeInstructionCopy?.(
         this.requireAgentLocator(record).sessionId,
         prompt,

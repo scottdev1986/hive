@@ -11,7 +11,7 @@ import {
   wrapKimiWithInstructionFile,
   writeKimiAgentConfig,
 } from "../../../src/adapters/tools/kimi";
-import { getVendorAdapter } from "../../../src/adapters/tools/adapter";
+import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
 
 const roots: string[] = [];
@@ -135,7 +135,7 @@ describe("Kimi adapter", () => {
 
   test("prepareSpawn keeps the token out of argv and the launch command", async () => {
     const root = await worktree();
-    const prepared = await getVendorAdapter("kimi").prepareSpawn({
+    const prepared = await getAgentAdapter("kimi").prepareSpawn({
       name: "maya",
       model: "kimi-code/k3",
       worktreePath: root,

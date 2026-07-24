@@ -1,4 +1,4 @@
-import { getVendorAdapter } from "../adapters/tools/adapter";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
 import {
   readBillingWithMemory,
@@ -47,7 +47,7 @@ export interface ModelControlSnapshotDependencies {
 function defaultDiscover(
   provider: CapabilityProvider,
 ): Promise<CapabilityDiscoveryResult> {
-  return getVendorAdapter(provider).discover();
+  return getAgentAdapter(provider).discover();
 }
 
 /**

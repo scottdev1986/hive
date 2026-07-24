@@ -12,7 +12,7 @@ import {
   providersOf,
   ROUTING_CATEGORIES,
 } from "../schemas";
-import { getVendorAdapter } from "../adapters/tools/adapter";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
   knownBillings,
@@ -101,7 +101,7 @@ export async function readModelInventory(
 ): Promise<ModelInventory> {
   const now = options.now?.() ?? new Date();
   const discover = options.discover ??
-    ((provider: CapabilityProvider) => getVendorAdapter(provider).discover());
+    ((provider: CapabilityProvider) => getAgentAdapter(provider).discover());
   const readBilling = options.readBilling ?? readBillingWithMemory;
   // Every vendor Hive knows is probed and billed, not a hardcoded pair.
   const [discovery, billings] = await Promise.all([

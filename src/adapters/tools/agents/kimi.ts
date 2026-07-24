@@ -1,0 +1,55 @@
+import {
+  KimiCapabilityProbe,
+  KimiCliCapabilityTransport,
+} from "../../../daemon/capability-discovery";
+import { shellJoin } from "../../../daemon/session-host/shell-session";
+import {
+  buildKimiResumeCommand,
+  buildKimiSpawnCommand,
+  resolveWorkingKimiExecutable,
+  wrapKimiSpawnWithEffort,
+  wrapKimiWithInstructionFile,
+  writeKimiAgentConfig,
+  type KimiSpawnOptions,
+} from "../kimi";
+import type { AgentAdapter } from "./agent-adapter";
+
+export const kimiAgentAdapter: AgentAdapter = {
+  id: "kimi",
+  async prepareSpawn(context) {
+    await writeKimiAgentConfig(context.worktreePath, {
+      daemonPort: context.daemonPort,
+      ...(context.capabilityToken === undefined
+        ? {}
+        : { capabilityToken: context.capabilityToken }),
+      ...(context.graphifyUrl === undefined
+        ? {}
+        : { graphifyUrl: context.graphifyUrl }),
+    });
+    const options: KimiSpawnOptions = {
+      model: context.model,
+      readOnly: context.readOnly,
+      dangerous: context.dangerous,
+      ...(context.executable === undefined
+        ? {}
+        : { executable: context.executable }),
+    };
+    const argv = context.resumeSessionId === undefined
+      ? buildKimiSpawnCommand(options)
+      : buildKimiResumeCommand(options, context.resumeSessionId);
+    let command = shellJoin(argv);
+    if (context.effort !== undefined) {
+      command = wrapKimiSpawnWithEffort(command, context.effort);
+    }
+    if (context.instructionPath !== undefined) {
+      command = wrapKimiWithInstructionFile(
+        command,
+        context.instructionPath,
+        context.kickoff,
+      );
+    }
+    return { argv, command };
+  },
+  discover: (executable = resolveWorkingKimiExecutable()?.path ?? "kimi") =>
+    new KimiCapabilityProbe(new KimiCliCapabilityTransport(executable)).read(),
+};

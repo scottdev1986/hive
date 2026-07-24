@@ -52,7 +52,7 @@ import {
   type AgentRecord,
   type CapabilityProvider,
 } from "../schemas";
-import { getVendorAdapter } from "../adapters/tools/adapter";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
@@ -207,7 +207,7 @@ export async function runDaemon(): Promise<void> {
     opencode: opencodeExecutable,
   };
   const discoverCapabilities = (provider: CapabilityProvider) =>
-    getVendorAdapter(provider).discover(discoveryExecutables[provider]);
+    getAgentAdapter(provider).discover(discoveryExecutables[provider]);
   const db = new HiveDatabase();
   const statusStore = new StatusStore(db, hiveInstanceSuffix());
   // routing.toml is dead as a policy source (user directive 2026-07-12); the

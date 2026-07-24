@@ -10,7 +10,7 @@ import {
   probeOpencodeDefaultModel,
   writeOpencodeAgentConfig,
 } from "../../../src/adapters/tools/opencode";
-import { getVendorAdapter } from "../../../src/adapters/tools/adapter";
+import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
 
 const roots: string[] = [];
@@ -148,7 +148,7 @@ describe("opencode adapter", () => {
 
   test("prepareSpawn keeps the token out of argv and passes the kickoff as --prompt", async () => {
     const root = await worktree();
-    const prepared = await getVendorAdapter("opencode").prepareSpawn({
+    const prepared = await getAgentAdapter("opencode").prepareSpawn({
       name: "maya",
       model: "openai/gpt-5.5",
       worktreePath: root,
