@@ -103,6 +103,19 @@ async function linkSkill(source: string, destination: string): Promise<void> {
         return;
       }
     }
+    // A byte-identical real copy (e.g. an install artifact that was
+    // accidentally committed, so every fresh worktree carries it) IS the
+    // skill — replace it with the canonical link instead of refusing.
+    if (existing.isDirectory()) {
+      const [shipped, wanted] = await Promise.all([
+        readFile(join(destination, "SKILL.md"), "utf8").catch(() => null),
+        readFile(join(source, "SKILL.md"), "utf8").catch(() => null),
+      ]);
+      if (shipped !== null && shipped === wanted) {
+        await rm(destination, { recursive: true, force: true });
+        return symlink(source, destination, "dir");
+      }
+    }
     throw new Error(
       `Cannot provision skill "${destination}": the native path already exists and does not link to ${source}`,
     );

@@ -57,6 +57,7 @@ zig-out/
 .claude/
 .codex/
 .grok/
+.opencode/
 .mcp.json
 .agents/
 
