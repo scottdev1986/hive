@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en" class="doc-terminal doc-hierarchy">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Hive: Quota Lifecycle Redesign</title>
+  <link rel="stylesheet" href="hive-design.css">
+</head>
+<body>
+  <header class="shell topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
+    <div class="doc-meta">QUOTA LIFECYCLE REDESIGN · REVIEW DRAFT · 2026-07-24</div>
+  </header>
+
+  <main>
+    <div class="shell">
+      <div class="hero">
+        <div>
+          <p class="eyebrow">Quota lifecycle · current state vs. dictated policy</p>
+          <h1>Quota stops launches today. <span>Tomorrow it only stops work.</span></h1>
+          <p class="hero-copy">Hive’s quota system is an extensive measurement stack whose only enforcement point is the spawn gate: it can refuse to <em>start</em> an agent, but once an agent runs, quota does nothing but bookkeep and warn. The dictated policy inverts that — never block a spawn, always handle the mid-work drain — and in doing so makes most of the measurement stack’s booking machinery dead code.</p>
+        </div>
+        <aside class="hero-aside" aria-label="The one-paragraph summary">
+          <p class="kicker">Decision · dictated by the user</p>
+          <h2>Never refuse a spawn for usage. Handle exhaustion where it actually happens: mid-work.</h2>
+          <p>Refresh at boot and every 15 minutes and at every agent close. When a provider drains: hold-and-poke if a window resets within the hour, hand the branch to another provider otherwise. When everything is drained: wait out a near reset, or preserve the branch and write a memory.</p>
+          <div class="decision-line">Scope: src/daemon/quota*.ts · spawner-impl.ts · server.ts — plus one new hold/handoff path</div>
+        </aside>
+      </div>
+    </div>
+
+    <section id="current-state">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">01 · Current state</p><h2>What the quota system does today, measured against the code.</h2></div>
+          <p>Every claim below is a file:line in the tree as of 2026-07-24. The short version: measurement is thorough and wired; actuation is one gate and some messages.</p>
+        </div>
+
+        <div class="split">
+          <article class="panel">
+            <h3>When readings are fetched</h3>
+            <p><strong>Boot:</strong> a forced refresh of every registered probe at daemon start — but fire-and-forget, so the first spawn can race it (<code>src/daemon/server.ts:1543-1551</code>, <code>refreshQuota</code> at <code>server.ts:1710-1713</code>). Probes are registered per vendor at <code>src/cli/daemon.ts:265-286</code> (codex/claude/grok/kimi stdio+HTTP).</p>
+            <p><strong>Cadence:</strong> the 30-second maintenance sweep calls <code>needsRefresh()</code> (<code>server.ts:1917-1924</code>), which re-reads when the last refresh is older than <code>refreshIntervalMinutes</code> — default <strong>15 minutes</strong> (<code>src/schemas/quota.ts:192</code>) — or when a routable pool has “gone blind” because its window’s reset passed (<code>src/daemon/quota.ts:1228-1246</code>). Inside a refresh, <code>hasFreshReading</code> skips providers already live in both windows (<code>quota.ts:1203-1214</code>).</p>
+            <p><strong>Event-driven:</strong> codex rate-limit notifications ride the app-server event stream (<code>quota.observeCodexRateLimits</code>, <code>quota.ts:450</code>, wired at <code>src/cli/daemon.ts:297-300</code>); claude statusline observations land via <code>observeStatusline</code> (<code>quota.ts:2208</code>, wired at <code>server.ts:3793</code>).</p>
+            <p><strong>Nothing today refreshes on agent close.</strong> Killing an agent settles its reservation (<code>server.ts:2560-2567</code>) and nothing more.</p>
+          </article>
+          <article class="panel">
+            <h3>How quota influences spawning</h3>
+            <p>The launch gate itself (<code>src/daemon/authorized-launch.ts:58-80</code>) runs five checks — resolution, enablement, availability, capability-floor, effort — and <strong>none of them is quota</strong>. Quota enters only afterwards, in <code>routeAndReserve</code> (<code>src/daemon/quota.ts:1645</code>), called for explicit pins (<code>spawner-impl.ts:2361</code>) and for chain selection (<code>spawner-impl.ts:2456</code>).</p>
+            <p><code>routeAndReserve</code> can <strong>refuse</strong>: unbound model-scoped pools put a model in “explicit-pin only” quarantine (<code>quota.ts:1671-1702</code>); a model whose every metering pool is spent fails <code>hasRoom</code> (<code>quota.ts:915-951</code>) with per-category reserve floors (15% 5-hour / 20% weekly, <code>src/schemas/quota.ts:196-197</code>); a launch-failure cooldown holds routes back (<code>quarantinedUntil</code>, <code>quota.ts:865-912</code>). Selection is <code>spread</code> (default: rank-biased by remaining headroom) or <code>strict</code> (rank order) (<code>spawner-impl.ts:2380-2385</code>). A candidate with <em>no</em> measured pool is admitted in “compatibility mode” — unconstrained, with a warning and an alert (<code>quota.ts:1860-1878</code>).</p>
+            <p>The walk is category chain → default chain → remaining enabled models, and only when all refuse does the spawn fail with every reason listed (<code>spawner-impl.ts:2527-2542</code>). A successful pick creates a <strong>reservation</strong> with an estimated cost (<code>quota.ts:1879-1887</code>, <code>estimateFor</code> at <code>quota.ts:780</code>).</p>
+          </article>
+        </div>
+
+        <div class="split">
+          <article class="panel">
+            <h3>Mid-work exhaustion: what happens today</h3>
+            <p><strong>Nothing structural.</strong> A running agent whose provider drains is not paused, not held, not killed, and its deliveries are not gated. Turn boundaries settle accounting (<code>server.ts:5229-5242</code>: <code>markStarted</code> on session/turn-start, <code>reconcile</code> on turn-end, <code>cancel</code> on dead). Threshold crossings fire an alert (<code>alertPool</code>, <code>quota.ts:2471-2529</code>; warning at 25% / critical at 10% remaining with 5% hysteresis, <code>src/schemas/quota.ts:194-195</code>) which is delivered as a message <em>to the queen</em> (<code>server.ts:1121-1123</code>, <code>delivery.send("hive-quota", ORCHESTRATOR_NAME, …)</code>) — and her brief merely tells her to summarize quota warnings to the user. The agent keeps burning. The queen may react; the system does not.</p>
+          </article>
+          <article class="panel">
+            <h3>Stale and unavailable readings today</h3>
+            <p>Probe failure records the reason and alerts once per outage, re-arming on recovery (<code>quota.ts:1066-1084</code>, <code>alertProbeFailure</code> at <code>quota.ts:2435-2459</code>); the last good reading stays in the ledger with its provenance and ages honestly. A model with no measured pool spawns unconstrained (compatibility mode, above) with an explicit “headroom unknown” alert (<code>alertUnknown</code>, <code>quota.ts:2403-2432</code>) — <strong>unknown never blocks</strong>, and unknown is never filled in with an invented number. On the billing display path, a 30-minute TTL memory serves the last real reading at its true age (<code>readBillingWithMemory</code>, <code>src/daemon/usage-credits.ts:592-697</code>). The only estimates anywhere are labelled cost guesses for <em>future</em> runs (<code>estimateFor</code>, <code>quota.ts:780-794</code>).</p>
+          </article>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>quota.db / QuotaService machinery</th><th>Status today</th><th>What it actually does</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Provider probes + refresh cycle (<code>quota-sources.ts</code>)</td><td><strong>Wired, load-bearing</strong></td><td>The only source of truth for pools; boot + 15-min + event-driven refresh, persisted per pool with provenance (<code>quota.ts:1054-1137</code>).</td></tr>
+              <tr><td>Discovered pools + model catalogs (quota.db)</td><td><strong>Wired, load-bearing</strong></td><td>Read at every spawn selection and at every status read; catalogs bind metered sub-pools to models (<code>quota.ts:1089-1097</code>).</td></tr>
+              <tr><td><code>routeAndReserve</code> selection + refusal</td><td><strong>Wired — the one enforcement point</strong></td><td>Filters, ranks, and can refuse spawns; creates the reservation (<code>quota.ts:1645-1980</code>).</td></tr>
+              <tr><td>Reservations (<code>tryReserveGroup</code>, guard, <code>markStarted</code>, <code>reconcile</code>, <code>cancel</code>)</td><td><strong>Wired — but only as accounting</strong></td><td>Lifecycle is complete (guard before session create <code>spawner-impl.ts:2786</code>, start on events <code>server.ts:5233</code>, turn-end reconcile, settle on kill <code>server.ts:2560</code>, TTL sweep <code>quota.ts:2180</code>). Nothing downstream <em>acts</em> on the numbers except spawn admission and alerts.</td></tr>
+              <tr><td>Launch-failure quarantine (route health)</td><td><strong>Wired, thin</strong></td><td>Model-layer spawn failures cool a route down (≤ 4×15 min); released on success (<code>quota.ts:865-933</code>, fed from <code>spawner-impl.ts:3058</code>). Not usage — orthogonal to this redesign.</td></tr>
+              <tr><td>Threshold + unknown + probe-failure alerts → queen</td><td><strong>Wired — and that’s all they do</strong></td><td>Durable messages to the queen (<code>server.ts:1121</code>). No automatic action follows them, ever.</td></tr>
+              <tr><td>Estimates tables (<code>estimatesPct</code>, <code>estimates</code>)</td><td><strong>Wired but entirely speculative numbers</strong></td><td>Hive’s own cost guesses per category (<code>src/schemas/quota.ts:193,199</code>) — every reservation is built on them and every reconcile falls back to them.</td></tr>
+              <tr><td>Catalog quarantine (unbound model pools → pin-only)</td><td><strong>Wired, rarely exercised</strong></td><td>Only meaningful for claude-style model-scoped weekly caps (<code>quota.ts:1671-1702</code>).</td></tr>
+              <tr><td><code>reconcileAgentModel</code> (mid-session model swap re-booking)</td><td><strong>Wired, rarely exercised</strong></td><td>Re-books a reservation when the live model differs (<code>quota.ts:730-778</code>).</td></tr>
+              <tr><td>Reset credits surfacing</td><td><strong>Wired, display-only</strong></td><td>Shown inside refusal text, never redeemed (<code>quota.ts:1981-1993</code>).</td></tr>
+              <tr><td>Statusline observation path (claude)</td><td><strong>Wired, single-vendor</strong></td><td>Live pool updates between refreshes (<code>quota.ts:2208-2353</code>).</td></tr>
+              <tr><td>Escalations (<code>hive_escalate</code>, wrong-model ledger)</td><td><strong>Wired — not quota</strong></td><td>Capability escalations recorded in the instance db and printed by <code>hive routing</code> (<code>server.ts:5860</code>, <code>src/cli/routing.ts:141-148</code>). Out of scope here.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="hero-copy" style="margin-top:18px"><strong>The candid read:</strong> almost none of this is dormant. The over-engineering is not dead code, it is <em>actuation asymmetry</em> — a large booking apparatus whose only teeth are “don’t start” and “tell the queen a number.” The dictated policy deletes the first and automates the second, at which point most of the booking apparatus genuinely does become dead weight (§05).</p>
+      </div>
+    </section>
+
+    <section id="target-policy">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">02 · Target policy</p><h2>The dictated rules, as one decision flow.</h2></div>
+          <p>Verbatim policy, structured for review. “Window” is always the provider’s own 5-hour or 7-day quota window.</p>
+        </div>
+        <div class="principles" aria-label="The dictated policy rules">
+          <article class="principle"><span class="num">R1 / BOOT</span><strong>Fresh readings from every provider at start</strong><p>No stale numbers at boot: the boot refresh is a startup <em>gate</em> for the quota picture, not a background task that races the first spawn.</p></article>
+          <article class="principle"><span class="num">R2 / CADENCE</span><strong>Refresh every 15 minutes, and on every agent close</strong><p>The existing 15-minute cadence stays; an agent closing is a new refresh trigger (its last spend is only knowable afterwards).</p></article>
+          <article class="principle"><span class="num">R3 / SPAWN</span><strong>Never deny a spawn because of usage</strong><p>Agents run all the way down to zero. Quota may still <em>rank</em> candidates (pick the pool with the most room); it may never <em>block</em> one.</p></article>
+          <article class="principle"><span class="num">R4 / DRAIN ≤ 1h</span><strong>Hold, then poke on reset</strong><p>A mid-work agent whose provider drains holds in place when a window resets within the hour; at reset, Hive proactively tells it to continue — it will not resume on its own.</p></article>
+          <article class="principle"><span class="num">R5 / DRAIN &gt; 1h</strong><strong>Hand the branch to another provider</strong><p>A capable provider’s agent picks up the drained agent’s branch and continues; the drained agent is closed down.</p></article>
+          <article class="principle"><span class="num">R6 / ALL DRAINED</span><strong>Wait, or preserve and remember</strong><p>No provider has usage left: wait for the nearest 5-hour reset, or the 7-day reset if it lands within 5 hours. Further out: preserve the branch and write a memory so work resumes when availability returns.</p></article>
+          <article class="principle"><span class="num">R7 / API DOWN</span><strong>Estimate from last known numbers</strong><p>When a provider API is down, drain decisions may use the last known readings as estimates — a user-ruled exception to the never-invent posture, for this case only.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="diagram">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">03 · The flow</p><h2>One pass through the new lifecycle.</h2></div>
+        </div>
+        <figure class="diagram" aria-label="Quota lifecycle flow: boot refresh, cadence refresh, never-blocked spawn, mid-work drain decision, total-exhaustion decision">
+          <svg viewBox="0 0 1100 520" role="img" aria-labelledby="quota-flow-title quota-flow-desc">
+            <title id="quota-flow-title">Quota lifecycle under the dictated policy</title>
+            <desc id="quota-flow-desc">Boot forces a refresh from all providers. A 15-minute timer and every agent close refresh again. Spawns are ranked by headroom but never blocked. A mid-work drain branches on reset distance: within one hour, hold and poke on reset; beyond one hour, hand the branch to another provider. If every provider is drained, wait for a near reset or preserve the branch and write a memory.</desc>
+            <defs>
+              <marker id="q-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/>
+              </marker>
+              <marker id="q-arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
+              </marker>
+              <marker id="q-arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--amber)"/>
+              </marker>
+            </defs>
+
+            <text x="36" y="34" class="svg-label svg-muted">Measure → never block → handle the drain where it happens</text>
+
+            <rect x="30" y="52" width="220" height="72" rx="14" class="node node-queen"/>
+            <text x="140" y="82" text-anchor="middle" class="svg-title">Boot</text>
+            <text x="140" y="103" text-anchor="middle" class="svg-copy">forced refresh, ALL providers</text>
+
+            <rect x="300" y="52" width="220" height="72" rx="14" class="node node-queen"/>
+            <text x="410" y="82" text-anchor="middle" class="svg-title">Refresh loop</text>
+            <text x="410" y="103" text-anchor="middle" class="svg-copy">every 15 min + every agent close</text>
+
+            <rect x="570" y="52" width="220" height="72" rx="14" class="node node-lead"/>
+            <text x="680" y="82" text-anchor="middle" class="svg-title">Spawn</text>
+            <text x="680" y="103" text-anchor="middle" class="svg-copy">ranked by headroom · never blocked</text>
+
+            <rect x="840" y="52" width="230" height="72" rx="14" class="node node-worker"/>
+            <text x="955" y="82" text-anchor="middle" class="svg-title">Agent runs to zero</text>
+            <text x="955" y="103" text-anchor="middle" class="svg-copy">mid-work drain detected at window 0%</text>
+
+            <line x1="250" y1="88" x2="292" y2="88" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
+            <line x1="520" y1="88" x2="562" y2="88" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
+            <line x1="790" y1="88" x2="832" y2="88" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
+
+            <rect x="60" y="220" width="300" height="86" rx="14" class="node node-review"/>
+            <text x="210" y="252" text-anchor="middle" class="svg-title">Window resets ≤ 1h?</text>
+            <text x="210" y="273" text-anchor="middle" class="svg-copy">5-hour or 7-day, whichever is nearer</text>
+            <line x1="955" y1="124" x2="955" y2="170" stroke="var(--line-strong)" stroke-width="2"/>
+            <line x1="955" y1="170" x2="210" y2="170" stroke="var(--line-strong)" stroke-width="2"/>
+            <line x1="210" y1="170" x2="210" y2="212" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
+
+            <rect x="60" y="360" width="300" height="86" rx="14" class="node node-queen"/>
+            <text x="210" y="392" text-anchor="middle" class="svg-title">HOLD the agent</text>
+            <text x="210" y="413" text-anchor="middle" class="svg-copy">at reset: poke it to continue</text>
+            <line x1="210" y1="306" x2="210" y2="352" stroke="var(--green)" stroke-width="2" marker-end="url(#q-arrow-green)"/>
+            <text x="222" y="334" class="svg-small">yes</text>
+
+            <rect x="430" y="360" width="300" height="86" rx="14" class="node node-lead"/>
+            <text x="580" y="392" text-anchor="middle" class="svg-title">HANDOFF</text>
+            <text x="580" y="413" text-anchor="middle" class="svg-copy">other provider continues the branch · drained agent closed</text>
+            <line x1="360" y1="263" x2="580" y2="263" stroke="var(--amber)" stroke-width="2"/>
+            <line x1="580" y1="263" x2="580" y2="352" stroke="var(--amber)" stroke-width="2" marker-end="url(#q-arrow-amber)"/>
+            <text x="588" y="250" class="svg-small">no</text>
+
+            <rect x="790" y="220" width="280" height="86" rx="14" class="node node-review"/>
+            <text x="930" y="252" text-anchor="middle" class="svg-title">ALL providers drained?</text>
+            <text x="930" y="273" text-anchor="middle" class="svg-copy">evaluated on every drain event</text>
+            <line x1="730" y1="403" x2="760" y2="403" stroke="var(--line-strong)" stroke-width="2"/>
+            <line x1="760" y1="403" x2="760" y2="263" stroke="var(--line-strong)" stroke-width="2"/>
+            <line x1="760" y1="263" x2="782" y2="263" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
+
+            <rect x="790" y="360" width="280" height="60" rx="14" class="node node-queen"/>
+            <text x="930" y="384" text-anchor="middle" class="svg-title">WAIT for the reset</text>
+            <text x="930" y="404" text-anchor="middle" class="svg-copy">nearest 5h reset, or 7d if ≤ 5h away</text>
+            <line x1="930" y1="306" x2="930" y2="352" stroke="var(--green)" stroke-width="2" marker-end="url(#q-arrow-green)"/>
+            <text x="942" y="334" class="svg-small">near</text>
+
+            <rect x="790" y="446" width="280" height="60" rx="14" class="node node-worker"/>
+            <text x="930" y="470" text-anchor="middle" class="svg-title">PRESERVE + MEMORY</text>
+            <text x="930" y="490" text-anchor="middle" class="svg-copy">branch preserved · resume when availability returns</text>
+            <line x1="1070" y1="390" x2="1086" y2="390" stroke="var(--line-strong)" stroke-width="2"/>
+            <line x1="1086" y1="390" x2="1086" y2="476" stroke="var(--line-strong)" stroke-width="2"/>
+            <line x1="1086" y1="476" x2="1078" y2="476" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
+            <text x="1094" y="440" class="svg-small">far</text>
+          </svg>
+        </figure>
+      </div>
+    </section>
+
+    <section id="delta">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">04 · What needs to change</p><h2>The concrete delta, with the simplest implementation point for each.</h2></div>
+          <p>Ordered by policy rule. “Simplest” means the least new machinery against the code as it stands.</p>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Rule</th><th>Change</th><th>Simplest implementation point</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>R1 · fresh at boot</td><td><strong>CHANGE</strong> — the boot refresh already exists and is already forced (<code>server.ts:1546</code>); it is fire-and-forget. Make the first quota-aware spawn wait for it instead of racing it.</td><td>Await the existing boot <code>refreshQuota({force:true})</code> before the spawner accepts work (a latch in <code>HiveSpawner.spawn</code>’s quota branch, <code>spawner-impl.ts:2356+</code>), or gate <code>needsRefresh</code> to force until the first successful cycle. No new machinery.</td></tr>
+              <tr><td>R2 · close-trigger refresh</td><td><strong>ADD</strong></td><td>One line in the one teardown funnel: <code>killAgentTeardown</code> already settles quota at <code>server.ts:2679</code> — fire <code>this.refreshQuota()</code> right after (same catch-and-log shape as <code>server.ts:1918</code>). Covers kill, idle-reap, and shutdown, since all funnel through there.</td></tr>
+              <tr><td>R2 · 15-min cadence</td><td><strong>KEEP</strong> — already the default (<code>src/schemas/quota.ts:192</code>, driven at <code>server.ts:1917</code>).</td><td>Nothing to do.</td></tr>
+              <tr><td>R3 · never deny spawn for usage</td><td><strong>REMOVE</strong> — quota as a spawn blocker</td><td>In <code>routeAndReserve</code> (<code>quota.ts:1645</code>): delete the <code>hasRoom</code> exclusion (<code>quota.ts:915-951</code>) and the <code>QuotaExhaustedError</code> pool-block refusal; rank all gated candidates by headroom and always pick one (spread) or the first (strict). Reservations become accounting-only — <code>tryReserveGroup</code> must stop refusing (<code>quota.ts:1879-1887</code> becomes an unchecked booking, the already-existing <code>reserveGroupUnchecked</code> path at <code>quota.ts:758</code>). Catalog quarantine (<code>quota.ts:1671-1702</code>) and reserve floors (<code>src/schemas/quota.ts:196-197</code>) go with them. <strong>Keep every non-quota refusal</strong>: enablement/consent, availability, capability-floor, effort (<code>authorized-launch.ts:63-76</code>) — those are the user’s own policy, not usage.</td></tr>
+              <tr><td>R4 · hold + poke (≤1h)</td><td><strong>ADD</strong> — the only genuinely new mechanism</td><td>Detect at the existing read points: <code>alertPool</code>’s threshold evaluation (<code>quota.ts:2471-2529</code>) or the turn-end reconcile (<code>server.ts:5233</code>) — when a routable pool hits 0% remaining and its <code>resetsAt ≤ now+1h</code>, mark the agent held (a status, or the existing <code>control-paused</code>) and record the reset time. The 30s maintenance sweep (<code>server.ts:1914+</code>) already runs; add: held agents whose reset has passed get a <code>delivery.send</code> “your quota window has reset, continue” (the same envelope recovery already uses to wake resumed agents, <code>src/daemon/recovery.ts:924-937</code>), then unhold. No new timers, no new tables — one flag + one timestamp on the agent row.</td></tr>
+              <tr><td>R5 · branch handoff (&gt;1h)</td><td><strong>ADD</strong></td><td>Same detection point as R4. On &gt;1h: <code>killAgentTeardown</code> (<code>server.ts:2570+</code>) already preserves unlanded work as a ref and removes nothing over stranded work — reuse it, then spawn a replacement via the normal spawn path with the preserved branch in its brief (the exact pattern the orchestrator’s integrator flow already dictates for rebase conflicts). The drained agent’s reservation settles through the existing <code>settleAgentQuota</code>.</td></tr>
+              <tr><td>R6 · all drained: wait or preserve+memory</td><td><strong>ADD</strong></td><td>The drain detector computes nearest-reset across providers from the pools it already holds (<code>resolvedLimits</code> + <code>statusForLimit</code>, <code>quota.ts:1266-1289</code>). Near (5h reset, or 7d ≤ 5h): hold as R4, poked at reset. Far: the handoff path’s preserve step (<code>killAgentTeardown</code>) plus one memory write through the existing episodic/memory store (<code>EpisodicStore</code>, already injected at <code>cli/daemon.ts:308-315</code>).</td></tr>
+              <tr><td>R7 · estimate when API down</td><td><strong>CHANGE</strong> — scoped relaxation of never-invent</td><td>The drain detector (R4/R5/R6) may read the ledger’s last-known windows with their provenance when the probe is failing (<code>probeErrors</code>, <code>quota.ts:1216-1219</code>), treating them as estimates. Scope it to the drain decision only; spawn ranking keeps today’s honesty, and every estimate-driven hold/handoff is labelled estimated in the alert it emits.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="split">
+          <article class="panel">
+            <h3>Invariant conflicts to rule on</h3>
+            <p><strong>“Never deny for usage” vs. the consent boundary.</strong> No conflict — but the line must be drawn in the code review, not left to taste: enablement (the user’s per-model click) and capability gates stay as refusals; only pool-exhaustion refusals die. The gate (<code>authorized-launch.ts</code>) already separates these cleanly.</p>
+            <p><strong>R7 vs. “unknown, never invent.”</strong> This is the one real weakening of a load-bearing invariant. It is tolerable because it is narrow (drain decisions only, provenance-stamped, user-ruled) — but it should live in exactly one function with a comment naming this ruling, so the exception cannot leak into spawn admission or billing by copy-paste.</p>
+          </article>
+          <article class="panel">
+            <h3>What the policy deliberately does not say</h3>
+            <p>Selection ranking survives: “never deny” does not mean “ignore headroom” — spread-by-remaining-quota is still the fairest dispatcher, it just can’t say no. Alerts to the queen survive as information; they are no longer the only response. Recovery, delivery, landing, and the terminal stack are untouched.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="simplification">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">05 · Simplification opportunities</p><h2>Machinery that becomes dead under the new policy.</h2></div>
+          <p>The simplest code is deleted code. Under R3 these lose their only enforcement consumer; under R4–R6 their alerting role is subsumed by the drain handler.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Machinery</th><th>Fate</th><th>Why</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Reserve floors + <code>hasRoom</code> (<code>quota.ts:915-951</code>, <code>src/schemas/quota.ts:196-197</code>)</td><td><strong>DELETE</strong></td><td>Exists only to refuse spawns. R3 outlaws the refusal.</td></tr>
+              <tr><td><code>tryReserveGroup</code> refusal path</td><td><strong>DELETE</strong> (keep unchecked booking if reservations stay)</td><td>Same. <code>reserveGroupUnchecked</code> already exists (<code>quota.ts:758</code>).</td></tr>
+              <tr><td>Catalog quarantine (<code>quota.ts:1671-1702</code>)</td><td><strong>DELETE</strong></td><td>A second, rarer spawn refusal. Gone with the first.</td></tr>
+              <tr><td>Threshold/hysteresis alert machinery (<code>alertPool</code>, <code>quota.ts:2461-2529</code>)</td><td><strong>DELETE or shrink to one drain event</strong></td><td>R4/R5/R6 replace “warn at 25%/10%” with “act at 0%.” The hysteresis state table in quota.db goes with it.</td></tr>
+              <tr><td>Compatibility-mode unknown-admit + <code>alertUnknown</code> (<code>quota.ts:1860-1878</code>)</td><td><strong>SIMPLIFY</strong></td><td>When nothing can be refused, unknown-quota is no longer a special case at spawn — it is the same as everything else. The alert can survive as one line, not a mode.</td></tr>
+              <tr><td>Reservations, TTL sweeps, settle/reconcile lifecycle</td><td><strong>CANDIDATE DELETE — the big one</strong></td><td>With no admission control and drain handled by windows directly, the reservation book keeps no one honest. If mid-work spend <em>accounting</em> is not a stated requirement, the whole reservation subsystem (≈ half of <code>quota-ledger.ts</code>’s 2,029 lines, plus <code>recoverExpired</code>, <code>requireActiveReservation</code>, <code>reconcileAgentModel</code>, control reservations) can go. If usage accounting for the MCC/status displays is wanted, keep it as append-only observation and delete the guard/reconcile/settle verbs.</td></tr>
+              <tr><td>Estimates tables (<code>estimatesPct</code>, <code>estimates</code>)</td><td><strong>DELETE with reservations</strong></td><td>They exist solely to price future bookings. R7’s last-known-as-estimate is a different, much smaller thing.</td></tr>
+              <tr><td>Launch-failure quarantine (route health)</td><td><strong>KEEP</strong></td><td>Not usage — it encodes “this route just failed to produce a live agent,” which R3 does not touch. (If it too is judged speculative, it is a separate deletion with its own review.)</td></tr>
+              <tr><td>Probes, pools, catalogs, refresh cycle</td><td><strong>KEEP — this is the system</strong></td><td>Measurement is what R1/R2/R4/R6 all run on.</td></tr>
+              <tr><td>Billing display path (<code>usage-credits.ts</code>, MCC surfaces)</td><td><strong>KEEP</strong></td><td>Display, not enforcement; untouched by the policy.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="hero-copy" style="margin-top:18px"><strong>The one-line summary for review:</strong> keep the eyes (probes, pools, catalogs), cut the bookings (reservations, floors, refusal paths, threshold alerting), and add exactly one muscle — the drain handler (hold/poke, handoff, preserve+memory) at the read points that already exist.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
