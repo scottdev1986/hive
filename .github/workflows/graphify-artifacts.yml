@@ -144,6 +144,11 @@ jobs:
             --base-url "${{ steps.release.outputs.base_url }}"
           bun run scripts/signing/sign-manifest.ts dist/graphify-runtime.json
           bun run scripts/graphify/verify-manifest.ts dist/graphify-runtime.json
+          jq -n \
+            --rawfile manifest dist/graphify-runtime.json \
+            --rawfile signature dist/graphify-runtime.json.sig \
+            '{manifest: $manifest, signature: ($signature | rtrimstr("\n"))}' \
+            > dist/graphify-channel.json
 
       - name: Publish the immutable release and advance the signed channel
         env:
@@ -166,12 +171,11 @@ jobs:
             --latest=false \
             --notes "Standalone Graphify bundles used by Hive. $signed_line"
           if gh release view graphify-channel >/dev/null 2>&1; then
-            gh release upload graphify-channel \
-              dist/graphify-runtime.json dist/graphify-runtime.json.sig --clobber
+            gh release edit graphify-channel \
+              --notes-file dist/graphify-channel.json
           else
             gh release create graphify-channel \
-              dist/graphify-runtime.json dist/graphify-runtime.json.sig \
               --title "Graphify runtime channel" \
               --latest=false \
-              --notes "Signed pointer to the latest compatible Graphify runtime."
+              --notes-file dist/graphify-channel.json
           fi

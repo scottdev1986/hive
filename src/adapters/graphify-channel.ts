@@ -8,8 +8,6 @@ import {
 } from "../version";
 
 export const GRAPHIFY_CHANNEL_TAG = "graphify-channel";
-export const GRAPHIFY_MANIFEST_ASSET = "graphify-runtime.json";
-export const GRAPHIFY_SIGNATURE_ASSET = `${GRAPHIFY_MANIFEST_ASSET}.sig`;
 export const GRAPHIFY_CONSUMER_API = 1;
 
 const GraphifyArtifactSchema = z.strictObject({
@@ -56,12 +54,12 @@ export interface GraphifyRelease {
 }
 
 const ReleaseSchema = z.object({
-  assets: z.array(
-    z.object({
-      name: z.string(),
-      browser_download_url: z.url(),
-    }),
-  ),
+  body: z.string(),
+});
+
+const ChannelSchema = z.strictObject({
+  manifest: z.string(),
+  signature: z.string().min(1),
 });
 
 function platformKey(platform = process.platform, arch = process.arch): string {
@@ -77,17 +75,6 @@ function selectArtifact(manifest: GraphifyManifest): GraphifyArtifact {
     throw new Error(`Graphify publishes no runtime for ${key}`);
   }
   return artifact;
-}
-
-async function responseBytes(
-  url: string,
-  fetcher: typeof fetch,
-): Promise<Uint8Array> {
-  const response = await fetcher(url, {
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
 }
 
 export function parseGraphifyManifest(bytes: Uint8Array): GraphifyManifest {
@@ -130,23 +117,11 @@ export async function fetchGraphifyRelease(
     throw new Error(`Graphify channel returned HTTP ${response.status}`);
   }
   const release = ReleaseSchema.parse(await response.json());
-  const assetUrl = (name: string): string => {
-    const asset = release.assets.find((candidate) => candidate.name === name);
-    if (asset === undefined) {
-      throw new Error(`Graphify channel publishes no ${name}`);
-    }
-    return asset.browser_download_url;
-  };
-  const manifestBytes = await responseBytes(
-    assetUrl(GRAPHIFY_MANIFEST_ASSET),
-    fetcher,
-  );
-  const signature = new TextDecoder()
-    .decode(await responseBytes(assetUrl(GRAPHIFY_SIGNATURE_ASSET), fetcher))
-    .trim();
+  const channel = ChannelSchema.parse(JSON.parse(release.body));
+  const manifestBytes = new TextEncoder().encode(channel.manifest);
   const trust = verifyManifest(
     manifestBytes,
-    signature,
+    channel.signature,
     HIVE_RELEASE_PUBLIC_KEY,
   );
   if (!trust.verified) {

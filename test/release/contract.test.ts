@@ -196,7 +196,7 @@ describe("the Graphify runtime workflow", () => {
     expect(workflow).toContain("graphify.lock");
     expect(workflow).toContain("scripts/signing/sign-manifest.ts");
     expect(workflow).toContain("scripts/graphify/verify-manifest.ts");
-    expect(workflow).toContain("gh release upload graphify-channel");
+    expect(workflow).toContain("gh release edit graphify-channel");
   });
 
   test("Graphify-only changes do not manufacture a Hive release", () => {

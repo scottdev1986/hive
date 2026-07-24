@@ -2,11 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  fetchGraphifyRelease,
-  GRAPHIFY_MANIFEST_ASSET,
-  GRAPHIFY_SIGNATURE_ASSET,
-} from "../../src/adapters/graphify-channel";
+import { fetchGraphifyRelease } from "../../src/adapters/graphify-channel";
 
 const originalOverride = process.env.HIVE_GRAPHIFY_MANIFEST;
 
@@ -39,28 +35,18 @@ function manifest(url = "https://example.test/graphify.tar.zst") {
 
 describe("Graphify runtime channel", () => {
   test("resolves the platform artifact from the published channel manifest", async () => {
-    const manifestUrl = "https://example.test/manifest";
-    const signatureUrl = "https://example.test/signature";
     const artifactUrl =
       "https://github.com/owner/repo/releases/download/graphify-v0.9.25-hive.2/graphify.tar.zst";
     const fetcher = async (input: string | URL | Request) => {
       const url = String(input);
       if (url.includes("/releases/tags/graphify-channel")) {
         return Response.json({
-          assets: [
-            {
-              name: GRAPHIFY_MANIFEST_ASSET,
-              browser_download_url: manifestUrl,
-            },
-            {
-              name: GRAPHIFY_SIGNATURE_ASSET,
-              browser_download_url: signatureUrl,
-            },
-          ],
+          body: JSON.stringify({
+            manifest: `${JSON.stringify(manifest(artifactUrl), null, 2)}\n`,
+            signature: "development-signature",
+          }),
         });
       }
-      if (url === manifestUrl) return Response.json(manifest(artifactUrl));
-      if (url === signatureUrl) return new Response("development-signature");
       throw new Error(`unexpected URL ${url}`);
     };
 
