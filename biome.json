@@ -10,7 +10,6 @@
       "src/**/*.ts",
       "test/**/*.ts",
       "scripts/**/*.ts",
-      "prototypes/**/*.ts",
       "native/**/*.ts"
     ]
   },

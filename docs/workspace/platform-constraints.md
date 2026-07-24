@@ -11,7 +11,7 @@ A reference of macOS platform traps and terminal-renderer facts that a native Wo
 
 **A bookmark will happily name an impostor.** Apple documents a bookmark as "capable of locating resources that have been moved or renamed" — Alias Manager semantics — so the first correction is that a bookmark does *not* pin the directory you bookmarked. The obvious remedy follows: never trust the bookmark; compare its resolved path against the last confirmed path and treat disagreement as a move.
 
-**That remedy is also wrong, and the prototype is what proved it.** Driving real plain `NSURL` bookmarks (`prototypes/project-identity`, `prototypes/project-identity/EVIDENCE.md:174`) shows resolution is **path-first**: a bookmark follows a rename only while the old path stays *vacant*.
+**That remedy is also wrong.** Driving real plain `NSURL` bookmarks shows resolution is **path-first**: a bookmark follows a rename only while the old path stays *vacant*.
 
 | step | state on disk | bookmark resolves to |
 |---|---|---|
@@ -19,20 +19,20 @@ A reference of macOS platform traps and terminal-renderer facts that a native Wo
 | rename `A` → `B` | `B` exists, `A` vacant | `B`, `isStale=true` |
 | create any fresh dir at `A` | **both** `B` and `A` exist | **`A`** — the impostor, `isStale=true` |
 
-In row three the real project is alive at `B` and the bookmark points at an unrelated directory at `A` — and, decisively, **resolved path == confirmed path**. The path-disagreement check therefore *passes* in precisely the dangerous case and attaches the wrong directory (`prototypes/project-identity/EVIDENCE.md:116`, `move-then-impostor`).
+In row three the real project is alive at `B` and the bookmark points at an unrelated directory at `A` — and, decisively, **resolved path == confirmed path**. The path-disagreement check therefore *passes* in precisely the dangerous case and attaches the wrong directory.
 
 The surviving rule is stronger than either version: a bookmark is a hint, never a verdict. Filesystem evidence is consulted **before** the bookmark and may **only refuse**. See the resolver in [blueprint.md](blueprint.md) ("Project identity: evidence may only refuse").
 
 - **`NSURLFileResourceIdentifierKey` is not persistent across system restarts.** It can be evidence; it can never be the durable key. The durable refusal pair is `ino`/`birthtime`: matching is necessary and insufficient, while either differing is dispositive. `st_dev` is only a process-local mount hint because macOS may renumber it across reboot.
-- **Security-scoped bookmarks are a sandbox construct.** `startAccessingSecurityScopedResource()` is a no-op outside a sandbox. Hive ships unsandboxed (`scripts/signing/entitlements.plist` declares only `allow-jit` and `allow-unsigned-executable-memory` — no `app-sandbox` key), so the Workspace uses **plain** bookmarks, which is what the prototype measured.
+- **Security-scoped bookmarks are a sandbox construct.** `startAccessingSecurityScopedResource()` is a no-op outside a sandbox. Hive ships unsandboxed (`scripts/signing/entitlements.plist` declares only `allow-jit` and `allow-unsigned-executable-memory` — no `app-sandbox` key), so the Workspace uses **plain** bookmarks.
 
 ## XPC: the endpoint is not the identity
 
 - **`xpc_connection_get_audit_token` is private SPI.** Not an option.
 - **PID-based peer checks are TOCTOU-broken** by Apple's own warning: another process can spawn and claim the PID before the message is received.
 - **The supported mechanism is a code-signing requirement**: `NSXPCConnection/NSXPCListener.setCodeSigningRequirement` (macOS 13+), `xpc_connection_set_peer_code_signing_requirement` (12+), `xpc_connection_set_peer_lightweight_code_requirement` (14.4+). Swift's native `XPCListener`/`IncomingSessionRequest` exposes no code-requirement check, so the Objective-C/C API is mandatory.
-- **An anonymous endpoint is a bearer capability, not an identity.** Possessing it proves nothing about who holds it. `prototypes/authenticated-xpc` A/Bs exactly this (H2): the *same* hostile client, holding a *real* endpoint fetched from an unauthenticated rendezvous, is served by the listener without a requirement and rejected by the identically shaped listener with one. Identity came from the requirement, never from the address. `setConnectionCodeSigningRequirement` rejects the peer *before* `shouldAcceptNewConnection` is consulted.
-- Corollary, also measured (H4): a capability file descriptor **not** marked `FD_CLOEXEC` is readable by an agent's grandchild by its known fd number. Inherited credentials leak through descendants unless the flag is set.
+- **An anonymous endpoint is a bearer capability, not an identity.** Possessing it proves nothing about who holds it. A listener without a code-signing requirement may serve a hostile client holding a real endpoint fetched from an unauthenticated rendezvous; an identically shaped listener with a requirement rejects it. Identity comes from the requirement, never from the address. `setConnectionCodeSigningRequirement` rejects the peer *before* `shouldAcceptNewConnection` is consulted.
+- Corollary: a capability file descriptor **not** marked `FD_CLOEXEC` is readable by an agent's grandchild by its known fd number. Inherited credentials leak through descendants unless the flag is set.
 
 Authentication (who is calling) and authorization (what they may do) are separate and both required; the authorization half is the capability rights matrix in [../daemon/authorization.md](../daemon/authorization.md).
 
@@ -76,15 +76,6 @@ Drive the app **in-process** instead. Two techniques, at different altitudes:
 - **"Content-blind" must be an explicit field allowlist, not an adjective.** A quota arbiter that leases capacity must see provider, account, pool, concrete model, and estimated units — and therefore learns how many projects exist and which models they run. It never sees prompts, paths, repo names, or branch names. Write the field list down; an adjective is not a specification.
 - **`UNKNOWN_OUTCOME` is a first-class, surfaced state because no vendor offers turn-level idempotency.** Vendor resume recovers the *conversation*, not the *outcome of the turn that was in flight*. A turn you are unsure about cannot be safely replayed, so the honest unknown must be renderable — never a silent retry. It is written into the safety gates in [blueprint.md](blueprint.md) (gate 10).
 - **"35 gates is a wish, not a gate."** A blocking gate must be falsifiable, cheap to run, and tied to a failure that has occurred or would be unrecoverable. A list long enough to feel thorough is a list nobody runs — and several of the original 35 gated subsystems that were later deleted, or asserted properties the platform cannot provide (the private clipboard, above). The blueprint's gate list is thirteen.
-
-## Where the evidence lives
-
-Four de-risking prototypes ran; their measured results supersede anything restated here.
-
-- `prototypes/project-identity` — bookmarks, moves, impostors, symlinks, submodules, linked worktrees (22 checks).
-- `prototypes/authenticated-xpc` — signed peers, code-signing requirements, anonymous endpoints, capability FDs (H1–H4, `run-evidence.sh`).
-- `prototypes/agenthost-crash-matrix` — pipe-owner loss, replay, `UNKNOWN_OUTCOME`.
-- `prototypes/provider-conformance` — one scenario vocabulary across Claude stream-json and Codex app-server.
 
 ## See Also
 
