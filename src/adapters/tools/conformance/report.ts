@@ -10,8 +10,8 @@ import {
   type ProviderSurfaceId,
   type ReadinessEvidenceKind,
   type TerminalReceiptLevel,
-} from "../../schemas/provider-manifest";
-import { classifyProviderObservation } from "./provider-evidence";
+} from "../../../schemas/provider-manifest";
+import { classifyProviderObservation } from "./evidence";
 import {
   CONFORMANCE_PROBES,
   EMITTABLE_PROBES,
@@ -108,6 +108,7 @@ export function adapterEvidenceIsStructurallyGrounded(
   if (!hasExactFileCitation) return false;
   const sourcePath = join(
     import.meta.dir,
+    "..",
     expectedFile.slice("src/adapters/tools/".length),
   );
   try {
@@ -215,7 +216,7 @@ export function buildProviderConformanceReport(): ProviderConformanceReport {
       "docs/design/terminal-stack-transition.html §07 turnState sources",
       "docs/design/terminal-stack-transition.html §28 WP8",
       "src/schemas/message-envelope.ts TERMINAL_DELIVERY_EVIDENCE",
-      "src/adapters/tools/provider-evidence.ts",
+      "src/adapters/tools/conformance/evidence.ts",
     ],
     derivedFrom:
       "classifyProviderObservation over CONFORMANCE_PROBES (emittable grounded shapes with explicit adapter/host origins)",

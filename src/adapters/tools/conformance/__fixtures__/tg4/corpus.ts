@@ -3,7 +3,7 @@ import type {
   ProviderEvidenceOrigin,
   ProviderSurfaceId,
   Tg4Scenario,
-} from "../../../../schemas/provider-manifest";
+} from "../../../../../schemas/provider-manifest";
 
 /**
  * TG4 recorded-shape fixture corpus — grounded observations only.

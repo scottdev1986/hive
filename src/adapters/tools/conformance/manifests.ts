@@ -3,7 +3,7 @@ import {
   WP8_OUT_OF_SCOPE_SEAMS,
   type ProviderManifest,
   type ProviderSurfaceId,
-} from "../../schemas/provider-manifest";
+} from "../../../schemas/provider-manifest";
 
 /**
  * Versioned adapter manifests for §25 / WP8 early slice.
@@ -19,7 +19,7 @@ export const CLAUDE_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.pars
     value: "tg4-claude-tui",
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 version-support / CI fixture set",
-      "src/adapters/tools/__fixtures__/tg4/corpus.ts (claude-tui scenarios)",
+      "src/adapters/tools/conformance/__fixtures__/tg4/corpus.ts (claude-tui scenarios)",
     ],
   },
   executableProbe: {
@@ -101,7 +101,7 @@ export const CLAUDE_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.pars
       "docs/design/terminal-stack-transition.html §25 Claude TUI row",
       "src/adapters/tools/claude.ts:610-621 (hooks that feed readiness)",
       "src/daemon/server.ts:396-407,3120-3133 (permission_prompt → awaiting-approval)",
-      "src/adapters/tools/provider-evidence.ts classifyHookObservation",
+      "src/adapters/tools/conformance/evidence.ts classifyHookObservation",
     ],
   },
   cancelSubmit: {
@@ -159,7 +159,7 @@ export const CODEX_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse
     value: "tg4-codex-tui",
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 version-support / CI fixture set",
-      "src/adapters/tools/__fixtures__/tg4/corpus.ts (codex-tui scenarios)",
+      "src/adapters/tools/conformance/__fixtures__/tg4/corpus.ts (codex-tui scenarios)",
     ],
   },
   executableProbe: {
@@ -259,7 +259,7 @@ export const CODEX_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 Codex TUI row",
       "src/adapters/tools/codex.ts:174-186 (hooks registered; Notification absent)",
-      "src/adapters/tools/provider-evidence.ts classifyHookObservation codex-tui gates",
+      "src/adapters/tools/conformance/evidence.ts classifyHookObservation codex-tui gates",
     ],
   },
   cancelSubmit: {
@@ -318,7 +318,7 @@ export const CODEX_APP_SERVER_MANIFEST: ProviderManifest = ProviderManifestSchem
     value: "tg4-codex-app-server",
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 version-support / CI fixture set",
-      "src/adapters/tools/__fixtures__/tg4/corpus.ts (codex-app-server scenarios)",
+      "src/adapters/tools/conformance/__fixtures__/tg4/corpus.ts (codex-app-server scenarios)",
     ],
   },
   executableProbe: {
@@ -392,7 +392,7 @@ export const CODEX_APP_SERVER_MANIFEST: ProviderManifest = ProviderManifestSchem
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 Codex app-server row",
       "src/adapters/tools/codex-app-server.ts:554-620",
-      "src/adapters/tools/provider-evidence.ts classifyCodexAppServerObservation",
+      "src/adapters/tools/conformance/evidence.ts classifyCodexAppServerObservation",
     ],
   },
   cancelSubmit: {
@@ -460,7 +460,7 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     value: "tg4-grok-tui",
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 version-support / CI fixture set",
-      "src/adapters/tools/__fixtures__/tg4/corpus.ts (grok-tui scenarios)",
+      "src/adapters/tools/conformance/__fixtures__/tg4/corpus.ts (grok-tui scenarios)",
     ],
   },
   executableProbe: {
@@ -566,7 +566,7 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 Grok TUI row (conservative readiness)",
       "src/adapters/tools/grok.ts:270-279,353-414 (summary mtime is artifact activity only)",
-      "src/adapters/tools/provider-evidence.ts classifyGrokObservation",
+      "src/adapters/tools/conformance/evidence.ts classifyGrokObservation",
     ],
   },
   cancelSubmit: {

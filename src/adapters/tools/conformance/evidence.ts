@@ -6,7 +6,7 @@ import {
   type ProviderSurfaceId,
   type ReadinessEvidenceKind,
   type ReceiptEvidenceKind,
-} from "../../schemas/provider-manifest";
+} from "../../../schemas/provider-manifest";
 
 /**
  * Readiness / receipt evidence collection for §25.

@@ -14,19 +14,19 @@ import {
   allProviderManifests,
   collectManifestCitationPaths,
   PROVIDER_MANIFESTS,
-} from "../../../src/adapters/tools/provider-manifests";
+} from "../../../src/adapters/tools/conformance/manifests";
 import {
   classifyProviderObservation,
   parseAttemptContext,
   receiptForBoundary,
   receiptForLostBoundary,
   CLAUDE_PERMISSION_PROMPT_TYPE,
-} from "../../../src/adapters/tools/provider-evidence";
+} from "../../../src/adapters/tools/conformance/evidence";
 import {
   adapterEvidenceIsStructurallyGrounded,
   buildProviderConformanceReport,
   PROVIDER_CONFORMANCE_REPORT,
-} from "../../../src/adapters/tools/provider-conformance-report";
+} from "../../../src/adapters/tools/conformance/report";
 import {
   ABSENT_FIELD_CONTROLS,
   ADAPTER_EVIDENCE_SURFACE_FILES,
@@ -37,7 +37,7 @@ import {
   TG4_SCENARIO_FIXTURES,
   attemptFor,
   hasRequiredEvidenceGrounding,
-} from "../../../src/adapters/tools/__fixtures__/tg4/corpus";
+} from "../../../src/adapters/tools/conformance/__fixtures__/tg4/corpus";
 
 /**
  * §25-derived expectations — not self-enums on fixtures.
