@@ -11,6 +11,7 @@ import {
   parseOrchestratorStatus,
   parseWorkspaceOrchestratorSnapshot,
   publishWorkspaceVisibility,
+  registerWorkspaceOwner,
   runWorkspaceFeed,
   type WorkspaceOrchestratorSnapshot,
   WorkspaceVisibilityPublisher,
@@ -143,6 +144,22 @@ const rootLocator = {
 };
 
 describe("runWorkspaceFeed", () => {
+  test("registers the launching Workspace before publishing inventory", async () => {
+    const requests: Request[] = [];
+    await registerWorkspaceOwner(4483, "workspace-launch", 7210, {
+      observeProcess: () => ({ startToken: "7210:500" }),
+      post: async (input, init) => {
+        requests.push(new Request(input, init));
+        return Response.json({ state: "accepted" });
+      },
+    });
+    expect(requests[0]?.url).toBe("http://127.0.0.1:4483/workspace-owner");
+    expect(await requests[0]?.json()).toEqual({
+      sessionId: "workspace-launch",
+      process: { processId: 7210, startToken: "7210:500" },
+    });
+  });
+
   test("publishes the observed Workspace PID identity with its full inventory", async () => {
     const requests: Request[] = [];
     await publishWorkspaceVisibility(

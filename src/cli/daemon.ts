@@ -483,16 +483,28 @@ export async function runDaemon(): Promise<void> {
       return;
     }
     stopping = true;
+    const hardStop = setTimeout(() => {
+      process.kill(process.pid, "SIGKILL");
+    }, 30_000);
+    let exitCode = 0;
     try {
       await daemon.stop();
+    } catch (error) {
+      exitCode = 1;
+      console.error(
+        `Hive daemon cleanup failed before exit: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     } finally {
       // stop() owns the supervisor when wired; belt-and-braces if construction
       // failed after start or stop threw before the broker field was torn down.
       await sessiondBroker.stop();
+      clearTimeout(hardStop);
     }
     quotaDb.close();
     db.close();
-    process.exit(0);
+    process.exit(exitCode);
   };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);

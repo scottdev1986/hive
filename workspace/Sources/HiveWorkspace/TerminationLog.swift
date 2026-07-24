@@ -49,18 +49,16 @@ enum TerminationLog {
     }
 
     /// Where in the termination sequence the line was written. A quit is not
-    /// one event: AppKit asks, the app answers — possibly `.terminateLater` —
-    /// and the real exit happens after that answer resolves, or never, if the
-    /// answer was cancelled.
+    /// one event: AppKit asks, the app answers, and the real exit follows.
+    /// `resolved` remains readable for lifecycle logs written by older builds
+    /// that deferred termination while waiting for `hive stop`.
     enum Phase: String {
         /// Something inside the app decided this process should end. The
         /// earliest and most load-bearing line.
         case requested
-        /// `applicationShouldTerminate` answered AppKit. `detail` carries the
-        /// reply, including `terminateLater`.
+        /// `applicationShouldTerminate` answered AppKit.
         case decision
-        /// A deferred (`terminateLater`) quit resolved — allowed, or cancelled
-        /// and the app is still alive.
+        /// A deferred quit from an older Workspace build resolved.
         case resolved
         /// `applicationWillTerminate`: AppKit is committed, teardown running.
         case willTerminate = "will-terminate"

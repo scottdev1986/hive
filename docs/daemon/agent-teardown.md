@@ -85,7 +85,14 @@ Measured end to end, SIGTERM to daemon exit, with every agent carrying a full tr
 
 Both rows are single runs, and they are not held equally firmly. The 0.97s figure is the measurement recorded when the shutdown fix landed. The 6-agent row is **one observation by its author, not independently reproduced** — confirming it costs a real six-agent teardown, so it stands as recorded, not as established fact. What it has going for it is arithmetic: the ~0.3s/agent slope sits just above the 250ms floor the code actually sets, so it is at least consistent with the mechanism. Argue from the slope; do not quote the second row as a spec.
 
-**That is not a correctness bound, and the Workspace must not treat it as one.** AppKit returns `terminateLater` while `hive stop` runs. It replies yes only after the command reports verified absence; a nonzero exit cancels quit and displays the failure. There is no UI timeout that converts "still checking" into success. The visibility lease remains the backstop for an app crash, not the ordinary quit mechanism.
+**That is not a correctness bound, and the Workspace does not wait on it.**
+AppKit always permits the UI to exit. It starts `hive stop --force` as a
+best-effort request, while the daemon owns verified teardown independently.
+The Workspace registers its exact PID and start token before terminal
+inventory is accepted; owner death starts daemon shutdown, failure to register
+within the startup grace period also shuts it down, and daemon shutdown has a
+hard upper bound. The visibility lease remains an independent terminal-host
+backstop.
 
 Parallelising `killAllAgents` to shrink the number was deliberately **rejected**: it is a speculative change to a kill path, for a latency problem with no correctness consequence.
 

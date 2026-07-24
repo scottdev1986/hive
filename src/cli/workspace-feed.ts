@@ -105,6 +105,46 @@ export interface WorkspaceVisibilityPublishDeps {
   readonly now?: () => number;
 }
 
+export async function registerWorkspaceOwner(
+  port: number,
+  workspaceSessionId: string,
+  workspacePid: number,
+  deps: WorkspaceVisibilityPublishDeps = {},
+): Promise<void> {
+  const processIdentity = (deps.observeProcess ?? macProcessIdentity)(
+    workspacePid,
+  );
+  const response = await (deps.post ?? operatorFetch)(
+    `http://127.0.0.1:${port}/workspace-owner`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(
+        deps.timeoutMs ?? FEED_VISIBILITY_PUBLISH_TIMEOUT_MS,
+      ),
+      body: JSON.stringify({
+        sessionId: workspaceSessionId,
+        process: {
+          processId: workspacePid,
+          startToken: processIdentity.startToken,
+        },
+      }),
+    },
+  );
+  if (response.ok) return;
+  const body = (await response.json().catch(() => null)) as {
+    error?: unknown;
+    diagnostic?: unknown;
+  } | null;
+  const detail =
+    typeof body?.diagnostic === "string"
+      ? body.diagnostic
+      : typeof body?.error === "string"
+        ? body.error
+        : `HTTP ${response.status}`;
+  throw new Error(`workspace owner registration failed: ${detail}`);
+}
+
 class WorkspaceVisibilityPublishError extends Error {
   constructor(
     readonly status: number,
@@ -499,6 +539,7 @@ export async function runWorkspaceFeedCli(
   // Capture the launching Workspace once. If it dies, this child may be
   // reparented; a later process.ppid must never become a new visibility source.
   const workspacePid = process.ppid;
+  await registerWorkspaceOwner(port, workspaceSessionId, workspacePid);
   let input = Buffer.alloc(0);
   const publisher = new WorkspaceVisibilityPublisher(
     (inventory) =>

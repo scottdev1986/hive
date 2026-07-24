@@ -54,53 +54,17 @@ final class AppDelegateLifecycleTests: XCTestCase {
         )
     }
 
-    func testTerminationWaitsForVerifiedStopBeforeAllowingQuit() async {
+    func testTerminationNeverWaitsForCleanupBeforeAllowingQuit() {
         _ = NSApplication.shared
         let owner = AppDelegate(config: completeConfig())
-        var finish: ((Result<Void, Error>) -> Void)?
-        var replies: [Bool] = []
-        let replied = expectation(description: "termination reply")
-        owner.stopForTermination = { finish = $0 }
-        owner.replyToApplicationTermination = {
-            replies.append($0)
-            replied.fulfill()
-        }
-        owner.presentTerminationFailure = { _ in
-            XCTFail("successful teardown must not present failure")
+        var stopRequests = 0
+        owner.stopForTermination = { _ in
+            stopRequests += 1
         }
 
-        XCTAssertEqual(
-            owner.applicationShouldTerminate(.shared), .terminateLater)
-        XCTAssertEqual(
-            owner.applicationShouldTerminate(.shared), .terminateLater)
-        XCTAssertTrue(replies.isEmpty)
-        finish?(.success(()))
-        await fulfillment(of: [replied], timeout: 1)
-        XCTAssertEqual(replies, [true])
-    }
-
-    func testTerminationFailureCancelsQuitAndSurfacesReason() async {
-        _ = NSApplication.shared
-        let owner = AppDelegate(config: completeConfig())
-        var finish: ((Result<Void, Error>) -> Void)?
-        var replies: [Bool] = []
-        var failure = ""
-        let replied = expectation(description: "termination rejection")
-        owner.stopForTermination = { finish = $0 }
-        owner.replyToApplicationTermination = {
-            replies.append($0)
-            replied.fulfill()
-        }
-        owner.presentTerminationFailure = { failure = $0 }
-
-        XCTAssertEqual(owner.applicationShouldTerminate(.shared), .terminateLater)
-        finish?(.failure(NSError(
-            domain: "test", code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "provider tree survived"])))
-        await fulfillment(of: [replied], timeout: 1)
-
-        XCTAssertEqual(replies, [false])
-        XCTAssertEqual(failure, "provider tree survived")
+        XCTAssertEqual(owner.applicationShouldTerminate(.shared), .terminateNow)
+        XCTAssertEqual(owner.applicationShouldTerminate(.shared), .terminateNow)
+        XCTAssertEqual(stopRequests, 1)
     }
 
     /// #64: closing a pane (or a window fanning `.closePane` out to every

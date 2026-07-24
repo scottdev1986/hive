@@ -206,6 +206,7 @@ import {
   type WorkspaceVisibilityAdmission,
   type WorkspaceVisibilityAuthority,
   type WorkspaceVisibilityCandidate,
+  WorkspaceOwnerSchema,
   type WorkspaceVisibilitySnapshot,
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
@@ -247,6 +248,7 @@ const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * stay comfortably under sessiond's `visibility_expiry_ms` (15 s) so a missed
  * tick is survivable; three ticks fit inside one lease. */
 export const WORKSPACE_VISIBILITY_RENEWAL_MS = 5_000;
+export const WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS = 15_000;
 
 // Codex app-server hosts drop their pidfiles beside their sockets; the daemon
 // reaps children whose host died without running its own cleanup.
@@ -816,6 +818,7 @@ export class HiveDaemon {
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityRenewalTimer: ReturnType<typeof setInterval> | null = null;
+  private ownerRegistrationTimer: ReturnType<typeof setTimeout> | null = null;
   private maintenanceRunning = false;
   /** Wake-path faults already reported, so a persistent one alerts once. */
   private readonly alertedWakeFaults = new Set<string>();
@@ -1464,6 +1467,18 @@ export class HiveDaemon {
       });
     }, WORKSPACE_VISIBILITY_RENEWAL_MS);
     this.visibilityRenewalTimer.unref?.();
+    if (this.manageLifecycle && this.workspaceVisibility !== null) {
+      this.ownerRegistrationTimer = setTimeout(() => {
+        this.ownerRegistrationTimer = null;
+        if (
+          !this.workspaceVisibility?.ownerRegistered() &&
+          !this.stopInProgress
+        ) {
+          this.stopInProgress = true;
+          this.initiateShutdown();
+        }
+      }, WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS);
+    }
     // Memory retention (HiveMemory HM-2 WP3): a periodic timer on
     // sweep_interval_hours, plus one sweep at start so a daemon that was down
     // past its cadence does not wait a full interval to age anything out.
@@ -3010,6 +3025,10 @@ export class HiveDaemon {
       clearInterval(this.visibilityRenewalTimer);
       this.visibilityRenewalTimer = null;
     }
+    if (this.ownerRegistrationTimer !== null) {
+      clearTimeout(this.ownerRegistrationTimer);
+      this.ownerRegistrationTimer = null;
+    }
     if (this.retentionTimer !== null) {
       clearInterval(this.retentionTimer);
       this.retentionTimer = null;
@@ -3613,6 +3632,9 @@ export class HiveDaemon {
     if (url.pathname === "/workspace-visibility" && request.method === "POST") {
       return this.workspaceVisibilityEndpoint(request);
     }
+    if (url.pathname === "/workspace-owner" && request.method === "POST") {
+      return this.workspaceOwnerEndpoint(request);
+    }
     if (url.pathname === "/token-usage" && request.method === "GET") {
       return this.tokenUsageEndpoint(url, request);
     }
@@ -4120,6 +4142,37 @@ export class HiveDaemon {
     );
   }
 
+  private async workspaceOwnerEndpoint(request: Request): Promise<Response> {
+    const route = "/workspace-owner";
+    const authenticated = this.authenticate(request, route);
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      route,
+      "workspace-visibility:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (this.workspaceVisibility === null) {
+      return json(
+        { error: "workspace ownership authority is unavailable" },
+        { status: 503 },
+      );
+    }
+    const body = WorkspaceOwnerSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!body.success)
+      return json({ error: body.error.message }, { status: 400 });
+    const result = this.workspaceVisibility.register(body.data);
+    if (result.state !== "accepted") return json(result, { status: 409 });
+    if (this.ownerRegistrationTimer !== null) {
+      clearTimeout(this.ownerRegistrationTimer);
+      this.ownerRegistrationTimer = null;
+    }
+    return json({ state: "accepted" });
+  }
+
   /** Renews one inventory's leases. `admit` is the only liveness gate: it
    * returns null unless the recorded Workspace source still verifies by PID and
    * start token, so an unverified or dead Workspace renews nothing. */
@@ -4185,15 +4238,16 @@ export class HiveDaemon {
   async renewWorkspaceVisibility(): Promise<number> {
     const workspaceVisibility = this.workspaceVisibility;
     if (workspaceVisibility == null) return 0;
-    const snapshot = workspaceVisibility.currentSnapshot();
-    if (snapshot === null) return 0;
     if (!workspaceVisibility.sourceVerified()) {
+      if (!workspaceVisibility.ownerRegistered()) return 0;
       if (!this.stopInProgress) {
         this.stopInProgress = true;
         this.initiateShutdown();
       }
       return 0;
     }
+    const snapshot = workspaceVisibility.currentSnapshot();
+    if (snapshot === null) return 0;
     const renewals = await this.renewVisibleTerminals(snapshot.terminals);
     await this.recordVisibilityExpiryAudits(snapshot);
     return renewals.filter((renewal) => renewal?.state === "renewed").length;

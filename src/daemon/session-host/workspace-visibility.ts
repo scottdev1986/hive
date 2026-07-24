@@ -45,15 +45,18 @@ export type WorkspaceVisibleTerminal = z.infer<
   typeof WorkspaceVisibleTerminalSchema
 >;
 
+export const WorkspaceOwnerSchema = z
+  .strictObject({
+    sessionId: z.string().min(1),
+    process: TerminalHostProcessIdentitySchema,
+  })
+  .readonly();
+export type WorkspaceOwner = z.infer<typeof WorkspaceOwnerSchema>;
+
 export const WorkspaceVisibilitySnapshotSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
-    source: z
-      .strictObject({
-        sessionId: z.string().min(1),
-        process: TerminalHostProcessIdentitySchema,
-      })
-      .readonly(),
+    source: WorkspaceOwnerSchema,
     inventoryRevision: PositiveRevisionSchema,
     terminals: z.array(WorkspaceVisibleTerminalSchema).readonly(),
   })
@@ -141,18 +144,53 @@ function sameSource(
  * re-attest its whole UI model before any create or renewal is admitted.
  */
 export class WorkspaceVisibilityAuthority {
+  private owner: WorkspaceOwner | null = null;
   private current: WorkspaceVisibilitySnapshot | null = null;
 
   constructor(private readonly dependencies: WorkspaceVisibilityDependencies) {}
+
+  register(owner: WorkspaceOwner): WorkspaceVisibilityPublishResult {
+    const parsed = WorkspaceOwnerSchema.parse(owner);
+    if (!this.sourceIsLive(parsed)) {
+      return this.rejected(
+        "source-not-live",
+        "workspace process identity is not live",
+      );
+    }
+    if (
+      this.owner !== null &&
+      !sameSource(this.owner, parsed) &&
+      this.sourceIsLive(this.owner)
+    ) {
+      return this.rejected(
+        "source-identity-mismatch",
+        "another live Workspace source already owns the daemon",
+      );
+    }
+    this.owner = parsed;
+    return { state: "accepted", inventoryRevision: "0" };
+  }
 
   publish(
     snapshot: WorkspaceVisibilitySnapshot,
   ): WorkspaceVisibilityPublishResult {
     const parsed = WorkspaceVisibilitySnapshotSchema.parse(snapshot);
-    if (!this.sourceIsLive(parsed.source)) {
+    if (this.owner === null) {
       return this.rejected(
         "source-not-live",
-        "workspace process identity is not live",
+        "workspace owner is not registered",
+      );
+    }
+    if (!sameSource(this.owner, parsed.source)) {
+      return this.rejected(
+        "source-identity-mismatch",
+        "workspace inventory does not match the registered owner",
+      );
+    }
+    if (!this.sourceIsLive(this.owner)) {
+      return this.rejected(
+        "source-not-live",
+        "registered workspace process identity is not live",
       );
     }
 
@@ -295,7 +333,11 @@ export class WorkspaceVisibilityAuthority {
    * from `admit`'s many other null answers, so the daemon can record *why* it
    * is letting sessiond expire these hosts. */
   sourceVerified(): boolean {
-    return this.current !== null && this.sourceIsLive(this.current.source);
+    return this.owner !== null && this.sourceIsLive(this.owner);
+  }
+
+  ownerRegistered(): boolean {
+    return this.owner !== null;
   }
 
   private sourceIsLive(source: VisibilitySourceIdentity): boolean {

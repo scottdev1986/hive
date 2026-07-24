@@ -49,24 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// the last-window-closed callback would otherwise overwrite the real
     /// reason with its own consequence.
     private(set) var terminationReason: TerminationLog.Reason?
-    private var terminationPending = false
-    private var terminationFailureAlert: NSAlert?
+    private var terminationStopStarted = false
     private var terminationProcess: Process?
 
     lazy var stopForTermination: (@escaping (Result<Void, Error>) -> Void) -> Void = {
         [weak self] completion in self?.runStopSession(completion: completion)
-    }
-    lazy var replyToApplicationTermination: (Bool) -> Void = { allow in
-        NSApp.reply(toApplicationShouldTerminate: allow)
-    }
-    lazy var presentTerminationFailure: (String) -> Void = { [weak self] reason in
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "Hive could not quit safely"
-        alert.informativeText = reason
-        alert.addButton(withTitle: "OK")
-        self?.terminationFailureAlert = alert
-        alert.window.makeKeyAndOrderFront(nil)
     }
 
     init(config: LaunchConfig) {
@@ -410,38 +397,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 detail: "reply=terminateNow no-session-to-stop")
             return .terminateNow
         }
-        guard !terminationPending else {
-            TerminationLog.record(
-                .decision, reason: reason,
-                detail: "reply=terminateLater already-pending")
-            return .terminateLater
-        }
-        terminationPending = true
-        TerminationLog.record(
-            .decision, reason: reason,
-            detail: "reply=terminateLater awaiting-verified-hive-stop")
-        stopForTermination { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                switch result {
-                case .success:
-                    TerminationLog.record(
-                        .resolved, reason: reason, detail: "outcome=allowed hive-stop-verified")
-                    self.replyToApplicationTermination(true)
-                case .failure(let error):
-                    TerminationLog.record(
-                        .resolved, reason: reason,
-                        detail: "outcome=cancelled still-running: \(error.localizedDescription)")
-                    self.terminationPending = false
-                    // The app is still alive; the next quit re-derives its own
-                    // reason rather than inheriting this cancelled one.
-                    self.terminationReason = nil
-                    self.replyToApplicationTermination(false)
-                    self.presentTerminationFailure(error.localizedDescription)
+        if !terminationStopStarted {
+            terminationStopStarted = true
+            stopForTermination { result in
+                if case .failure(let error) = result {
+                    NSLog(
+                        "Hive cleanup continued after Workspace exit: %@",
+                        error.localizedDescription)
                 }
             }
         }
-        return .terminateLater
+        TerminationLog.record(
+            .decision, reason: reason,
+            detail: "reply=terminateNow cleanup-delegated-to-daemon")
+        return .terminateNow
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -465,9 +434,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// own shutdown — it stops every live agent and then the daemon itself — so
     /// no agent, and no daemon, outlives the window that was showing them.
     ///
-    /// AppKit holds termination until this process exits successfully. `hive
-    /// stop` itself returns only after exact process-tree absence has been read
-    /// back; an error cancels quit and remains visible.
+    /// The subprocess is best effort and never controls whether AppKit exits.
+    /// Once the Workspace process disappears, the daemon's verified owner
+    /// watch independently drives the same cleanup path.
     private func runStopSession(completion: @escaping (Result<Void, Error>) -> Void) {
         guard let hivePath = config.hivePath, let instanceHome = config.instanceHome,
               !config.smoke else {

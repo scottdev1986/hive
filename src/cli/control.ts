@@ -6,8 +6,10 @@ import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   cleanupLifecycleFiles,
   type DaemonInstanceLiveness,
+  type DaemonProcessIdentity,
   daemonInstanceLiveness,
   getPidFilePath,
+  macProcessIdentity,
   readDaemonPort,
 } from "../daemon/lifecycle";
 import type {
@@ -463,6 +465,8 @@ export interface StopHiveDependencies {
   readonly cleanup?: (pid?: number) => void;
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly timeoutMs?: number;
+  readonly processIdentity?: (pid: number) => DaemonProcessIdentity;
+  readonly killDaemon?: (pid: number) => void;
   readonly log?: (message: string) => void;
   /** Captured once per invocation; injectable for tests. */
   readonly invoker?: InvokerIdentity;
@@ -543,6 +547,14 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
           "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
       );
     }
+    const processIdentity = deps.processIdentity ?? macProcessIdentity;
+    let daemonIdentity: DaemonProcessIdentity | null = null;
+    try {
+      daemonIdentity = processIdentity(pid);
+    } catch {
+      // A normal stop is still safe if exact inspection races daemon exit.
+      // Forced escalation below remains disabled without an exact identity.
+    }
     const requestStop = deps.requestStop ?? defaultRequestStop;
     const body: StopRequestBody = {
       origin: killOrigin("stop", invoker),
@@ -602,10 +614,32 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
       state = await liveness();
     }
     if (state !== "dead") {
-      throw new Error(
-        `daemon pid ${pid} did not stop (liveness: ${state})\n` +
-          "Fix: inspect the daemon, stop it manually, then rerun `hive stop`.",
-      );
+      let currentIdentity: DaemonProcessIdentity | null = null;
+      try {
+        currentIdentity = processIdentity(pid);
+      } catch {
+        // The daemon exited between the liveness read and exact observation.
+      }
+      if (
+        daemonIdentity !== null &&
+        currentIdentity !== null &&
+        currentIdentity.startToken === daemonIdentity.startToken &&
+        currentIdentity.executablePath === daemonIdentity.executablePath
+      ) {
+        (deps.killDaemon ?? ((ownedPid) => process.kill(ownedPid, "SIGKILL")))(
+          pid,
+        );
+        for (let attempt = 0; attempt < 20 && state !== "dead"; attempt += 1) {
+          await sleep(50);
+          state = await liveness();
+        }
+      }
+      if (state !== "dead") {
+        throw new Error(
+          `daemon pid ${pid} did not stop (liveness: ${state}) and exact forced cleanup could not verify its exit\n` +
+            "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
+        );
+      }
     }
   }
 

@@ -63,6 +63,9 @@ function authority() {
     observeProcess: (pid) => (pid === observed.processId ? observed : null),
     discoverEngineBuildId: async () => build,
   });
+  expect(value.register(snapshot("1").source)).toMatchObject({
+    state: "accepted",
+  });
   return {
     value,
     replaceProcess: (next: typeof process) => {
@@ -75,6 +78,22 @@ function authority() {
 }
 
 describe("WorkspaceVisibilityAuthority", () => {
+  test("requires a verified owner before accepting terminal inventory", () => {
+    const host = new WorkspaceVisibilityAuthority({
+      expectedInstanceId: instanceId,
+      observeProcess: () => process,
+      discoverEngineBuildId: async () => engineBuildId,
+    });
+    expect(host.publish(snapshot("1"))).toMatchObject({
+      state: "rejected",
+      reason: "source-not-live",
+    });
+    expect(host.register(snapshot("1").source)).toMatchObject({
+      state: "accepted",
+    });
+    expect(host.publish(snapshot("1"))).toMatchObject({ state: "accepted" });
+  });
+
   test("accepts only advancing full snapshots from one live exact source", () => {
     const host = authority();
     expect(host.value.publish(snapshot("1"))).toEqual({
@@ -283,9 +302,12 @@ describe("WorkspaceVisibilityAuthority", () => {
     });
     expect(host.value.publish(second)).toMatchObject({
       state: "rejected",
-      reason: "source-not-live",
+      reason: "source-identity-mismatch",
     });
     host.replaceProcess({ processId: 7102, startToken: "7102:100" });
+    expect(host.value.register(second.source)).toMatchObject({
+      state: "accepted",
+    });
     expect(host.value.publish(second)).toMatchObject({ state: "accepted" });
   });
 
@@ -300,16 +322,15 @@ describe("WorkspaceVisibilityAuthority", () => {
       observeProcess: (pid) => observed.get(pid) ?? null,
       discoverEngineBuildId: async () => engineBuildId,
     });
+    expect(host.register(snapshot("1").source)).toMatchObject({
+      state: "accepted",
+    });
     expect(host.publish(snapshot("1"))).toMatchObject({ state: "accepted" });
     expect(
-      host.publish(
-        snapshot("1", {
-          source: {
-            sessionId: "second-live-workspace",
-            process: secondProcess,
-          },
-        }),
-      ),
+      host.register({
+        sessionId: "second-live-workspace",
+        process: secondProcess,
+      }),
     ).toMatchObject({
       state: "rejected",
       reason: "source-identity-mismatch",
@@ -318,14 +339,14 @@ describe("WorkspaceVisibilityAuthority", () => {
     expect(host.currentSnapshot()?.source.sessionId).toBe("workspace-session");
   });
 
-  test("a dead Workspace asks its daemon to shut down exactly once", async () => {
+  test("owner death before the first inventory shuts down exactly once", async () => {
     let workspaceIsLive = true;
     const visibility = new WorkspaceVisibilityAuthority({
       expectedInstanceId: instanceId,
       observeProcess: () => (workspaceIsLive ? process : null),
       discoverEngineBuildId: async () => engineBuildId,
     });
-    expect(visibility.publish(snapshot("1", { terminals: [] }))).toMatchObject({
+    expect(visibility.register(snapshot("1").source)).toMatchObject({
       state: "accepted",
     });
     const db = new HiveDatabase(":memory:");
