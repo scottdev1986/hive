@@ -296,3 +296,27 @@ unique is preserved.
 5. All 35 bucket-A refs can be dropped whenever convenient. They preserve nothing.
 
 None of this is urgent. Nothing here is at risk from a restart.
+
+---
+
+## 6. Post-audit disposition — 2026-07-25
+
+The 41 refs recorded in
+`planning/2026-07-25-preserved-ref-deletions.md` were independently verified
+and deleted after that ledger landed. This triage remains because these eight
+refs are intentionally unresolved or owned by a live landing:
+
+- **C1.3, excluded from this task:** `hive/nina-integrator-land-the-c1-3-chrom`,
+  `hive/john-integrator-finish-a-killed-int`,
+  `hive/maya-integrator-land-the-stranded-c`,
+  `hive/hazelton-m1-item-4-c1-3-the-chrome-focu`, and `hazelton-c13`. Agent
+  `c13` is actively landing Nina's source; do not prune these refs here.
+- **Geoff, live follow-up:** `hive/geoff-fix-the-hive-terminal-it-is-vi` remains
+  at `0d8e80e7` because current `main` lacks both
+  `isSessiondBrokerUnavailable` and
+  `RealShellRenderProofTests.swift`. `geoff-dirty-snapshot` remains with it
+  pending disposition of that live work.
+- **Amber, needs an explicit decision:**
+  `hive/amber-implement-the-missing-producti` is a large production-create WIP.
+  Current broker code has been rebuilt around the same concern, but that is not
+  byte-identical proof that Amber's payload is superseded.
