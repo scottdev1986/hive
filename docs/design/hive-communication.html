@@ -1,189 +1,252 @@
-<!DOCTYPE html>
-<html lang="en" class="doc-terminal doc-hierarchy">
+<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <title>Hive Communication Rebuild — Technical Specification</title>
-  <link rel="stylesheet" href="hive-design.css">
+  <title>Hive Communication System — Implemented Technical Map</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d12;
+      --panel: #101720;
+      --panel-2: #151e29;
+      --line: #2b3948;
+      --text: #d8e2ec;
+      --muted: #91a1b2;
+      --accent: #7dd3fc;
+      --proven: #63e6be;
+      --unproven: #ffd166;
+      --absent: #ff7b8b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        linear-gradient(rgba(125, 211, 252, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 211, 252, .035) 1px, transparent 1px),
+        var(--bg);
+      background-size: 32px 32px;
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+    a { color: var(--accent); }
+    code, pre { font-family: var(--mono); }
+    code { color: #b9e6ff; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 72px 0 34px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 8px 0 12px; font: 650 clamp(2rem, 5vw, 4.3rem)/1.02 var(--sans); letter-spacing: -.045em; }
+    header p { max-width: 850px; color: var(--muted); font-size: 1.05rem; }
+    .eyebrow, .section-label { color: var(--accent); font: 700 .72rem/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+    nav { padding: 24px 0; border-bottom: 1px solid var(--line); background: rgba(9, 13, 18, .88); }
+    nav ol { margin: 0; padding: 0; columns: 3; list-style-position: inside; }
+    nav li { margin: 5px 0; color: var(--muted); font-family: var(--mono); font-size: .82rem; }
+    section { padding: 52px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 20px; }
+    .section-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 480px); gap: 40px; align-items: end; margin-bottom: 28px; }
+    h2 { margin: 6px 0 0; font-size: clamp(1.6rem, 3vw, 2.5rem); letter-spacing: -.025em; }
+    h3 { margin: 34px 0 12px; font-size: 1.05rem; letter-spacing: .02em; }
+    p, li { max-width: 980px; }
+    .section-head > p, .note { color: var(--muted); }
+    .status {
+      display: inline-block;
+      margin-right: .5em;
+      padding: .18rem .45rem;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      font: 750 .67rem/1 var(--mono);
+      letter-spacing: .08em;
+      vertical-align: .1em;
+      white-space: nowrap;
+    }
+    .proven { color: var(--proven); }
+    .unproven { color: var(--unproven); }
+    .absent { color: var(--absent); }
+    .claim {
+      padding: 14px 16px;
+      border-left: 3px solid var(--line);
+      background: rgba(16, 23, 32, .82);
+    }
+    .claim.proven-border { border-color: var(--proven); }
+    .claim.unproven-border { border-color: var(--unproven); }
+    .claim.absent-border { border-color: var(--absent); }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: rgba(16, 23, 32, .9); }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { padding: 12px 13px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font: 700 .72rem/1.25 var(--mono); letter-spacing: .06em; text-transform: uppercase; background: var(--panel-2); }
+    tr:last-child td { border-bottom: 0; }
+    pre { overflow-x: auto; padding: 18px; border: 1px solid var(--line); background: #080c11; color: #c5d8e8; font-size: .82rem; line-height: 1.5; }
+    .diagram { margin: 24px 0; border: 1px solid var(--line); background: #0b1118; }
+    .diagram svg { display: block; width: 100%; height: auto; }
+    .diagram figcaption { padding: 11px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+    .diagram text { font-family: var(--mono); fill: var(--text); }
+    .diagram .muted { fill: var(--muted); }
+    .diagram .box { fill: #111b26; stroke: #34485c; }
+    .diagram .ok { stroke: var(--proven); }
+    .diagram .warn { stroke: var(--unproven); }
+    .diagram .bad { stroke: var(--absent); }
+    .diagram .arrow { stroke: #72879b; stroke-width: 1.5; fill: none; }
+    .identity-diagram .arrow { marker-end: url(#identity-arrow); }
+    .observe-diagram .arrow { marker-end: url(#observe-arrow); }
+    .delivery-diagram .arrow { marker-end: url(#delivery-arrow); }
+    .quota-diagram .arrow { marker-end: url(#quota-arrow); }
+    .diagram .dash { stroke-dasharray: 6 5; }
+    .source { color: var(--muted); font-size: .79rem; }
+    .source code { color: #b6c7d7; }
+    .matrix td:first-child { white-space: nowrap; }
+    footer { padding: 40px 0 70px; color: var(--muted); font-size: .84rem; }
+    @media (max-width: 760px) {
+      nav ol { columns: 1; }
+      .section-head { grid-template-columns: 1fr; gap: 10px; }
+      .shell { width: min(100% - 24px, 1180px); }
+      section { padding: 38px 0; }
+    }
+  </style>
 </head>
 <body>
-  <header class="shell topbar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
-    <div class="doc-meta">COMMUNICATION REBUILD · TECHNICAL SPECIFICATION · 2026-07-24</div>
+  <header id="status">
+    <div class="shell">
+      <p class="eyebrow">00 · Verification basis</p>
+      <h1>Hive communication system</h1>
+      <p>A present-tense map of runtime identity, observation, delivery, control, quota response, handoff, and ownership boundaries.</p>
+      <p class="claim proven-border"><span class="status proven">PROVEN</span>Verified against commit <code>7603832c0ae4b4e610153a76ba7820c3293623eb</code>. The focused command shown in §14 completed with <code>129 pass, 1 todo, 0 fail</code>; <code>native/sessiond/test.sh</code> completed with <code>21/21 steps succeeded; 53/53 tests passed</code>.</p>
+      <p class="claim unproven-border"><span class="status unproven">UNPROVEN</span>A code citation establishes that an implementation exists. It does not establish runtime behavior. An unproven item names the observation needed to promote it.</p>
+      <p class="claim absent-border"><span class="status absent">NOT IMPLEMENTED</span>An absent item names the substitute that runs now and the concrete implementation needed.</p>
+    </div>
   </header>
 
+  <nav aria-label="Document sections">
+    <div class="shell">
+      <ol>
+        <li><a href="#scope">Scope</a></li>
+        <li><a href="#invariants">Status discipline</a></li>
+        <li><a href="#identity">Runtime identities</a></li>
+        <li><a href="#records">Durable records</a></li>
+        <li><a href="#observation">Passive observation</a></li>
+        <li><a href="#delivery">Message delivery</a></li>
+        <li><a href="#control">Process control</a></li>
+        <li><a href="#quota">Quota response</a></li>
+        <li><a href="#handoff">Handoff bundle</a></li>
+        <li><a href="#providers">Provider sources</a></li>
+        <li><a href="#context-economy">Context economy</a></li>
+        <li><a href="#interfaces">Interfaces</a></li>
+        <li><a href="#verification">Acceptance matrix</a></li>
+        <li><a href="#router-ready">Ownership boundary</a></li>
+      </ol>
+    </div>
+  </nav>
+
   <main>
-    <section id="status">
-      <div class="shell">
-        <div class="section-head">
-          <div>
-            <p class="section-label">Status and sequence</p>
-            <h1>Communication Rebuild</h1>
-          </div>
-          <p><strong>Status:</strong> proposed implementation contract. <strong>Order:</strong> quota lifecycle redesign → this rebuild → router refactor.</p>
-        </div>
-
-        <div class="table-wrap">
-          <table>
-            <tbody>
-              <tr><th>Purpose</th><td>Make agent observation, delivery, control, quota recovery, and handoff correct for persistent zsh terminals.</td></tr>
-              <tr><th>Primary consumers</th><td>Queen, quota drain handler, recovery, Workspace, and the later model router.</td></tr>
-              <tr><th>Providers</th><td><code>claude</code>, <code>codex</code>, <code>grok</code>, <code>kimi</code>, and <code>opencode</code>.</td></tr>
-              <tr><th>Implementation constraint</th><td>Reuse the current sessiond terminal stream, message store, status reports, memory, worktrees, and provider adapters. Add no general workflow engine.</td></tr>
-              <tr><th>Success condition</th><td>The router can choose a model without owning terminal state, communication transport, quota recovery, or handoff reconstruction.</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <nav aria-label="Document contents">
-          <h2>Contents</h2>
-          <ol>
-            <li><a href="#scope">Scope and non-goals</a></li>
-            <li><a href="#invariants">Required invariants</a></li>
-            <li><a href="#identity">Runtime identity</a></li>
-            <li><a href="#records">Minimal records</a></li>
-            <li><a href="#observation">Passive observation</a></li>
-            <li><a href="#delivery">Message delivery</a></li>
-            <li><a href="#control">Process control</a></li>
-            <li><a href="#quota">Quota lifecycle integration</a></li>
-            <li><a href="#handoff">Handoff construction</a></li>
-            <li><a href="#providers">Provider capability contract</a></li>
-            <li><a href="#context-economy">Context economy without information loss</a></li>
-            <li><a href="#interfaces">Service interfaces</a></li>
-            <li><a href="#implementation">Implementation order</a></li>
-            <li><a href="#verification">Acceptance tests</a></li>
-            <li><a href="#router-ready">Router-ready boundary</a></li>
-          </ol>
-        </nav>
-      </div>
-    </section>
-
     <section id="scope">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">01</p><h2>Scope and non-goals</h2></div>
-          <p>This specification covers communication with one local Hive instance. It does not redesign task hierarchy or model selection.</p>
+          <div><p class="section-label">01</p><h2>Scope</h2></div>
+          <p><span class="status proven">PROVEN</span>The mapped production path is the TypeScript daemon plus the sessiond terminal host.</p>
         </div>
-
-        <div class="split">
-          <article class="panel">
-            <h3>In scope</h3>
-            <ul>
-              <li>Identify the persistent terminal separately from each provider run.</li>
-              <li>Observe bounded terminal and provider activity without interrupting the agent.</li>
-              <li>Normalize provider hooks and native event streams into one bounded lifecycle event contract.</li>
-              <li>Deliver messages only to the intended live provider run.</li>
-              <li>Pause, resume, cancel, stop, and replace the foreground provider without accidentally targeting zsh.</li>
-              <li>Turn quota drain events into hold/resume or evidence-backed handoff.</li>
-              <li>Build a replacement brief from the original task, measured work, communication, memory, and observed activity.</li>
-              <li>Bound Hive-added model context without discarding durable information or reducing an agent’s authorized capability.</li>
-              <li>Expose stable run outcomes needed by the later router.</li>
-            </ul>
-          </article>
-          <article class="panel">
-            <h3>Not in scope</h3>
-            <ul>
-              <li>Model ranking, user weights, equal-weight Hive selection, or random selection.</li>
-              <li>A new task hierarchy, channel system, artifact service, or delegation language.</li>
-              <li>A replacement for git, worktrees, HiveMemory, or provider-native transcripts.</li>
-              <li>Full terminal transcript ingestion into every model context.</li>
-              <li>Price tracking, cost prediction, or speculative task-token budgeting.</li>
-              <li>A general event-sourcing rewrite of the existing database.</li>
-              <li>Cross-machine or internet agent messaging.</li>
-            </ul>
-          </article>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Status</th><th>Owned here</th><th>Code boundary</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Provider-run identity, durable messages, atomic terminal submission, priority handling, activity snapshots, provider control, quota hold/resume, handoff persistence.</td><td><code>src/daemon/delivery.ts: MessageDelivery</code>; <code>src/daemon/activity-snapshot.ts: buildActivitySnapshot</code>; <code>src/daemon/drain-handler.ts: DrainHandler</code>; <code>src/daemon/server.ts: replaceWithHandoff</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Quota measurement and route availability are inputs; model selection is a separate owner.</td><td><code>src/daemon/quota.ts: QuotaService</code>; <code>src/daemon/drain-handler.ts: ReplacementDrain</code>.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Automatic selection and launch after a durable quota handoff.</td><td>A durable notice containing provider, pool, and reset time is sent instead. Implementation requires selection to accept and enforce the drained-pool exclusion, then launch with the handoff ID. <code>src/daemon/server.ts: replaceWithHandoff</code>.</td></tr>
+            </tbody>
+          </table>
         </div>
-
-        <p><strong>Design rule:</strong> add a record only when it closes a demonstrated race, preserves recovery evidence, or creates the router boundary. Everything else remains a projection over existing state.</p>
       </div>
     </section>
 
     <section id="invariants">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">02</p><h2>Required invariants</h2></div>
+          <div><p class="section-label">02</p><h2>Status and authority discipline</h2></div>
+          <p>The labels below describe demonstrated properties of the implementation, not intent.</p>
         </div>
-
-        <ol>
-          <li><strong>A live terminal is not proof of a live agent.</strong> The terminal may contain only an interactive zsh prompt.</li>
-          <li><strong>Every provider launch creates a new provider-run ID.</strong> Reusing a terminal, agent name, or provider conversation does not reuse the run ID.</li>
-          <li><strong>Automated message text is never submitted to bare zsh.</strong> Foreground identity is checked atomically with the terminal write.</li>
-          <li><strong>Old-run communication never reaches a later run implicitly.</strong> Rebinding queued work to a replacement is an explicit handoff decision.</li>
-          <li><strong>Observation does not acquire input.</strong> Reading output cannot focus, resize, type into, wake, pause, or otherwise alter the terminal.</li>
-          <li><strong>Terminal output is evidence, not authority.</strong> It cannot grant permissions, change the task, mark work complete, or become shell input.</li>
-          <li><strong>Hooks improve evidence but are not an enforcement boundary.</strong> A missing, late, duplicated, failed, or untrusted hook degrades observation; it cannot grant authority, reduce provider capability, or block lifecycle cleanup. Vendor trust and permission grants remain user-owned: Hive detects and reports them, but never writes vendor trust or permission configuration.</li>
-          <li><strong>Measured and inferred facts remain distinct.</strong> Git state and exit codes are measured; an activity summary is inferred unless the agent explicitly reported it.</li>
-          <li><strong>Control targets a verified provider run.</strong> Stopping a provider and terminating its terminal are separate operations.</li>
-          <li><strong>Handoff remains usable when summarization fails.</strong> Exact task and work references are mandatory; generated narrative is optional.</li>
-          <li><strong>Context limits apply to projections, never source data.</strong> A bounded preview may omit content only when the exact durable source, digest, omitted amount, and authorized retrieval path remain available.</li>
-          <li><strong>Token savings do not reduce capability.</strong> Context budgeting cannot remove an authorized tool, permission, control, evidence source, or recovery path.</li>
-          <li><strong>Communication never chooses a model.</strong> It accepts a launch decision and reports a run outcome.</li>
-        </ol>
+        <ul>
+          <li><span class="status proven">PROVEN</span>A terminal generation, a provider run, and an agent are separate identities. Test: <code>test/daemon/db.test.ts — persists each provider execution as a distinct run and closes it once</code>.</li>
+          <li><span class="status proven">PROVEN</span>Terminal text contributes a bounded inferred summary and never creates authority. Test: <code>test/daemon/activity-snapshot.test.ts — terminal text never becomes authority and gaps remain visible</code>.</li>
+          <li><span class="status proven">PROVEN</span>A declined or failed terminal write leaves the durable message queued and records the attempt. Test: <code>test/daemon/orchestrator-lifecycle.test.ts — a foreground change leaves the opening message queued with its terminal receipt</code>.</li>
+          <li><span class="status proven">PROVEN</span>Critical intent revokes the capability epoch before control recovery. Test: <code>test/daemon/control-messages.test.ts — critical revokes the capability epoch before restart and rejects stale acknowledgement</code>.</li>
+          <li><span class="status unproven">UNPROVEN</span>End-to-end observation is claimed to be passive. Unit tests demonstrate pure snapshot construction, but proving production passivity requires tracing a fleet observation and showing no input claim, delivery row, provider turn, or quota spend caused by that read.</li>
+        </ul>
       </div>
     </section>
 
     <section id="identity">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">03</p><h2>Runtime identity</h2></div>
-          <p>The persistent-zsh design creates three lifecycles. They must not be represented by one generation field.</p>
+          <div><p class="section-label">03</p><h2>Three runtime identities</h2></div>
+          <p><span class="status proven">PROVEN</span>Each identity answers a different lifecycle question. None substitutes for another.</p>
         </div>
-
+        <figure class="diagram">
+          <svg class="identity-diagram" viewBox="0 0 1040 330" role="img" aria-labelledby="identity-title identity-desc">
+            <title id="identity-title">Agent, terminal, and provider-run lifecycles</title>
+            <desc id="identity-desc">An agent owns a terminal locator. A terminal persists across provider runs. Each provider run binds one process identity and capability epoch.</desc>
+            <defs><marker id="identity-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker></defs>
+            <rect class="box ok" x="36" y="42" width="270" height="220" rx="8"/>
+            <text x="58" y="76" font-size="18">AgentRecord</text>
+            <text class="muted" x="58" y="105" font-size="13">created → live statuses → closed</text>
+            <text x="58" y="145" font-size="13">stable database id</text>
+            <text x="58" y="169" font-size="13">name holder / task / branch</text>
+            <text x="58" y="193" font-size="13">capabilityEpoch</text>
+            <text x="58" y="217" font-size="13">sessionLocator</text>
+            <rect class="box ok" x="384" y="42" width="270" height="220" rx="8"/>
+            <text x="406" y="76" font-size="18">SessionLocator</text>
+            <text class="muted" x="406" y="105" font-size="13">create → running → exited/lost</text>
+            <text x="406" y="145" font-size="13">instance + subject</text>
+            <text x="406" y="169" font-size="13">generation + session id</text>
+            <text x="406" y="193" font-size="13">zsh root survives job exit</text>
+            <text x="406" y="217" font-size="13">engine build binding</text>
+            <rect class="box ok" x="732" y="42" width="270" height="220" rx="8"/>
+            <text x="754" y="76" font-size="18">ProviderRun</text>
+            <text class="muted" x="754" y="105" font-size="13">running → exited</text>
+            <text x="754" y="145" font-size="13">provider / model / effort</text>
+            <text x="754" y="169" font-size="13">pid + start token + pgid</text>
+            <text x="754" y="193" font-size="13">conversation + epoch</text>
+            <text x="754" y="217" font-size="13">launch grant + timestamps</text>
+            <path class="arrow" d="M306 152 H384"/>
+            <path class="arrow" d="M654 152 H732"/>
+            <path class="arrow dash" d="M732 286 H1002"/>
+            <text class="muted" x="740" y="310" font-size="12">later run may reuse terminal, never runId</text>
+          </svg>
+          <figcaption><span class="status proven">PROVEN</span><code>src/schemas/agent.ts: AgentRecordSchema</code>; <code>src/schemas/session-protocol.ts: SessionLocatorSchema</code>; <code>src/schemas/provider-run.ts: ProviderRunSchema</code>. Persistence proof: <code>test/daemon/db.test.ts</code>.</figcaption>
+        </figure>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Identity</th><th>Starts</th><th>Ends</th><th>What it proves</th></tr></thead>
+            <thead><tr><th>Status</th><th>Identity</th><th>What it proves</th><th>What it does not prove</th></tr></thead>
             <tbody>
-              <tr><td><strong>TerminalBinding</strong></td><td>sessiond creates the zsh session</td><td>The zsh session is explicitly terminated or lost</td><td>The exact PTY transport and shell generation</td></tr>
-              <tr><td><strong>ProviderRunBinding</strong></td><td>Hive launches a provider CLI into that shell</td><td>That foreground provider job exits or is reaped</td><td>Provider, model, effort, process identity, and capability epoch for one execution</td></tr>
-              <tr><td><strong>ConversationBinding</strong></td><td>A provider creates or resumes its own session</td><td>Provider-defined; it may outlive a process</td><td>The provider-native context that may be resumed</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>AgentRecord.id</code></td><td>One durable task/name holder and its authority epoch.</td><td>That a provider process or terminal is alive.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>SessionLocator</code></td><td>Exact Hive instance, subject, positive generation, session ID, sessiond host, and engine build.</td><td>That its foreground job is the agent's provider.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>ProviderRun</code></td><td>One launch grant bound to provider/model/effort, terminal, PID, start token, process group, capability epoch, optional conversation, and start/end state.</td><td>That the process is still foreground or that a transcript entry came from this executor.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Foreground projection</td><td><code>managed</code> only when the active run matches measured PID, start token, and group; <code>shell-idle</code> when zsh owns foreground; otherwise <code>unmanaged</code> or <code>unknown</code>.</td><td>Foreground movement alone does not end a run. <code>src/daemon/session-host/hive-terminal-host.ts: projectForeground, reconcileProviderRun</code>.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td>Five-provider live lifecycle</td><td>Fixture coverage exists for all five providers.</td><td>Grok has not been launched live. Proof requires one real launch, provider exit, shell-idle observation, and a later unmanaged command. <code>test/daemon/provider-run-identity.test.ts — grok live launch…</code> is todo.</td></tr>
             </tbody>
           </table>
         </div>
-
-        <p>The existing session inspection name <code>providerRoot</code> becomes <code>shellRoot</code>. Its verified executable is <code>/bin/zsh</code>; this proves the terminal shell, not the selected provider or model.</p>
-
-        <pre><code>type ProviderRunBinding = {
-  runId: string;
-  agentId: string;
-  terminal: SessionLocator;
-  provider: "claude" | "codex" | "grok" | "kimi" | "opencode";
-  model: string;
-  effort: string | null;
-  conversationId: string | null;
-  pid: number;
-  startToken: string;
-  foregroundProcessGroupId: number;
-  capabilityEpoch: number;
-  launchGrantId: string;
-  startedAt: string;
-  endedAt: string | null;
-};</code></pre>
-
-        <p>A manually launched foreground command is <code>unmanaged</code>. Hive must not adopt it by executable name. Adoption, if ever added, must be an explicit authorized operation that creates a new provider-run binding.</p>
       </div>
     </section>
 
     <section id="records">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">04</p><h2>Minimal durable records</h2></div>
-          <p>Reuse current agent, message, status, quota, memory, and git records. Add only the records below.</p>
+          <div><p class="section-label">04</p><h2>Durable communication records</h2></div>
+          <p><span class="status proven">PROVEN</span>SQLite rows retain operating identity and audit evidence independently of projected provider context.</p>
         </div>
-
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Record</th><th>Required content</th><th>Retention</th></tr></thead>
+            <thead><tr><th>Status</th><th>Record</th><th>Stored fields and semantics</th><th>Evidence</th></tr></thead>
             <tbody>
-              <tr><td><strong>ProviderRun</strong></td><td>The binding above plus lifecycle state and exit reason</td><td>For the Hive instance audit lifetime</td></tr>
-              <tr><td><strong>MessageAttempt</strong></td><td>message ID, expected run ID, terminal generation, expected foreground identity, attempt time, outcome, terminal receipt</td><td>With the message</td></tr>
-              <tr><td><strong>ActivitySnapshot</strong></td><td>Latest bounded projection, source cursors, completeness, evidence references, and provenance</td><td>Replace in place; retain snapshots cited by a handoff</td></tr>
-              <tr><td><strong>HandoffBundle</strong></td><td>Source run, reason, exact task/work/message/memory/output references, measured state, optional summary, and target pickup state</td><td>Until task completion and branch disposition</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>ProviderRun</code></td><td>The binding in §03 plus <code>running|exited</code> and exit reason.</td><td><code>src/schemas/provider-run.ts</code>; <code>src/daemon/db.ts: insertProviderRun, endProviderRun</code>; DB test named in §03.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>AgentMessage</code></td><td>Durable body, priority, intent, lifecycle timestamps, sequence, idempotency, epoch, diagnostic, and alert markers.</td><td><code>src/schemas/message.ts: AgentMessageSchema</code>; <code>test/daemon/db.test.ts — round-trips messages and delivery updates</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>MessageAttempt</code></td><td>Message, expected run, terminal generation, expected foreground identity, outcome, and frozen terminal receipt.</td><td><code>src/schemas/message-attempt.ts</code>; <code>test/daemon/db.test.ts — preserves a timed-out message attempt even if a late success arrives</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>ActivitySnapshot</code></td><td>Latest bounded projection with evidence references and process/output cursors.</td><td><code>src/schemas/provider-communication.ts: ActivitySnapshotSchema</code>; <code>test/daemon/activity-snapshot.test.ts</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>HandoffBundle</code> and pickup</td><td>Frozen task, run outcome, worktree, messages, explicit memory refs, activity evidence, summary, completeness, and one pickup.</td><td><code>src/schemas/handoff.ts</code>; <code>test/daemon/db.test.ts — persists one handoff per source run and records pickup without completing work</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>RunOutcome</code></td><td>Launch decision, provider run, provider/model/category, outcome, handoff, and interval.</td><td><code>src/schemas/run-outcome.ts: RunOutcomeSchema</code>; embedded and identity-checked by <code>src/daemon/handoff.ts: buildHandoffBundle</code>.</td></tr>
             </tbody>
           </table>
         </div>
-
-        <p>No separate content-object store is required for this rebuild. Existing message bodies, terminal retention, provider transcripts, memory IDs, commits, and worktree paths remain the source data. The handoff stores bounded references and digests.</p>
       </div>
     </section>
 
@@ -191,53 +254,55 @@
       <div class="shell">
         <div class="section-head">
           <div><p class="section-label">05</p><h2>Passive observation</h2></div>
-          <p>The Queen reads activity instead of asking agents for routine status. Observation must not create a provider turn.</p>
+          <p><span class="status proven">PROVEN</span>The snapshot composes sources; it does not make all sources equally authoritative.</p>
         </div>
-
-        <h3>Sources and authority</h3>
-        <ol>
-          <li><strong>Measured runtime:</strong> terminal generation, foreground process group, process state, and exit status.</li>
-          <li><strong>Measured repository state:</strong> branch, head, dirty paths, untracked paths, commits, and recorded test exits.</li>
-          <li><strong>Provider hooks or native events:</strong> the preferred structured activity signal when the adapter binds the event to the exact provider run.</li>
-          <li><strong>Provider transcript:</strong> durable retrospective evidence only when it is bound to the exact provider run/executor and conversation. Conversation binding alone is insufficient because two executors may write the same conversation.</li>
-          <li><strong>Terminal output:</strong> the universal fallback for all providers, identified by run ID and output range.</li>
-          <li><strong>Agent status report:</strong> explicit claimed phase, blocker, summary, decisions, and next action.</li>
-        </ol>
-
-        <pre><code>type ActivitySnapshot = {
-  agentId: string;
-  providerRunId: string | null;
-  observedAt: string;
-  terminalState: "present" | "lost" | "unknown";
-  providerState:
-    | "starting" | "running" | "stopped" | "exited"
-    | "shell-idle" | "unmanaged" | "unknown";
-  turnState: "idle" | "working" | "waiting" | "unknown";
-  phase: "planning" | "editing" | "testing" | "blocked" | "unknown";
-  summary: string | null;
-  evidence: EvidenceRef[];
-  providerEventThrough: string | null;
-  outputThrough: string;
-  completeness: "complete" | "gap" | "unknown";
-};</code></pre>
-
-        <h3>Projection rules</h3>
-        <ul>
-          <li>Strip terminal escape sequences and collapse redraw duplicates before summarization.</li>
-          <li>Never interpret terminal text as a tool call, control command, approval, or memory mutation.</li>
-          <li>Prefer deltas since the Queen’s last output cursor; do not repeatedly summarize full scrollback.</li>
-          <li>Return a bounded summary by default and evidence references on request.</li>
-          <li>Label output gaps. Do not summarize across a gap as though the history were complete.</li>
-          <li>Never attribute an observed effect to an agent unless the evidence binds both the effect and its cause to that exact provider run/executor. Shared conversation, worktree, or session identity proves location, not causation.</li>
-          <li>Redact known credential patterns before storing a summary. Raw output remains under the existing terminal-observation authorization.</li>
-          <li>Use deterministic extraction for commands, exits, paths, and test counts. Model-generated narrative is optional and labelled <code>inferred</code>.</li>
-          <li>A hook updates activity only when its run ID, provider session when present, and capability epoch match the active ProviderRun.</li>
-          <li>Duplicate events are idempotent. A late event may add evidence but cannot move a provider from a newer terminal-measured state back to an older state.</li>
-          <li>Hook failure is reported as degraded observation and immediately falls back to terminal/process evidence.</li>
-          <li>A quiet terminal is not proof of a stuck agent. It is only absence of new output.</li>
-        </ul>
-
-        <p>The current <code>hive_terminal_observe</code> tool remains a bounded diagnostic surface. The rebuild adds a Queen-facing fleet delta that reads projections; it does not grant the Queen unrestricted raw terminal content by default.</p>
+        <figure class="diagram">
+          <svg class="observe-diagram" viewBox="0 0 1080 470" role="img" aria-labelledby="observe-title observe-desc">
+            <title id="observe-title">Observation sources composing an ActivitySnapshot</title>
+            <desc id="observe-desc">Measured process, output, git, provider events, and agent reports feed fixed projection rules. Missing sources produce unknown or gap.</desc>
+            <defs><marker id="observe-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker></defs>
+            <rect class="box ok" x="32" y="40" width="240" height="62" rx="7"/><text x="50" y="68" font-size="14">sessiond inspection</text><text class="muted" x="50" y="88" font-size="11">terminal + foreground process</text>
+            <rect class="box ok" x="32" y="122" width="240" height="62" rx="7"/><text x="50" y="150" font-size="14">output observer</text><text class="muted" x="50" y="170" font-size="11">cursor + bytes + complete/gap</text>
+            <rect class="box ok" x="32" y="204" width="240" height="62" rx="7"/><text x="50" y="232" font-size="14">git path measurement</text><text class="muted" x="50" y="252" font-size="11">branch-local changed paths</text>
+            <rect class="box ok" x="32" y="286" width="240" height="62" rx="7"/><text x="50" y="314" font-size="14">ProviderEvent rows</text><text class="muted" x="50" y="334" font-size="11">exact run + epoch binding</text>
+            <rect class="box ok" x="32" y="368" width="240" height="62" rx="7"/><text x="50" y="396" font-size="14">authenticated status</text><text class="muted" x="50" y="416" font-size="11">claimed phase + summary</text>
+            <rect class="box ok" x="398" y="116" width="280" height="244" rx="7"/>
+            <text x="422" y="148" font-size="16">buildActivitySnapshot</text>
+            <text x="422" y="184" font-size="12">process determines providerState</text>
+            <text x="422" y="210" font-size="12">latest event determines turnState</text>
+            <text x="422" y="236" font-size="12">status maps claimed phase</text>
+            <text x="422" y="262" font-size="12">status summary wins; else terminal tail</text>
+            <text x="422" y="288" font-size="12">ANSI + known secrets removed</text>
+            <text x="422" y="314" font-size="12">missing source → unknown</text>
+            <text x="422" y="340" font-size="12">any observed gap → gap</text>
+            <rect class="box ok" x="806" y="164" width="240" height="150" rx="7"/>
+            <text x="830" y="197" font-size="16">ActivitySnapshot</text>
+            <text x="830" y="228" font-size="12">terminal/provider/turn/phase</text>
+            <text x="830" y="252" font-size="12">bounded summary</text>
+            <text x="830" y="276" font-size="12">evidence + high-waters</text>
+            <path class="arrow" d="M272 71 C340 71 340 150 398 150"/>
+            <path class="arrow" d="M272 153 H398"/>
+            <path class="arrow" d="M272 235 H398"/>
+            <path class="arrow" d="M272 317 H398"/>
+            <path class="arrow" d="M272 399 C340 399 340 330 398 330"/>
+            <path class="arrow" d="M678 238 H806"/>
+          </svg>
+          <figcaption><span class="status proven">PROVEN</span><code>src/daemon/activity-snapshot.ts: buildActivitySnapshot</code>. Tests: all three cases in <code>test/daemon/activity-snapshot.test.ts</code>.</figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Status</th><th>Source</th><th>Authority and projection</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Process and terminal inspection</td><td>Determines terminal presence and whether foreground is managed, shell-idle, unmanaged, or unknown. <code>HiveTerminalHostAdapter.projectInspection</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Provider events</td><td>Determine turn state only after normalization to an exact active run and epoch. A conversation ID may be bound, but conversation identity alone is not executor identity. <code>src/daemon/provider-events.ts: recordProviderHookEvent</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Authenticated status</td><td>Supplies the claimed phase and preferred summary; it remains a report, not process evidence. <code>src/daemon/activity-snapshot.ts: phase</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Terminal output fallback</td><td><code>observeSessiondOutput</code> returns retained output through a cursor; attach failure becomes empty text with <code>gap</code>. Snapshot fallback strips ANSI, deduplicates adjacent lines, redacts known tokens, and retains at most 200 characters of the last non-empty line.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Gap composition</td><td>Missing inspection or output gives <code>unknown</code>; an output or transcript gap gives <code>gap</code>. <code>src/daemon/activity-snapshot.ts: buildActivitySnapshot</code>.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td><code>hive_terminal_observe</code> in production</td><td>The MCP tool calls <code>SessionHost.capture()</code>, but production <code>SessiondHost</code> has no capture method. Tests supply a stub. Servicing it requires a production active-screen renderer/capture that returns bounded visible rows, distinct from raw PTY output retention. <code>src/daemon/server.ts: hive_terminal_observe</code>; <code>src/daemon/session-host/sessiond-host.ts: SessiondHost</code>.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td>Fleet observation passivity</td><td>Prove by observing a live fleet while comparing input-claim, message, provider-turn, and quota ledgers before and after; all must remain unchanged except observation audit/projection state.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -245,59 +310,74 @@
       <div class="shell">
         <div class="section-head">
           <div><p class="section-label">06</p><h2>Message delivery</h2></div>
+          <p><span class="status proven">PROVEN</span>Durability, terminal submission, vendor receipt, and semantic application are separate states.</p>
         </div>
+        <figure class="diagram">
+          <svg class="delivery-diagram" viewBox="0 0 1100 380" role="img" aria-labelledby="delivery-title delivery-desc">
+            <title id="delivery-title">Message delivery state machine and atomic write boundary</title>
+            <desc id="delivery-desc">A queued message creates an attempt, then sessiond checks the exact foreground in the same host transaction that orders bytes. A decline remains queued. A successful write becomes injected, then acknowledgement or a later boundary makes it applied.</desc>
+            <defs><marker id="delivery-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker></defs>
+            <rect class="box ok" x="32" y="54" width="180" height="78" rx="7"/><text x="58" y="87" font-size="17">queued</text><text class="muted" x="58" y="111" font-size="11">durable; not delivered</text>
+            <rect class="box ok" x="284" y="34" width="300" height="180" rx="7"/>
+            <text x="308" y="66" font-size="16">sessiond INPUT_SUBMIT</text>
+            <text x="308" y="94" font-size="12">1. validate claim + generation</text>
+            <text x="308" y="118" font-size="12">2. read foreground pgid</text>
+            <text x="308" y="142" font-size="12">3. re-read pid start token + pgid</text>
+            <text x="308" y="166" font-size="12">4. order bytes through arbiter</text>
+            <text x="308" y="195" font-size="11" fill="#63e6be">atomic host transaction boundary</text>
+            <rect class="box ok" x="664" y="54" width="180" height="78" rx="7"/><text x="690" y="87" font-size="17">injected</text><text class="muted" x="690" y="111" font-size="11">transport accepted</text>
+            <rect class="box ok" x="884" y="54" width="184" height="78" rx="7"/><text x="904" y="87" font-size="17">applied</text><text class="muted" x="904" y="111" font-size="11">receipt boundary</text>
+            <rect class="box warn" x="284" y="264" width="300" height="78" rx="7"/><text x="308" y="296" font-size="15">attempt outcome + receipt</text><text class="muted" x="308" y="320" font-size="11">decline/failure returns to queued</text>
+            <path class="arrow" d="M212 93 H284"/>
+            <path class="arrow" d="M584 93 H664"/>
+            <path class="arrow" d="M844 93 H884"/>
+            <path class="arrow" d="M434 214 V264"/>
+            <path class="arrow dash" d="M284 303 C180 303 122 234 122 132"/>
+            <text class="muted" x="650" y="165" font-size="11">does not prove model read,</text>
+            <text class="muted" x="650" y="183" font-size="11">acknowledgement, or stop</text>
+          </svg>
+          <figcaption><span class="status proven">PROVEN</span>Atomic boundary: <code>native/sessiond/src/host_core.zig: submitInput</code>. Native command result: <code>native/sessiond/test.sh</code>, 53/53 tests passed, including <code>A3 live drill: automation never writes inside a human composition</code>. TypeScript race proof: <code>test/daemon/orchestrator-lifecycle.test.ts</code>.</figcaption>
+        </figure>
 
-        <h3>Message state</h3>
-        <pre><code>queued → submitted → observed → applied
-   └──────────────→ failed
-
-queued     durable; the provider has not received it
-submitted  sessiond atomically wrote it to the expected provider run
-observed   a provider boundary or transcript proves the provider saw it
-applied    the agent explicitly acknowledged it or a typed action proves effect
-failed     the attempt ended; the message may remain queued for an explicit retry</code></pre>
-
-        <p>Existing message rows remain the durable queue. <code>MessageAttempt</code> records each transport attempt so a timeout cannot be rewritten into success.</p>
-        <p>A correlated <code>UserPromptSubmit</code>, message, or turn-start event may advance <code>submitted</code> to <code>observed</code>. A generic idle, stop, or later tool event is not sufficient unless it carries the exact message ID or input digest. Hooks never advance a message to <code>applied</code> by themselves.</p>
-
-        <h3>Atomic terminal submission</h3>
-        <pre><code>writeAutomated({
-  terminal,
-  expectedForeground: {
-    providerRunId,
-    pid,
-    startToken,
-    processGroupId
-  },
-  bytes,
-  idempotencyKey
-})</code></pre>
-
-        <p>sessiond must verify the terminal generation and foreground identity immediately before committing bytes to the PTY. A mismatch returns <code>foreground-changed</code> and writes zero bytes. The caller leaves the message queued. A daemon-side preflight alone is insufficient because the provider can exit between inspection and write.</p>
-
-        <h3>Priority semantics</h3>
+        <h3>Lifecycle state</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Priority</th><th>Behavior</th><th>Fallback</th></tr></thead>
+            <thead><tr><th>Status</th><th>State</th><th>Exact meaning</th></tr></thead>
             <tbody>
-              <tr><td><code>normal</code></td><td>Deliver at the next proven idle/input-ready boundary.</td><td>Remain queued.</td></tr>
-              <tr><td><code>steer</code></td><td>Non-destructive guidance at a provider-supported mid-turn boundary.</td><td>Degrade to normal and report the degradation.</td></tr>
-              <tr><td><code>urgent</code></td><td>Cancel the exact in-flight provider turn, then deliver when input is ready.</td><td>Fail if the run identity or cancel boundary is unknown.</td></tr>
-              <tr><td><code>critical</code></td><td>Revoke authority first; execute the typed control intent; deliver to the surviving or replacement run.</td><td>Fail closed and preserve evidence.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>queued</code></td><td>The message row exists. No transport receipt has promoted it. It may be waiting for idle, a tool boundary, input ownership, a live run, or retry.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>injected</code></td><td>The terminal host returned a written receipt, the native provider control accepted delivery, or the root protocol accepted input. It does not prove the model read the content, complied, acknowledged, or stopped.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>agent-acknowledged</code></td><td>The addressed agent called acknowledgement with the required epoch. This may still precede application for non-critical messages.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>applied</code></td><td>An explicit applied acknowledgement, critical acknowledgement, root inbox consumption, or a recipient-owned turn/transcript boundary after injection closed the receipt loop. <code>src/daemon/delivery.ts: acknowledge, reconcileInjected</code>.</td></tr>
             </tbody>
           </table>
         </div>
 
-        <p>A human composer/input lease blocks automated terminal delivery. Native provider transport may proceed only if it is independently bound to the same provider run and cannot alter the human draft.</p>
+        <h3>Atomic run-bound write and attempts</h3>
+        <p class="claim proven-border"><span class="status proven">PROVEN</span><code>MessageDelivery.deliver</code> records <code>MessageAttempt</code>, passes terminal generation plus PID/start-token/process-group expectation, and wraps text in bracketed paste plus carriage return. <code>HostCore.submitInput</code> re-reads the PTY foreground group and the exact PID identity immediately before the arbiter orders bytes. A mismatch returns <code>foreground-changed</code> with no byte range; the row remains queued.</p>
+        <p class="claim proven-border"><span class="status proven">PROVEN</span>Attempt outcomes are <code>pending</code>, <code>written</code>, <code>foreground-changed</code>, <code>input-busy</code>, <code>timeout</code>, or <code>unknown</code>. A late result cannot rewrite a settled timeout. <code>src/schemas/message-attempt.ts</code>; DB timeout test in §04.</p>
 
-        <h3>Routine message batching</h3>
+        <h3>Priority by vendor</h3>
+        <div class="table-wrap matrix">
+          <table>
+            <thead><tr><th>Vendor</th><th>Status</th><th>Normal</th><th>Steer</th><th>Urgent</th><th>Critical</th></tr></thead>
+            <tbody>
+              <tr><td>Claude</td><td><span class="status proven">PROVEN</span></td><td>Waits for opening or idle boundary; terminal submission.</td><td>Hook tool boundary permits non-cancelling terminal injection.</td><td>Tool-boundary injection requests interrupt; in-flight reasoning is cancelled.</td><td>Epoch revoked first; typed control uses verified provider control/recovery, not a normal batch.</td></tr>
+              <tr><td>Codex</td><td><span class="status proven">PROVEN</span></td><td>Native app-server starts a turn when idle.</td><td><code>turn/steer</code> with active-turn precondition.</td><td><code>turn/interrupt</code>, then starts a replacement turn; cancelled work is not resumed.</td><td>Epoch revoked first; native cancel exists and typed control recovery is durable.</td></tr>
+              <tr><td>Grok</td><td><span class="status proven">PROVEN</span></td><td>Terminal submission at opening/idle; transcript activity is later receipt evidence.</td><td>No tool hook or native steer; remains queued until a later turn/idle wake.</td><td>No tool boundary; cannot preempt a running turn through the message path.</td><td>Epoch revocation and verified process control exist; native cancel does not.</td></tr>
+              <tr><td>Kimi</td><td><span class="status proven">PROVEN</span></td><td>Universal run-bound terminal path.</td><td>No structured tool boundary; degrades to later turn delivery.</td><td>No structured tool boundary; no mid-turn preemption proof.</td><td>Epoch revocation and verified process control exist; native cancel does not.</td></tr>
+              <tr><td>OpenCode</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Adapter code has terminal fallback, but provider is disabled and cannot be launched.</td><td>No plugin boundary; degrades to later turn delivery if enabled.</td><td>No plugin boundary; no mid-turn preemption proof.</td><td>Generic epoch/process control code exists, but live provider behavior cannot be proved while disabled.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="source"><span class="status proven">PROVEN</span>Structural sources: <code>src/daemon/delivery.ts: send, flushQueued, flushSteer, flushUrgent, reportsTurnEvents</code>; <code>src/adapters/tools/codex-app-server.ts: deliver, steer, interruptAndStart</code>. Proof: <code>test/daemon/control-messages.test.ts</code> and <code>test/adapters/tools/codex-app-server.test.ts — initializes, starts a thread and turn, steers with the active turn precondition, and interrupts</code>.</p>
+
+        <h3>Batching and first turn</h3>
         <ul>
-          <li>Normal messages queued for the same provider run and input-ready boundary share one bounded provider turn.</li>
-          <li>The batch preserves message order, message IDs, sender identity, and an independent delivery state for every message. Batching does not merge, rewrite, deduplicate, or acknowledge message meaning.</li>
-          <li>Each bounded message preview carries a reference to its exact durable body. The recipient pulls the full body only when the preview is insufficient.</li>
-          <li><code>steer</code>, <code>urgent</code>, and <code>critical</code> never hide inside a normal batch. Their provider-boundary and authority semantics remain independent.</li>
+          <li><span class="status proven">PROVEN</span>At most eight normal messages share one projection capped at 8 KiB UTF-8. Order follows durable sequence; every source keeps its own ID, SHA-256, retrieval reference, attempt, and lifecycle row. <code>src/daemon/context-projection.ts: buildNormalMessageBatchProjection</code>.</li>
+          <li><span class="status proven">PROVEN</span>Steer, urgent, critical, and memory-trigger commands cannot enter a normal batch. Tests: <code>test/daemon/context-economy.test.ts — control priorities cannot enter a normal batch</code>.</li>
+          <li><span class="status proven">PROVEN</span>The first queued normal message is the general opening-turn mechanism: a run with no prior <code>MessageAttempt</code> may receive it while the agent row is still working. Test: <code>test/daemon/orchestrator-lifecycle.test.ts — a working provider receives its first queued message as its opening turn</code>.</li>
+          <li><span class="status proven">PROVEN</span>Kimi receives first and later Hive messages through this terminal path. No Hive delivery code invokes <code>kimi web</code>. The structured-source reason appears in §10.</li>
         </ul>
-        <p>Kimi kickoff is not a special case: it is the agent's first delivery. The brief rides the AGENTS.md system context at launch (context never initiates a turn — verified: a freshly spawned kimi agent idles until spoken to), and the queued "begin" message is submitted as a real user turn through the same atomic terminal path used for later messages, bound to the exact foreground ProviderRun. Hive must never POST a prompt or steer request to a TUI-bound Kimi session: <code>kimi web</code> creates a second executor that can mutate the shared transcript while the TUI remains idle. Transcript mutation alone is not delivery evidence.</p>
       </div>
     </section>
 
@@ -305,57 +385,56 @@ failed     the attempt ended; the message may remain queued for an explicit retr
       <div class="shell">
         <div class="section-head">
           <div><p class="section-label">07</p><h2>Process control</h2></div>
-          <p>Control operates on the foreground provider group by default. Terminal teardown is separate.</p>
+          <p><span class="status proven">PROVEN</span>Provider control and terminal teardown are different operations with different targets.</p>
         </div>
-
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Operation</th><th>Target</th><th>Required proof</th><th>Terminal result</th></tr></thead>
+            <thead><tr><th>Status</th><th>Operation</th><th>Implementation and proof</th><th>Result</th></tr></thead>
             <tbody>
-              <tr><td><code>pause</code></td><td>Exact provider foreground process group</td><td>PID, start token, group identity, and stopped readback</td><td>zsh remains present</td></tr>
-              <tr><td><code>resume</code></td><td>Same stopped process group</td><td>Same run identity and running readback</td><td>unchanged</td></tr>
-              <tr><td><code>cancel-turn</code></td><td>Exact provider run through native cancel or verified foreground input</td><td>Provider-specific cancellation evidence</td><td>provider remains or returns to input</td></tr>
-              <tr><td><code>stop-provider</code></td><td>Exact provider foreground process group</td><td>Exit/reap evidence and shell-idle readback</td><td>zsh remains present</td></tr>
-              <tr><td><code>terminate-terminal</code></td><td>Whole session process tree</td><td>Session exit, reap, and survivor report</td><td>terminal ends</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Pause provider</td><td>Verify managed foreground, re-read leader token, signal <code>SIGSTOP</code> to the provider group, poll stopped state. Test: <code>HiveTerminalHostAdapter — pauses, resumes, and stops only the freshly verified provider group while zsh survives</code>.</td><td>Provider stopped; zsh retained.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Resume provider</td><td>Same verification, <code>SIGCONT</code>, running readback. The production signal-path test suspends and resumes a real process group.</td><td>Same run continues.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Stop provider</td><td><code>SIGTERM</code>, bounded readback, then verified <code>SIGKILL</code> if needed; closes the provider run only after stopped evidence.</td><td>Provider exits; zsh becomes shell-idle.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Terminate terminal</td><td>Neutral host terminates <code>process-tree</code>, reports exit/reap/survivors. Test: <code>HiveTerminalHostAdapter — reports a terminated process tree as closed before its host is reaped</code>.</td><td>Whole terminal session ends.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Reject recycled identity before signal</td><td>Immediate token drift produces no signal. Test: <code>HiveTerminalHostAdapter — does not signal a recycled provider group after the immediate token re-read drifts</code>.</td><td>Fail closed.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td>Read/signal atomicity</td><td>It is not atomic: <code>signalVerifiedGroup</code> re-reads identity, then calls <code>process.kill(-pgid,...)</code>. Worst case: after the re-read, the run exits and an unrelated process is created with a PID equal to the recorded process-group ID and becomes that group leader. Proving containment requires a deterministic reuse-at-signal fixture for group signaling; the current token-drift test changes identity before the signal call.</td><td>Residual wrong-group signal is possible.</td></tr>
             </tbody>
           </table>
         </div>
-
-        <p>The terminal host contract names <code>foreground-group</code>, <code>session-members</code>, and <code>process-tree</code> targets, but the current sessiond <code>foreground-group</code> termination resolves the group from the durable creation record. In a zsh-hosted provider session that record names the shell group, not the later provider job. Provider control therefore re-verifies the live foreground PID, start token, and group immediately before signaling it; this narrows but does not make the read-then-signal window atomic. The residual worst case is process-group recycling after the re-read: another process may be created with a PID equal to the recorded group and become its leader, for example a freshly forked zsh belonging to a different agent. Terminal teardown continues to use <code>process-tree</code>. Capability revocation precedes any critical stop or replacement.</p>
+        <p class="source"><span class="status proven">PROVEN</span><code>src/daemon/session-host/hive-terminal-host.ts: pauseProvider, resumeProvider, stopProvider, signalVerifiedGroup</code>. The terminal host's creation-record foreground target is not used for provider control; live foreground verification supplies the provider group.</p>
       </div>
     </section>
 
     <section id="quota">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">08</p><h2>Quota lifecycle integration</h2></div>
-          <p>Quota detects and classifies exhaustion. Communication executes the run-safe response. The router is consulted only when a replacement model is needed.</p>
+          <div><p class="section-label">08</p><h2>Quota drain, hold, and resume</h2></div>
+          <p><span class="status proven">PROVEN</span>The drain handler classifies exhaustion and chooses hold, preservation, or handoff notification.</p>
         </div>
-
-        <pre><code>type QuotaDrainEvent = {
-  eventId: string;
-  providerRunId: string;
-  provider: CapabilityProvider;
-  poolId: string | null;
-  detectedAt: string;
-  resetsAt: string | null;
-  confidence: "measured" | "last-known" | "vendor-error";
-};</code></pre>
-
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Condition</th><th>Communication action</th><th>Router interaction</th></tr></thead>
-            <tbody>
-              <tr><td>Reset is within the quota policy’s hold window</td><td>Pause or mark held at a safe boundary; retain the provider run and terminal; schedule one idempotent resume wake.</td><td>None</td></tr>
-              <tr><td>Reset is outside the hold window</td><td>Freeze the source run, build a handoff, and stop the source provider after the handoff evidence is durable.</td><td>Request one replacement for the same task, excluding the drained pool until its reset.</td></tr>
-              <tr><td>Unmetered provider reports quota/billing exhaustion</td><td>Build the same handoff; there is no reset-based hold without a reset time.</td><td>Request a replacement and report the source as vendor-error unavailable.</td></tr>
-              <tr><td>No replacement can launch</td><td>Preserve the branch and handoff bundle; write a bounded episodic memory pointing to them.</td><td>Record <code>no-candidate</code>; do not invent a model.</td></tr>
-              <tr><td>Reset time passes</td><td>Revalidate quota, provider-run identity, capability epoch, and foreground state before the resume wake.</td><td>None unless the original run cannot resume.</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <p>Quota state does not travel as prose to the provider. The hold reason, reset time, and source reading remain typed daemon state. Only the bounded “continue after reset” instruction crosses the provider boundary.</p>
+        <figure class="diagram">
+          <svg class="quota-diagram" viewBox="0 0 1100 420" role="img" aria-labelledby="quota-title quota-desc">
+            <title id="quota-title">Quota drain and handoff flow</title>
+            <desc id="quota-desc">A drained run with a near reset is held and revalidated before one wake. A distant or unmetered drain freezes and persists a handoff, stops the provider, and notifies the root. Automatic replacement is absent.</desc>
+            <defs><marker id="quota-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker></defs>
+            <rect class="box ok" x="32" y="166" width="180" height="72" rx="7"/><text x="58" y="197" font-size="16">drain observed</text><text class="muted" x="58" y="220" font-size="11">meter or vendor error</text>
+            <rect class="box ok" x="292" y="54" width="220" height="92" rx="7"/><text x="316" y="87" font-size="15">reset within 1 hour</text><text x="316" y="112" font-size="12">pause + held record</text><text x="316" y="132" font-size="12">retain terminal/run</text>
+            <rect class="box ok" x="604" y="42" width="234" height="116" rx="7"/><text x="628" y="75" font-size="15">at reset sweep</text><text x="628" y="100" font-size="12">refresh provider quota</text><text x="628" y="122" font-size="12">re-read run + epoch</text><text x="628" y="144" font-size="12">resume + idempotent wake</text>
+            <rect class="box ok" x="292" y="258" width="220" height="108" rx="7"/><text x="316" y="291" font-size="15">distant / no reset</text><text x="316" y="316" font-size="12">fence → pause → measure</text><text x="316" y="338" font-size="12">persist → stop provider</text><text x="316" y="358" font-size="12">retain terminal/worktree</text>
+            <rect class="box warn" x="604" y="266" width="234" height="92" rx="7"/><text x="628" y="299" font-size="15">durable root notice</text><text x="628" y="324" font-size="12">provider / pool / reset</text><text x="628" y="346" font-size="12">handoff id</text>
+            <rect class="box bad" x="894" y="266" width="174" height="92" rx="7"/><text x="916" y="299" font-size="15">replacement</text><text x="916" y="324" font-size="12">not automatic</text><text x="916" y="346" font-size="12">selection-owned</text>
+            <path class="arrow" d="M212 188 C250 170 260 112 292 100"/>
+            <path class="arrow" d="M512 100 H604"/>
+            <path class="arrow" d="M212 216 C250 230 260 302 292 312"/>
+            <path class="arrow" d="M512 312 H604"/>
+            <path class="arrow dash" d="M838 312 H894"/>
+          </svg>
+          <figcaption><span class="status proven">PROVEN</span>Hold and handoff seams are covered by <code>test/daemon/drain-handler.test.ts</code> and <code>test/daemon/handoff.test.ts</code>. <span class="status absent">NOT IMPLEMENTED</span>The dashed replacement edge does not exist.</figcaption>
+        </figure>
+        <ul>
+          <li><span class="status proven">PROVEN</span>A measured reset within one hour pauses the exact run and stores <code>held</code>, reason, reset time, and held run ID. Test: <code>§R4: a drain resetting within the hour holds the agent, and the sweep pokes it past the reset</code>.</li>
+          <li><span class="status proven">PROVEN</span>Resume first refreshes provider quota, then re-reads held state, active run ID, capability epoch, and verified foreground control. The wake uses an idempotency key; overlapping sweeps produce one durable wake. Tests: the two near-reset tests in <code>test/daemon/drain-handler.test.ts</code>.</li>
+          <li><span class="status proven">PROVEN</span>A distant reset or an unmetered rate-limit error enters the handoff seam. If every route is drained, the handler can wait for the nearest five-hour reset or retain work and write episodic memory. Tests: the distant, all-drained, and unmetered cases in <code>test/daemon/drain-handler.test.ts</code>.</li>
+          <li><span class="status absent">NOT IMPLEMENTED</span>Automatic replacement excluding the drained pool is absent. <code>replaceWithHandoff</code> emits a durable notice with provider, pool, reset time, and handoff ID. Implementing replacement requires quota/selection ownership to enforce that exclusion and supply a replacement launch decision.</li>
+        </ul>
       </div>
     </section>
 
@@ -363,277 +442,100 @@ failed     the attempt ended; the message may remain queued for an explicit retr
       <div class="shell">
         <div class="section-head">
           <div><p class="section-label">09</p><h2>Handoff construction</h2></div>
-          <p>A handoff is a frozen evidence bundle plus a bounded summary. It is not a copied terminal transcript.</p>
+          <p><span class="status proven">PROVEN</span>The handoff is a durable measured bundle. Its summary is one field, not the authority for the bundle.</p>
         </div>
-
-        <pre><code>type HandoffBundle = {
-  handoffId: string;
-  sourceRunId: string;
-  reason: "quota-drain" | "capability-wall" | "crash" | "operator";
-  originalTaskRef: ExactContentRef;
-  requirementRefs: ExactContentRef[];
-  branch: { name: string; base: string; head: string };
-  worktree: {
-    dirtyPaths: MeasuredPath[];
-    untrackedPaths: MeasuredPath[];
-    commits: MeasuredCommit[];
-  };
-  messagesThrough: number;
-  pendingMessageIds: string[];
-  memoryRefs: MemoryRef[];
-  activity: {
-    providerEventRefs: EvidenceRef[];
-    terminalOutputRanges: OutputRangeRef[];
-    providerTranscriptRefs: EvidenceRef[];
-    statusReportRef: EvidenceRef | null;
-  };
-  summary: {
-    goal: string;
-    done: string[];
-    remaining: string[];
-    decisions: string[];
-    failedApproaches: string[];
-    uncertainty: string[];
-    nextAction: string | null;
-    provenance: "agent" | "generated" | "fallback";
-  };
-  completeness: "complete" | "partial" | "unknown";
-  createdAt: string;
-};</code></pre>
-
-        <h3>Freeze and build sequence</h3>
-        <ol>
-          <li>Fence new writes for the source capability epoch.</li>
-          <li>Stop or pause the exact provider foreground group at a known boundary.</li>
-          <li>Record every high-water the source actually exposes. Claude and Codex have durable normalized <code>provider_events</code>; terminal output has a real cursor and gap flag. Kimi has no structured source by deliberate design: <code>wire.jsonl</code> cannot distinguish entries written by its TUI from entries written by <code>kimi web</code>, so its provider-transcript references remain empty rather than inferred.</li>
-          <li>Measure branch, head, commits, dirty paths, untracked paths, and recorded tests.</li>
-          <li>Collect the original task, later requirements, durable messages, memory articles explicitly named by the latest authenticated status evidence, and latest agent status. Hive does not record per-agent memory-acceptance receipts; an absent association stays unknown rather than inferred, while replacement spawn and pull-based recall continue to provide task-matched memory.</li>
-          <li>Generate a bounded summary from those sources. Store its provenance and evidence references.</li>
-          <li>Persist the handoff before stopping the source terminal or starting the replacement.</li>
-          <li>Pass the exact task and handoff ID to the replacement launch. The replacement verifies the branch and evidence before writing.</li>
-        </ol>
-
-        <h3>Failure behavior</h3>
-        <ul>
-          <li>If the source provider is already dead, continue from terminal retention, provider transcript, messages, memory, and git state.</li>
-          <li>If generated summarization fails, use the latest agent status plus a deterministic bounded terminal tail and mark provenance <code>fallback</code>.</li>
-          <li>If terminal output has a gap, mark the handoff partial; do not block preservation.</li>
-          <li>If worktree measurement fails, preserve the worktree and mark completeness unknown. Never delete it.</li>
-          <li>A replacement acknowledgement records pickup; it does not mark the task complete.</li>
-        </ul>
+        <pre><code>HandoffBundle {
+  handoffId, sourceRunId, runOutcome, reason,
+  originalTaskRef, requirementRefs,
+  branch { name, base, head },
+  worktree { dirtyPaths, untrackedPaths, commits },
+  messagesThrough, pendingMessageIds,
+  memoryRefs[], activity {
+    providerEventRefs[], terminalOutputRanges[],
+    providerTranscriptRefs[], statusReportRef
+  },
+  summary, completeness, createdAt
+}</code></pre>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Status</th><th>Property</th><th>Implemented behavior</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Freeze/build order</td><td><code>replaceWithHandoff</code> revokes the source epoch, attempts to pause the exact run, reads retained output, measures worktree state, then builds and inserts the bundle. It stops the provider only when the pause succeeded. Test: <code>the replacement seam persists before stop and defers routing, then pickup leaves work open</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Task and requirements</td><td>The exact task content and digest are embedded; later root-to-agent instruction messages become retrieval references. <code>src/daemon/handoff.ts: buildHandoffBundle</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Message boundary</td><td><code>messagesThrough</code> is the maximum durable addressed-message sequence; pending IDs are addressed messages not in <code>applied</code>. This is not a provider transcript high-water.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Memory</td><td>Only memory articles explicitly named in the latest authenticated status <code>evidenceRefs</code> become <code>memoryRefs</code>. There is no per-agent memory acceptance/association record. <code>src/daemon/handoff.ts: explicitMemoryRefs</code>.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Provider transcript references</td><td>The bundle always writes <code>providerTranscriptRefs: []</code>. Implementing them requires a provider source cursor attributable to the exact executor, not merely a conversation.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Failure behavior</td><td>Missing worktree measurement gives <code>unknown</code>; missing/gapped output gives partial or unknown; summarizer failure uses authenticated status plus a redacted terminal tail capped at 2,000 bytes with <code>fallback</code> provenance. Tests: dead-source, gap/summarizer, and measurement-failure cases in <code>test/daemon/handoff.test.ts</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Pickup</td><td>The replacement must have the exact task digest, cannot be the source, and wins a one-time pickup update. Pickup returns the bundle and does not close the task. <code>src/daemon/server.ts: hive_pickup_handoff</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
     <section id="providers">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">10</p><h2>Provider capability contract</h2></div>
-          <p>Use hooks or native events wherever the provider supports them. The universal fallback remains terminal observation plus foreground process identity.</p>
+          <div><p class="section-label">10</p><h2>Provider capability descriptors and sources</h2></div>
+          <p><span class="status proven">PROVEN</span>The descriptor is exhaustive over the provider union; the structured source behind it is vendor-specific.</p>
         </div>
-
-        <div class="table-wrap">
+        <p class="claim proven-border"><span class="status proven">PROVEN</span><code>ProviderCommunicationCapabilities</code> records provider, event source, native delivery, tool/turn boundaries, transcript reader, native cancel, and conversation resume. <code>test/adapters/tools/agent-factory.test.ts — every provider has one honest communication descriptor</code> covers all providers in <code>CAPABILITY_PROVIDERS</code>.</p>
+        <div class="table-wrap matrix">
           <table>
-            <thead><tr><th>Provider</th><th>Structured source</th><th>Hive integration decision</th><th>Required fallback</th></tr></thead>
+            <thead><tr><th>Vendor</th><th>Status</th><th>Structured source actually supplied</th><th>Normalized activity and limits</th></tr></thead>
             <tbody>
-              <tr><td>Claude</td><td>Lifecycle hooks and bound transcript</td><td>Keep the existing hook path; emit normalized ProviderEvents.</td><td>Terminal output and process state</td></tr>
-              <tr><td>Codex</td><td>Hooks/app-server events and bound rollout</td><td>Keep the existing structured path; emit normalized ProviderEvents.</td><td>Terminal output and process state</td></tr>
-              <tr><td>Grok</td><td>Native project/plugin lifecycle hooks and session <code>updates.jsonl</code> telemetry</td><td>Write only Hive-owned <code>.grok/hooks/*.json</code> files in the launched worktree and normalize both hooks and the existing update stream. Detect and report project trust with <code>grok inspect</code>, verified live in both trusted and untrusted states; never write <code>~/.grok/trusted_folders.toml</code> or any vendor trust or permission config. When untrusted, run normally, report that hooks await user trust, and observe through <code>updates.jsonl</code> plus terminal and process state. Hook firing remains documentation-only and unverified until a live turn is possible after the quota reset at 2026-07-26T17:18Z.</td><td>Terminal output and process state</td></tr>
-              <tr><td>Kimi</td><td>None</td><td>Use the universal fallback. Session <code>wire.jsonl</code> carries no executor identity: the TUI and <code>kimi web</code> both write <code>origin: { kind: "user" }</code>, and tool and step entries inherit the same ambiguity. Atomic terminal submission remains primary. NO Hive-managed hooks — Kimi reads one user-level <code>$KIMI_CODE_HOME/config.toml</code>, has no project-level configuration, and does not merge global and project hooks. Its hooks execute automatically and fail-open, but carry session identity rather than provider-run/executor identity; Hive must not write them.</td><td>Terminal output and process state</td></tr>
-              <tr><td>OpenCode</td><td>JavaScript/TypeScript plugin events</td><td>Add a Hive-managed project plugin that emits normalized ProviderEvents.</td><td>Terminal output and process state</td></tr>
+              <tr><td>Claude</td><td><span class="status proven">PROVEN</span></td><td>Hive-installed lifecycle hooks; Claude transcript telemetry reader.</td><td>Hook events normalize to exact active run/epoch and optional conversation. Transcript supplies retrospective context/model/tool evidence when keyed by tool session. Test: <code>test/daemon/provider-events.test.ts — binds Claude and Codex events to the exact active run and conversation</code>.</td></tr>
+              <tr><td>Codex</td><td><span class="status proven">PROVEN</span></td><td>Native app-server events/delivery plus rollout reader.</td><td>Turn and tool boundaries normalize through the same run binding; native steer/cancel are available. App-server protocol test named in §06.</td></tr>
+              <tr><td>Grok</td><td><span class="status proven">PROVEN</span></td><td>Session <code>updates.jsonl</code> reader supplies activity freshness, model/context/tool telemetry.</td><td>The reader is proved by <code>test/daemon/tool-telemetry.test.ts — counts grok calls off the session's real updates.jsonl</code>. It does not create normalized <code>ProviderEvent</code> rows.</td></tr>
+              <tr><td>Grok hooks</td><td><span class="status unproven">UNPROVEN</span></td><td>Project hook configuration exists, but live hook firing has not been observed because the available quota was exhausted.</td><td>Prove with a live Grok launch and one turn that produces run, turn, and tool callbacks bound to the minted run and epoch.</td></tr>
+              <tr><td>Grok normalization</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>The snapshot path contains no Grok event normalizer; it intentionally reaches the universal fallback.</td><td>Implementation requires a verified Grok hook/event source mapped through <code>ProviderEventSchema</code> and rejected on wrong run/epoch. <code>src/daemon/server.ts</code> activity construction contains the empty transcript-source branch.</td></tr>
+              <tr><td>Kimi</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>No structured event or transcript reader; terminal/process/git/status fallback is used.</td><td><code>wire.jsonl</code> records a user-origin turn identically for the running TUI and a separate <code>kimi web</code> executor. No entry can be bound to the executor that produced it, so conversation/session binding is insufficient. Test: <code>test/daemon/activity-snapshot.test.ts — Kimi shared transcript entries never claim an executor turn</code>.</td></tr>
+              <tr><td>OpenCode</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>No Hive plugin and no transcript reader. The provider is disabled, so it cannot be launched or proved.</td><td>The generic adapter and terminal fallback code exist. Implementation requires enabling the provider, adding a project-scoped plugin that emits executor-bound lifecycle events, normalizing them, and live-testing launch and callbacks. <code>src/adapters/tools/agents/opencode.ts</code>.</td></tr>
             </tbody>
           </table>
         </div>
-
-        <p>Trust is a permission problem; per-run binding is a capability problem. Grok's hooks are project-scoped, so Hive owns its <code>.grok/hooks/</code> file and supplies run binding through the hook process environment or arguments. User-granted trust is the only remaining barrier, making those hooks a legitimate opt-in evidence enhancement. Trust grants cascade to subdirectories, so a user grant on a worktrees parent covers future worktrees beneath it as a one-time user action, not a per-agent Hive mutation. Kimi has no project-scoped hook equivalent and no hook trust gate: its user-global hooks run automatically and fail-open, but have nowhere for Hive to inject run identity. A vendor session ID is not a provider-run/executor ID and cannot distinguish a TUI from a web executor writing the same session, as the transcript authority rule in §5 requires. The same missing executor identity makes <code>wire.jsonl</code> unusable for turn or tool attribution. A user can grant Grok's missing permission; nobody can grant Kimi's missing identity. Kimi therefore uses the universal terminal/process fallback.</p>
-        <p>Using <code>KIMI_CODE_HOME</code> to manufacture per-run hook scope is explicitly rejected. The variable relocates the entire vendor data root, including OAuth credentials, sessions, logs, and plugins; it is not a project overlay or hook-only redirect. An isolated home would either leave the agent unauthenticated or make Hive provision the user's vendor credentials, hide the session from the user's ordinary Kimi installation and break human takeover, and make Hive own data-root creation, cleanup, migration, and upgrade compatibility for every concurrent run. Reverified 2026-07-24 against Kimi's <a href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html">hook documentation</a>, <a href="https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/overrides.html">configuration-resolution documentation</a>, and <a href="https://www.kimi.com/code/docs/en/kimi-code-cli/customization/plugins.html">plugin documentation</a>, plus installed Kimi 0.29.1 using <code>kimi --version</code>, <code>kimi --help</code>, <code>kimi doctor --help</code>, <code>kimi doctor config --help</code>, and <code>KIMI_CODE_HOME=/tmp/kimi-config-resolution.yNxGdv kimi doctor config</code>.</p>
-        <p>Vendor and compatibility hooks that the user independently configured may fire during Hive sessions. Grok's shipped documentation states that it reads project <code>.claude/settings.json</code> hooks by default and that disabling this behavior requires Grok's global config; a trusted worktree containing the user's <code>.claude/</code> configuration will therefore fire those hooks too. Matching user-global Kimi hooks will likewise fire, receive the agent worktree as <code>cwd</code>, and cannot be disabled for one project without changing global vendor configuration. This is the user's configuration in the user's environment or project: Hive discloses the behavior and does not rewrite vendor trust, permission, hook, or compatibility settings. Observation must follow §5's source-authority and projection rules: it must not attribute hook-caused effects to the agent without exact executor/run and causal binding. This is a measured failure mode, not a hypothetical one: an idle Kimi agent that had never begun a turn and had written nothing was nonetheless reported as holding two uncommitted files, making routine teardown appear to strand work.</p>
-
-        <h3>Normalized event</h3>
-        <pre><code>type ProviderEvent = {
-  eventId: string;
-  providerRunId: string;
-  provider: CapabilityProvider;
-  capabilityEpoch: number;
-  conversationId: string | null;
-  kind:
-    | "run-started"
-    | "turn-started"
-    | "tool-started"
-    | "tool-finished"
-    | "approval-waiting"
-    | "turn-idle"
-    | "turn-failed"
-    | "interrupted"
-    | "compacted"
-    | "run-ended";
-  occurredAt: string;
-  toolName: string | null;
-  inputDigest: string | null;
-};</code></pre>
-
-        <h3>Adapter descriptor</h3>
-        <pre><code>type ProviderCommunicationCapabilities = {
-  provider: CapabilityProvider;
-  eventSource: "hooks" | "native" | "transcript" | "none";
-  nativeDelivery: boolean;
-  toolBoundaryEvents: boolean;
-  turnBoundaryEvents: boolean;
-  transcriptReader: boolean;
-  nativeCancel: boolean;
-  conversationResume: boolean;
-};</code></pre>
-
-        <h3>Hook ingestion rules</h3>
-        <ul>
-          <li>The launch adapter gives the hook a per-run endpoint and credential; callers cannot supply actor or run identity in ordinary prompt text.</li>
-          <li>The daemon accepts only the active ProviderRun’s run ID, provider, capability epoch, and conversation binding when present.</li>
-          <li>The hook sends event metadata and digests by default, not full prompts, reasoning, or tool output.</li>
-          <li>Hook delivery is fast and fail-open from the provider’s perspective. If the daemon is unavailable, the hook exits successfully and Hive uses terminal/process evidence; no second hook queue is introduced.</li>
-          <li>Vendor trust and permission grants are owned by the user. Hive detects and reports trust state, never writes vendor trust or permission configuration, and treats absent trust as degraded hook evidence rather than degraded provider capability. Trust can authorize a capable project hook; it cannot manufacture per-run identity on a user-global hook surface that does not carry it.</li>
-          <li>Grok project-hook files and the OpenCode plugin are Hive-managed launch inputs. They must not overwrite unrelated user hooks or plugins. Grok trust remains user-owned. Kimi is excluded: neither its single user-level hook configuration nor its shared session transcript carries the executor identity required for per-run binding.</li>
-        </ul>
-
-        <p>Adapters return the descriptor from measured implementation support. Delivery and recovery branch on the descriptor, not on hand-written provider lists scattered through the daemon. A new provider must compile-fail until its descriptor and terminal fallback tests exist.</p>
       </div>
     </section>
 
     <section id="context-economy">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">11</p><h2>Context economy without information loss</h2></div>
-          <p>Hive minimizes text placed into provider context. It does not minimize the durable evidence available to the agent.</p>
+          <div><p class="section-label">11</p><h2>Context economy and retrieval</h2></div>
+          <p><span class="status proven">PROVEN</span>Durable source data and provider-facing projections are separate planes.</p>
         </div>
-
-        <h3>Two distinct planes</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Plane</th><th>Contains</th><th>Limit rule</th></tr></thead>
+            <thead><tr><th>Status</th><th>Mechanism</th><th>Actual bound or behavior</th></tr></thead>
             <tbody>
-              <tr><td><strong>Durable information</strong></td><td>Exact tasks, message bodies, status rows, memory, terminal ranges, provider transcripts, commits, files, test evidence, and handoff references.</td><td>Existing retention and authorization rules apply. Model-context budgets never truncate or delete this plane.</td></tr>
-              <tr><td><strong>Context projection</strong></td><td>The task-specific bootstrap, message previews, activity deltas, selected memory, and handoff summary submitted to a provider.</td><td>Bounded by type. Overflow remains pullable from the durable plane.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Normal message projection</td><td>8 messages and 8 KiB UTF-8 maximum; oversize bodies retain head/tail, omitted-byte count, SHA-256, and exact <code>hive_read_message</code> arguments. <code>src/daemon/context-projection.ts</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Lossless overflow</td><td>The full message is stored before projection and remains byte-identical behind its ID. Test: <code>test/daemon/context-economy.test.ts — an oversized normal message has a bounded lossless projection</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Wake memory delta</td><td>Default budget is 300 estimated tokens; unchanged task-matching pitfalls are not reinjected, and overflow carries a marker. <code>src/schemas/config.ts: wake_budget_tokens</code>; <code>test/daemon/memory-delta.test.ts — unchanged task-matching pitfalls are not re-injected; a new warning is</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Status projection</td><td>Status summary is capped at 280 characters, blocker at 1,000, and evidence refs at 16 × 512 characters. <code>src/schemas/status-envelope.ts: STATUS_LIMITS</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Handoff fallback</td><td>Terminal tail is capped at 2,000 bytes after redaction. Exact output range, byte count, digest, and completeness remain in the bundle. <code>src/daemon/handoff.ts: FALLBACK_TAIL_BYTES</code>.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td>Capability preservation</td><td><code>test/daemon/context-economy.test.ts — limiting context preserves effective provider and control capability</code> proves that descriptor values and message-priority options survive a limited projection. It does not exercise provider tools, filesystem/network posture, MCP servers, terminal observation, or recovery. Full proof requires before/after conformance runs for those surfaces on every enabled provider.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>General projection builders</td><td><code>ContextProjectionSchema</code> admits bootstrap, control, and handoff purposes, but the only production builder in <code>src/daemon/context-projection.ts</code> is the normal message batch. Implementing the other purposes requires builders with source digests, omission accounting, retrieval tests, and capability-equivalence tests.</td></tr>
             </tbody>
           </table>
         </div>
-
-        <pre><code>type ContextProjection = {
-  projectionId: string;
-  providerRunId: string;
-  purpose: "bootstrap" | "message-batch" | "control" | "handoff";
-  body: string;
-  sourceRefs: ExactContentRef[];
-  sourceDigests: string[];
-  omitted: { sources: number; bytes: number };
-  complete: boolean;
-};</code></pre>
-
-        <p><code>ContextProjection</code> is a transient submission description, not a second content store. The referenced task, message, memory, output, transcript, or handoff remains authoritative.</p>
-
-        <h3>Bootstrap diet</h3>
-        <ol>
-          <li>Always include the exact task, run identity, worktree, authority posture, and the minimum reporting/landing contract.</li>
-          <li>Include only task-selected documentation, memory, graph evidence, and provider caveats. Everything else is a reference that the agent can retrieve.</li>
-          <li>Remove repeated prose when the rule is already daemon-enforced. Put operation-specific semantics in the relevant tool description instead of every spawn prompt.</li>
-          <li>Keep a concise behavioral rule only when the agent must exercise judgment and Hive cannot enforce the decision mechanically.</li>
-          <li>Category-specific contracts appear only for that category. A summarizer does not receive reviewer procedure; a reader does not receive writer landing procedure.</li>
-        </ol>
-
-        <h3>Communication diet</h3>
-        <ul>
-          <li>Provider hooks, process events, git changes, and routine phase updates modify projections without creating a model turn.</li>
-          <li>An agent reports semantic state on a transition, not on a timer: blocked, decision required, capability escalation, complete, or failed. Intermediate narration is passive observation.</li>
-          <li><code>hive_update_status</code> carries a bounded summary and evidence references. Detailed reports live in durable messages or artifacts and are pulled only when needed.</li>
-          <li>A compact completion or blocker notification may wake the Queen; the underlying status, message, branch, and evidence remain separately retrievable.</li>
-          <li>Do not append the same task-matching memory on every wake. Task-relevant memory is selected once for bootstrap or handoff; later memory is pull-based unless a new, directly relevant warning requires an explicit system message.</li>
-          <li>Do not repeatedly summarize full terminal output. Project only the delta after the last consumed cursor and keep exact output-range references.</li>
-        </ul>
-
-        <h3>Lossless overflow rules</h3>
-        <ol>
-          <li>Store exact authorized content before producing its bounded representation.</li>
-          <li>Preserve the beginning and end of free-form reports when a preview must omit the middle; report the omitted byte count and exact retrieval reference.</li>
-          <li>Never summarize or batch away typed control intent, target run identity, capability epoch, deadline, or acknowledgement requirement.</li>
-          <li>An oversized control is rejected before submission with a request to shorten its command body and reference supporting evidence. It is never silently truncated into a different command.</li>
-          <li>Retrieval is paged and bounded, but repeated authorized reads can reach the complete source. A context limit may defer information; it may not make information unreachable.</li>
-          <li>Summaries are navigation aids. When a decision depends on an omitted fact, the agent must retrieve and verify the referenced source.</li>
-        </ol>
-
-        <h3>Capability preservation</h3>
-        <ul>
-          <li>Context budgeting does not change the provider adapter’s tool set, filesystem/network posture, MCP servers, message priorities, control operations, memory access, terminal observation authority, or handoff/recovery behavior.</li>
-          <li>Lazy or pull-based context changes when information is loaded, not whether authorized information or tools exist.</li>
-          <li>Provider conformance tests compare effective tools, permissions, delivery priorities, retrieval reachability, and recovery operations before and after context limiting.</li>
-        </ul>
-
-        <h3>Budgets and measurement</h3>
-        <ul>
-          <li>Use a small set of implementation constants by projection purpose, measured in UTF-8 bytes and estimated provider tokens. Do not introduce per-provider or per-user tuning knobs until measurements prove one is necessary.</li>
-          <li>Measure current bootstrap and wake distributions before choosing the constants. Set the common-case budget high enough to avoid a fetch round trip while still bounding worst-case context.</li>
-          <li>Record only aggregate projection size, omitted counts, and follow-up retrievals for tuning. Do not duplicate prompt or message content into telemetry.</li>
-          <li>A budget change requires conformance tests proving exact-source retrieval and capability equivalence; a lower token count alone is not success.</li>
-        </ul>
-
-        <p><strong>Success condition:</strong> routine observation consumes zero provider tokens; queued normal messages share one bounded turn; unchanged memory is not re-injected; and every omitted authorized fact remains reachable from an exact reference without changing agent capability.</p>
       </div>
     </section>
 
     <section id="interfaces">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">12</p><h2>Service interfaces</h2></div>
-          <p>These are daemon-internal interfaces first. Expose tools only where the Queen or operator needs them.</p>
+          <div><p class="section-label">12</p><h2>Runtime interfaces</h2></div>
+          <p><span class="status proven">PROVEN</span>The public tools expose durable state; the terminal host supplies measured execution boundaries.</p>
         </div>
-
-        <pre><code>interface CommunicationService {
-  acceptProviderEvent(event: ProviderEvent):
-    Promise&lt;"accepted" | "duplicate" | "stale-run" | "rejected"&gt;;
-
-  observeAgent(agentId: string, after?: ObservationCursor):
-    Promise&lt;ActivitySnapshot&gt;;
-
-  observeFleet(after?: FleetObservationCursor):
-    Promise&lt;FleetActivityDelta&gt;;
-
-  send(messageId: string):
-    Promise&lt;MessageProjection&gt;;
-
-  control(request: ProviderControlRequest):
-    Promise&lt;ProviderControlResult&gt;;
-
-  buildHandoff(request: HandoffRequest):
-    Promise&lt;HandoffBundle&gt;;
-
-  acknowledgePickup(handoffId: string, targetRunId: string):
-    Promise&lt;HandoffProjection&gt;;
-}</code></pre>
-
-        <p>Keep the public surface small:</p>
-        <ul>
-          <li><code>hive_status</code> consumes fleet activity deltas for normal Queen monitoring.</li>
-          <li><code>hive_terminal_observe</code> remains the explicitly authorized raw diagnostic view.</li>
-          <li><code>hive_send</code> retains current priority semantics and returns truthful delivery state.</li>
-          <li>Quota and recovery call internal <code>control</code> and <code>buildHandoff</code>; they do not synthesize terminal keystrokes themselves.</li>
-        </ul>
-      </div>
-    </section>
-
-    <section id="implementation">
-      <div class="shell">
-        <div class="section-head">
-          <div><p class="section-label">13</p><h2>Implementation order</h2></div>
-          <p>Each phase is independently testable. Do not begin the router refactor until C5 passes.</p>
-        </div>
-
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Phase</th><th>Change</th><th>Exit condition</th></tr></thead>
+            <thead><tr><th>Status</th><th>Interface</th><th>Semantics</th></tr></thead>
             <tbody>
-              <tr><td><strong>C0 · Identity</strong></td><td>Add ProviderRun; rename shell evidence; expose foreground identity; distinguish shell-idle from terminal death.</td><td>Provider exit leaves zsh alive while the agent run is reported exited.</td></tr>
-              <tr><td><strong>C1 · Safe input</strong></td><td>Add run-bound atomic <code>writeAutomated</code>; record MessageAttempt; retain composer exclusion.</td><td>A provider exit racing submission writes zero bytes to zsh.</td></tr>
-              <tr><td><strong>C2 · Observation</strong></td><td>Normalize Claude/Codex structured events, add Grok lifecycle hooks plus the OpenCode plugin, and build ActivitySnapshot with terminal, process, git, transcript, and status fallbacks. Kimi uses the universal fallback because its shared session transcript cannot bind entries to one executor.</td><td>The Queen can obtain bounded fleet progress without waking an agent; every provider survives hook loss.</td></tr>
-              <tr><td><strong>C3 · Context economy</strong></td><td>Shrink bootstrap repetition, make routine status silent, batch normal messages, stop repeated memory injection, and add lossless bounded projections.</td><td>Hive-added context is bounded; every omission has an exact authorized retrieval path; provider capabilities are unchanged.</td></tr>
-              <tr><td><strong>C4 · Control and quota</strong></td><td>Expose foreground-group pause/stop; wire quota hold/resume and drain events to communication.</td><td>Holding or replacing a provider preserves the terminal and worktree.</td></tr>
-              <tr><td><strong>C5 · Handoff</strong></td><td>Persist HandoffBundle; build replacement context; acknowledge pickup; preserve on failure.</td><td>A different provider resumes from the bundle with no status query to the source agent.</td></tr>
-              <tr><td><strong>C6 · Cleanup</strong></td><td>Remove old process-equals-terminal assumptions, duplicated provider branches, repeated prompt prose, repeated wake memory, and optimistic injection wording.</td><td>Router-readiness checklist passes.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>hive_send</code></td><td>Stores a durable message, applies priority/intent semantics, attempts eligible delivery, and returns the stored lifecycle state plus a bounded preview. Tool description is wired in <code>src/daemon/server.ts</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>hive_inbox</code>, <code>hive_read_message</code>, <code>hive_ack_message</code></td><td>Inbox consumption, exact authorized retrieval, and explicit receipt/application transitions. Delivery and DB tests in §14 prove the state changes.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>hive_update_status</code>, <code>hive_status</code></td><td>Authenticated bounded report ingestion and passive projection retrieval. <code>test/daemon/status-mcp.test.ts</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td><code>hive_pickup_handoff</code></td><td>Validates replacement identity and exact task digest, records one pickup, returns bundle, leaves work open.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td><code>hive_terminal_observe</code> production service</td><td>Registered and authorization-tested, but unserviceable without production <code>capture()</code>; see §05.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>sessiond <code>INPUT_SUBMIT</code></td><td>One claim/foreground/write transaction returns a frozen receipt and byte range or a rejection. <code>native/sessiond/src/host_core.zig: submitInput</code>.</td></tr>
             </tbody>
           </table>
         </div>
@@ -643,111 +545,70 @@ failed     the attempt ended; the message may remain queued for an explicit retr
     <section id="verification">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">14</p><h2>Acceptance tests</h2></div>
+          <div><p class="section-label">14</p><h2>Acceptance matrix</h2></div>
+          <p><span class="status proven">PROVEN</span>Every acceptance item below has an evidence state. A test proves only what its fixture observes.</p>
         </div>
-
-        <ol>
-          <li>Run each of the five providers under zsh; exit the provider; verify the same terminal becomes <code>shell-idle</code>.</li>
-          <li>Exit a provider between daemon preflight and sessiond commit; verify zero message bytes reach zsh and the message remains queued.</li>
-          <li>Start a second provider in the same terminal; verify a message bound to the first run cannot be delivered to it.</li>
-          <li>Start a vendor CLI manually at zsh; verify Hive reports <code>unmanaged</code> and grants no agent authority.</li>
-          <li>Pause and resume a foreground provider; verify the PID/start token/group remain the same and zsh remains alive.</li>
-          <li>Stop a foreground provider; verify zsh remains. Terminate the terminal separately; verify the whole session ends.</li>
-          <li>Hold a quota-drained run through a near reset; verify exactly one revalidated resume wake.</li>
-          <li>Drain a provider beyond the hold window; verify the handoff is durable before source shutdown and excludes the drained pool until reset.</li>
-          <li>Kill a provider without a final status report; verify handoff uses terminal output, provider telemetry where available, messages, memory, and measured git state.</li>
-          <li>Force a terminal retention gap and summarizer failure; verify preservation succeeds with partial/fallback provenance.</li>
-          <li>Observe all active agents from the Queen; verify no input claim, provider turn, delivery event, or quota usage is caused by observation.</li>
-          <li>For Kimi, verify shared transcript entries never become normalized events without executor identity; a freshly launched idle TUI receives first and later turns only through bound atomic terminal submission; and no Hive path POSTs prompts or steer requests to a TUI-bound session.</li>
-          <li>For Grok, verify Hive writes only its project hook file, detects and reports trusted and untrusted states without changing vendor trust or permission config, falls back to <code>updates.jsonl</code> plus terminal and process evidence when untrusted, and discloses compatibility-hook loading without rewriting the user's configuration. Keep hook firing explicitly pending until it is verified by a live turn.</li>
-          <li>For OpenCode, verify session, message, tool, permission, and compaction plugin events map to the normalized event set.</li>
-          <li>Send duplicate, delayed, wrong-epoch, and old-run hook events; verify duplicates are idempotent, stale events cannot regress state, and wrong bindings are rejected.</li>
-          <li>Disable or break every provider’s structured event source; verify activity and handoff degrade to terminal/process evidence without stopping the agent.</li>
-          <li>Place secrets and control-like text in terminal output; verify summaries redact known secret patterns and the text never executes or changes authority.</li>
-          <li>Run provider capability contract tests over the exhaustive provider union; adding a provider without a descriptor must fail compilation or schema validation.</li>
-          <li>Store an oversized normal message; verify its bounded preview reports omission and retrieves the byte-identical durable body by reference.</li>
-          <li>Queue several normal messages for one boundary; verify one provider turn carries ordered IDs and previews while every message retains independent delivery state.</li>
-          <li>Mix normal, steer, urgent, and critical traffic; verify control intent, run identity, epoch, deadline, and acknowledgement requirements are never truncated or hidden in a normal batch.</li>
-          <li>Wake an agent repeatedly without a memory change; verify unchanged task-matching memory is not re-injected.</li>
-          <li>Compare each provider before and after context limiting; verify identical authorized tools, permissions, MCP access, message priorities, control operations, source retrieval, and recovery behavior.</li>
-          <li>Omit sources from bootstrap and handoff projections under a forced low budget; verify the agent can page through every authorized source and validate its digest.</li>
-          <li>Observe routine hook, process, git, and phase activity; verify it updates ActivitySnapshot without creating provider input or token usage.</li>
-        </ol>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Status</th><th>Acceptance item</th><th>Proof or requirement</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><span class="status unproven">UNPROVEN</span></td><td>All five providers live under zsh, then shell-idle after exit.</td><td>Fixture: <code>provider-run-identity.test.ts — [provider]: provider exit…</code>. Grok live launch is todo. Prove with five real launches; Grok is the missing provider.</td></tr>
+              <tr><td>2</td><td><span class="status proven">PROVEN</span></td><td>Foreground exit/race writes zero message bytes and leaves queued.</td><td><code>native/sessiond/test.sh</code> passes the A3/C1 guarded-write drill; TypeScript test <code>a foreground change leaves the opening message queued with its terminal receipt</code>.</td></tr>
+              <tr><td>3</td><td><span class="status unproven">UNPROVEN</span></td><td>An old-run message cannot reach a later foreground run.</td><td>The guarded-write test proves foreground mismatch leaves the message queued. A specific later-run proof must mint run B in the same terminal after run A, attempt A's queued message, and show no bytes reach B.</td></tr>
+              <tr><td>4</td><td><span class="status proven">PROVEN</span></td><td>Manual foreground command is unmanaged and has no run authority.</td><td><code>provider-run-identity.test.ts — [provider]: provider exit…manual command is unmanaged</code> for exhaustive provider fixtures.</td></tr>
+              <tr><td>5</td><td><span class="status proven">PROVEN</span></td><td>Pause/resume retains exact provider group and zsh.</td><td><code>hive-terminal-host.test.ts — pauses, resumes, and stops only the freshly verified provider group while zsh survives</code>; real process-group signal test.</td></tr>
+              <tr><td>6</td><td><span class="status proven">PROVEN</span></td><td>Provider stop retains zsh; terminal termination ends tree.</td><td>Same control test plus <code>reports a terminated process tree as closed before its host is reaped</code>.</td></tr>
+              <tr><td>7</td><td><span class="status proven">PROVEN</span></td><td>Near-reset hold yields one revalidated resume wake.</td><td><code>drain-handler.test.ts</code> near-reset and overlapping-sweep tests.</td></tr>
+              <tr><td>8</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Distant drain persists before shutdown and automatically excludes drained pool during replacement.</td><td>Persistence-before-stop is proved by <code>handoff.test.ts — the replacement seam persists…</code>. Replacement/exclusion is absent; durable notice exists instead.</td></tr>
+              <tr><td>9</td><td><span class="status proven">PROVEN</span></td><td>Dead provider without final status yields a handoff from available evidence.</td><td><code>handoff.test.ts — a dead source without a final status still produces a usable handoff</code>.</td></tr>
+              <tr><td>10</td><td><span class="status proven">PROVEN</span></td><td>Terminal gap and summarizer failure preserve partial fallback.</td><td><code>handoff.test.ts — preserves a dead source through a terminal gap and summarizer failure</code>.</td></tr>
+              <tr><td>11</td><td><span class="status unproven">UNPROVEN</span></td><td>Fleet observation creates no input, turn, delivery, or quota usage.</td><td>Requires the before/after live ledger trace specified in §05.</td></tr>
+              <tr><td>12</td><td><span class="status unproven">UNPROVEN</span></td><td>Kimi executor ambiguity is rejected and all TUI turns use bound terminal submission.</td><td>Ambiguity rejection is proved by <code>activity-snapshot.test.ts</code>; opening terminal submission is proved generically. Prove full Kimi behavior with a live idle TUI, first and later sends, and a trace showing no web executor call.</td></tr>
+              <tr><td>13</td><td><span class="status unproven">UNPROVEN</span></td><td>Grok project hooks fire and trust states preserve user configuration.</td><td>Hook firing has never been live-verified. Requires trusted and untrusted live launches plus config diffs showing no user trust/permission mutation.</td></tr>
+              <tr><td>14</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>OpenCode plugin maps lifecycle events.</td><td>No plugin; provider disabled. Requires plugin, normalization, enablement, and live callback proof.</td></tr>
+              <tr><td>15</td><td><span class="status proven">PROVEN</span></td><td>Wrong-epoch/old-run hook events reject; duplicates are idempotent.</td><td><code>provider-events.test.ts — binds Claude and Codex events to the exact active run and conversation</code>.</td></tr>
+              <tr><td>16</td><td><span class="status unproven">UNPROVEN</span></td><td>Breaking every structured source leaves a live agent running on universal fallback.</td><td><code>activity-snapshot.test.ts — all providers fall back to bounded terminal, process, git, and status evidence</code> proves snapshot construction with an empty event set. Proving degradation requires disabling each live source and observing continued agent execution plus fallback evidence.</td></tr>
+              <tr><td>17</td><td><span class="status proven">PROVEN</span></td><td>Terminal secrets redact and terminal text gains no authority.</td><td>The two first tests in <code>activity-snapshot.test.ts</code>.</td></tr>
+              <tr><td>18</td><td><span class="status proven">PROVEN</span></td><td>Provider capability descriptor is exhaustive.</td><td><code>agent-factory.test.ts — every capability provider resolves…</code> and <code>every provider has one honest communication descriptor</code>.</td></tr>
+              <tr><td>19</td><td><span class="status proven">PROVEN</span></td><td>Oversized normal message has bounded preview and exact retrieval ref.</td><td><code>context-economy.test.ts — an oversized normal message has a bounded lossless projection</code>.</td></tr>
+              <tr><td>20</td><td><span class="status proven">PROVEN</span></td><td>Several normal messages share one ordered turn and independent state.</td><td><code>context-economy.test.ts — a batch preserves message order, identity, and independent references</code>; opening-turn integration test.</td></tr>
+              <tr><td>21</td><td><span class="status proven">PROVEN</span></td><td>Control metadata never enters a normal batch.</td><td><code>context-economy.test.ts — control priorities cannot enter a normal batch</code>; control-message epoch/deadline tests.</td></tr>
+              <tr><td>22</td><td><span class="status proven">PROVEN</span></td><td>Unchanged memory is not reinjected on repeated wake.</td><td><code>memory-delta.test.ts — unchanged task-matching pitfalls are not re-injected; a new warning is</code>.</td></tr>
+              <tr><td>23</td><td><span class="status unproven">UNPROVEN</span></td><td>Context limiting preserves all effective capabilities.</td><td>The named context-economy test proves descriptor and priority equality. Full proof requires matching tools, permissions, MCP access, control, retrieval, observation, and recovery before and after limiting for each enabled provider.</td></tr>
+              <tr><td>24</td><td><span class="status unproven">UNPROVEN</span></td><td>Forced low-budget bootstrap/handoff omission is fully pageable and digest-valid.</td><td>Message paging is proved. Bootstrap/handoff projection builders are absent; proof requires those builders plus exhaustive paged reconstruction tests.</td></tr>
+              <tr><td>25</td><td><span class="status unproven">UNPROVEN</span></td><td>Routine activity updates snapshot without provider input or token usage.</td><td>Pure snapshot update is proved; the no-input/no-token production trace is the same missing proof as item 11.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="claim proven-border"><span class="status proven">PROVEN</span>Verification command at the basis commit: <code>bun test test/daemon/provider-run-identity.test.ts test/daemon/orchestrator-lifecycle.test.ts test/daemon/activity-snapshot.test.ts test/daemon/provider-events.test.ts test/daemon/context-economy.test.ts test/daemon/drain-handler.test.ts test/daemon/handoff.test.ts test/adapters/tools/agent-factory.test.ts test/daemon/session-host/hive-terminal-host.test.ts test/daemon/status-mcp.test.ts test/daemon/control-messages.test.ts test/daemon/db.test.ts test/daemon/session-host/sessiond-agent-input.test.ts test/daemon/orchestrator-root-delivery.test.ts</code> → <code>129 pass, 1 todo, 0 fail</code>.</p>
       </div>
     </section>
 
     <section id="router-ready">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">15</p><h2>Router-ready boundary</h2></div>
-          <p>After this rebuild, the router has one job: select one launch candidate from the models the user enabled and the launch gate accepts. <a href="hive-router.html">The router technical specification</a> defines the governing policy and selection algorithm.</p>
+          <div><p class="section-label">15</p><h2>Ownership boundary</h2></div>
+          <p><span class="status proven">PROVEN</span>Communication produces measured outcomes and preservation artifacts. Other owners consume them.</p>
         </div>
-
-        <h3>Expected router policy</h3>
-        <ul>
-          <li><strong>User preference:</strong> every enabled candidate has an integer weight from 1 through 100. Weighted selection favors higher values without turning preference into a strict fallback chain.</li>
-          <li><strong>Hive choice:</strong> every enabled candidate has equal weight. Work is spread across the available candidates.</li>
-          <li><strong>Disablement:</strong> zero is not a routing weight. A model is excluded through the existing explicit enabled/disabled control.</li>
-          <li><strong>Quota:</strong> remaining quota does not continuously rewrite weights. A pool proven unable to run is temporarily unavailable until its reset or recovery; unknown usage receives no invented score.</li>
-          <li><strong>Task fit:</strong> required capabilities, minimum context, and supported effort filter candidates before weighting. Communication reports capability escalation as an outcome; it does not predict token cost from task prose.</li>
-        </ul>
-
-        <h3>Router supplies</h3>
-        <pre><code>type LaunchDecision = {
-  decisionId: string;
-  provider: CapabilityProvider;
-  model: string;
-  effort: string | null;
-  reason: "explicit" | "user-weight" | "hive-equal" | "fallback";
-};</code></pre>
-
-        <h3>Communication supplies back</h3>
-        <pre><code>type RunOutcome = {
-  decisionId: string;
-  providerRunId: string;
-  provider: CapabilityProvider;
-  model: string;
-  taskCategory: string;
-  outcome:
-    | "completed"
-    | "quota-drained"
-    | "capability-escalated"
-    | "launch-failed"
-    | "crashed"
-    | "stopped";
-  handoffId: string | null;
-  startedAt: string;
-  endedAt: string;
-};</code></pre>
-
-        <h3>Ownership boundary</h3>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Concern</th><th>Owner</th></tr></thead>
+            <thead><tr><th>Status</th><th>Owner</th><th>Owned state and operation</th><th>Boundary</th></tr></thead>
             <tbody>
-              <tr><td>Provider/model discovery, enabled state, model capability, and effort validation</td><td>Authorized launch/model inventory</td></tr>
-              <tr><td>Usage readings, reset times, drain detection, and temporary exhausted-pool exclusion</td><td>Quota lifecycle</td></tr>
-              <tr><td>User weights or equal-weight Hive choice</td><td>Router</td></tr>
-              <tr><td>Terminal, provider-run identity, observation, delivery, control, and handoff</td><td>Communication</td></tr>
-              <tr><td>Branch, commits, dirty state, and tests</td><td>Git/worktree measurement</td></tr>
-              <tr><td>Durable project knowledge</td><td>HiveMemory</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Communication</td><td>Terminal/run identity, messages and attempts, activity snapshot, provider control, handoff construction and pickup.</td><td><code>delivery.ts</code>, <code>activity-snapshot.ts</code>, <code>handoff.ts</code>, terminal-host adapter.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Quota</td><td>Usage observations, drain classification, reset time, held state, and resume eligibility.</td><td><code>quota.ts</code> and <code>drain-handler.ts</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Selection</td><td>Provider/model choice and exclusion of unavailable pools.</td><td>Communication emits a typed/durable notice; it does not invent a replacement.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Git/worktree measurement</td><td>Read-only branch head/base, commits, dirty paths, and untracked paths.</td><td><code>src/daemon/handoff.ts: measureHandoffWorktree</code>; test <code>measures exact branch work without touching the worktree</code>.</td></tr>
+              <tr><td><span class="status proven">PROVEN</span></td><td>Run outcome record</td><td>Associates the exact launch decision and provider run with completed, drained, escalated, launch-failed, crashed, or stopped outcome and optional handoff.</td><td><code>src/schemas/run-outcome.ts</code>; <code>buildHandoffBundle</code> rejects a mismatched source identity.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Communication → automatic selection</td><td>No executable edge consumes <code>ReplacementDrain</code> to choose and launch a replacement while excluding its pool.</td><td>Requires a selection-owned API that returns a launch decision or a durable no-candidate outcome.</td></tr>
             </tbody>
           </table>
         </div>
-
-        <h3>Readiness checklist</h3>
-        <ul>
-          <li>The router does not inspect terminal processes or transcripts.</li>
-          <li>The router does not send messages, pause agents, or build handoffs.</li>
-          <li>Communication does not assign weights, rank models, or estimate future task usage.</li>
-          <li>Quota exhaustion does not destroy work and produces a typed run outcome.</li>
-          <li>Every run outcome is attributable to the exact launch decision, provider run, provider, model, and task category.</li>
-          <li>All five providers share the same fallback contract; richer vendor support only improves evidence.</li>
-        </ul>
-
-        <p><strong>Gate:</strong> begin the router refactor only after the acceptance tests pass and these ownership boundaries are true in code. The router can then be simplified without also solving terminal races, monitoring, quota recovery, or context transfer.</p>
       </div>
     </section>
   </main>
+
+  <footer>
+    <div class="shell">Technical map verified at <code>7603832c0ae4b4e610153a76ba7820c3293623eb</code>. Status changes require a code citation and the proof named by the relevant row.</div>
+  </footer>
 </body>
 </html>
