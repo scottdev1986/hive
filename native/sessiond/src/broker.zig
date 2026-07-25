@@ -546,16 +546,25 @@ pub const Registry = struct {
         return self.occupiedSlots() < self.entries.len;
     }
 
-    pub fn reapExitedChildHosts(self: *Registry) usize {
+    /// The only path that returns capacity. TERMINATE answers on the control
+    /// plane and never writes this in-memory registry, so a killed or crashed
+    /// host is discovered here: the broker observes the exact process, and an
+    /// absent one has taken its generation with it. Adopted hosts count too —
+    /// after a restart every recovered session is non-parent, and skipping them
+    /// would leak precisely the sessions a restart was meant to recover.
+    pub fn reapExitedHosts(self: *Registry) usize {
         var reaped: usize = 0;
         for (&self.entries) |*slot| if (slot.*) |*entry| {
-            if (entry.host_process_ownership != .child or entry.record.state == .exited) continue;
+            if (entry.record.state == .exited) continue;
             if (observeExactProcess(
                 entry.record.host_pid,
                 entry.record.host_start_token,
-                .child,
+                entry.host_process_ownership,
             ) != .absent) continue;
-            entry.record.state = .unknown;
+            // Exited, not unknown: unknown counts as occupied forever, and the
+            // process is proven gone. Whether the exit was clean is answered by
+            // final evidence, which list() consults ahead of this state.
+            entry.record.state = .exited;
             reaped += 1;
         };
         return reaped;
@@ -757,8 +766,8 @@ pub const Registry = struct {
         // Preserve the exited tombstone for honest inspection. Capacity is the
         // count of live/in-doubt generations, not a lifetime launch counter;
         // registerWithOwnership may reuse this slot. Only complete
-        // zero-survivor readback reaches exited, while unknown teardown stays
-        // fail-closed and occupied.
+        // zero-survivor readback reaches exited; an unknown teardown stays
+        // occupied until reapExitedHosts observes the host process is gone.
         entry.record.state = .exited;
         return .terminated;
     }
@@ -2295,7 +2304,7 @@ pub fn serve(
     const backend = production_backend.backend();
     while (true) {
         if (!brokerOwnerIsLive(owner)) return;
-        _ = recovered.registry.reapExitedChildHosts();
+        _ = recovered.registry.reapExitedHosts();
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = runtime.server.stream.handle,
             .events = std.posix.POLL.IN,
@@ -3250,11 +3259,14 @@ test "registry reaps an exited broker-owned host child" {
     };
 
     var timer = try std.time.Timer.start();
-    while (registry.reapExitedChildHosts() == 0 and timer.read() < std.time.ns_per_s) {
+    while (registry.reapExitedHosts() == 0 and timer.read() < std.time.ns_per_s) {
         std.Thread.sleep(std.time.ns_per_ms);
     }
-    child_reaped = registry.entries[0].?.record.state == .unknown;
+    child_reaped = registry.entries[0].?.record.state == .exited;
     try std.testing.expect(child_reaped);
+    // The reap must return the slot, not just record the death: a crashed host
+    // that keeps occupying capacity is the sessiond exhaustion defect.
+    try std.testing.expectEqual(@as(usize, 0), registry.occupiedSlots());
 }
 
 test "host peer authenticates the sessiond self executable, not the provider executable" {

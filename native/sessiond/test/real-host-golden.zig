@@ -474,6 +474,19 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     try waitForProcessAbsence(parsed_created.value.inspection.shellRoot.pid);
     try waitForProcessAbsence(parsed_created.value.inspection.hostPid);
 
+    // The slot must come back after a real kill. TERMINATE answers entirely on
+    // the control plane, so this in-memory entry is still `.live` right now and
+    // occupies capacity; the daemon loop's reap is what frees it, and this host
+    // is adopted (non-parent), the ownership the reap used to skip. Together
+    // those two gaps leaked one of the 32 slots on every real kill until the
+    // daemon restarted — which then re-adopted the survivors as non-parent.
+    if (recovered.registry.reapExitedHosts() != 1) return error.TerminatedSlotNotFreed;
+    switch (recovered.registry.lookup(locator) orelse return error.TerminatedSlotNotFreed) {
+        .entry => |terminated_entry| if (terminated_entry.record.state != .exited)
+            return error.TerminatedSlotNotFreed,
+        .failure => return error.TerminatedSlotNotFreed,
+    }
+
     const final_path = try std.fs.path.join(allocator, &.{
         root,
         "runtime/sessiond/hosts",
