@@ -171,11 +171,16 @@ final class SessiondPaneTerminal {
         self.transport?.close()
         self.transport = transport
         do {
+            TerminalTelemetry.shared.startIfNeeded() // TELEMETRY — REMOVE
+            let attachStart = ProcessInfo.processInfo.systemUptime // TELEMETRY — REMOVE
             let outcome = try view.attach(
                 grant: grant,
                 geometry: geometry,
                 afterSeq: afterSeq,
                 transport: transport
+            )
+            TerminalTelemetry.shared.noteAttach( // TELEMETRY — REMOVE
+                microseconds: Int((ProcessInfo.processInfo.systemUptime - attachStart) * 1_000_000)
             )
             if case .failed(let state) = outcome {
                 transport.close()
