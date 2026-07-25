@@ -127,7 +127,7 @@
       <p>A present-tense map of storage, isolation, ingest, recall, lifecycle, embeddings, tools, configuration, and operator surfaces. Every factual claim carries the rung of evidence that stands behind it and, below the top rung, the exact check that would raise it.</p>
 
       <div class="banner">
-        <p><strong>The deployed system is not this source.</strong> The running daemon is build <code>1495d735</code>; <code>git rev-list --count 1495d735..main</code> printed <code>66</code>. The installed CLI is <code>hive 0.0.38 (8ff0a55f, 2026-07-24, darwin-arm64)</code>; <code>git rev-list --count 8ff0a55f..main</code> printed <code>99</code>. Every <code>live</code> row below describes those two builds, not this source. The skew is directly observable: <code>hive status</code> on the installed CLI fails to parse the running daemon's reply, rejecting the unrecognized keys <code>holdReason</code> and <code>holdResetAt</code>.</p>
+        <p><strong>The deployed system is not this source.</strong> The running daemon is build <code>1495d735</code>; <code>git rev-list --count 1495d735..84e58da4</code> printed <code>69</code>. The installed CLI is <code>hive 0.0.38 (8ff0a55f, 2026-07-24, darwin-arm64)</code>; <code>git rev-list --count 8ff0a55f..84e58da4</code> printed <code>102</code>. Every <code>live</code> row below describes those two builds, not this source. The skew is directly observable: <code>hive status</code> on the installed CLI fails to parse the running daemon's reply, rejecting the unrecognized keys <code>holdReason</code> and <code>holdResetAt</code>.</p>
         <p><strong>The live memory self-test fails right now.</strong> <code>hive memory self-test --live</code> against daemon <code>1495d735</code> exits non-zero on <code>semantic-recall</code>. The fix is in this source and has never run live. §8 states the situation at the rungs that apply.</p>
       </div>
 
@@ -142,8 +142,8 @@
       </ul>
 
       <h3>Raising a rung</h3>
-      <p class="claim test-border"><span class="status r-test">TEST</span>Source basis: commit <code>f12b8f1751ef44f61d76093fce547ed471c09c33</code>, checked on 2026-07-25. Observable result: <code>git rev-parse main</code> printed that SHA before final verification. The named memory suites completed with <code>272 pass, 3 skip, 0 fail</code>; the three skips are the Claude, Codex, and Grok <code>--version</code> preconditions in §11.</p>
-      <p class="claim unproven-border"><span class="status unproven">UNPROVEN</span>Every <code>PROVE →</code> entry below that names a live observation presumes one prior step, stated once here and not repeated per row: build this source and restart the daemon and CLI, so that <code>hive --version</code> and the running daemon binary both report a commit at or after <code>f12b8f17</code>. Until that happens, no such entry can be executed, because the daemon that answers is <code>1495d735</code>.</p>
+      <p class="claim test-border"><span class="status r-test">TEST</span>Source basis: commit <code>84e58da45280510b75636cbe91be1aa791ee51db</code>, checked on 2026-07-25. Observable result: <code>git rev-parse main</code> printed that SHA before final verification. The named memory suites completed with <code>272 pass, 3 skip, 0 fail</code>; the three skips are the Claude, Codex, and Grok <code>--version</code> preconditions in §11.</p>
+      <p class="claim unproven-border"><span class="status unproven">UNPROVEN</span>Every <code>PROVE →</code> entry below that names a live observation presumes one prior step, stated once here and not repeated per row: build this source and restart the daemon and CLI, so that <code>hive --version</code> and the running daemon binary both report a commit at or after <code>84e58da4</code>. Until that happens, no such entry can be executed, because the daemon that answers is <code>1495d735</code>.</p>
       <p class="claim unproven-border"><span class="status unproven">UNPROVEN</span>Load-time runtime integrity is under active change outside this basis commit. This document does not describe that unlanded behavior; the §8 integrity row requires re-verification and a new basis SHA after it lands.</p>
     </div>
   </header>
@@ -543,7 +543,7 @@
   </main>
 
   <footer>
-    <div class="shell">Source basis <code>f12b8f1751ef44f61d76093fce547ed471c09c33</code>, checked 2026-07-25. Deployed daemon <code>1495d735</code>, installed CLI <code>0.0.38 (8ff0a55f)</code>. Raising a rung requires the observation named by the relevant row; lowering one requires only that the named evidence stop establishing the claim.</div>
+    <div class="shell">Source basis <code>84e58da45280510b75636cbe91be1aa791ee51db</code>, checked 2026-07-25. Deployed daemon <code>1495d735</code>, installed CLI <code>0.0.38 (8ff0a55f)</code>. Raising a rung requires the observation named by the relevant row; lowering one requires only that the named evidence stop establishing the claim.</div>
   </footer>
 </body>
 </html>
