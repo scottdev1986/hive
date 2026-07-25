@@ -103,6 +103,9 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
         inspect: async () => {
           throw new Error("not reached");
         },
+        terminate: async () => {
+          throw new Error("not reached");
+        },
       },
     },
   });
