@@ -274,6 +274,7 @@ export async function runMemoryLiveSelfTest(
           let delay = initialPollMs;
           let lastRowCount = 0;
           let lastOmitted = 0;
+          let lastOmittedArticles = 0;
           for (;;) {
             const envelope = await recallMemory(port, PARAPHRASE_QUERY);
             if (envelope.semantic.startsWith("degraded:")) {
@@ -291,6 +292,7 @@ export async function runMemoryLiveSelfTest(
             const rows = [...envelope.pitfalls, ...envelope.articles];
             lastRowCount = rows.length;
             lastOmitted = envelope.omitted ?? 0;
+            lastOmittedArticles = envelope.omittedArticles ?? 0;
             if (
               rows.some((row) => row.scope === "repo" && row.id === articleId)
             ) {
@@ -308,9 +310,10 @@ export async function runMemoryLiveSelfTest(
                   `${lastRowCount} row(s)) — ` +
                   (lastOmitted > 0
                     ? `the recall bundle was truncated at the token ceiling ` +
-                      `(${lastOmitted} row(s) omitted, pitfalls kept first), so ` +
-                      `the canary was cut from the bundle rather than missing ` +
-                      `from the index — this is not evidence about the projection`
+                      `(${lastOmitted} row(s) omitted, ${lastOmittedArticles} of ` +
+                      `them articles), so the canary was cut from the bundle ` +
+                      `rather than missing from the index — this is not evidence ` +
+                      `about the projection`
                     : "the queued projection never settled"),
               );
             }

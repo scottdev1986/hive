@@ -17,7 +17,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { writeMemory } from "../src/cli/mcp";
+import { recallMemory, writeMemory } from "../src/cli/mcp";
 import {
   memoryLiveSelfTestCli,
   runMemoryLiveSelfTest,
@@ -163,39 +163,76 @@ describe("hive memory self-test --live (defect D3)", () => {
     expect(semantic).toContain("degraded:embedding-runtime-missing");
   }, 30_000);
 
-  test("a bundle truncated at the recall token ceiling is not reported as a " +
-    "stalled projection", async () => {
-    const { port } = await makeLiveDaemon();
-    // Saturate the recall token ceiling with pitfall rows. memory_recall keeps
-    // pitfalls first and cuts the rest, so the probe's non-pitfall canary is
-    // omitted from a bundle it was ranked into — the semantic leg is healthy
-    // and the projection settles, but the canary never appears.
-    for (let index = 0; index < 7; index += 1) {
+  async function plantFiller(
+    port: number,
+    kind: "pitfall" | "article",
+    count: number,
+  ): Promise<void> {
+    // Ids sort before the probe's `self-test-live-<nonce>` canary, so with the
+    // mock embedder's single shared direction these rank ahead of it.
+    for (let index = 0; index < count; index += 1) {
       await writeMemory(port, {
         scope: "repo",
-        id: `aaa-recall-budget-filler-${index}`,
+        id: `aaa-recall-budget-${kind}-${index}`,
         topic: "pitfalls",
         title:
-          `Filler pitfall ${index} with a deliberately long title so this row ` +
+          `Filler ${kind} ${index} with a deliberately long title so this row ` +
           "costs a realistic share of the recall token ceiling",
         body:
-          `Filler pitfall ${index}. ` +
+          `Filler ${kind} ${index}. ` +
           "This body is long enough that the recall row carries a full-length " +
-          "snippet, which is what makes the row expensive enough to starve the " +
-          "articles partition of the bundle exactly as a real pitfall corpus does.",
+          "snippet, which is what makes the row expensive enough to crowd the " +
+          "bundle exactly as a real grown memory corpus does.",
         source: "agent",
         evidence: "Planted by the recall-budget regression test",
         status: "unverified",
-        kind: "pitfall",
+        kind,
         supersedes: [],
       });
     }
+  }
+
+  test("a pitfall-heavy corpus cannot starve the articles partition", async () => {
+    const { port } = await makeLiveDaemon();
+    // The live degradation: enough pitfall rows to fill the whole recall token
+    // ceiling. Under a pitfalls-first priority ordering every article — the
+    // probe's canary included — is cut, and semantic recall silently stops
+    // returning articles while the embedding leg is perfectly healthy. The
+    // reserved article share is what keeps the canary reachable.
+    await plantFiller(port, "pitfall", 7);
+
+    const report = await runMemoryLiveSelfTest({ settleBudgetMs: 5_000 });
+    expect(lineFor(report.lines, "semantic-recall")).toMatch(
+      /PASS.*semantic: hybrid/,
+    );
+
+    // The probe deletes its canary, so re-establish the same shape it ran
+    // under — a pitfall corpus that overruns the ceiling, plus one article —
+    // and assert the invariant directly: the article survives, a pitfall is
+    // what gets cut, and the signal names that side.
+    await plantFiller(port, "article", 1);
+    const envelope = await recallMemory(
+      port,
+      "what happens when RAM is exhausted and a new worker starts",
+    );
+    expect(envelope.truncated).toBe(true);
+    expect(envelope.articles.length).toBeGreaterThan(0);
+    expect(required(envelope.omittedPitfalls)).toBeGreaterThan(0);
+    expect(required(envelope.omittedArticles)).toBe(0);
+  }, 30_000);
+
+  test("a bundle truncated at the recall token ceiling is not reported as a " +
+    "stalled projection", async () => {
+    const { port } = await makeLiveDaemon();
+    // Crowd the ARTICLES side instead, so the canary is genuinely cut from the
+    // bundle while the semantic leg is healthy and the projection settles.
+    await plantFiller(port, "article", 9);
 
     const report = await runMemoryLiveSelfTest({ settleBudgetMs: 2_000 });
     const semantic = lineFor(report.lines, "semantic-recall");
     expect(semantic).toContain("FAIL");
     expect(semantic).toContain("truncated at the token ceiling");
-    expect(semantic).toContain("row(s) omitted");
+    expect(semantic).toContain("articles");
     // The load-bearing half: the probe must NOT invent a projection stall it
     // never measured.
     expect(semantic).not.toContain("the queued projection never settled");

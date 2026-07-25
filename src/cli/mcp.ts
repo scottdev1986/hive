@@ -252,6 +252,9 @@ const MemoryRecallEnvelopeSchema = z.object({
    * mean "cut by the budget", not "never ranked". */
   truncated: z.boolean().optional(),
   omitted: z.number().optional(),
+  /** Which side the ceiling cut, so starvation is visible directly. */
+  omittedPitfalls: z.number().optional(),
+  omittedArticles: z.number().optional(),
   pitfalls: z.array(MemoryRecallRowSchema),
   articles: z.array(MemoryRecallRowSchema),
 });

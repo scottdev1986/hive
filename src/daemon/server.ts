@@ -7044,7 +7044,7 @@ export class HiveDaemon {
       {
         title: "Recall ranked Hive memory for a query",
         description:
-          "The ranked recall bundle the trigger protocol produces, as a tool: wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. Retrieval is hybrid: full-text search blended (reciprocal-rank) with local embedding similarity when the daemon's semantic leg is available, FTS-only otherwise. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it; over-budget bundles are cut pitfalls-first with truncated:true and an omitted count. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
+          "The ranked recall bundle the trigger protocol produces, as a tool: wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. Retrieval is hybrid: full-text search blended (reciprocal-rank) with local embedding similarity when the daemon's semantic leg is available, FTS-only otherwise. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it. The ceiling is partitioned so neither class can starve the other — each is bounded to a reserved share and unused capacity is reallocated to the other side. Over-budget bundles come back with truncated:true, an omitted count, and omittedPitfalls/omittedArticles naming which side was cut. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
         inputSchema: MemoryRecallRequestSchema,
       },
       async ({ query, budget }) => {
@@ -7063,21 +7063,48 @@ export class HiveDaemon {
         });
         const ceiling = MEMORY_RECALL_DEFAULT_BUDGET;
         const effective = Math.min(budget ?? ceiling, ceiling);
-        // Pitfalls first: the mistake class is the highest-priority injection
-        // (plan §3), so a clamped budget starves articles before pitfalls.
-        const keptPitfalls: typeof bundle.pitfalls = [];
-        const keptArticles: typeof bundle.articles = [];
-        let tokens = 0;
-        let omitted = 0;
-        for (const row of [...bundle.pitfalls, ...bundle.articles]) {
-          const cost = estimateTokens(row);
-          if (tokens + cost > effective) {
-            omitted += 1;
-            continue;
+        // The bundle is PARTITIONED, not merely prioritized (plan §3). Taking
+        // pitfalls first and giving articles the remainder is a priority
+        // ordering, and it starves: a corpus that is mostly pitfalls fills the
+        // whole ceiling with them and a rank-1 semantic-only article becomes
+        // unreachable. Each class is bounded to a reserved share instead, and
+        // whatever one side leaves unused is reallocated to the other so a
+        // corpus with few pitfalls wastes none of its budget.
+        const fill = (
+          rows: readonly (typeof bundle.pitfalls)[number][],
+          budget: number,
+        ): { kept: (typeof bundle.pitfalls)[number][]; tokens: number } => {
+          const kept: (typeof bundle.pitfalls)[number][] = [];
+          let used = 0;
+          for (const row of rows) {
+            const cost = estimateTokens(row);
+            if (used + cost > budget) continue;
+            used += cost;
+            kept.push(row);
           }
-          tokens += cost;
-          (row.pitfall ? keptPitfalls : keptArticles).push(row);
-        }
+          return { kept, tokens: used };
+        };
+        // Articles claim their reserved share first — that claim is the whole
+        // anti-starvation guarantee. Pitfalls then take everything else, so
+        // the mistake class keeps its priority over the unreserved remainder
+        // (and wins outright when the budget is too small for both). Finally
+        // articles reclaim whatever pitfalls could not use.
+        const articleReserve = Math.floor(effective / 2);
+        const reservedArticles = fill(bundle.articles, articleReserve);
+        const pitfallFill = fill(
+          bundle.pitfalls,
+          effective - reservedArticles.tokens,
+        );
+        const articleFill = fill(
+          bundle.articles,
+          effective - pitfallFill.tokens,
+        );
+        const keptPitfalls = pitfallFill.kept;
+        const keptArticles = articleFill.kept;
+        const tokens = pitfallFill.tokens + articleFill.tokens;
+        const omittedPitfalls = bundle.pitfalls.length - keptPitfalls.length;
+        const omittedArticles = bundle.articles.length - keptArticles.length;
+        const omitted = omittedPitfalls + omittedArticles;
         // Defect D2: the envelope discriminates hybrid / degraded:<state> /
         // disabled so FTS-only-because-embeddings-are-down is never
         // indistinguishable from a genuine keyword-only result. The warning is
@@ -7105,6 +7132,8 @@ export class HiveDaemon {
             tokens,
             truncated: omitted > 0,
             omitted,
+            omittedPitfalls,
+            omittedArticles,
             pitfalls: keptPitfalls,
             articles: keptArticles,
           },
