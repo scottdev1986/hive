@@ -124,20 +124,70 @@ describe("C3 context economy", () => {
   });
 
   test("limiting context preserves effective provider and control capability", () => {
-    const providerCapabilities = () =>
-      Object.fromEntries(
-        CAPABILITY_PROVIDERS.map((provider) => [
-          provider,
-          getAgentAdapter(provider).communication,
-        ]),
-      );
-    const before = providerCapabilities();
     const projection = buildNormalMessageBatchProjection(
       [message("message-1", 1, "large".repeat(4_000))],
       runId,
     );
 
-    expect(providerCapabilities()).toEqual(before);
+    expect(
+      Object.fromEntries(
+        CAPABILITY_PROVIDERS.map((provider) => [
+          provider,
+          getAgentAdapter(provider).communication,
+        ]),
+      ),
+    ).toEqual({
+      claude: {
+        provider: "claude",
+        eventSource: "hooks",
+        nativeDelivery: false,
+        toolBoundaryEvents: true,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+      codex: {
+        provider: "codex",
+        eventSource: "native",
+        nativeDelivery: true,
+        toolBoundaryEvents: true,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: true,
+        conversationResume: true,
+      },
+      grok: {
+        provider: "grok",
+        eventSource: "transcript",
+        nativeDelivery: false,
+        toolBoundaryEvents: false,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+      kimi: {
+        provider: "kimi",
+        eventSource: "none",
+        nativeDelivery: false,
+        toolBoundaryEvents: false,
+        turnBoundaryEvents: false,
+        transcriptReader: false,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+      opencode: {
+        provider: "opencode",
+        eventSource: "none",
+        nativeDelivery: false,
+        toolBoundaryEvents: false,
+        turnBoundaryEvents: false,
+        transcriptReader: false,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+    });
     expect(MessagePrioritySchema.options).toEqual([
       "normal",
       "steer",
