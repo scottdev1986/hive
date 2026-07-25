@@ -239,7 +239,7 @@ import {
   stopSessiondAgentSession,
 } from "./teardown";
 import { TokenUsageStore } from "./token-usage";
-import { DrainHandler } from "./drain-handler";
+import { DrainHandler, type ReplacementDrain } from "./drain-handler";
 import {
   type ClaudeTelemetryReader,
   clampPct,
@@ -1271,8 +1271,8 @@ export class HiveDaemon {
           requireSessiondAgentLocator(agent),
           run,
         ),
-      requestReplacement: async (agent, reason) => {
-        await this.replaceWithHandoff(agent, reason);
+      requestReplacement: async (agent, drain) => {
+        await this.replaceWithHandoff(agent, drain);
       },
       ...(this.episodic === null
         ? {}
@@ -1381,7 +1381,7 @@ export class HiveDaemon {
 
   private async replaceWithHandoff(
     agent: AgentRecord,
-    detail: string,
+    drain: ReplacementDrain,
   ): Promise<void> {
     const runs = this.db.listProviderRunsForAgent(agent.id);
     const run = runs.at(-1);
@@ -1439,32 +1439,21 @@ export class HiveDaemon {
     // Persistence is the boundary: failure from here onward cannot erase the
     // task, worktree measurements, or evidence needed by another provider.
     if (paused) await this.terminalHost.stopProvider(locator, run);
-    try {
-      const replacement = await this.spawner.spawn({
-        task: agent.taskDescription,
-        category: agent.category,
-        handoffId: bundle.handoffId,
-      });
-      await this.delivery.send(
-        "hive-handoff",
-        ORCHESTRATOR_NAME,
-        `${agent.name}'s quota handoff ${bundle.handoffId} is durable; ${replacement.name} was launched with the exact task and handoff ID. ${detail}`,
-        {
-          idempotencyKey: `handoff-launched:${bundle.handoffId}`,
-        },
-      );
-    } catch (error) {
-      await this.delivery.send(
-        "hive-handoff",
-        ORCHESTRATOR_NAME,
-        `${agent.name}'s quota handoff ${bundle.handoffId} is durable, but replacement launch failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }. The source terminal and worktree remain retained.`,
-        {
-          idempotencyKey: `handoff-launch-failed:${bundle.handoffId}`,
-        },
-      );
-    }
+    // TODO(router): launch automatically only after quota lifecycle can enforce
+    // this measured provider/pool exclusion through the replacement decision.
+    await this.delivery.send(
+      "hive-handoff",
+      ORCHESTRATOR_NAME,
+      `${agent.name}'s quota handoff ${bundle.handoffId} is durable; the source terminal and worktree remain retained. ` +
+        `Automatic replacement is deferred until quota routing can exclude the proven drained ${
+          drain.pool === null
+            ? `${drain.provider} route`
+            : `${drain.provider}/${drain.pool} pool`
+        }${drain.resetsAt === null ? "" : ` until ${drain.resetsAt}`}. ${drain.reason}`,
+      {
+        idempotencyKey: `handoff-awaiting-route:${bundle.handoffId}`,
+      },
+    );
   }
 
   private async agentSessionPresent(agent: AgentRecord): Promise<boolean> {

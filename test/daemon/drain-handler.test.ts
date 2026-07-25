@@ -2,17 +2,17 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentRecord, CapabilityProvider } from "../../src/schemas";
-import { QuotaConfigSchema } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { QuotaLedger } from "../../src/daemon/quota-ledger";
-import { QuotaService } from "../../src/daemon/quota";
-import { drainedWindowFor } from "../../src/daemon/quota";
-import type { QuotaProbe } from "../../src/daemon/quota-sources";
 import {
   classifyVendorDrainError,
   DrainHandler,
+  type ReplacementDrain,
 } from "../../src/daemon/drain-handler";
+import { drainedWindowFor, QuotaService } from "../../src/daemon/quota";
+import { QuotaLedger } from "../../src/daemon/quota-ledger";
+import type { QuotaProbe } from "../../src/daemon/quota-sources";
+import type { AgentRecord } from "../../src/schemas";
+import { QuotaConfigSchema } from "../../src/schemas";
 
 /**
  * The drain handler (§R4–R7): hold when a window resets within the hour,
@@ -22,9 +22,9 @@ import {
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) =>
-    rm(root, { recursive: true, force: true })
-  ));
+  await Promise.all(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
 });
 
 let now = new Date("2026-07-24T12:00:00.000Z");
@@ -76,7 +76,7 @@ interface Harness {
   }>;
   paused: string[];
   resumed: string[];
-  replacements: Array<{ name: string; reason: string }>;
+  replacements: Array<{ name: string; drain: ReplacementDrain }>;
   memories: Array<{ agent: string | null; summary: string }>;
   drain: DrainHandler;
 }
@@ -141,7 +141,9 @@ async function harness(
     send: async (from, to, body, options) => {
       if (
         options?.idempotencyKey !== undefined &&
-        sent.some((message) => message.idempotencyKey === options.idempotencyKey)
+        sent.some(
+          (message) => message.idempotencyKey === options.idempotencyKey,
+        )
       ) {
         return;
       }
@@ -155,8 +157,8 @@ async function harness(
       resumed.push(record.name);
       return true;
     },
-    requestReplacement: async (record, reason) => {
-      replacements.push({ name: record.name, reason });
+    requestReplacement: async (record, drain) => {
+      replacements.push({ name: record.name, drain });
     },
     remember: (event) => memories.push(event),
     clock: () => now,
@@ -347,7 +349,15 @@ describe("the drain handler", () => {
     await h.drain.sweep();
     expect(h.paused).toEqual(["maya"]);
     expect(h.replacements).toEqual([
-      { name: "maya", reason: expect.stringContaining("spent") },
+      {
+        name: "maya",
+        drain: {
+          provider: "claude",
+          pool: "subscription",
+          resetsAt: at(180),
+          reason: expect.stringContaining("spent"),
+        },
+      },
     ]);
     expect(h.db.getAgentById("agent-maya")).toMatchObject({
       status: "held",
@@ -371,7 +381,13 @@ describe("the drain handler", () => {
     ]);
     insertRunningAgent(h, agent());
     // The only unmetered route has errored too.
-    const opencodeAgent = agent({ id: "agent-otto", name: "otto", tool: "opencode", status: "failed", failedAt: now.toISOString() });
+    const opencodeAgent = agent({
+      id: "agent-otto",
+      name: "otto",
+      tool: "opencode",
+      status: "failed",
+      failedAt: now.toISOString(),
+    });
     insertRunningAgent(h, opencodeAgent);
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
 
@@ -396,7 +412,13 @@ describe("the drain handler", () => {
       { provider: "kimi", fiveHourUsed: 100, weeklyUsed: 100 },
     ]);
     insertRunningAgent(h, agent());
-    const opencodeAgent = agent({ id: "agent-otto", name: "otto", tool: "opencode", status: "failed", failedAt: now.toISOString() });
+    const opencodeAgent = agent({
+      id: "agent-otto",
+      name: "otto",
+      tool: "opencode",
+      status: "failed",
+      failedAt: now.toISOString(),
+    });
     insertRunningAgent(h, opencodeAgent);
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
 
@@ -404,7 +426,9 @@ describe("the drain handler", () => {
     // with a memory each; C5 owns replacement construction.
     expect(h.memories).toHaveLength(2);
     expect(h.memories[0]?.summary).toContain("hive/maya-server");
-    expect(h.memories[0]?.summary).toContain("Resume it when any provider's usage returns");
+    expect(h.memories[0]?.summary).toContain(
+      "Resume it when any provider's usage returns",
+    );
     expect(h.paused).toEqual(["maya"]);
     expect(h.db.getAgentById("agent-maya")).toMatchObject({
       status: "held",
@@ -422,7 +446,13 @@ describe("the drain handler", () => {
         fiveHourResetAt: at(200),
       },
     ]);
-    const opencodeAgent = agent({ id: "agent-otto", name: "otto", tool: "opencode", status: "failed", failedAt: now.toISOString() });
+    const opencodeAgent = agent({
+      id: "agent-otto",
+      name: "otto",
+      tool: "opencode",
+      status: "failed",
+      failedAt: now.toISOString(),
+    });
     insertRunningAgent(h, opencodeAgent);
 
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
@@ -430,6 +460,12 @@ describe("the drain handler", () => {
     // The agent was already terminal: C4 retains its work and reports the C5
     // replacement seam without inventing a handoff.
     expect(h.replacements).toHaveLength(1);
+    expect(h.replacements[0]?.drain).toEqual({
+      provider: "opencode",
+      pool: null,
+      resetsAt: null,
+      reason: "a opencode rate-limit error: 429 Too Many Requests",
+    });
 
     // A live start on the provider clears its drain error record.
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
@@ -456,18 +492,34 @@ describe("the drain handler", () => {
 
 describe("the vendor-error classifier", () => {
   test("rate-limit and billing text is a drain, per vendor", () => {
-    expect(classifyVendorDrainError("claude", "429 rate_limit_error")).toBe(true);
-    expect(classifyVendorDrainError("claude", "Credit balance is too low")).toBe(true);
-    expect(classifyVendorDrainError("codex", "Rate limit reached for gpt-5.6-sol")).toBe(true);
-    expect(classifyVendorDrainError("kimi", "provider.rate_limit: quota exceeded")).toBe(true);
-    expect(classifyVendorDrainError("grok", "quota exceeded for this account")).toBe(true);
-    expect(classifyVendorDrainError("opencode", "429: rate limit exceeded")).toBe(true);
+    expect(classifyVendorDrainError("claude", "429 rate_limit_error")).toBe(
+      true,
+    );
+    expect(
+      classifyVendorDrainError("claude", "Credit balance is too low"),
+    ).toBe(true);
+    expect(
+      classifyVendorDrainError("codex", "Rate limit reached for gpt-5.6-sol"),
+    ).toBe(true);
+    expect(
+      classifyVendorDrainError("kimi", "provider.rate_limit: quota exceeded"),
+    ).toBe(true);
+    expect(
+      classifyVendorDrainError("grok", "quota exceeded for this account"),
+    ).toBe(true);
+    expect(
+      classifyVendorDrainError("opencode", "429: rate limit exceeded"),
+    ).toBe(true);
   });
 
   test("a crash is never a drain — it stays with the quarantine", () => {
     expect(classifyVendorDrainError("claude", "command not found")).toBe(false);
-    expect(classifyVendorDrainError("codex", "process exited with status 1")).toBe(false);
-    expect(classifyVendorDrainError("opencode", "Error: ENOENT no such file")).toBe(false);
+    expect(
+      classifyVendorDrainError("codex", "process exited with status 1"),
+    ).toBe(false);
+    expect(
+      classifyVendorDrainError("opencode", "Error: ENOENT no such file"),
+    ).toBe(false);
     expect(classifyVendorDrainError("kimi", "connection refused")).toBe(false);
   });
 });
@@ -517,11 +569,13 @@ describe("the R7 estimate boundary (drainedWindowFor)", () => {
       resetsAt: at(30),
     });
     expect(
-      drainedWindowFor([{
-        ...status,
-        fiveHour: windowStatus("unknown", null),
-        weekly: windowStatus("not-metered", null),
-      }]),
+      drainedWindowFor([
+        {
+          ...status,
+          fiveHour: windowStatus("unknown", null),
+          weekly: windowStatus("not-metered", null),
+        },
+      ]),
     ).toBeNull();
   });
 });

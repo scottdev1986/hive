@@ -1,9 +1,9 @@
 import {
-  CAPABILITY_PROVIDERS,
   type AgentRecord,
+  CAPABILITY_PROVIDERS,
   type CapabilityProvider,
-  type ProviderRun,
   isTerminalAgentStatus,
+  type ProviderRun,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 import type { QuotaService } from "./quota";
@@ -70,10 +70,24 @@ export interface DrainHandlerDependencies {
   ) => Promise<unknown>;
   pauseProvider: (agent: AgentRecord, run: ProviderRun) => Promise<boolean>;
   resumeProvider: (agent: AgentRecord, run: ProviderRun) => Promise<boolean>;
-  requestReplacement: (agent: AgentRecord, reason: string) => Promise<void>;
+  requestReplacement: (
+    agent: AgentRecord,
+    drain: ReplacementDrain,
+  ) => Promise<void>;
   /** EpisodicStore.appendEvent — the all-drained memory. */
-  remember?: (event: { agent: string | null; type: string; summary: string }) => void;
+  remember?: (event: {
+    agent: string | null;
+    type: string;
+    summary: string;
+  }) => void;
   clock?: () => Date;
+}
+
+export interface ReplacementDrain {
+  provider: CapabilityProvider;
+  pool: string | null;
+  resetsAt: string | null;
+  reason: string;
 }
 
 export class DrainHandler {
@@ -96,10 +110,16 @@ export class DrainHandler {
    * destroying its terminal or worktree. */
   async onVendorError(agent: AgentRecord, failure: string): Promise<void> {
     this.drainErrors.set(agent.tool, new Date(this.clock()).toISOString());
+    const drain: ReplacementDrain = {
+      provider: agent.tool,
+      pool: null,
+      resetsAt: null,
+      reason: `a ${agent.tool} rate-limit error: ${failure}`,
+    };
     if (this.allDrained()) {
-      await this.allDrainedArm(agent, `a ${agent.tool} rate-limit error`);
+      await this.allDrainedArm(agent, drain);
     } else {
-      await this.deferReplacement(agent, `a ${agent.tool} rate-limit error`);
+      await this.deferReplacement(agent, drain);
     }
     // The error may have changed the all-drained verdict for every live
     // agent too — evaluate them through the normal sweep now, not 30s late.
@@ -127,7 +147,8 @@ export class DrainHandler {
         agent.status !== "working" &&
         agent.status !== "idle" &&
         agent.status !== "awaiting-approval"
-      ) continue;
+      )
+        continue;
       const identity = agent.executionIdentity;
       const model = identity?.model ?? agent.model;
       const drained = quota.drainFor({ tool: agent.tool, model }, now);
@@ -137,35 +158,41 @@ export class DrainHandler {
         (drained.resetsAt === null
           ? " and the provider does not say when it resets"
           : ` until ${drained.resetsAt}`);
+      const drain: ReplacementDrain = {
+        provider: agent.tool,
+        pool: drained.pool,
+        resetsAt: drained.resetsAt,
+        reason,
+      };
       if (
         drained.resetsAt !== null &&
         new Date(drained.resetsAt).getTime() - now.getTime() <= HOLD_WINDOW_MS
       ) {
         // §R4: a reset within the hour is a hold, never a handoff.
         if (!(await this.hold(agent, reason, drained.resetsAt))) {
-          await this.deps.requestReplacement(
-            agent,
-            `${reason}; the source provider could not be held`,
-          );
+          await this.deps.requestReplacement(agent, {
+            ...drain,
+            reason: `${reason}; the source provider could not be held`,
+          });
         }
         continue;
       }
-      await this.handle(agent, reason);
+      await this.handle(agent, drain);
     }
   }
 
   /** The arm decision shared by the sweep and the vendor-error path. */
   private async handle(
     agent: AgentRecord,
-    reason: string,
+    drain: ReplacementDrain,
   ): Promise<void> {
     const quota = this.deps.quota;
     if (quota === undefined || agent.status === "held") return;
     if (this.allDrained()) {
-      await this.allDrainedArm(agent, reason);
+      await this.allDrainedArm(agent, drain);
       return;
     }
-    await this.deferReplacement(agent, reason);
+    await this.deferReplacement(agent, drain);
   }
 
   /** Every metered provider drained AND every unmetered route errored (§R6). */
@@ -184,42 +211,46 @@ export class DrainHandler {
   }
 
   /** §R6: wait for the nearest reset, or preserve and remember. */
-  private async allDrainedArm(agent: AgentRecord, reason: string): Promise<void> {
+  private async allDrainedArm(
+    agent: AgentRecord,
+    drain: ReplacementDrain,
+  ): Promise<void> {
     const quota = this.deps.quota!;
     const now = this.clock();
     const nearest = quota.nearestDrainResets(now);
-    const waitFor = nearest.fiveHour ??
+    const waitFor =
+      nearest.fiveHour ??
       (nearest.weekly !== null &&
-        new Date(nearest.weekly).getTime() - now.getTime() <=
-          ALL_DRAINED_WEEKLY_WAIT_MS
+      new Date(nearest.weekly).getTime() - now.getTime() <=
+        ALL_DRAINED_WEEKLY_WAIT_MS
         ? nearest.weekly
         : null);
     if (waitFor !== null && agent.status !== "held" && !isTerminal(agent)) {
       const held = await this.hold(
         agent,
-        `every provider is out of usage (${reason}); nearest window resets ${waitFor}`,
+        `every provider is out of usage (${drain.reason}); nearest window resets ${waitFor}`,
         waitFor,
       );
       if (!held) {
-        await this.deps.requestReplacement(
-          agent,
-          `${reason}; the source provider could not be held`,
-        );
+        await this.deps.requestReplacement(agent, {
+          ...drain,
+          reason: `${drain.reason}; the source provider could not be held`,
+        });
       }
       return;
     }
     if (!isTerminal(agent)) {
-      await this.hold(agent, `all providers drained: ${reason}`, null);
+      await this.hold(agent, `all providers drained: ${drain.reason}`, null);
     }
     this.deps.remember?.({
       agent: agent.name,
       type: "quota-drain",
       summary:
-        `${agent.name} is retained because every provider ran out of usage (${reason}). ` +
+        `${agent.name} is retained because every provider ran out of usage (${drain.reason}). ` +
         `Work remains on branch ${agent.branch ?? "(none)"} from task: ${agent.taskDescription}. ` +
         "Resume it when any provider's usage returns.",
     });
-    await this.deps.requestReplacement(agent, reason);
+    await this.deps.requestReplacement(agent, drain);
   }
 
   private async hold(
@@ -278,9 +309,9 @@ export class DrainHandler {
 
   private async deferReplacement(
     agent: AgentRecord,
-    reason: string,
+    drain: ReplacementDrain,
   ): Promise<void> {
-    if (!isTerminal(agent)) await this.hold(agent, reason, null);
-    await this.deps.requestReplacement(agent, reason);
+    if (!isTerminal(agent)) await this.hold(agent, drain.reason, null);
+    await this.deps.requestReplacement(agent, drain);
   }
 }

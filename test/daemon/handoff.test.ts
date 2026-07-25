@@ -1,16 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type {
-  AgentRecord,
-  MemoryFact,
-  ProviderEvent,
-  ProviderRun,
-} from "../../src/schemas";
-import { AgentMessageSchema } from "../../src/schemas";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
 import {
   buildHandoffBundle,
@@ -20,6 +13,13 @@ import { HiveDaemon } from "../../src/daemon/server";
 import { buildAgentPrompt } from "../../src/daemon/spawner-impl";
 import { StatusStore } from "../../src/daemon/status-store";
 import { actingAs } from "../../src/daemon/testing";
+import type {
+  AgentRecord,
+  MemoryFact,
+  ProviderEvent,
+  ProviderRun,
+} from "../../src/schemas";
+import { AgentMessageSchema } from "../../src/schemas";
 
 const AT = "2026-07-25T01:00:00.000Z";
 const terminal = {
@@ -270,7 +270,62 @@ describe("handoff bundle", () => {
     expect(bundle.summary?.provenance).toBe("fallback");
   });
 
-  test("the replacement seam persists before stop and launch, then pickup leaves work open", async () => {
+  test("a dead source without a final status still produces a usable handoff", async () => {
+    const requirement = AgentMessageSchema.parse({
+      id: "dead-source-requirement",
+      from: "queen",
+      to: agent.name,
+      body: "Continue from the retained worktree",
+      createdAt: "2026-07-25T01:01:00.000Z",
+      deliveredAt: null,
+      sequence: 4,
+    });
+    const bundle = await buildHandoffBundle({
+      handoffId: "018f1e90-7b5a-7cc0-8000-000000000217",
+      reason: "crash",
+      agent,
+      run,
+      measurement: {
+        name: "hive/maya-work",
+        base: "base-sha",
+        head: "head-sha",
+        dirtyPaths: ["src/preserved.ts"],
+        untrackedPaths: [],
+        commits: [],
+      },
+      messages: [requirement],
+      providerEvents: [],
+      statusEvents: [],
+      output: {
+        locator: terminal,
+        outputThrough: "51",
+        text: "last retained provider output",
+        completeness: "complete",
+      },
+      memory: [],
+      createdAt: "2026-07-25T01:12:00.000Z",
+    });
+
+    expect(bundle.activity.statusReportRef).toBeNull();
+    expect(bundle.originalTaskRef.content).toBe(agent.taskDescription);
+    expect(bundle.requirementRefs.map((ref) => ref.id)).toEqual([
+      requirement.id,
+    ]);
+    expect(bundle.pendingMessageIds).toEqual([requirement.id]);
+    expect(bundle.branch).toMatchObject({
+      name: agent.branch,
+      head: "head-sha",
+    });
+    expect(bundle.worktree.dirtyPaths).toEqual(["src/preserved.ts"]);
+    expect(bundle.activity.terminalOutputRanges).toHaveLength(1);
+    expect(bundle.activity.terminalOutputRanges[0]).toMatchObject({
+      through: "51",
+      completeness: "complete",
+    });
+    expect(bundle.summary).toMatchObject({ provenance: "fallback" });
+  });
+
+  test("the replacement seam persists before stop and defers routing, then pickup leaves work open", async () => {
     const db = new HiveDatabase(":memory:");
     db.insertAgent({ ...agent, status: "held", writeRevoked: false });
     db.insertProviderRun({
@@ -280,35 +335,14 @@ describe("handoff bundle", () => {
       exitReason: null,
     });
     const order: string[] = [];
-    let daemon!: HiveDaemon;
-    daemon = new HiveDaemon({
-      statusIncarnationGenerationSource:
-        HiveDaemon.statusGenerationUnavailable,
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       repoRoot: "/does/not/exist",
       spawner: {
-        async spawn(request) {
-          const handoffId = request.handoffId;
-          expect(handoffId).toBeString();
-          expect(db.getHandoff(handoffId!)).not.toBeNull();
+        async spawn() {
           order.push("spawn");
-          const replacement: AgentRecord = {
-            ...agent,
-            id: "agent-replacement",
-            name: "replacement",
-            status: "working",
-            taskDescription: request.task,
-            capabilityEpoch: 0,
-            writeRevoked: false,
-            sessionLocator: {
-              ...terminal,
-              subject: { kind: "agent", agentId: "agent-replacement" },
-              sessionId:
-                "ses_018f1e90-7b5a-7cc0-8000-000000000215",
-            },
-          };
-          db.insertAgent(replacement);
-          return replacement;
+          throw new Error("automatic replacement must stay deferred");
         },
       },
     });
@@ -320,7 +354,12 @@ describe("handoff bundle", () => {
       };
       replaceWithHandoff: (
         source: AgentRecord,
-        reason: string,
+        drain: {
+          provider: "codex";
+          pool: string;
+          resetsAt: string;
+          reason: string;
+        },
       ) => Promise<void>;
     };
     internal.terminalHost.pauseProvider = async () => {
@@ -336,8 +375,13 @@ describe("handoff bundle", () => {
       return true;
     };
 
-    await internal.replaceWithHandoff(agent, "weekly pool spent");
-    expect(order).toEqual(["pause", "stop", "spawn"]);
+    await internal.replaceWithHandoff(agent, {
+      provider: "codex",
+      pool: "weekly",
+      resetsAt: "2026-07-26T19:00:00.000Z",
+      reason: "weekly pool spent",
+    });
+    expect(order).toEqual(["pause", "stop"]);
     expect(db.getAgentById(agent.id)).toMatchObject({
       status: "control-paused",
       writeRevoked: true,
@@ -346,8 +390,30 @@ describe("handoff bundle", () => {
       branch: agent.branch,
     });
     const stored = db.getHandoffForSourceRun(run.runId);
+    if (stored === null) throw new Error("handoff was not persisted");
     expect(stored?.bundle.completeness).toBe("unknown");
     expect(stored?.pickup).toBeNull();
+    expect(db.listMessages().at(-1)?.body).toContain(
+      "codex/weekly pool until 2026-07-26T19:00:00.000Z",
+    );
+    expect(db.listMessages().at(-1)?.body).toContain(
+      "Automatic replacement is deferred",
+    );
+
+    db.insertAgent({
+      ...agent,
+      id: "agent-replacement",
+      name: "replacement",
+      status: "working",
+      taskDescription: agent.taskDescription,
+      capabilityEpoch: 0,
+      writeRevoked: false,
+      sessionLocator: {
+        ...terminal,
+        subject: { kind: "agent", agentId: "agent-replacement" },
+        sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000215",
+      },
+    });
 
     const fetch = actingAs(daemon, "replacement", "writer");
     const client = new Client({ name: "handoff-test", version: "0.0.0" });
@@ -361,14 +427,14 @@ describe("handoff bundle", () => {
         name: "hive_pickup_handoff",
         arguments: {
           agent: "replacement",
-          handoffId: stored!.bundle.handoffId,
+          handoffId: stored.bundle.handoffId,
         },
       });
       expect(result.isError).not.toBe(true);
     } finally {
       await client.close().catch(() => undefined);
     }
-    expect(db.getHandoff(stored!.bundle.handoffId)?.pickup).toMatchObject({
+    expect(db.getHandoff(stored.bundle.handoffId)?.pickup).toMatchObject({
       replacementAgentId: "agent-replacement",
     });
     expect(db.getAgentById("agent-replacement")?.status).toBe("working");
