@@ -527,10 +527,27 @@ final class OrderedOutputEngineTests: XCTestCase {
                        "every contending call must eventually enter (after hold release)")
     }
 
-    /// processOutput is serialized with draw and restore: observe ALL three
-    /// ops, force draw+restore to queue while processOutput is held IN body,
-    /// and prove via entry/exit sequence stamps that nothing nested.
-    func testIngestionSerializedWithDrawAndRestore() throws {
+    /// The two FEED entry points — processOutput and restoreCheckpoint — are
+    /// serialized against each other: force both to queue while processOutput
+    /// is held in body, and prove via entry/exit stamps that they never nest.
+    ///
+    /// That serialization is required because `HiveManual` mutates its
+    /// `pending` / `output_ranges` / `stream` bookkeeping OUTSIDE
+    /// `renderer_state.mutex`, so two concurrent feeds would corrupt it.
+    /// `feedLock` is what provides it now that the feed runs on the pane's
+    /// terminal I/O thread instead of the main queue.
+    ///
+    /// `draw` is deliberately NOT part of that guarantee and is allowed to
+    /// overlap a feed. It used to be covered here only because main-queue
+    /// confinement serialized everything by construction, not because Ghostty
+    /// requires it — `Surface.draw` states outright that "renderers are
+    /// required to support `drawFrame` being called from the main thread", and
+    /// `drawFrame` takes only the renderer's own `draw_mutex` to rasterize
+    /// ALREADY-built cells. The one reader of terminal state is
+    /// `updateFrame`, which takes `renderer_state.mutex` — the same lock the
+    /// feed takes. Serializing draw behind the feed would park the main thread
+    /// on a VT parse for no safety benefit.
+    func testFeedEntryPointsSerializeWithEachOtherButNotDraw() throws {
         let surface = try makeSurface()
         defer { surface.free() }
 
@@ -607,10 +624,16 @@ final class OrderedOutputEngineTests: XCTestCase {
         }
         wait(for: [raceDone], timeout: 8)
 
-        XCTAssertEqual(midActive, 1, "draw/restore must not enter while processOutput is held")
-        XCTAssertEqual(midOps, ["processOutput"],
-                       "only processOutput begin may exist before release: \(midOps)")
-        XCTAssertEqual(midPhases, ["begin"])
+        // While processOutput is held, the other FEED must not have entered.
+        // Draw may have come and gone — it does not contend for the feed lock.
+        let midFeedOps = zip(midOps, midPhases).filter {
+            $0.0 == "processOutput" || $0.0 == "restoreCheckpoint"
+        }
+        XCTAssertEqual(midFeedOps.map(\.0), ["processOutput"],
+                       "restore must not enter while processOutput is held: \(midOps)")
+        XCTAssertEqual(midFeedOps.map(\.1), ["begin"])
+        XCTAssertFalse(midOps.contains("restoreCheckpoint"),
+                       "restore entered during a held feed: \(midOps)")
 
         // Capture the race stamps BEFORE any follow-up processOutput so the
         // ordering proof is about the forced draw/restore contention only.
@@ -625,18 +648,20 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(restoreResult, .invalidValue, "empty restore is invalid and must not reset")
         XCTAssertEqual(surface.throughSeq, 9)
         XCTAssertEqual(stillAfterRace, 0)
-        XCTAssertEqual(peak, 1, "processOutput/draw/restore must never nest")
 
-        // Stamps on BOTH sides: processOutput begin/end, then draw begin/end,
-        // then restore begin/end (or draw/restore order), never interleaved.
+        // The feed pair must never nest. Draw is excluded — it is permitted to
+        // overlap a feed (see the note on this test), so it is filtered out of
+        // the depth walk rather than asserted against.
+        let feedOps: Set<String> = ["processOutput", "restoreCheckpoint"]
         var depth = 0
         var opsSeen = Set<String>()
         for stamp in raceStamps {
             opsSeen.insert(stamp.op)
+            guard feedOps.contains(stamp.op) else { continue }
             if stamp.phase == "begin" {
                 depth += 1
                 XCTAssertEqual(depth, 1,
-                               "nesting detected at \(stamp): \(raceStamps)")
+                               "feed nesting detected at \(stamp): \(raceStamps)")
             } else {
                 XCTAssertEqual(depth, 1, "unbalanced end at \(stamp)")
                 depth -= 1
@@ -649,15 +674,12 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertTrue(opsSeen.contains("restoreCheckpoint"),
                       "restore must be stamped: \(raceStamps)")
 
-        // Ordering: processOutput fully completes before draw and restore begin.
+        // Ordering: processOutput fully completes before the OTHER FEED begins.
+        // No such assertion for draw — overlapping is the intended behaviour.
         let poEnd = raceStamps.lastIndex { $0.op == "processOutput" && $0.phase == "end" }
-        let drawBegin = raceStamps.firstIndex { $0.op == "draw" && $0.phase == "begin" }
         let restoreBegin = raceStamps.firstIndex { $0.op == "restoreCheckpoint" && $0.phase == "begin" }
         XCTAssertNotNil(poEnd)
-        XCTAssertNotNil(drawBegin)
         XCTAssertNotNil(restoreBegin)
-        XCTAssertLessThan(poEnd!, drawBegin!,
-                          "draw must not begin until processOutput ends: \(raceStamps)")
         XCTAssertLessThan(poEnd!, restoreBegin!,
                           "restore must not begin until processOutput ends: \(raceStamps)")
 

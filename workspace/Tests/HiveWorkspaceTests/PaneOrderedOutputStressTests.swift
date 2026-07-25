@@ -115,6 +115,121 @@ final class PaneOrderedOutputStressTests: XCTestCase {
         )
     }
 
+    /// The responsiveness contract the pane actually owes a typist: while output
+    /// floods in, a main-queue work item — which is what a keystroke is — must
+    /// still be scheduled promptly.
+    ///
+    /// `testRealPaneStaysResponsiveThroughOrdered100MiB` cannot catch this. It
+    /// hands each chunk to the main queue itself via `DispatchQueue.main.sync`,
+    /// so it yields between every chunk by construction and would stay green
+    /// even if every byte were parsed on the main thread.
+    ///
+    /// Here the flood runs the way the production pump runs it — frames applied
+    /// on a background thread, never touching the main queue — and the main
+    /// queue is timed from the main thread. If VT parsing moves back onto the
+    /// main queue, or frames are re-coalesced into multi-megabyte main-queue
+    /// blocks, this latency blows up immediately.
+    func testMainQueueStaysSchedulableWhileOutputFloods() async throws {
+        let fixture = try makeFixture()
+        defer {
+            fixture.terminal.userClose()
+            fixture.controller.close()
+        }
+
+        let floodBytes = 16 * 1024 * 1024
+        let finished = expectation(description: "flood finished")
+        let terminal = UnsafeSendable(fixture.terminal)
+        let binding = fixture.binding
+        let done = LockedBox<Bool>()
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var volume: UInt64 = 0
+            var block = 0
+            while Int(volume) < floodBytes {
+                let payload = Self.payload(block: block)
+                // Applied straight from this thread, exactly as the pane pump
+                // does — no main-queue hop anywhere in the output path.
+                terminal.value.pumpHostFrame(
+                    WireFrame(
+                        type: .output,
+                        flags: [.contentSensitive],
+                        streamSeq: fixture.initialHighWater + volume,
+                        payload: payload
+                    ),
+                    frameBinding: binding
+                )
+                volume += UInt64(payload.count)
+                block += 1
+            }
+            done.set(true)
+            finished.fulfill()
+        }
+
+        // Sample how long a freshly-queued main-queue item waits to run — the
+        // keystroke path, since NSEvent delivery and input submission are both
+        // main-queue work.
+        //
+        // Sampled from a BACKGROUND thread on purpose. Driving this from the
+        // test's own main thread means every sample pays XCTest expectation
+        // overhead and measures the harness rather than the main queue; an
+        // earlier version of this test read ~140 ms that way while the pane had
+        // drawn zero frames. A semaphore round-trip from off-main is the honest
+        // instrument, and it cannot deadlock because the waiter is not main.
+        let worst = LockedBox<TimeInterval>()
+        let sampleCount = LockedBox<Int>()
+        let profile = LockedBox<String>()
+        DispatchQueue.global(qos: .userInitiated).async {
+            var all: [TimeInterval] = []
+            var worstIndex = 0
+            while done.get() != true, all.count < 2000 {
+                let queuedAt = ProcessInfo.processInfo.systemUptime
+                let hop = DispatchSemaphore(value: 0)
+                DispatchQueue.main.async { hop.signal() }
+                hop.wait()
+                let elapsed = ProcessInfo.processInfo.systemUptime - queuedAt
+                if elapsed > (all.max() ?? 0) { worstIndex = all.count }
+                all.append(elapsed)
+            }
+            // Drop warm-up. The first hop pays one-time costs that have nothing
+            // to do with steady-state responsiveness — thread-pool spin-up and
+            // lazy init — and measured ~130 ms while p50 was 0 ms and the pane
+            // had drawn nothing. Asserting on the raw maximum measured that
+            // startup cost, not the main queue.
+            let steady = all.count > 20 ? Array(all.dropFirst(10)) : all
+            let sorted = steady.sorted()
+            let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+            let p99 = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, (sorted.count * 99) / 100)]
+            let over10ms = steady.filter { $0 > 0.010 }.count
+            profile.set(
+                "p50=\(String(format: "%.4f", p50))s p99=\(String(format: "%.4f", p99))s "
+                    + "over10ms=\(over10ms) rawWorst="
+                    + "\(String(format: "%.4f", all.max() ?? 0))s@\(worstIndex)/\(all.count)"
+            )
+            worst.set(p99)
+            sampleCount.set(steady.count)
+        }
+
+        await fulfillment(of: [finished], timeout: 60)
+        // Let the sampler observe `done` and publish.
+        while sampleCount.get() == nil { await Task.yield() }
+        let worstLatency = worst.get() ?? 0
+        let samples = sampleCount.get() ?? 0
+
+        XCTAssertGreaterThan(samples, 10, "flood finished too fast to measure responsiveness")
+        XCTAssertLessThan(
+            worstLatency,
+            0.010,
+            "main queue p99 latency was \(worstLatency)s during output flood; "
+                + "output application belongs off the main thread"
+        )
+        print(
+            "B25 MAIN-QUEUE LATENCY: floodBytes=\(floodBytes) samples=\(samples) "
+                + "p99MainQueueLatency=\(String(format: "%.4f", worstLatency))s "
+                + "draws=\(fixture.terminal.drawScheduledCount) "
+                + (profile.get() ?? "")
+        )
+    }
+
     func testOneByteSequenceGapBreaksThePaneRow() throws {
         let fixture = try makeFixture()
         defer {

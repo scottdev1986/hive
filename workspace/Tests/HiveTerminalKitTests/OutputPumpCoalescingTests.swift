@@ -2,11 +2,14 @@ import AppKit
 import XCTest
 @testable import HiveTerminalKit
 
-/// Output coalescing (SessiondPaneTerminal pump): a burst of host frames must
-/// reach the surface in bounded main-queue dispatches — one per drained batch
-/// instead of one per 64 KiB frame — so queued scrollback cannot starve
-/// keystrokes. Applied bytes and APPLIED acks must be byte-for-byte identical
-/// to per-frame dispatch: ack only what was applied, in order.
+/// Output pump ordering (SessiondPaneTerminal pump): a burst of host frames
+/// must reach the surface in contiguous wire order with exactly one APPLIED ack
+/// per applied frame, and an ack high-water that never regresses.
+///
+/// These invariants used to be stated against the main-queue coalescing batch.
+/// Frames now apply one at a time on the pane's terminal I/O thread, so the
+/// batching is gone — but the ordering and ack contract it had to preserve is
+/// unchanged, and is what this exercises.
 final class OutputPumpCoalescingTests: XCTestCase {
     private let geometry = TerminalGeometry(
         columns: 80,
@@ -38,17 +41,15 @@ final class OutputPumpCoalescingTests: XCTestCase {
         return view
     }
 
-    /// Mirrors the production pump turn in SessiondPaneTerminal.startPump:
-    /// one blocking receive, one bounded drain, ONE main-queue block per turn.
-    /// Returns the number of main-queue dispatches used.
+    /// Mirrors the production pump loop in SessiondPaneTerminal.startPump:
+    /// blocking receive, then apply that one frame. Returns the frame count.
     @discardableResult
-    private func pumpCoalesced(
+    private func pumpAllFrames(
         view: HiveTerminalView,
         transport: InMemoryHostTransport,
-        binding: SurfaceBinding,
-        maxFramesPerTurn: Int
+        binding: SurfaceBinding
     ) -> Int {
-        var dispatches = 0
+        var applied = 0
         while true {
             let first: WireFrame
             do {
@@ -59,22 +60,13 @@ final class OutputPumpCoalescingTests: XCTestCase {
             } catch {
                 break
             }
-            let batch = transport.drainAvailableFrames(
-                first: first,
-                maxFrames: maxFramesPerTurn
-            )
-            // One main-queue dispatch per batch in production; applied inline
-            // here (tests already run on the main thread).
-            dispatches += 1
-            for frame in batch.frames {
-                view.pumpHostFrame(frame, frameBinding: binding)
-            }
-            if batch.hostClosed { break }
+            view.pumpHostFrame(first, frameBinding: binding)
+            applied += 1
         }
-        return dispatches
+        return applied
     }
 
-    func testBurstAppliesWithBoundedDispatchesAndIdenticalAckSequence() throws {
+    func testBurstAppliesInWireOrderWithOneAckPerFrame() throws {
         let host = FakeHost(connectionId: "coalesce-burst")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
@@ -92,20 +84,14 @@ final class OutputPumpCoalescingTests: XCTestCase {
             expected.append(bytes)
         }
 
-        let dispatches = pumpCoalesced(
+        let applied_count = pumpAllFrames(
             view: view,
             transport: host.clientTransport,
-            binding: binding,
-            maxFramesPerTurn: 32
+            binding: binding
         )
-        XCTAssertEqual(
-            dispatches,
-            4,
-            "100 buffered frames drain in ceil(100/32) main-queue dispatches, not 100"
-        )
+        XCTAssertEqual(applied_count, 100, "every buffered frame applies")
 
-        // Applied output is identical to per-frame dispatch: every range in
-        // wire order, byte-for-byte.
+        // Every range in wire order, byte-for-byte.
         let applied = engine.appliedRanges.dropFirst() // attach's "ready"
         XCTAssertEqual(applied.count, 100)
         var expectedSeq = highWaterAfterAttach
@@ -131,28 +117,5 @@ final class OutputPumpCoalescingTests: XCTestCase {
         XCTAssertEqual(ackSeqs.first, highWaterAfterAttach)
         XCTAssertEqual(ackSeqs.last, view.highWater)
         XCTAssertEqual(ackSeqs, ackSeqs.sorted(), "ack high-water never regresses")
-    }
-
-    /// An orderly host close mid-drain is reported: buffered frames deliver
-    /// first, then the pump treats the connection as ended.
-    func testDrainReportsOrderlyClose() throws {
-        let pair = InMemoryHostTransport.makePair(clientId: "coalesce-c", hostId: "coalesce-h")
-        let first = WireFrame(type: .output, streamSeq: 0, payload: Data("a".utf8))
-        pair.client.close()
-
-        let batch = pair.client.drainAvailableFrames(first: first, maxFrames: 32)
-        XCTAssertEqual(batch.frames, [first])
-        XCTAssertTrue(batch.hostClosed)
-    }
-
-    /// Nothing buffered behind `first` drains as a single-frame batch without
-    /// blocking (the common steady-state turn).
-    func testDrainWithEmptyQueueReturnsFirstOnly() throws {
-        let pair = InMemoryHostTransport.makePair(clientId: "coalesce-c2", hostId: "coalesce-h2")
-        let first = WireFrame(type: .output, streamSeq: 0, payload: Data("a".utf8))
-
-        let batch = pair.client.drainAvailableFrames(first: first, maxFrames: 32)
-        XCTAssertEqual(batch.frames, [first])
-        XCTAssertFalse(batch.hostClosed)
     }
 }

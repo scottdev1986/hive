@@ -7,7 +7,7 @@ import XCTest
 /// the main queue. Output and restore may originate off-main, but their bytes
 /// are copied before admission; callback delivery occurs only after C returns.
 final class Gate3OperationDomainTests: XCTestCase {
-    func testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain() throws {
+    func testOffMainOutputCopiesBeforeParseAndCallsCOnCallerThread() throws {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         defer { surface.free() }
 
@@ -29,7 +29,7 @@ final class Gate3OperationDomainTests: XCTestCase {
             allowAdmission.wait()
         }
 
-        var entryWasMain = false
+        var entryWasMain = true
         surface.operationObserver = { operation, phase in
             if operation == "processOutput", phase == .begin {
                 entryWasMain = Thread.isMainThread
@@ -50,7 +50,11 @@ final class Gate3OperationDomainTests: XCTestCase {
         wait(for: [finished], timeout: 2)
 
         XCTAssertEqual(result, .success)
-        XCTAssertTrue(entryWasMain)
+        // The feed now runs on the CALLER's thread — the pane's terminal I/O
+        // thread in production — instead of being admitted to the main queue.
+        // Keeping the parse off main is the point; the copy-before-mutation
+        // guarantee asserted below is what makes that safe, and is unchanged.
+        XCTAssertFalse(entryWasMain, "processOutput must not hop to the main queue")
         XCTAssertTrue(readScreen(surface).contains("Hive"))
         XCTAssertFalse(readScreen(surface).contains("XXXX"))
     }

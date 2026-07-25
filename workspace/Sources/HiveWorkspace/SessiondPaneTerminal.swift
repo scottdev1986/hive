@@ -192,7 +192,8 @@ final class SessiondPaneTerminal {
             noteLiveAttach()
             startPump(
                 transport: transport,
-                binding: SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
+                binding: SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId),
+                view: view
             )
         } catch {
             NSLog("sessiond surface attach for %@ refused: %@", agentName, "\(error)")
@@ -201,20 +202,26 @@ final class SessiondPaneTerminal {
         }
     }
 
-    /// Cap on frames applied per main-queue turn: bounds how long one
-    /// coalesced output burst occupies the main queue before a keystroke
-    /// block can interleave (32 × 64 KiB = 2 MiB worst case per turn).
-    private static let maxFramesPerMainQueueTurn = 32
-
     /// Background frame pump: live OUTPUT keeps flowing after the attach
-    /// handshake returns. Frames apply on the main thread through the
+    /// handshake returns. Frames apply on THIS thread through the
     /// locator-fenced view entry; transport loss triggers a re-attach to the
     /// SAME exact generation at the applied high-water.
-    private func startPump(transport: UdsHostTransport, binding: SurfaceBinding) {
-        let thread = Thread { [weak self] in
+    ///
+    /// `view` is captured here, on the main thread, rather than read from
+    /// `self.view` inside the loop: the pump applies frames on its own thread
+    /// and must not touch main-thread-owned properties.
+    private func startPump(
+        transport: UdsHostTransport,
+        binding: SurfaceBinding,
+        view: HiveTerminalView
+    ) {
+        let thread = Thread { [weak self, weak view] in
             var disconnectEvidence = "host transport ended"
             while true {
                 guard let self, !self.detached else { return }
+                // Weak so a live pump thread cannot outlive and retain the pane
+                // view; a torn-down view ends the pump like a transport loss.
+                guard let view else { return }
                 if transport.isClosed {
                     disconnectEvidence =
                         transport.failureEvidence ?? "host transport closed without EOF"
@@ -226,23 +233,18 @@ final class SessiondPaneTerminal {
                             transport.failureEvidence ?? "host closed the viewer stream (EOF)"
                         break // orderly close
                     }
-                    // Coalesce: drain everything already buffered behind
-                    // `first` and apply it in ONE main-queue block. Per-frame
-                    // dispatch let a scrollback flood queue hundreds of blocks
-                    // ahead of keystrokes, which also take a main-queue hop.
-                    // Order is preserved and acks still fire from
-                    // pumpHostFrame in applied order — only the main-queue
-                    // block count changes.
-                    let batch = transport.drainAvailableFrames(
-                        first: first,
-                        maxFrames: Self.maxFramesPerMainQueueTurn
-                    )
-                    DispatchQueue.main.async {
-                        for frame in batch.frames {
-                            self.view?.pumpHostFrame(frame, frameBinding: binding)
-                        }
-                    }
-                    if batch.hostClosed { break }
+                    // Apply on THIS thread. The VT parse is the expensive part
+                    // (~milliseconds per 64 KiB chunk) and it no longer touches
+                    // the main queue at all, so output volume cannot delay a
+                    // keystroke. pumpHostFrame mirrors the cheap UI state to
+                    // main on its own.
+                    //
+                    // No coalescing: batching only ever existed to cut the
+                    // number of main-queue blocks. Off the main queue there is
+                    // nothing to coalesce, and applying one frame at a time
+                    // keeps the client's lock hold short so a keystroke can
+                    // overtake queued output instead of waiting out a batch.
+                    view.pumpHostFrame(first, frameBinding: binding)
                 } catch let error as WireError {
                     if case .receiveTimeout = error { continue }
                     disconnectEvidence =

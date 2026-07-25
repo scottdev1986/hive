@@ -73,6 +73,49 @@ public final class AttachReplayClient {
     public static let resizeQuiescenceNanos: UInt64 = 100_000_000
     private static let claimRetryDelay: TimeInterval = 0.05
 
+    /// Serializes this client's state across the two threads that reach it.
+    ///
+    /// OUTPUT application runs on the pane's terminal I/O thread (a megabyte of
+    /// VT parsing must never sit on the main queue in front of a keystroke),
+    /// while keystrokes, resizes, and attach still arrive from the main thread.
+    ///
+    /// A lock rather than a serial queue is deliberate: a keystroke dispatched
+    /// onto a serial queue would queue BEHIND the whole pending output backlog,
+    /// which during a flood is exactly the latency we are trying to remove. A
+    /// lock lets a keystroke acquire as soon as the chunk in flight finishes,
+    /// so input overtakes queued output instead of trailing it.
+    ///
+    /// It is recursive because the VT parser re-enters us: terminal reply
+    /// effects (DA/DSR/cursor reports) fire `onWrite` → `handleEncodedWrite`
+    /// synchronously from inside `handleFrame`'s parse, on the same thread.
+    private let stateLock = NSRecursiveLock()
+
+    /// UI-observable state, read atomically so the view can mirror it onto the
+    /// main thread after an off-main frame application.
+    struct UISnapshot {
+        let state: TerminalSurfaceState
+        let highWater: UInt64
+        let claimPresentation: InputClaimPresentation
+        let inputSubmissionState: InputSubmissionState
+    }
+
+    func uiSnapshot() -> UISnapshot {
+        locked {
+            UISnapshot(
+                state: state,
+                highWater: highWater,
+                claimPresentation: claimPresentation,
+                inputSubmissionState: inputSubmissionState
+            )
+        }
+    }
+
+    private func locked<T>(_ body: () throws -> T) rethrows -> T {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return try body()
+    }
+
     init(viewerId: String, engine: ManualSurfaceEngine) {
         self.viewerId = viewerId
         self.engine = engine
@@ -90,6 +133,8 @@ public final class AttachReplayClient {
         afterSeq: UInt64,
         transport: HostTransport
     ) throws -> AttachReplayOutcome {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         // M3: fail CLOSED — never restore when local engine id is unknown or mismatched.
         let localEngine = HiveTerminalEngineIdentity.current.buildId
         if localEngine.isEmpty {
@@ -183,6 +228,8 @@ public final class AttachReplayClient {
     }
 
     func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         releaseClaimBestEffort()
         transport?.close()
         transport = nil
@@ -197,6 +244,8 @@ public final class AttachReplayClient {
     }
 
     func failDeferredPresentation(_ failure: TerminalSurfaceState) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         releaseClaimBestEffort()
         transport?.close()
         transport = nil
@@ -207,6 +256,8 @@ public final class AttachReplayClient {
     /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport (#40).
     /// Best-effort: transport may already be half-dead; host also clears on drop.
     public func releaseClaimBestEffort() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard let token = activeClaimToken, let binding, transport != nil else {
             // A skip with a claim still held leaves the host holding a human
             // claim nobody will ever release, and every daemon inject is denied
@@ -244,16 +295,23 @@ public final class AttachReplayClient {
     /// release waits for both accepted input and an in-flight claim result so a
     /// late grant cannot become an orphaned host-side claim.
     public func releaseAfterPendingInput() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         releaseAfterPendingInputRequested = true
         // The encoder callback may be queued just behind the NSTextInputClient
         // composition-end callback. Let that write enqueue before deciding a
         // cancellation had no committed input.
         DispatchQueue.main.async { [weak self] in
-            self?.releaseClaimIfInputQuiescent()
+            guard let self else { return }
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            self.releaseClaimIfInputQuiescent()
         }
     }
 
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard let binding else { return .rejectedLateFrame }
         if frameBinding != binding { return .rejectedLateFrame }
         return try handleHostFrame(frame, binding: binding)
@@ -262,6 +320,8 @@ public final class AttachReplayClient {
     /// Gate 8 encoder output is held until this exact binding owns a human
     /// claim, then submitted through the frozen INPUT_SUBMIT JSON operation.
     public func handleEncodedWrite(_ bytes: Data) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard !bytes.isEmpty, let binding, transport != nil else { return }
         if bytes.count > FrameCodec.inputTransactionMaxBytes {
             var offset = 0
@@ -303,6 +363,8 @@ public final class AttachReplayClient {
     /// the host readmits a returning human through operatorResume, so the write
     /// path stays armed: the next keystroke re-acquires and resumes (#87).
     public func noteOrphaned(claimId: String) {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         activeClaimToken = nil
         claimPresentation = .humanOrphaned(viewerId: viewerId, claimId: claimId)
         setInputSubmissionState(pendingInputBatches.isEmpty ? .idle : .waitingForClaim)
@@ -311,6 +373,8 @@ public final class AttachReplayClient {
 
     /// Frozen RESIZE request after geometry quiescence (M10).
     public func sendResize(_ geometry: TerminalGeometry) throws {
+        stateLock.lock()
+        defer { stateLock.unlock() }
         guard let binding else { throw WireError.notConnected }
         guard geometry.isUsable else { return }
         resizeRevision += 1
@@ -712,8 +776,10 @@ public final class AttachReplayClient {
               transport != nil else { return }
         claimRetryScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.claimRetryDelay) { [weak self] in
-            guard let self,
-                  self.claimRetryScheduled,
+            guard let self else { return }
+            self.stateLock.lock()
+            defer { self.stateLock.unlock() }
+            guard self.claimRetryScheduled,
                   self.binding == retryBinding else { return }
             self.claimRetryScheduled = false
             self.requestClaim()

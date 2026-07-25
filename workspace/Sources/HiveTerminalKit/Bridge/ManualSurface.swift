@@ -186,6 +186,8 @@ extension ManualSurfaceEngine {
 /// In-process fake for L1/L2 logic tests that do not need the real C boundary.
 final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapshotProviding {
     let callbackContext: BridgeCallbackContext
+    /// Serializes the feed path, matching `GhosttyManualSurface.feedLock`.
+    private let feedLock = NSLock()
     private(set) var throughSeq: UInt64 = 0
     private(set) var appliedRanges: [(streamSeq: UInt64, bytes: Data)] = []
     private(set) var restored: [(throughSeq: UInt64, payload: Data)] = []
@@ -228,15 +230,18 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
 
     func semanticSnapshot() -> ManualSurfaceSemanticSnapshot? { fakeSemanticSnapshot }
 
+    /// Mirrors the real engine's contract: the feed runs on the caller's thread
+    /// (the pane's terminal I/O thread in production), serialized by `feedLock`
+    /// rather than by main-queue confinement. A fake that still hopped to main
+    /// would hide exactly the main-thread coupling this split removed.
     public func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
         let ownedBytes = Data(bytes)
-        return performOnMainSync {
-            self.processOutputOnMain(bytes: ownedBytes, streamSeq: streamSeq)
-        }
+        feedLock.lock()
+        defer { feedLock.unlock() }
+        return processOutputLocked(bytes: ownedBytes, streamSeq: streamSeq)
     }
 
-    private func processOutputOnMain(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
-        dispatchPrecondition(condition: .onQueue(.main))
+    private func processOutputLocked(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
         if bytes.isEmpty { return .invalidValue }
         let digest = sha256(bytes)
         let (end, overflow) = streamSeq.addingReportingOverflow(UInt64(bytes.count))
@@ -262,13 +267,13 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
 
     public func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> HiveTerminalEngineResult {
         let ownedPayload = Data(payload)
-        return performOnMainSync {
-            if ownedPayload.isEmpty { return .invalidValue }
-            self.restored.append((throughSeq, ownedPayload))
-            self.committed.removeAll()
-            self.throughSeq = throughSeq
-            return .success
-        }
+        feedLock.lock()
+        defer { feedLock.unlock() }
+        if ownedPayload.isEmpty { return .invalidValue }
+        restored.append((throughSeq, ownedPayload))
+        committed.removeAll()
+        self.throughSeq = throughSeq
+        return .success
     }
 
     public func setFocus(_ focused: Bool) { focusCalls.append(focused) }
@@ -390,8 +395,29 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     private var hiveConfigurationContents: String?
     private let hiveConfigurationHeadless: Bool
 
+    /// Serializes EVERY surface operation, including the output feed.
+    ///
+    /// Main-queue confinement used to provide this serialization for free: all
+    /// surface work ran on one queue, so `processOutput`, `draw`, and
+    /// `restoreCheckpoint` could never nest (`OrderedOutputEngineTests`
+    /// asserts exactly that). Moving the feed onto the pane's terminal I/O
+    /// thread removes that guarantee, so this lock restores it explicitly —
+    /// ingestion and draw stay mutually exclusive, and `free()` cannot pull the
+    /// handle out from under an in-flight feed.
+    ///
+    /// What this buys and what it costs: the expensive part — parsing a 64 KiB
+    /// chunk of VT bytes — no longer occupies the main queue, so a keystroke is
+    /// never stuck behind it (the input path does not touch this lock at all).
+    /// A main-thread `draw` can still wait for the chunk in flight, bounded by
+    /// one chunk rather than by a whole coalesced batch.
+    ///
+    /// Recursive because main-thread surface operations call one another.
+    private let feedLock = NSRecursiveLock()
+
     var throughSeq: UInt64 {
-        performOnMainSync { self.rawThroughSeq }
+        feedLock.lock()
+        defer { feedLock.unlock() }
+        return rawThroughSeq
     }
 
     var surfaceHandle: ghostty_surface_t? {
@@ -463,10 +489,10 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
         // Data may wrap caller-owned mutable storage. Force an independent
-        // copy before a background producer waits for main-queue admission.
+        // copy before handing the bytes to the engine.
         let ownedBytes = Data(bytes)
         outputCopyObserver?(ownedBytes)
-        return performSurfaceOperation("processOutput", default: .invalidValue) { surface in
+        return performFeedOperation("processOutput", default: .invalidValue) { surface in
             let result: ghostty_result_e = ownedBytes.withUnsafeBytes { raw in
                 let ptr = raw.bindMemory(to: UInt8.self).baseAddress
                 return hive_ghostty_surface_process_output_v1(surface, ptr, raw.count, streamSeq)
@@ -482,7 +508,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
 
     public func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> HiveTerminalEngineResult {
         let ownedPayload = Data(payload)
-        return performSurfaceOperation("restoreCheckpoint", default: .invalidValue) { surface in
+        return performFeedOperation("restoreCheckpoint", default: .invalidValue) { surface in
             let result: ghostty_result_e = ownedPayload.withUnsafeBytes { raw in
                 let ptr = raw.bindMemory(to: UInt8.self).baseAddress
                 return hive_ghostty_surface_restore_checkpoint_v1(surface, ptr, raw.count, throughSeq)
@@ -574,6 +600,23 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         )
     }
 
+    /// Deliberately does NOT take `feedLock`, unlike every other surface entry
+    /// point here. Ghostty separates the two halves of rendering and only the
+    /// first half touches terminal state:
+    ///
+    ///   - `renderer.updateFrame` (renderer thread) takes
+    ///     `renderer_state.mutex` via `state.lockDemand()`, reads
+    ///     `state.terminal`, and builds the cell buffer. That is the only
+    ///     reader of terminal state.
+    ///   - `renderer.drawFrame`, which is all this calls, takes the renderer's
+    ///     own `draw_mutex` and rasterizes the ALREADY-built cells. It never
+    ///     reads `state.terminal`.
+    ///
+    /// `Surface.draw` says so outright: "Renderers are required to support
+    /// `drawFrame` being called from the main thread." So a draw here and a
+    /// feed on the terminal I/O thread contend on nothing, and serializing them
+    /// would only park the main thread behind a VT parse for no benefit — which
+    /// is exactly the cost this whole change exists to remove.
     public func draw() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
@@ -778,6 +821,10 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
 
     public func free() {
         performOnMainSync {
+            // Barrier against an in-flight feed on the terminal I/O queue: the
+            // handle must not be freed while `performFeedOperation` holds it.
+            self.feedLock.lock()
+            defer { self.feedLock.unlock() }
             guard self.ownsSurface, let surface = self.rawSurfaceHandle else { return }
             self.clipboardContext.beginTeardown()
             self.callbackContext.beginTeardown()
@@ -811,17 +858,36 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         return body(surface)
     }
 
-    private func performSurfaceOperation<T>(
+    /// The output feed path, which — unlike every other surface entry point —
+    /// runs on the CALLER's thread rather than hopping to the main queue.
+    ///
+    /// This is the whole point of the terminal I/O queue: applying a megabyte
+    /// of VT bytes costs milliseconds, and doing it on the main queue puts that
+    /// cost directly in front of the next keystroke. Ghostty is built for this.
+    /// `HiveManual.process` takes `core_surface.renderer_state.mutex` around the
+    /// terminal mutation and then notifies `renderer_wakeup`, which is exactly
+    /// the handshake Ghostty's own I/O thread uses against its renderer thread.
+    ///
+    /// `feedLock` therefore does NOT protect terminal state — Ghostty's mutex
+    /// does. It protects this wrapper's fields and, critically, surface
+    /// lifetime: `free()` takes the same lock, so the handle cannot be freed on
+    /// main while a feed is in flight here.
+    ///
+    /// Callers must be serialized with respect to each other. `HiveManual`
+    /// mutates its `pending`/`output_ranges` bookkeeping OUTSIDE the renderer
+    /// mutex, so concurrent feeds would corrupt it. The per-pane serial I/O
+    /// queue is what provides that guarantee.
+    private func performFeedOperation<T>(
         _ operation: String,
         default defaultValue: T,
-        _ body: @escaping (ghostty_surface_t) -> T
+        _ body: (ghostty_surface_t) -> T
     ) -> T {
-        performOnMainSync {
-            guard let surface = self.rawSurfaceHandle else { return defaultValue }
-            self.operationObserver?(operation, .begin)
-            defer { self.operationObserver?(operation, .end) }
-            return body(surface)
-        }
+        feedLock.lock()
+        defer { feedLock.unlock() }
+        guard let surface = rawSurfaceHandle else { return defaultValue }
+        operationObserver?(operation, .begin)
+        defer { operationObserver?(operation, .end) }
+        return body(surface)
     }
 }
 

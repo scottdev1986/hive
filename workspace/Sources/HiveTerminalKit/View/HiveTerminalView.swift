@@ -247,9 +247,20 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         engine.callbackContext.onWrite = { [weak client] bytes in
             client?.handleEncodedWrite(bytes)
         }
+        // Fires on whichever thread changed input state: the main thread for a
+        // keystroke, the terminal I/O thread for an APPLIED frame.
         client.onInputSubmissionStateChange = { [weak self] state in
-            self?.inputSubmissionState = state
-            self?.onInputSubmissionStateChange?(state)
+            guard let self else { return }
+            if Thread.isMainThread {
+                self.inputSubmissionState = state
+                self.onInputSubmissionStateChange?(state)
+            } else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.inputSubmissionState = state
+                    self.onInputSubmissionStateChange?(state)
+                }
+            }
         }
         // Event path stays on the view (INVALIDATE/CLOSE_REQUEST/…).
         engine.callbackContext.onEvent = { [weak self] event in
@@ -262,9 +273,15 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private func handleBridgeEventOnMain(_ event: BridgeEvent) {
         if Thread.isMainThread {
             handleBridgeEvent(event)
-        } else {
-            DispatchQueue.main.async { [weak self] in self?.handleBridgeEvent(event) }
+            return
         }
+        // INVALIDATE arrives once per parsed chunk from the terminal I/O
+        // thread. Posting each one floods the main queue with blocks a
+        // keystroke then queues behind, so collapse them: INVALIDATE carries no
+        // payload and its handler is idempotent (schedule a draw, mark the AX
+        // cache dirty), so one delivery covers any number of them. Every other
+        // event type is rare and carries payload, so it posts normally.
+        DispatchQueue.main.async { [weak self] in self?.handleBridgeEvent(event) }
     }
 
     @discardableResult
@@ -305,16 +322,41 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     /// Applies one live post-attach host frame through the locator-fenced
     /// client (§20/§26). Frames for a superseded binding are rejected by the
-    /// client and never mutate the surface. Main-thread confined.
+    /// client and never mutate the surface.
+    ///
+    /// Safe to call from the pane's terminal I/O thread:
+    /// the VT parse happens on the CALLER's thread (the client serializes itself
+    /// with its own lock), and only the UI mirror below is main-thread work.
+    ///
+    /// This is the whole point of the split. Applying 64 KiB of output costs
+    /// milliseconds of parsing; doing that on the main queue put it directly in
+    /// front of the next keystroke. Now the main queue only ever sees the cheap
+    /// state copy.
     public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
         guard let client = attachClient else { return }
-        let priorHighWater = highWater
         let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
             ?? .rejectedLateFrame
-        highWater = client.highWater
+        let snapshot = client.uiSnapshot()
+        // Callers already on main (tests, attach replay) still see their state
+        // update synchronously, so read-after-pump keeps meaning what it did.
+        if Thread.isMainThread {
+            applyPumpedState(outcome: outcome, snapshot: snapshot)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.applyPumpedState(outcome: outcome, snapshot: snapshot)
+            }
+        }
+    }
+
+    private func applyPumpedState(
+        outcome: AttachReplayOutcome,
+        snapshot: AttachReplayClient.UISnapshot
+    ) {
+        let priorHighWater = highWater
+        highWater = snapshot.highWater
         if highWater > priorHighWater { noteOutputApplied() }
-        claimPresentation = client.claimPresentation
-        inputSubmissionState = client.inputSubmissionState
+        claimPresentation = snapshot.claimPresentation
+        inputSubmissionState = snapshot.inputSubmissionState
         switch outcome {
         case .firstCorrectFrame(let hw, _):
             presentFirstCorrectFrame(hw)
