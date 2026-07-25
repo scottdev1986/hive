@@ -18,6 +18,10 @@ const ANSI = new RegExp(
 const SECRET =
   /\b(?:Bearer\s+[A-Za-z0-9._~+/=-]+|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|HIVE_CAPABILITY_TOKEN=\S+)/gi;
 
+export function redactTerminalEvidence(value: string): string {
+  return value.replaceAll(ANSI, "").replaceAll(SECRET, "[REDACTED]");
+}
+
 export interface ActivitySnapshotInput {
   agent: AgentRecord;
   run: ProviderRun | null;
@@ -103,7 +107,7 @@ function terminalSummary(
     .filter((line, index, all) => line.length > 0 && line !== all[index - 1]);
   const latest = lines.at(-1);
   if (latest === undefined) return null;
-  return `inferred terminal: ${latest.replaceAll(SECRET, "[REDACTED]").slice(0, 200)}`;
+  return `inferred terminal: ${redactTerminalEvidence(latest).slice(0, 200)}`;
 }
 
 export function buildActivitySnapshot(

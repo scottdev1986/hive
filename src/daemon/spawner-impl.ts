@@ -1074,6 +1074,7 @@ export interface AgentPromptOptions {
    * does not have. */
   graphifyTools?: boolean;
   assignment?: Pick<FlatAssignment, "assignmentId" | "assignmentGeneration">;
+  handoffId?: string;
 }
 
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
@@ -1186,6 +1187,11 @@ export function buildAgentPrompt(
     ...(options.assignment === undefined
       ? []
       : [assignmentPrompt(options.assignment)]),
+    ...(options.handoffId === undefined
+      ? []
+      : [
+          `Before writing, call hive_pickup_handoff with agent=${JSON.stringify(name)} and handoffId=${JSON.stringify(options.handoffId)}. Verify its branch and evidence; pickup resumes the exact task and does not mark it complete.`,
+        ]),
     // Every category: the trimmed prompt drops narration, never a
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
@@ -2749,6 +2755,9 @@ export class HiveSpawner implements Spawner {
           ...(graphBrief === null ? {} : { graphBrief }),
           ...(graphifyUrl === null ? {} : { graphifyTools: true }),
           ...(assignment === undefined ? {} : { assignment }),
+          ...(request.handoffId === undefined
+            ? {}
+            : { handoffId: request.handoffId }),
         },
       );
       const instructionPath = await writeLaunchPrompt(

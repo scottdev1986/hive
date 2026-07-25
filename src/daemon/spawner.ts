@@ -37,6 +37,8 @@ export const SpawnRequestSchema = z.strictObject({
   minContextTokens: z.number().int().positive().optional(),
   /** Launch with reader authority and the vendor's enforced read-only mode. */
   readOnly: z.boolean().optional(),
+  /** Durable C5 bundle this replacement must pick up before writing. */
+  handoffId: z.string().uuid().optional(),
 });
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;

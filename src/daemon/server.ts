@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,6 +105,10 @@ import {
   MemoryQueryInputSchema,
   runMemoryQuery,
 } from "./episodic-projections";
+import {
+  buildHandoffBundle,
+  measureHandoffWorktree,
+} from "./handoff";
 import type { EpisodicStore } from "./episodic-store";
 import type { GraphifyService } from "./graphify-service";
 import { expectedDaemonHandshake } from "./handshake";
@@ -387,6 +392,11 @@ const InboxRequestSchema = z.object({
 
 const ReadMessageRequestSchema = z.object({
   id: z.string().min(1),
+});
+
+const PickupHandoffRequestSchema = z.object({
+  agent: z.string().min(1),
+  handoffId: z.string().uuid(),
 });
 
 const StatusRequestSchema = z.object({
@@ -1262,15 +1272,7 @@ export class HiveDaemon {
           run,
         ),
       requestReplacement: async (agent, reason) => {
-        await this.delivery.send(
-          "hive-quota",
-          ORCHESTRATOR_NAME,
-          `${agent.name}'s ${agent.tool} provider run is quota-drained (${reason}). ` +
-            "The source terminal and worktree are retained. Replacement is deferred to the C5 handoff path.",
-          {
-            idempotencyKey: `quota-replacement-deferred:${agent.id}:${agent.capabilityEpoch}:${reason}`,
-          },
-        );
+        await this.replaceWithHandoff(agent, reason);
       },
       ...(this.episodic === null
         ? {}
@@ -1373,6 +1375,94 @@ export class HiveDaemon {
         "orchestrator",
         0,
         OPERATOR_TTL_MS,
+      );
+    }
+  }
+
+  private async replaceWithHandoff(
+    agent: AgentRecord,
+    detail: string,
+  ): Promise<void> {
+    const runs = this.db.listProviderRunsForAgent(agent.id);
+    const run = runs.at(-1);
+    if (run === undefined) {
+      throw new Error(
+        `Cannot hand off ${agent.name}: no provider run is recorded; terminal and worktree remain retained`,
+      );
+    }
+    const existing = this.db.getHandoffForSourceRun(run.runId);
+    if (existing !== null) return;
+
+    // Fence the source epoch before asking the terminal to pause. This is the
+    // durable write boundary; process control then targets the exact old run.
+    const fenced =
+      this.db.revokeAgentCapabilities(agent.name, new Date().toISOString()) ??
+      agent;
+    this.capabilities.revokeSubject(agent.name);
+    removeCredential(agent.name);
+    const locator = requireSessiondAgentLocator(agent);
+    const paused =
+      run.state === "running"
+        ? await this.terminalHost.pauseProvider(locator, run)
+        : false;
+
+    const inspection = await this.terminalHost.inspect(locator).catch(() => null);
+    const output =
+      this.observeTerminalOutput === null || inspection === null
+        ? null
+        : await this.observeTerminalOutput(locator, inspection.geometry).catch(
+            () => null,
+          );
+    const measurement =
+      agent.worktreePath === null || agent.branch === null
+        ? null
+        : await measureHandoffWorktree(
+            this.repoRoot,
+            agent.worktreePath,
+            agent.branch,
+          ).catch(() => null);
+    const bundle = await buildHandoffBundle({
+      handoffId: crypto.randomUUID(),
+      reason: "quota-drain",
+      agent: fenced,
+      run,
+      measurement,
+      messages: this.db.listMessages(),
+      providerEvents: this.db.listProviderEvents(run.runId),
+      statusEvents: this.status.listEventsForAgent(agent.id),
+      output,
+      memory: await listMemoryFacts(this.repoRoot).catch(() => []),
+      createdAt: new Date().toISOString(),
+    });
+    this.db.insertHandoff(bundle);
+
+    // Persistence is the boundary: failure from here onward cannot erase the
+    // task, worktree measurements, or evidence needed by another provider.
+    if (paused) await this.terminalHost.stopProvider(locator, run);
+    try {
+      const replacement = await this.spawner.spawn({
+        task: agent.taskDescription,
+        category: agent.category,
+        handoffId: bundle.handoffId,
+      });
+      await this.delivery.send(
+        "hive-handoff",
+        ORCHESTRATOR_NAME,
+        `${agent.name}'s quota handoff ${bundle.handoffId} is durable; ${replacement.name} was launched with the exact task and handoff ID. ${detail}`,
+        {
+          idempotencyKey: `handoff-launched:${bundle.handoffId}`,
+        },
+      );
+    } catch (error) {
+      await this.delivery.send(
+        "hive-handoff",
+        ORCHESTRATOR_NAME,
+        `${agent.name}'s quota handoff ${bundle.handoffId} is durable, but replacement launch failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }. The source terminal and worktree remain retained.`,
+        {
+          idempotencyKey: `handoff-launch-failed:${bundle.handoffId}`,
+        },
       );
     }
   }
@@ -6218,6 +6308,55 @@ export class HiveDaemon {
             : await this.delivery.inbox(agent),
           "messages",
         );
+      },
+    );
+
+    server.registerTool(
+      "hive_pickup_handoff",
+      {
+        title: "Pick up a durable handoff",
+        description:
+          "Read the exact durable handoff named in a replacement launch and record that this agent picked it up. Pickup never marks the task complete.",
+        inputSchema: PickupHandoffRequestSchema,
+      },
+      async ({ agent, handoffId }) => {
+        this.authorizeTool(
+          capability,
+          "hive_pickup_handoff",
+          "status:read",
+          agent,
+          false,
+        );
+        const replacement = this.db.getAgentByName(agent);
+        if (replacement === null) {
+          throw new Error(`Cannot pick up handoff: no agent named ${agent}`);
+        }
+        const stored = this.db.getHandoff(handoffId);
+        if (stored === null) {
+          throw new Error(`Handoff not found: ${handoffId}`);
+        }
+        if (stored.bundle.originalTaskRef.agentId === replacement.id) {
+          throw new Error("A source agent cannot acknowledge its own handoff");
+        }
+        if (
+          stored.bundle.originalTaskRef.digest !==
+          createHash("sha256")
+            .update(replacement.taskDescription)
+            .digest("hex")
+        ) {
+          throw new Error(
+            `Handoff ${handoffId} does not carry ${agent}'s exact task`,
+          );
+        }
+        const pickup = this.db.acknowledgeHandoffPickup(
+          handoffId,
+          replacement.id,
+          new Date().toISOString(),
+        );
+        if (pickup === null) {
+          throw new Error(`Handoff ${handoffId} was picked up by another agent`);
+        }
+        return toolResult({ handoff: stored.bundle, pickup }, "handoff");
       },
     );
 

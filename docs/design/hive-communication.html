@@ -405,9 +405,9 @@ failed     the attempt ended; the message may remain queued for an explicit retr
         <ol>
           <li>Fence new writes for the source capability epoch.</li>
           <li>Stop or pause the exact provider foreground group at a known boundary.</li>
-          <li>Record the provider-event, terminal-output, and provider-transcript high-waters.</li>
+          <li>Record every high-water the source actually exposes. Claude and Codex have durable normalized <code>provider_events</code>; terminal output has a real cursor and gap flag. Kimi has no structured source by deliberate design: <code>wire.jsonl</code> cannot distinguish entries written by its TUI from entries written by <code>kimi web</code>, so its provider-transcript references remain empty rather than inferred.</li>
           <li>Measure branch, head, commits, dirty paths, untracked paths, and recorded tests.</li>
-          <li>Collect the original task, later requirements, durable messages, accepted memory changes, and latest agent status.</li>
+          <li>Collect the original task, later requirements, durable messages, memory articles explicitly named by the latest authenticated status evidence, and latest agent status. Hive does not record per-agent memory-acceptance receipts; an absent association stays unknown rather than inferred, while replacement spawn and pull-based recall continue to provide task-matched memory.</li>
           <li>Generate a bounded summary from those sources. Store its provenance and evidence references.</li>
           <li>Persist the handoff before stopping the source terminal or starting the replacement.</li>
           <li>Pass the exact task and handoff ID to the replacement launch. The replacement verifies the branch and evidence before writing.</li>
