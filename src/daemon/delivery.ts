@@ -113,6 +113,12 @@ export function queuedDeliveryNote(
   // through the restart-failure path.
   if (message.priority === "critical") return undefined;
   const name = recipient.name;
+  if (message.priority === "urgent") {
+    return (
+      `NOT stopped: ${name}'s turn has not been cancelled; urgent delivery requires ` +
+      "a live Codex native cancel surface and remains queued without one."
+    );
+  }
   switch (recipient.status) {
     case "dead":
     case "failed":
@@ -149,19 +155,16 @@ export function queuedDeliveryNote(
       );
     default:
       // working, control-paused, stuck: mid-turn shapes.
-      return message.priority === "urgent"
-        ? `NOT received yet: ${name} is mid-turn; urgent traffic is injected at its next tool call, ` +
-            "and the acknowledgement deadline alerts if that never happens."
-        : message.priority === "steer"
-          ? reportsTurnEvents(recipient.tool)
-            ? `NOT received yet: ${name} is mid-turn; steer traffic is injected without cancellation ` +
-              "at its next tool call, then confirmed by the following tool boundary."
-            : `NOT received yet: ${name}'s ${recipient.tool} session exposes no non-destructive ` +
-              "mid-turn injection boundary, so steer degrades to normal and arrives when the current turn ends."
-          : `NOT received yet: ${name} is mid-turn, and a normal message is delivered only when the ` +
+      return message.priority === "steer"
+        ? reportsTurnEvents(recipient.tool)
+          ? `NOT received yet: ${name} is mid-turn; steer traffic is injected without cancellation ` +
+            "at its next tool call, then confirmed by the following tool boundary."
+          : `NOT received yet: ${name}'s ${recipient.tool} session exposes no non-destructive ` +
+            "mid-turn injection boundary, so steer degrades to normal and arrives when the current turn ends."
+        : `NOT received yet: ${name} is mid-turn, and a normal message is delivered only when the ` +
             "current turn ends — for a deep task that can be after the work this message means to " +
-            "steer has already shipped. Use priority=steer for non-destructive mid-turn guidance, or `urgent` " +
-            "only when the current work must stop because urgent cancels the in-flight turn.";
+            "steer has already shipped. Use priority=steer for non-destructive mid-turn guidance, or critical " +
+            "to stop the verified provider run and revoke write authority.";
   }
 }
 
@@ -361,6 +364,15 @@ export class MessageDelivery {
     const intent = options.intent ?? "instruction";
     if (["pause", "stop", "cancel", "restrict-writes"].includes(intent)) {
       priority = "critical";
+    }
+    if (
+      priority === "urgent" &&
+      (recipient === null ||
+        this.nativeControl?.hasAgent(recipient.name) !== true)
+    ) {
+      throw new Error(
+        `Urgent delivery requires a live native cancel surface for ${to}; no turn was cancelled and no message was queued`,
+      );
     }
     const now = new Date();
     let capabilityEpoch =
@@ -694,12 +706,12 @@ export class MessageDelivery {
           const message = this.db.getMessage(queued.id);
           if (message === null || message.deliveredAt !== null) continue;
           if (this.composerActive(agentName)) break;
-          if (this.nativeControl?.hasAgent(currentRecipient.name)) {
-            delivered.push(await this.deliverNative(message, currentRecipient));
-            continue;
-          }
-          const result = await this.deliver(message, currentRecipient);
-          if (result.deliveredAt !== null) delivered.push(result);
+          // A future Grok cancel does not require a new transport: send
+          // Esc/Ctrl-C through sessiond's foreground-verified atomic write,
+          // then require updates.jsonl turn_completed.stop_reason=cancelled.
+          // The terminal write alone is never proof that the turn stopped.
+          if (!this.nativeControl?.hasAgent(currentRecipient.name)) break;
+          delivered.push(await this.deliverNative(message, currentRecipient));
         } catch (error) {
           console.error(
             `Hive failed to inject urgent message ${queued.id} to ${agentName} at a tool boundary: ${

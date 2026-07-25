@@ -223,43 +223,28 @@ describe("event-driven orchestrator lifecycle", () => {
     expect(db.listMessageAttempts(message.id)[0]?.outcome).toBe("written");
 
     const second = await delivery.send("sam", "maya", "Second message.");
-    const urgent = await delivery.send("queen", "maya", "Act soon.", {
-      priority: "urgent",
-    });
     const third = await delivery.send("queen", "maya", "Third message.");
-    expect([second.state, urgent.state, third.state]).toEqual([
-      "queued",
-      "queued",
-      "queued",
-    ]);
+    expect([second.state, third.state]).toEqual(["queued", "queued"]);
     const current = db.getAgentByName("maya");
     if (current === null) throw new Error("agent disappeared");
     db.upsertAgent({ ...current, status: "idle" });
 
     const flushed = await delivery.flushQueued("maya");
 
-    expect(flushed.map((item) => item.id)).toEqual([
-      urgent.id,
-      second.id,
-      third.id,
-    ]);
-    expect(writes).toHaveLength(3);
-    const control = new TextDecoder().decode(writes[1]?.bytes);
-    const batch = new TextDecoder().decode(writes[2]?.bytes);
-    expect(control).toContain(`URGENT HIVE CONTROL ${urgent.id}`);
-    expect(control).toContain("Acknowledge with hive_ack_message");
-    expect(batch).not.toContain(urgent.id);
+    expect(flushed.map((item) => item.id)).toEqual([second.id, third.id]);
+    expect(writes).toHaveLength(2);
+    const batch = new TextDecoder().decode(writes[1]?.bytes);
     expect(batch).not.toContain("URGENT HIVE CONTROL");
     expect(batch.indexOf(second.id)).toBeLessThan(batch.indexOf(third.id));
     expect(batch).toContain(`message ${second.id} from sam:`);
     expect(batch).toContain(`message ${third.id} from queen:`);
     expect(db.listMessageAttempts(second.id)[0]).toMatchObject({
       outcome: "written",
-      terminalReceipt: { transactionId: writes[2]?.idempotencyKey },
+      terminalReceipt: { transactionId: writes[1]?.idempotencyKey },
     });
     expect(db.listMessageAttempts(third.id)[0]).toMatchObject({
       outcome: "written",
-      terminalReceipt: { transactionId: writes[2]?.idempotencyKey },
+      terminalReceipt: { transactionId: writes[1]?.idempotencyKey },
     });
     db.close();
   });

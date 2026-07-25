@@ -131,7 +131,7 @@ describe("Codex app-server adapter", () => {
     ).toContain("--graphify-url");
   });
 
-  test("initializes, starts a thread and turn, steers with the active turn precondition, and interrupts", async () => {
+  test("does not start the urgent turn until Codex reports the prior turn interrupted", async () => {
     const transport = new FakeTransport();
     const events: HookEvent[] = [];
     const observations: unknown[] = [];
@@ -139,7 +139,7 @@ describe("Codex app-server adapter", () => {
       socketPath: () => "/tmp/fake.sock",
       transport: async () => transport,
       commandRunner: async () => 0,
-      sleep: async () => undefined,
+      sleep: async () => Bun.sleep(0),
       onEvent: async (event) => {
         events.push(event);
       },
@@ -183,11 +183,23 @@ describe("Codex app-server adapter", () => {
         input: [{ type: "text", text: "Focus on the tests" }],
       },
     });
-    await manager.interrupt(agent());
+    const interrupted = manager.interruptAndStart(
+      agent(),
+      "Stop the old work and review now",
+    );
+    while (
+      !transport.sent.some((message) => message.method === "turn/interrupt")
+    ) {
+      await Bun.sleep(0);
+    }
+    for (let tick = 0; tick < 5; tick += 1) await Bun.sleep(0);
     expect(transport.sent.at(-1)).toMatchObject({
       method: "turn/interrupt",
       params: { threadId: "thread-1", turnId: "turn-5" },
     });
+    expect(
+      transport.sent.filter((message) => message.method === "turn/start"),
+    ).toHaveLength(1);
     expect(events[0]?.kind).toEqual("session-start");
     transport.emit({
       method: "thread/tokenUsage/updated",
@@ -207,9 +219,20 @@ describe("Codex app-server adapter", () => {
         turn: { id: "turn-5", status: "interrupted" },
       },
     });
+    await interrupted;
     await Bun.sleep(0);
     await Bun.sleep(0);
-    expect(observations).toHaveLength(2);
+    expect(
+      transport.sent.filter((message) => message.method === "turn/start"),
+    ).toHaveLength(2);
+    expect(transport.sent.at(-1)).toMatchObject({
+      method: "turn/start",
+      params: {
+        threadId: "thread-1",
+        input: [{ type: "text", text: "Stop the old work and review now" }],
+      },
+    });
+    expect(observations).toHaveLength(3);
     expect(events.at(-1)).toMatchObject({
       kind: "turn-end",
       agentName: "maya",
