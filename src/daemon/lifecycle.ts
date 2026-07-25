@@ -44,7 +44,7 @@ export interface DaemonProcessIdentity {
   readonly executablePath: string;
 }
 
-/** §21 PID identity: PROC_PIDTBSDINFO start seconds:microseconds + proc_pidpath. */
+/** PID identity: PROC_PIDTBSDINFO start seconds:microseconds + proc_pidpath. */
 export function macProcessIdentity(pid: number): DaemonProcessIdentity {
   const libSystem = dlopen("/usr/lib/libSystem.B.dylib", {
     proc_pidinfo: {

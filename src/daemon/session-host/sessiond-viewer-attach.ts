@@ -45,7 +45,8 @@ const frameNames = new Map<number, FrameTypeName>(
 );
 
 /**
- * Stream-tolerant §20 frame decoder for the viewer wire.
+ * Stream-tolerant frame decoder for the viewer wire
+ * (terminal-stack-transition.html#attach).
  *
  * The daemon's control-only {@link SessiondFrameDecoder} rejects any frame with
  * `streamSeq != 0`; a HOST_ATTACH connection immediately receives SNAPSHOT/OUTPUT
@@ -154,7 +155,8 @@ export interface ViewerAttachDependencies {
 }
 
 /**
- * A single daemon-side §20 viewer connection to a neutral host's `host.sock`.
+ * A single daemon-side viewer connection to a neutral host's `host.sock`
+ * (terminal-stack-transition.html#attach).
  *
  * It performs the frozen attach handshake (HELLO(viewer)+grant → WELCOME →
  * HOST_ATTACH) and then, on one open connection, acquires an automation input
@@ -164,7 +166,8 @@ export interface ViewerAttachDependencies {
  * connection — which is why this is not projected through the per-call
  * connect/close of {@link SessiondHost.claimInput}/`submitInput`.
  *
- * Incoming OUTPUT frames are acknowledged with the §20 APPLIED high-water so the
+ * Incoming OUTPUT frames are acknowledged with the
+ * terminal-stack-transition.html#attach APPLIED high-water so the
  * host does not backpressure the viewer during the inject; SNAPSHOT/EVENT frames
  * are consumed and PING is answered.
  */

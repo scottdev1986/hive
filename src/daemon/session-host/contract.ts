@@ -203,7 +203,8 @@ export type InputReceipt = Readonly<{
   diagnosticId: string | null;
 }>;
 export type TerminationRequest = Readonly<{
-  // Domain idempotency key (`req_…`), distinct from the §20 header correlation requestId.
+  // Domain idempotency key (`req_…`), distinct from the
+  // terminal-stack-transition.html#attach header correlation requestId.
   mode: "graceful" | "immediate";
   reason: string;
   requestId: string;

@@ -993,7 +993,7 @@ export class HiveDaemon {
         landedTerminalHost,
         `hive-daemon:${hiveInstanceSuffix()}`,
         undefined,
-        // §22 orphan discard lives on the real sessiond client only; an
+        // Orphan discard lives on the real sessiond client only; an
         // injected test host keeps the pre-fix decline-and-queue behaviour.
         landedTerminalHost instanceof SessiondHost
           ? (locator, mode) =>
@@ -5216,7 +5216,8 @@ export class HiveDaemon {
     });
   }
 
-  /** POST /agents/<name>/attach-grant — §19/§20 one-use viewer attach for the
+  /** POST /agents/<name>/attach-grant — terminal-stack-transition.html#visibility
+   * one-use viewer attach for the
    * Workspace renderer, fenced by the pane's EXACT sessionLocator: a stale or
    * superseded generation is refused before the broker is ever contacted. */
   private async attachGrantEndpoint(

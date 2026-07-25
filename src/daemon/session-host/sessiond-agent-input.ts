@@ -21,7 +21,7 @@ const HUMAN_ORPHANED = "HumanOrphaned";
 
 /**
  * Injects one automated message into an idle sessiond-hosted agent over the
- * §20 neutral-host viewer wire. Returns the frozen receipt on `INPUT_SUBMIT`
+ * Neutral-host viewer wire. Returns the frozen receipt on `INPUT_SUBMIT`
  * acceptance, or a decline naming its cause (a human owns the input arbiter,
  * the session is not injectable right now, the host rejected the receipt) —
  * the caller then leaves the envelope queued AND records the reason on the
@@ -66,7 +66,7 @@ export interface SessiondRootInput {
 type BrokerFacade = Pick<SessionHost, "issueAttach"> &
   Pick<TerminalHost, "list">;
 
-/** §22 orphan discard, absent on hosts that predate it — an injector built
+/** Orphan discard, absent on hosts that predate it — an injector built
  * without it keeps the pre-fix behaviour: decline and stay queued. */
 type OrphanDiscarder = (
   locator: AutomatedInput["terminal"],
@@ -302,7 +302,7 @@ export class SessiondViewerAgentInput
 }
 
 /**
- * A §20 `AttachRequest`/`HOST_ATTACH` geometry derived from the host's inspected
+ * An `AttachRequest`/`HOST_ATTACH` geometry derived from the host's inspected
  * window. Cell pixel sizes are recovered from the window pixels; a zero-pixel
  * (headless) window falls back to conventional 8×16 cells so the geometry stays
  * schema-valid.

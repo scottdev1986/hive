@@ -65,11 +65,11 @@ import type {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
-/** §22 host-authorized resolution modes. A held claim is deliberately an
+/** Host-authorized resolution modes. A held claim is deliberately an
  * explicit preemption, never an accidental orphan discard. */
 export type OrphanDiscardMode = "orphaned" | "held";
 
-/** §22 ORPHAN_DISCARDED is a typed host decision, not a boolean whose false
+/** ORPHAN_DISCARDED is a typed host decision, not a boolean whose false
  * branch can erase the distinction between refusal and preemption. */
 export type OrphanDiscardResult =
   | Readonly<{
@@ -837,7 +837,7 @@ export class SessiondHost implements LandedTerminalHost {
   }
 
   /**
-   * §22 INPUT_ORPHAN_DISCARD: ask the host for a typed, authorized resolution
+   * INPUT_ORPHAN_DISCARD: ask the host for a typed, authorized resolution
    * of an orphaned or held human claim. The host alone may preempt a held claim,
    * and reports that distinct from an orphan discard. See
    * docs/incidents/2026-07-21-messaging-regression.md.

@@ -474,7 +474,8 @@ export class HiveTerminalHostAdapter {
     return this.host.resize({ ...request, session });
   }
 
-  /** §19/§20 one-use viewer attach, fenced by the exact completed binding:
+  /** terminal-stack-transition.html#visibility one-use viewer attach, fenced by
+   * the exact completed binding:
    * an unknown or incomplete locator never reaches the broker, and a grant
    * whose locator or engine drifted from the binding is refused here. */
   async issueAttach(

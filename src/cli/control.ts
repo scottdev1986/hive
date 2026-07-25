@@ -72,7 +72,9 @@ function readDaemonPid(): number | null {
  */
 /**
  * Request a one-use viewer attach grant for a pane's EXACT sessiond session
- * (§19/§20). The Workspace's HiveTerminalView shells out to this and connects
+ * (terminal-stack-transition.html#visibility and
+ * terminal-stack-transition.html#attach). The Workspace's HiveTerminalView
+ * shells out to this and connects
  * directly to the returned host endpoint; a stale or superseded generation is
  * refused by the daemon before the broker is contacted. Prints the grant as
  * JSON on stdout — machine-readable, nothing else.
