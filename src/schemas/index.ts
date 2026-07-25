@@ -8,6 +8,7 @@ export * from "./message";
 export * from "./message-attempt";
 export * from "./message-envelope";
 export * from "./provider-run";
+export * from "./provider-communication";
 export * from "./quota";
 export * from "./routing-derivation";
 export * from "./routing-policy";

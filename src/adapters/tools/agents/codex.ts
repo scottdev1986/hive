@@ -20,6 +20,16 @@ import type { AgentAdapter } from "./agent-adapter";
 
 export const codexAgentAdapter: AgentAdapter = {
   id: "codex",
+  communication: {
+    provider: "codex",
+    eventSource: "native",
+    nativeDelivery: true,
+    toolBoundaryEvents: true,
+    turnBoundaryEvents: true,
+    transcriptReader: true,
+    nativeCancel: true,
+    conversationResume: true,
+  },
   writeInstructionCopy: async (sessionId, prompt) => {
     await writeCodexInstructionProfile(sessionId, prompt);
   },

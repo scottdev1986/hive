@@ -16,6 +16,18 @@ import type { AgentAdapter } from "./agent-adapter";
 
 export const opencodeAgentAdapter: AgentAdapter = {
   id: "opencode",
+  // TODO(C2): enable the Hive plugin descriptor only after the disabled
+  // OpenCode provider can be launched and its callbacks verified.
+  communication: {
+    provider: "opencode",
+    eventSource: "none",
+    nativeDelivery: false,
+    toolBoundaryEvents: false,
+    turnBoundaryEvents: false,
+    transcriptReader: false,
+    nativeCancel: false,
+    conversationResume: true,
+  },
   async prepareSpawn(context) {
     await writeOpencodeAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,

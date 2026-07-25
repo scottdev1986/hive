@@ -17,6 +17,16 @@ import type { AgentAdapter } from "./agent-adapter";
 
 export const kimiAgentAdapter: AgentAdapter = {
   id: "kimi",
+  communication: {
+    provider: "kimi",
+    eventSource: "transcript",
+    nativeDelivery: false,
+    toolBoundaryEvents: true,
+    turnBoundaryEvents: true,
+    transcriptReader: true,
+    nativeCancel: false,
+    conversationResume: true,
+  },
   async prepareSpawn(context) {
     await writeKimiAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,

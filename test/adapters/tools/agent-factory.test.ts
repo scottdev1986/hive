@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
 import { CAPABILITY_PROVIDERS } from "../../../src/schemas/capability";
+import { ProviderCommunicationCapabilitiesSchema } from "../../../src/schemas/provider-communication";
 
 const roots: string[] = [];
 async function worktree(): Promise<string> {
@@ -22,6 +23,69 @@ describe("agent adapter factory", () => {
     for (const provider of CAPABILITY_PROVIDERS) {
       expect(getAgentAdapter(provider).id).toBe(provider);
     }
+  });
+
+  test("every provider has one honest communication descriptor", () => {
+    const descriptors = Object.fromEntries(
+      CAPABILITY_PROVIDERS.map((provider) => [
+        provider,
+        ProviderCommunicationCapabilitiesSchema.parse(
+          getAgentAdapter(provider).communication,
+        ),
+      ]),
+    );
+    expect(descriptors).toEqual({
+      claude: {
+        provider: "claude",
+        eventSource: "hooks",
+        nativeDelivery: false,
+        toolBoundaryEvents: true,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+      codex: {
+        provider: "codex",
+        eventSource: "native",
+        nativeDelivery: true,
+        toolBoundaryEvents: true,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: true,
+        conversationResume: true,
+      },
+      grok: {
+        provider: "grok",
+        eventSource: "transcript",
+        nativeDelivery: false,
+        toolBoundaryEvents: false,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+      kimi: {
+        provider: "kimi",
+        eventSource: "transcript",
+        nativeDelivery: false,
+        toolBoundaryEvents: true,
+        turnBoundaryEvents: true,
+        transcriptReader: true,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+      opencode: {
+        provider: "opencode",
+        eventSource: "none",
+        nativeDelivery: false,
+        toolBoundaryEvents: false,
+        turnBoundaryEvents: false,
+        transcriptReader: false,
+        nativeCancel: false,
+        conversationResume: true,
+      },
+    });
   });
 
   test("claude prepares config, argv, and a kickoff-bearing command", async () => {

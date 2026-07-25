@@ -16,6 +16,16 @@ import type { AgentAdapter } from "./agent-adapter";
 
 export const claudeAgentAdapter: AgentAdapter = {
   id: "claude",
+  communication: {
+    provider: "claude",
+    eventSource: "hooks",
+    nativeDelivery: false,
+    toolBoundaryEvents: true,
+    turnBoundaryEvents: true,
+    transcriptReader: true,
+    nativeCancel: false,
+    conversationResume: true,
+  },
   prepareWorktree: seedClaudeWorktreeTrust,
   async prepareSpawn(context) {
     await writeClaudeAgentConfig(context.worktreePath, {

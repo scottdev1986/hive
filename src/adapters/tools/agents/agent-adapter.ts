@@ -1,5 +1,6 @@
 import type { CapabilityDiscoveryResult } from "../../../daemon/capability-discovery";
 import type { CapabilityProvider } from "../../../schemas/capability";
+import type { ProviderCommunicationCapabilities } from "../../../schemas/provider-communication";
 
 /** Everything a launch needs that is not provider-specific. */
 export interface AgentSpawnContext {
@@ -37,6 +38,7 @@ export interface PreparedAgentSpawn {
  */
 export interface AgentAdapter {
   readonly id: CapabilityProvider;
+  readonly communication: ProviderCommunicationCapabilities;
   prepareWorktree?(worktreePath: string): Promise<void>;
   writeInstructionCopy?(sessionId: string, prompt: string): Promise<void>;
   prepareSpawn(context: AgentSpawnContext): Promise<PreparedAgentSpawn>;
