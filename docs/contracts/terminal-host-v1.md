@@ -96,11 +96,18 @@ Row letters are unique across the contract family rather than per document: A–
 | G | Broker restart reattaches to a durable parent; parent loss reports unavailable authority rather than fabricated exit. | Neutral green; real candidate baseline green |
 | H | Disconnect inside an escape and multibyte encoding resumes once from checkpoint/cursor without byte duplication or loss. | Neutral green; real candidate baseline green |
 | I | Concurrent human and automation writes obey claim fencing, transaction idempotency, and non-interleaving. | Neutral green; real candidate baseline green |
-| J | Immediate process-tree termination either removes an escaped descendant or reports it as a survivor. | Neutral green; real candidate baseline green |
+| J | Immediate process-tree termination removes an escaped descendant, reports it as a survivor, or reports `unknown` with possible escapees explicitly unaccounted. | Neutral green; real candidate baseline green |
 | K | Canonical end-of-file, the same byte in literal mode, and terminal hangup have distinct results. | Neutral green; real candidate baseline green |
 | U | A subscription resumes from a caller-supplied event position or the current end, delivers every retained event in host order exactly once, keeps subscribers independent, bounds retained events by negotiated limits released by acknowledgement, reports a position outside retention as an explicit gap carrying the missing event range and a fresh-inspection requirement, and delivers the incarnation's closing facts separately ordered with the authoritative reap last. | Neutral green |
 
 Every neutral case has a mutation control: injecting that case's semantic violation makes the corresponding assertion fail. The real-host discriminators are no longer expected failures — `pending-a1-contract` runs inside the ordinary native suite and is green, and it includes a live arbitrary-descriptor-leak probe. Its rows carry their own mutation controls too: inverting D's final observed geometry or F's retained tail bytes turns exactly those two rows red.
+
+Row J's `unknown` outcome is the platform floor, not a substitute for evidence
+that is available. This code path has no reliable containment or process-event
+primitive, so a child that forks and reparents between observations is
+unobservable. When an escaped descendant can be observed, removing it or
+reporting it as a survivor remains required; otherwise termination must leave
+possible escapees explicitly unaccounted and must not report success.
 
 Qualification versions: contract `1.0.0`; neutral fixture `1.0.0`; audited sessiond candidate `82b671a5b14e9489d584f41e0c36c65813923d3e`; Zig `0.15.2`; Bun `1.3.14`; libghostty-vt `1.3.2-dev` at `73534c4680a809398b396c94ac7f12fcccb7963d`.
 

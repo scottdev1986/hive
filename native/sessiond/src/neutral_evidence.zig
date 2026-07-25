@@ -790,8 +790,10 @@ pub fn terminationFromTree(
 ) !WireTerminationResult {
     var survivors: std.ArrayList(WireSurvivor) = .{};
     var diagnostics: std.ArrayList([]const u8) = .{};
+    var all_members_terminated = true;
     for (tree.members) |member| {
         if (member.fate == .terminated) continue;
+        all_members_terminated = false;
         var token_storage: [64]u8 = undefined;
         const token = try member.identity.start_token.format(&token_storage);
         try survivors.append(allocator, .{
@@ -806,6 +808,9 @@ pub fn terminationFromTree(
     }
     if (tree.snapshot_status == .unknown)
         try diagnostics.append(allocator, "process-tree-snapshot-unstable");
+    if (tree.state == .unknown and tree.snapshot_status == .stable and
+        all_members_terminated and !tree.deadline_expired)
+        try diagnostics.append(allocator, "process-tree-escapees-unaccounted");
     if (tree.deadline_expired)
         try diagnostics.append(allocator, "termination-deadline-expired");
     if (reap.completeness != .complete)

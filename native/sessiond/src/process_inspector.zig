@@ -558,8 +558,8 @@ fn snapshotTreeBefore(
                 };
             }
             // N1: stable absence — two consecutive clean root_missing passes.
-            // (Must not require !root_missing on the live path; otherwise absence
-            // can never stabilize and M1's rootEvidence terminated path is dead.)
+            // (Must not require !root_missing on the live path; otherwise
+            // stable root absence can never be represented.)
             if (pass.root_missing and !pass.incomplete and prev_clean_absent and
                 p.len == 0 and pass.members.len == 0)
             {
@@ -807,8 +807,6 @@ fn terminateTreeBefore(
     var any_survivor = false;
     // N1: incomplete OR never-stabilized snapshot (status=.unknown) forces
     // overall unknown — a changing-but-complete tree must not report terminated.
-    // M1 preserved: stable + root_missing + empty members → rootEvidence path
-    // (absent root with real absence evidence → terminated).
     var any_unknown = snap.incomplete or snap.status == .unknown;
 
     for (ordered) |m| {
@@ -825,14 +823,20 @@ fn terminateTreeBefore(
     const state: TerminationState = blk: {
         if (any_survivor) break :blk .survivors;
         if (any_unknown) break :blk .unknown;
+        // macOS exposes neither containment nor a process-event stream here.
+        // A child can fork and reparent between observations, so a complete
+        // current snapshot cannot prove that every owned descendant is known.
+        // Keep the verified per-member fates, but never promote process-tree
+        // teardown to aggregate success from snapshot evidence alone.
+        switch (target) {
+            .process_tree => break :blk .unknown,
+            .foreground_group, .session_members => {},
+        }
         if (ordered.len == 0) {
             // An empty stable narrowed target is complete. The full-tree case
-            // still requires positive root absence evidence.
+            // is rejected above because escaped ownership is unprovable.
             break :blk switch (target) {
-                .process_tree => switch (rootEvidence(platform, root_pid, expected_root_token)) {
-                    .absent_evidenced => .terminated,
-                    .unobservable, .still_present => .unknown,
-                },
+                .process_tree => unreachable,
                 .foreground_group, .session_members => .terminated,
             };
         }
@@ -844,26 +848,6 @@ fn terminateTreeBefore(
         .members = try results.toOwnedSlice(allocator),
         .snapshot_status = snap.status,
         .deadline_expired = deadlineReached(platform, operation_deadline_ns),
-    };
-}
-
-const RootEvidence = enum { absent_evidenced, unobservable, still_present };
-
-fn rootEvidence(
-    platform: Platform,
-    root_pid: i32,
-    expected_root_token: ?StartToken,
-) RootEvidence {
-    if (platform.waitNoHang(root_pid)) return .absent_evidenced;
-    return switch (platform.observe(root_pid)) {
-        .absent => .absent_evidenced,
-        .unobservable => .unobservable,
-        .present => |obs| {
-            if (expected_root_token) |tok| {
-                if (!obs.start_token.eql(tok)) return .absent_evidenced; // reuse
-            }
-            return .still_present;
-        },
     };
 }
 
@@ -1070,7 +1054,7 @@ fn reapIgnoreEchild(pid: i32) void {
     _ = c.waitpid(pid, &st, 0);
 }
 
-test "immediate stop terminates real tree with absence evidence" {
+test "immediate process-tree stop preserves member absence evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
     const root = try spawnNestedTree();
@@ -1089,14 +1073,14 @@ test "immediate stop terminates real tree with absence evidence" {
     // waitNoHang may already have reaped during terminateTree.
     reapIgnoreEchild(root);
 
-    try testing.expectEqual(TerminationState.terminated, result.state);
+    try testing.expectEqual(TerminationState.unknown, result.state);
     for (result.members) |m| {
         try testing.expectEqual(MemberFate.terminated, m.fate);
         try testing.expectEqualStrings("wait-or-absence", m.reason);
     }
 }
 
-test "graceful stop TERM-then-KILL terminates real tree" {
+test "graceful process-tree stop preserves member absence evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
     const root = try spawnNestedTree();
@@ -1113,14 +1097,14 @@ test "graceful stop TERM-then-KILL terminates real tree" {
     defer result.deinit(testing.allocator);
     reapIgnoreEchild(root);
 
-    try testing.expectEqual(TerminationState.terminated, result.state);
+    try testing.expectEqual(TerminationState.unknown, result.state);
     for (result.members) |m| {
         try testing.expectEqual(MemberFate.terminated, m.fate);
         try testing.expectEqualStrings("wait-or-absence", m.reason);
     }
 }
 
-test "positive control: escapee is NOT reported terminated; unrelated process survives" {
+test "process-tree stop is unknown when a reparented escapee cannot be accounted for" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
     const unrelated = try spawnSleepChild();
@@ -1142,7 +1126,7 @@ test "positive control: escapee is NOT reported terminated; unrelated process su
     defer result.deinit(testing.allocator);
     reapIgnoreEchild(tree.root);
 
-    try testing.expectEqual(TerminationState.terminated, result.state);
+    try testing.expectEqual(TerminationState.unknown, result.state);
     try testing.expect(isAlive(tree.escapee));
     for (result.members) |m| {
         try testing.expect(m.identity.pid != tree.escapee);
@@ -1547,7 +1531,7 @@ test "foreground target signals only matching members inside the verified tree" 
     try std.testing.expect(session_simulated.childKilled);
 }
 
-test "M1: absent root with empty tree reports terminated not unknown" {
+test "M1: absent root with empty process tree remains unknown" {
     const AbsentRoot = struct {
         now: u64 = 0,
         fn platform(self: *@This()) Platform {
@@ -1584,7 +1568,7 @@ test "M1: absent root with empty tree reports terminated not unknown" {
     var sim = AbsentRoot{};
     var result = try terminateTree(sim.platform(), testing.allocator, 9999, null, .immediate);
     defer result.deinit(testing.allocator);
-    try testing.expectEqual(TerminationState.terminated, result.state);
+    try testing.expectEqual(TerminationState.unknown, result.state);
     try testing.expectEqual(@as(usize, 0), result.members.len);
 }
 

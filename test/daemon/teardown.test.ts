@@ -316,6 +316,27 @@ describe("reapProcessTree", () => {
         readHostPid: async () => null,
       }),
     ).rejects.toThrow("not positively verified");
+
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: {
+          terminate: async () => ({
+            locator: sessionLocator,
+            state: "unknown",
+            exit: null,
+            survivors: [],
+            errors: [
+              {
+                phase: "process-tree-inspection",
+                code: "UNKNOWN",
+                diagnosticId: "process-tree-escapees-unaccounted",
+              },
+            ],
+          }),
+        },
+        readHostPid: async () => null,
+      }),
+    ).resolves.toEqual({ killed: [], survivors: [] });
   });
 
   test("an unreachable broker is an already-dead session, but survivors still refuse", async () => {

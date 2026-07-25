@@ -220,7 +220,17 @@ export async function stopSessiondAgentSession(
           requestId: mintSessionRequestId(),
         },
       );
-      if (result.state !== "terminated" || result.survivors.length !== 0) {
+      const escapeesExplicitlyUnaccounted =
+        result.state === "unknown" &&
+        result.survivors.length === 0 &&
+        result.errors.some(
+          (error) =>
+            error.diagnosticId === "process-tree-escapees-unaccounted",
+        );
+      if (
+        (result.state !== "terminated" || result.survivors.length !== 0) &&
+        !escapeesExplicitlyUnaccounted
+      ) {
         terminalError = new Error(
           `Sessiond termination was not positively verified for ${agent.name}: ${
             result.errors.map((error) => error.diagnosticId).join(", ") ||

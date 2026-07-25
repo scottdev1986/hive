@@ -4987,7 +4987,8 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
         .now_ns = 2_000,
     };
     const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
-    errdefer thread.join();
+    var thread_joined = false;
+    defer if (!thread_joined) thread.join();
     errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
 
     try writeTestBrokerHello(sockets[0], core.registration);
@@ -4996,6 +4997,7 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
     var response = try readRequiredFrame(std.testing.allocator, sockets[0]);
     defer response.deinit(std.testing.allocator);
     thread.join();
+    thread_joined = true;
 
     try std.testing.expect(server.failure == null);
     try std.testing.expectEqual(generated.frame_type.terminated, response.header.type_code);
@@ -5004,6 +5006,10 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
         generated.wire_schema.terminated_payload,
         response.payload,
     ));
+    try std.testing.expect(std.mem.indexOf(u8, response.payload, "\"state\":\"unknown\"") != null);
+    try std.testing.expect(
+        std.mem.indexOf(u8, response.payload, "process-tree-escapees-unaccounted") != null,
+    );
     try std.testing.expect(core.terminated);
     const final = try temporary.dir.readFileAlloc(
         std.testing.allocator,
@@ -5011,7 +5017,7 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
         generated.limits.control_json_bytes,
     );
     defer std.testing.allocator.free(final);
-    try std.testing.expect(std.mem.indexOf(u8, final, "\"state\":\"terminated\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, final, "\"state\":\"unknown\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, final, "\"waitObserved\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, final, "\"outputSeq\":\"0\"") != null);
     try std.testing.expect(switch (process_inspector.observeProcess(sentinel)) {

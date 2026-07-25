@@ -1759,6 +1759,9 @@ pub const HostCore = struct {
             });
         }
         if (failure_code) |code| try diagnostics.append(.{ .string = code });
+        if (outcome.tree.state == .unknown and outcome.tree.snapshot_status == .stable and
+            survivors_json.items.len == 0 and !outcome.tree.deadline_expired)
+            try diagnostics.append(.{ .string = "process-tree-escapees-unaccounted" });
 
         var exit_value: std.json.Value = .null;
         var observed_storage: [24]u8 = undefined;

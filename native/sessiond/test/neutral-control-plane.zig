@@ -424,13 +424,18 @@ test "live neutral session lists inspects and terminates with direct wait replay
         .{},
     );
     defer terminated.deinit();
-    try testing.expectEqual(@as(@FieldType(WireTerminationResult, "state"), .terminated), terminated.value.state);
+    try testing.expectEqual(@as(@FieldType(WireTerminationResult, "state"), .unknown), terminated.value.state);
     try testing.expectEqual(@as(@FieldType(WireReapEvidence, "authority"), .@"direct-parent"), terminated.value.reap.authority);
     try testing.expect(terminated.value.reap.reaped);
     try testing.expect(terminated.value.reap.status != null);
     try testing.expectEqual(@as(?i32, c.SIGKILL), terminated.value.reap.status.?.signal);
-    try testing.expectEqual(Completeness.complete, terminated.value.completeness);
+    try testing.expectEqual(Completeness.unknown, terminated.value.completeness);
     try testing.expectEqual(@as(usize, 0), terminated.value.survivors.len);
+    try testing.expectEqual(@as(usize, 1), terminated.value.diagnostics.len);
+    try testing.expectEqualStrings(
+        "process-tree-escapees-unaccounted",
+        terminated.value.diagnostics[0],
+    );
 
     const replayed = try controller.terminate(terminate_bytes);
     defer allocator.free(replayed);
@@ -573,8 +578,8 @@ test "pending termination re-execution never signals a start-token-mismatched pi
         .payload = canonical_a.bytes,
     });
     try testing.expect(response_a.accepted);
-    // The recorded identity is treated as gone (terminated from the ledger's
-    // perspective)...
+    // The recorded identity is gone, but aggregate process-tree ownership
+    // remains unknown because an escape between observations is unprovable.
     var parsed_a = try std.json.parseFromSlice(
         WireTerminationPayload,
         allocator,
@@ -583,7 +588,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
     );
     defer parsed_a.deinit();
     try testing.expectEqual(
-        @as(@FieldType(WireTerminationResult, "state"), .terminated),
+        @as(@FieldType(WireTerminationResult, "state"), .unknown),
         parsed_a.value.state,
     );
     // ...but the token guard is the whole safety story for that re-execution:

@@ -457,13 +457,18 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .{ .ignore_unknown_fields = true },
     );
     defer parsed_terminated.deinit();
-    if (!std.mem.eql(u8, parsed_terminated.value.state, "terminated") or
+    if (!std.mem.eql(u8, parsed_terminated.value.state, "unknown") or
         !std.mem.eql(u8, parsed_terminated.value.reap.authority, "direct-parent") or
         !parsed_terminated.value.reap.reaped or
         !std.mem.eql(u8, parsed_terminated.value.reap.completeness, "complete") or
         parsed_terminated.value.survivors.len != 0 or
-        !std.mem.eql(u8, parsed_terminated.value.completeness, "complete") or
-        parsed_terminated.value.diagnostics.len != 0 or
+        !std.mem.eql(u8, parsed_terminated.value.completeness, "unknown") or
+        parsed_terminated.value.diagnostics.len != 1 or
+        !std.mem.eql(
+            u8,
+            parsed_terminated.value.diagnostics[0],
+            "process-tree-escapees-unaccounted",
+        ) or
         std.mem.indexOf(u8, terminated, "neutral-host-control-unavailable") != null)
         return error.HostTerminationFailed;
     try waitForProcessAbsence(parsed_created.value.inspection.shellRoot.pid);
@@ -504,10 +509,12 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     defer parsed_final.deinit();
     // The PTY owner records the direct-child wait status even when tree
     // termination triggers the wait.
-    if (!std.mem.eql(u8, parsed_final.value.state, "terminated") or
+    if (!std.mem.eql(u8, parsed_final.value.state, "unknown") or
         !parsed_final.value.waitObserved or
         parsed_final.value.survivors.len != 0 or
-        parsed_final.value.errors.len != 0)
+        parsed_final.value.errors.len != 1 or
+        std.mem.indexOf(u8, final_json, "\"phase\":\"neutral-control-operation\"") == null or
+        std.mem.indexOf(u8, final_json, "\"code\":\"incomplete-after-root-reap\"") == null)
         return error.InvalidFinalEvidence;
 }
 
