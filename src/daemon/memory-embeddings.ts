@@ -161,7 +161,9 @@ const errorDetail = (error: unknown): string =>
  * cause. Returns null when every native library loads, which means the failure
  * is genuinely elsewhere in the bundle.
  */
-async function nativeLoadFailure(bundlePath: string): Promise<string | null> {
+export async function nativeLoadFailure(
+  bundlePath: string,
+): Promise<string | null> {
   const distDir = dirname(bundlePath);
   try {
     for await (const name of new Bun.Glob("*.node").scan(distDir)) {

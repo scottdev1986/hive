@@ -22,6 +22,7 @@ import {
   type MemoryEmbedder,
   MemoryEmbeddingIndex,
   MemoryEmbeddingService,
+  nativeLoadFailure,
   probeExternalRuntime,
 } from "../../src/daemon/memory-embeddings";
 import { MemoryIndex } from "../../src/daemon/memory-index";
@@ -779,6 +780,58 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
     const rows = episodic.memoryEmbeddings();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.sourceId).toBe(written.id);
+  });
+});
+
+describe("nativeLoadFailure — the diagnostic must not name a false cause", () => {
+  // The tokenizers loader inside the bundle swallows its real error and reports
+  // the last leg of a per-arch cascade, so a dlopen failure on the universal
+  // binding used to surface as a missing `@anush008/tokenizers-darwin-arm64`
+  // package that is not supposed to exist. Two agents and the orchestrator
+  // chased that false cause. This is the check that the loader reports the
+  // native library's OWN error instead.
+  const roots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      roots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+    );
+  });
+
+  async function distWith(files: Record<string, string>): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "hive-native-diag-"));
+    roots.push(root);
+    const dist = join(root, "dist");
+    await mkdir(dist, { recursive: true });
+    for (const [name, body] of Object.entries(files)) {
+      await writeFile(join(dist, name), body);
+    }
+    return join(dist, "entry.js");
+  }
+
+  test("an unloadable native library beside the bundle is named, with its own error", async () => {
+    const bundlePath = await distWith({
+      "entry.js": "export const x = 1;\n",
+      // Not a Mach-O, so the platform's loader refuses it — standing in for the
+      // signature rejection a hardened runtime produces.
+      "tokenizers.darwin-universal-abc123.node": "not a mach-o binary\n",
+    });
+    const failure = await nativeLoadFailure(bundlePath);
+    expect(failure).not.toBeNull();
+    expect(failure).toContain("tokenizers.darwin-universal-abc123.node");
+    // The point of the fix: the real reason, not the cascade's last leg.
+    expect(failure).not.toContain("tokenizers-darwin-arm64");
+  });
+
+  test("a dist with no native libraries reports nothing rather than inventing a cause", async () => {
+    const bundlePath = await distWith({ "entry.js": "export const x = 1;\n" });
+    expect(await nativeLoadFailure(bundlePath)).toBeNull();
+  });
+
+  test("a missing dist directory is not a native failure", async () => {
+    const failure = await nativeLoadFailure(
+      join(tmpdir(), "hive-native-diag-absent", "dist", "entry.js"),
+    );
+    expect(failure).toBeNull();
   });
 });
 
