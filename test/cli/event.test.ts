@@ -62,6 +62,9 @@ describe("hive event", () => {
       buildHookEvent("session-start", { agent: "maya" }, timestamp),
       buildHookEvent("session-end", { agent: "maya" }, timestamp),
       buildHookEvent("turn-start", { agent: "maya" }, timestamp),
+      buildHookEvent("turn-failure", { agent: "maya" }, timestamp),
+      buildHookEvent("tool-start", { agent: "maya" }, timestamp),
+      buildHookEvent("compacted", { agent: "maya" }, timestamp),
       buildHookEvent(
         "turn-end",
         {
@@ -84,12 +87,12 @@ describe("hive event", () => {
       const encoded = JSON.stringify(event);
       expect(HookEventSchema.parse(JSON.parse(encoded))).toEqual(event);
     }
-    expect(events[4]).toMatchObject({
+    expect(events[7]).toMatchObject({
       kind: "turn-end",
       usageUnits: 7,
       usageSource: "provider",
     });
-    expect(events[6]).toMatchObject({
+    expect(events[9]).toMatchObject({
       kind: "approval-request",
       description: "Publish package",
     });
@@ -161,6 +164,49 @@ describe("hive event", () => {
         }),
       ),
     ).toEqual({ toolSessionId: "abc123", toolName: "Read" });
+  });
+
+  test("captures Grok hook metadata without retaining tool input or output", () => {
+    const captured = parseHookStdin(
+      JSON.stringify({
+        hookEventName: "PreToolUse",
+        sessionId: "grok-session",
+        timestamp: "2026-07-24T19:00:00Z",
+        toolName: "read_file",
+        toolInput: { target_file: "/repo/file.ts" },
+        toolResult: "secret output",
+      }),
+    );
+    expect(captured).toEqual({
+      toolSessionId: "grok-session",
+      timestamp: "2026-07-24T19:00:00.000Z",
+      toolName: "read_file",
+      inputDigest:
+        "0fe21d7ad38f2728c3a083913dc5631a27b21dac46724db7b702a20a77127c7c",
+    });
+    expect(JSON.stringify(captured)).not.toContain("/repo/file.ts");
+    expect(JSON.stringify(captured)).not.toContain("secret output");
+  });
+
+  test("accepts only genuine Grok Stop completion", () => {
+    expect(
+      parseHookStdin(
+        JSON.stringify({
+          hookEventName: "Stop",
+          sessionId: "grok-session",
+          reason: "end_turn",
+        }),
+      ),
+    ).toEqual({ toolSessionId: "grok-session" });
+    expect(
+      parseHookStdin(
+        JSON.stringify({
+          hookEventName: "Stop",
+          sessionId: "grok-session",
+          reason: "channel_closed",
+        }),
+      ),
+    ).toEqual({ toolSessionId: "grok-session", ignore: true });
   });
 
   // Verbatim Notification payloads from claude 2.1.207 — captured from a real

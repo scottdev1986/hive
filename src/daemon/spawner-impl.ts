@@ -1283,6 +1283,7 @@ export class HiveSpawner implements Spawner {
     command: string,
     _expectedExecutable: string,
     launchGrantId: string,
+    providerRunId: string = crypto.randomUUID(),
   ): Promise<void> {
     const admission = await this.requireSessiondCreationPolicy(record);
     const shell = shellSessionLaunch(command);
@@ -1318,7 +1319,7 @@ export class HiveSpawner implements Spawner {
       }
       const foreground = inspection.foreground;
       this.dependencies.db.insertProviderRun({
-        runId: crypto.randomUUID(),
+        runId: providerRunId,
         agentId: record.id,
         terminal: created.locator,
         provider: record.tool,
@@ -1357,12 +1358,14 @@ export class HiveSpawner implements Spawner {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
+    providerRunId?: string,
   ): Promise<void> {
     await this.createSession(
       record,
       command,
       expectedExecutable,
       launchGrantId,
+      providerRunId,
     );
   }
 
@@ -1733,6 +1736,7 @@ export class HiveSpawner implements Spawner {
       // the daemon's autonomy dial says. Grok alone resumes its prior vendor
       // session — Hive minted that id, so it is reusable; the other vendors
       // start a fresh control process.
+      const providerRunId = crypto.randomUUID();
       const preparedLaunch = await adapter.prepareSpawn({
         daemonPort: this.daemonPort(),
         model: identity.model,
@@ -1746,6 +1750,7 @@ export class HiveSpawner implements Spawner {
         ...(capabilityToken === undefined ? {} : { withCapability: true }),
         instructionPath,
         sessionId: this.requireAgentLocator(agent).sessionId,
+        providerRunId,
         ...(identity.tool === "grok" && agent.toolSessionId !== undefined
           ? { resumeSessionId: agent.toolSessionId }
           : {}),
@@ -1760,6 +1765,7 @@ export class HiveSpawner implements Spawner {
         preparedLaunch.command,
         launchedCommand,
         message.id,
+        providerRunId,
       );
       const failureReason = await this.monitorControlReadiness(
         prepared.record,
@@ -2790,6 +2796,7 @@ export class HiveSpawner implements Spawner {
       // discard the hooks and permissions the config write is about to lay
       // down (claude's folder-trust seed; the other vendors have none).
       await adapter.prepareWorktree?.(worktree.path);
+      const providerRunId = crypto.randomUUID();
       const preparedLaunch = await adapter.prepareSpawn({
         daemonPort: this.daemonPort(),
         model,
@@ -2804,6 +2811,7 @@ export class HiveSpawner implements Spawner {
         ...(graphifyUrl === null ? {} : { graphifyUrl }),
         instructionPath,
         sessionId: this.requireAgentLocator(record).sessionId,
+        providerRunId,
         ...(grokSessionId === undefined
           ? {}
           : { newVendorSessionId: grokSessionId }),
@@ -2841,6 +2849,7 @@ export class HiveSpawner implements Spawner {
           command,
           expectedExecutable,
           record.quotaReservationId ?? record.id,
+          providerRunId,
         );
       };
 

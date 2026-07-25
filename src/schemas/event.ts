@@ -3,6 +3,7 @@ import { z } from "zod";
 const HookEventBaseSchema = z.strictObject({
   agentName: z.string().min(1),
   timestamp: z.iso.datetime({ offset: true }),
+  providerRunId: z.string().uuid().optional(),
   // Claude pipes session_id to every hook; Codex notify carries thread-id.
   // Either one is the handle a crash recovery needs for a native resume.
   toolSessionId: z.string().min(1).optional(),
@@ -20,6 +21,7 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   // as turn state rather than in terminal scraping.
   HookEventBaseSchema.extend({ kind: z.literal("session-end") }),
   HookEventBaseSchema.extend({ kind: z.literal("turn-start") }),
+  HookEventBaseSchema.extend({ kind: z.literal("turn-failure") }),
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
     // Populated by exactly one producer: the Codex app-server driver
@@ -63,9 +65,22 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   // It is a delivery tick, not a lifecycle fact — it never changes status and
   // is not persisted to the events table.
   HookEventBaseSchema.extend({
+    kind: z.literal("tool-start"),
+    toolName: z.string().min(1).optional(),
+    inputDigest: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
+  }),
+  HookEventBaseSchema.extend({
     kind: z.literal("tool-boundary"),
     toolName: z.string().min(1).optional(),
+    inputDigest: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/)
+      .optional(),
   }),
+  HookEventBaseSchema.extend({ kind: z.literal("compacted") }),
   HookEventBaseSchema.extend({
     kind: z.literal("approval-request"),
     description: z.string().min(1),

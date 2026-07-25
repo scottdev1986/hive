@@ -84,6 +84,7 @@ export interface EventCliOptions {
   agent?: string;
   port?: string;
   instanceId?: string;
+  providerRunId?: string;
   payload?: string;
   description?: string;
   usageUnits?: string;
@@ -222,6 +223,9 @@ export function buildEventOptions(options: EventCliOptions): HookEventOptions {
   return {
     ...payload,
     ...(options.agent === undefined ? {} : { agent: options.agent }),
+    ...(options.providerRunId === undefined
+      ? {}
+      : { providerRunId: options.providerRunId }),
     ...(options.description === undefined
       ? {}
       : { description: options.description }),
@@ -892,6 +896,7 @@ export function createProgram(): Command {
     .option("--agent <name>", "agent name")
     .option("--port <number>", "daemon port")
     .requiredOption("--instance-id <id>", "expected Hive instance identity")
+    .option("--provider-run-id <id>", "expected active provider run")
     .option("--payload <json>", "tool hook JSON payload")
     .option("--description <text>", "approval description")
     .option("--usage-units <number>", "provider or gateway usage units")

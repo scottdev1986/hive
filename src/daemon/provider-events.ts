@@ -5,26 +5,40 @@ import type { HiveDatabase } from "./db";
 
 function eventKind(
   event: HookEvent,
-): Pick<ProviderEvent, "kind" | "toolName"> | null {
+): Pick<ProviderEvent, "kind" | "toolName" | "inputDigest"> | null {
   switch (event.kind) {
     case "session-start":
-      return { kind: "run-started", toolName: null };
+      return { kind: "run-started", toolName: null, inputDigest: null };
     case "session-end":
     case "dead":
-      return { kind: "run-ended", toolName: null };
+      return { kind: "run-ended", toolName: null, inputDigest: null };
     case "turn-start":
-      return { kind: "turn-started", toolName: null };
+      return { kind: "turn-started", toolName: null, inputDigest: null };
     case "turn-end":
-      return { kind: "turn-idle", toolName: null };
+      return { kind: "turn-idle", toolName: null, inputDigest: null };
+    case "turn-failure":
+      return { kind: "turn-failed", toolName: null, inputDigest: null };
+    case "tool-start":
+      return {
+        kind: "tool-started",
+        toolName: event.toolName ?? null,
+        inputDigest: event.inputDigest ?? null,
+      };
     case "tool-boundary":
-      return { kind: "tool-finished", toolName: event.toolName ?? null };
+      return {
+        kind: "tool-finished",
+        toolName: event.toolName ?? null,
+        inputDigest: event.inputDigest ?? null,
+      };
+    case "compacted":
+      return { kind: "compacted", toolName: null, inputDigest: null };
     case "approval-request":
-      return { kind: "approval-waiting", toolName: null };
+      return { kind: "approval-waiting", toolName: null, inputDigest: null };
     case "notification":
       return event.notificationType === "permission_prompt"
-        ? { kind: "approval-waiting", toolName: null }
+        ? { kind: "approval-waiting", toolName: null, inputDigest: null }
         : event.notificationType === "idle_prompt"
-          ? { kind: "turn-idle", toolName: null }
+          ? { kind: "turn-idle", toolName: null, inputDigest: null }
           : null;
     case "session-launch":
     case "effort-drift":
@@ -46,6 +60,9 @@ export function recordProviderHookEvent(
   if (
     active === null ||
     active.capabilityEpoch !== agent.capabilityEpoch ||
+    (event.providerRunId !== undefined &&
+      event.providerRunId !== active.runId) ||
+    (agent.tool === "grok" && event.providerRunId === undefined) ||
     Date.parse(event.timestamp) < Date.parse(active.startedAt)
   ) {
     return null;
@@ -66,6 +83,7 @@ export function recordProviderHookEvent(
           event.timestamp,
           conversationId,
           normalized.toolName,
+          normalized.inputDigest,
         ]),
       )
       .digest("hex"),
@@ -76,7 +94,7 @@ export function recordProviderHookEvent(
     kind: normalized.kind,
     occurredAt: event.timestamp,
     toolName: normalized.toolName,
-    inputDigest: null,
+    inputDigest: normalized.inputDigest,
   };
   db.insertProviderEvent(value);
   return value;

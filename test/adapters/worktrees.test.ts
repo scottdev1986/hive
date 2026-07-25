@@ -191,7 +191,11 @@ describe("git worktree manager", () => {
 
   test("hive's own grok wiring is not the agent's work, and never blocks a reap", async () => {
     const created = await createWorktree(repoRoot, "agent-grok", "grok-wiring");
-    await writeGrokAgentConfig(created.path, { daemonPort: 4711 });
+    await writeGrokAgentConfig(created.path, {
+      daemonPort: 4711,
+      name: "agent-grok",
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000225",
+    });
 
     const stranded = await assessStrandedWork(
       repoRoot,

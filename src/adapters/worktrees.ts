@@ -7,6 +7,7 @@ import {
 import { CAPABILITY_PROVIDERS } from "../schemas";
 import { shippedSkillsFor } from "../skills/shipped";
 import { nativeSkillDirectory } from "./skills";
+import { grokHookFilename, ownsGrokHook } from "./tools/grok";
 
 interface GitResult {
   stdout: string;
@@ -72,9 +73,11 @@ export async function observedWorktreeFiles(
       }
     }
   }
-  return [...paths]
-    .filter((path) => !HIVE_WORKTREE_WIRING.includes(path))
-    .sort();
+  const observed: string[] = [];
+  for (const path of paths) {
+    if (!(await isHiveWorktreeWiring(path, worktreePath))) observed.push(path);
+  }
+  return observed.sort();
 }
 
 export interface UnmergedBranch {
@@ -497,13 +500,30 @@ const HIVE_WORKTREE_WIRING: readonly string[] = [
   ...new Set([...HIVE_WORKTREE_CONFIG, ...HIVE_WORKTREE_SKILLS]),
 ];
 
+const isHiveWorktreeWiring = async (
+  path: string,
+  worktreePath: string | null,
+): Promise<boolean> => {
+  if (HIVE_WORKTREE_WIRING.includes(path)) return true;
+  if (
+    worktreePath === null ||
+    path !== join(".grok", "hooks", grokHookFilename())
+  ) {
+    return false;
+  }
+  const source = await readFile(join(worktreePath, path), "utf8").catch(
+    () => null,
+  );
+  return source !== null && ownsGrokHook(source);
+};
+
 export async function assessStrandedWork(
   repoRoot: string,
   worktreePath: string | null,
   branch: string | null,
   mainBranch = "main",
 ): Promise<StrandedWork> {
-  let dirtyFiles: string[] = [];
+  const dirtyFiles: string[] = [];
   if (worktreePath !== null) {
     const statusResult = await runGit(worktreePath, [
       "status",
@@ -515,11 +535,15 @@ export async function assessStrandedWork(
       "-uall",
     ]);
     if (statusResult.exitCode === 0) {
-      dirtyFiles = statusResult.stdout
+      const candidates = statusResult.stdout
         .split("\n")
         .filter((line) => line !== "")
-        .map((line) => line.slice(3))
-        .filter((path) => !HIVE_WORKTREE_WIRING.includes(path));
+        .map((line) => line.slice(3));
+      for (const path of candidates) {
+        if (!(await isHiveWorktreeWiring(path, worktreePath))) {
+          dirtyFiles.push(path);
+        }
+      }
     }
     // A missing or already-pruned worktree has no dirty files by definition;
     // any commits it made still show up in the unmerged count below.

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { type HookEvent, HookEventSchema } from "../schemas";
 import { agentFetch } from "./credential";
 
@@ -7,7 +8,11 @@ export interface HookEventOptions {
   usageUnits?: number;
   usageSource?: "provider" | "gateway" | "estimated";
   toolSessionId?: string;
+  providerRunId?: string;
   toolName?: string;
+  inputDigest?: string;
+  timestamp?: string;
+  ignore?: boolean;
   /** Claude's `notification_type`, read off the Notification hook's stdin.
    * Never a CLI flag: only the vendor can say why it raised the notification. */
   notificationType?: string;
@@ -30,6 +35,9 @@ export function buildHookEvent(
     ...(options.toolSessionId === undefined
       ? {}
       : { toolSessionId: options.toolSessionId }),
+    ...(options.providerRunId === undefined
+      ? {}
+      : { providerRunId: options.providerRunId }),
   };
   if (kind === "turn-end") {
     return HookEventSchema.parse({
@@ -56,10 +64,13 @@ export function buildHookEvent(
         : { notificationType: options.notificationType }),
     });
   }
-  if (kind === "tool-boundary") {
+  if (kind === "tool-start" || kind === "tool-boundary") {
     return HookEventSchema.parse({
       ...base,
       ...(options.toolName === undefined ? {} : { toolName: options.toolName }),
+      ...(options.inputDigest === undefined
+        ? {}
+        : { inputDigest: options.inputDigest }),
     });
   }
   return HookEventSchema.parse(base);
@@ -89,7 +100,13 @@ export async function postHookEvent(
 // kept only the session id.
 export type CapturedHookStdin = Pick<
   HookEventOptions,
-  "toolSessionId" | "toolName" | "notificationType" | "description"
+  | "toolSessionId"
+  | "toolName"
+  | "inputDigest"
+  | "notificationType"
+  | "description"
+  | "timestamp"
+  | "ignore"
 >;
 
 /**
@@ -131,6 +148,13 @@ export function parseHookStdin(text: string): CapturedHookStdin {
       captured.toolSessionId = parsed.session_id;
     }
     if (
+      "sessionId" in parsed &&
+      typeof parsed.sessionId === "string" &&
+      parsed.sessionId.length > 0
+    ) {
+      captured.toolSessionId = parsed.sessionId;
+    }
+    if (
       "hook_event_name" in parsed &&
       parsed.hook_event_name === "PostToolUse" &&
       "tool_name" in parsed &&
@@ -138,6 +162,32 @@ export function parseHookStdin(text: string): CapturedHookStdin {
       parsed.tool_name.length > 0
     ) {
       captured.toolName = parsed.tool_name;
+    }
+    if (
+      "toolName" in parsed &&
+      typeof parsed.toolName === "string" &&
+      parsed.toolName.length > 0
+    ) {
+      captured.toolName = parsed.toolName;
+    }
+    if ("toolInput" in parsed) {
+      captured.inputDigest = createHash("sha256")
+        .update(JSON.stringify(parsed.toolInput))
+        .digest("hex");
+    }
+    if (
+      "timestamp" in parsed &&
+      typeof parsed.timestamp === "string" &&
+      !Number.isNaN(Date.parse(parsed.timestamp))
+    ) {
+      captured.timestamp = new Date(parsed.timestamp).toISOString();
+    }
+    if (
+      "hookEventName" in parsed &&
+      parsed.hookEventName === "Stop" &&
+      (!("reason" in parsed) || parsed.reason !== "end_turn")
+    ) {
+      captured.ignore = true;
     }
     if (
       "notification_type" in parsed &&
@@ -200,7 +250,8 @@ export async function runHiveEvent(
   fetcher?: EventFetcher,
 ): Promise<0> {
   try {
-    const event = buildHookEvent(kind, options);
+    if (options.ignore === true) return 0;
+    const event = buildHookEvent(kind, options, options.timestamp);
     // A hook speaks only for the agent it was installed for, and presents that
     // agent's capability. The credential is read from its 0600 file, never
     // from this process's environment.

@@ -1302,12 +1302,14 @@ export class HiveDaemon {
               command,
               expectedExecutable,
               launchGrantId,
+              providerRunId,
             ) =>
               createRecoverySession(
                 agent,
                 command,
                 expectedExecutable,
                 launchGrantId,
+                providerRunId,
               ),
           }),
       send: (from, to, body, sendOptions) =>
@@ -5291,8 +5293,15 @@ export class HiveDaemon {
       agentName: canonicalOrchestratorName(parsed.agentName),
     };
     const eventAgent = this.db.getAgentByName(value.agentName);
-    if (eventAgent !== null) {
-      recordProviderHookEvent(this.db, eventAgent, value);
+    const providerEvent =
+      eventAgent === null
+        ? null
+        : recordProviderHookEvent(this.db, eventAgent, value);
+    if (value.providerRunId !== undefined && providerEvent === null) {
+      // A run-bound hook speaks only for that exact active ProviderRun. Do not
+      // let a stale worktree hook mutate the legacy lifecycle row after the
+      // normalized ingestion path rejected it.
+      return;
     }
     if (
       value.agentName === ORCHESTRATOR_NAME &&
@@ -5368,6 +5377,8 @@ export class HiveDaemon {
                 ? "dead"
                 : value.kind === "turn-start"
                   ? "working"
+                  : value.kind === "tool-start"
+                    ? "working"
                   : value.kind === "approval-request"
                     ? "awaiting-approval"
                     : value.kind === "notification"
@@ -5381,7 +5392,8 @@ export class HiveDaemon {
                         ? "awaiting-approval"
                         : agent.status
                       : value.kind === "session-launch" ||
-                          value.kind === "session-end"
+                          value.kind === "session-end" ||
+                          value.kind === "compacted"
                         ? // Only the orchestrator supervisor emits this today. If a
                           // future worker reports either supervisor lifecycle event,
                           // process teardown remains the authority for that worker.
@@ -5429,6 +5441,8 @@ export class HiveDaemon {
     const turnState =
       value.kind === "turn-start"
         ? "working"
+        : value.kind === "tool-start"
+          ? "working"
         : value.kind === "turn-end" || value.kind === "session-start"
           ? "idle"
           : value.kind === "approval-request" || isPermissionPrompt(value)

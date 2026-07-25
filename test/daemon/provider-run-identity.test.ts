@@ -441,11 +441,13 @@ describe("C0 provider-run identity", () => {
       "codex --resume thread-fixture",
       "codex",
       "req_018f1e90-7b5a-7cc0-8000-000000000299",
+      "018f1e90-7b5a-7cc0-8000-000000000298",
     );
 
     expect(inspections).toBe(2);
     expect(terminations).toBe(0);
     expect(db.getActiveProviderRunByTerminal(terminal)).toMatchObject({
+      runId: "018f1e90-7b5a-7cc0-8000-000000000298",
       agentId: record.id,
       provider: "codex",
       pid: 5_000,

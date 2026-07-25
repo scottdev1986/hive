@@ -22,6 +22,7 @@ export interface AgentSpawnContext {
   boardTools?: boolean;
   excludeMcpServers?: readonly string[];
   newVendorSessionId?: string;
+  providerRunId?: string;
 }
 
 /** The command prepared for the terminal host. */

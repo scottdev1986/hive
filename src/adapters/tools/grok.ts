@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import {
   mkdir,
@@ -9,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { resolveProviderExecutable } from "./provider-executable";
 import {
@@ -34,8 +36,13 @@ export interface GrokSpawnOptions {
 
 export interface GrokAgentConfigOptions {
   daemonPort: number;
+  name?: string;
+  providerRunId?: string;
+  hiveCommand?: readonly string[];
   graphifyUrl?: string;
 }
+
+export type GrokProjectTrust = "trusted" | "untrusted" | "unknown";
 
 /** Grok maps these compatibility names to native tools: `Bash` covers `Shell`,
  * and `MCPTool` covers both `CallMcpTool` and `use_tool`. Deny wins. */
@@ -185,6 +192,89 @@ export function wrapGrokSpawnWithCompatibilityEnv(command: string): string {
 }
 
 const tomlString = (value: string): string => JSON.stringify(value);
+const shellToken = (value: string): string =>
+  `'${value.replaceAll("'", `'\\''`)}'`;
+
+const hook = (command: string) => [
+  { hooks: [{ type: "command" as const, command }] },
+];
+
+export function ownsGrokHook(
+  source: string,
+  instanceId = hiveInstanceSuffix(),
+): boolean {
+  return (
+    source.includes(" event ") &&
+    source.includes(`--instance-id ${shellToken(instanceId)}`) &&
+    source.includes("--provider-run-id") &&
+    [
+      "SessionStart",
+      "UserPromptSubmit",
+      "PreToolUse",
+      "PostToolUse",
+      "PostToolUseFailure",
+      "Stop",
+      "StopFailure",
+      "PostCompact",
+      "SessionEnd",
+    ].every((event) => source.includes(`"${event}"`))
+  );
+}
+
+async function grokHookPath(
+  directory: string,
+  instanceId: string,
+): Promise<string> {
+  const preferred = join(directory, grokHookFilename(instanceId));
+  const existing = await readFile(preferred, "utf8").catch(() => null);
+  if (existing === null || ownsGrokHook(existing, instanceId)) return preferred;
+
+  const suffix = createHash("sha256")
+    .update(instanceId)
+    .digest("hex")
+    .slice(0, 12);
+  for (let index = 0; ; index += 1) {
+    const candidate = join(directory, `hive-${suffix}-${index + 1}.json`);
+    const candidateSource = await readFile(candidate, "utf8").catch(() => null);
+    if (candidateSource === null || ownsGrokHook(candidateSource, instanceId)) {
+      return candidate;
+    }
+  }
+}
+
+export function grokHookFilename(instanceId = hiveInstanceSuffix()): string {
+  const suffix = createHash("sha256")
+    .update(instanceId)
+    .digest("hex")
+    .slice(0, 12);
+  return `hive-${suffix}.json`;
+}
+
+export function inspectGrokProjectTrust(
+  worktreePath: string,
+  executable = "grok",
+): GrokProjectTrust {
+  try {
+    const result = Bun.spawnSync([executable, "inspect"], {
+      cwd: worktreePath,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5_000,
+      killSignal: "SIGKILL",
+    });
+    if (result.exitCode !== 0) return "unknown";
+    const output = `${result.stdout.toString()}\n${result.stderr.toString()}`;
+    const trust = /Project trusted:\s*(yes|no)\b/.exec(output)?.[1];
+    return trust === "yes"
+      ? "trusted"
+      : trust === "no"
+        ? "untrusted"
+        : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 function stripHiveMcpTables(source: string): string {
   const lines = source.split("\n");
@@ -209,6 +299,7 @@ export async function writeGrokAgentConfig(
   options: GrokAgentConfigOptions,
 ): Promise<void> {
   const directory = join(worktreePath, ".grok");
+  const hooksDirectory = join(directory, "hooks");
   const path = join(directory, "config.toml");
   await mkdir(directory, { recursive: true });
   const existing = await readFile(path, "utf8").catch((error: unknown) => {
@@ -240,18 +331,79 @@ export async function writeGrokAgentConfig(
           "enabled = true",
         ]),
   ].join("\n");
-  await writeFile(
-    path,
-    `${prefix.length === 0 ? "" : `${prefix}\n\n`}${owned}\n`,
-    {
+  const writes = [
+    writeFile(path, `${prefix.length === 0 ? "" : `${prefix}\n\n`}${owned}\n`, {
       mode: 0o600,
-    },
+    }),
+  ];
+  const name = options.name;
+  const providerRunId = options.providerRunId;
+  if (name !== undefined && providerRunId !== undefined) {
+    const hiveCommand = options.hiveCommand ?? ["hive"];
+    if (hiveCommand[0] === undefined) {
+      throw new Error("Hive command must contain an executable");
+    }
+    const instanceId = hiveInstanceSuffix();
+    const invocation = hiveCommand.map(shellToken).join(" ");
+    const eventCommand = (kind: string): string =>
+      [
+        invocation,
+        "event",
+        kind,
+        "--agent",
+        shellToken(name),
+        "--port",
+        String(options.daemonPort),
+        "--instance-id",
+        shellToken(instanceId),
+        "--provider-run-id",
+        shellToken(providerRunId),
+      ].join(" ");
+    const hooks = {
+      hooks: {
+        SessionStart: hook(eventCommand("session-start")),
+        UserPromptSubmit: hook(eventCommand("turn-start")),
+        PreToolUse: hook(eventCommand("tool-start")),
+        PostToolUse: hook(eventCommand("tool-boundary")),
+        PostToolUseFailure: hook(eventCommand("tool-boundary")),
+        Stop: hook(eventCommand("turn-end")),
+        StopFailure: hook(eventCommand("turn-failure")),
+        PostCompact: hook(eventCommand("compacted")),
+        SessionEnd: hook(eventCommand("session-end")),
+      },
+    };
+    await mkdir(hooksDirectory, { recursive: true });
+    const hookPath = await grokHookPath(hooksDirectory, instanceId);
+    writes.push(
+      writeFile(hookPath, `${JSON.stringify(hooks, null, 2)}\n`, {
+        mode: 0o600,
+      }),
+    );
+  }
+  await Promise.all(writes);
+}
+
+async function removeOwnedGrokHooks(worktreePath: string): Promise<boolean> {
+  const directory = join(worktreePath, ".grok", "hooks");
+  const entries = await readdir(directory, { withFileTypes: true }).catch(
+    () => [],
   );
+  let removed = false;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    const path = join(directory, entry.name);
+    const source = await readFile(path, "utf8").catch(() => null);
+    if (source === null || !ownsGrokHook(source)) continue;
+    await rm(path, { force: true });
+    removed = true;
+  }
+  return removed;
 }
 
 export async function removeGrokAgentConfig(
   worktreePath: string,
 ): Promise<boolean> {
+  const hooksRemoved = await removeOwnedGrokHooks(worktreePath);
   const path = join(worktreePath, ".grok", "config.toml");
   const existing = await readFile(path, "utf8").catch((error: unknown) => {
     if (
@@ -263,21 +415,21 @@ export async function removeGrokAgentConfig(
       return null;
     throw error;
   });
-  if (existing === null) return false;
+  if (existing === null) return hooksRemoved;
   let parsed: {
     mcp_servers?: { hive?: { url?: unknown } };
   };
   try {
     parsed = Bun.TOML.parse(existing) as typeof parsed;
   } catch {
-    return false;
+    return hooksRemoved;
   }
   const hiveUrl = parsed.mcp_servers?.hive?.url;
   if (
     typeof hiveUrl !== "string" ||
     !/^http:\/\/127\.0\.0\.1:\d+\/mcp$/.test(hiveUrl)
   )
-    return false;
+    return hooksRemoved;
   const remaining = stripHiveMcpTables(existing);
   if (remaining.trim().length === 0) await rm(path, { force: true });
   else await writeFile(path, `${remaining}\n`, { mode: 0o600 });

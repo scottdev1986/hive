@@ -103,6 +103,7 @@ export interface CrashRecoveryDependencies {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
+    providerRunId?: string,
   ) => Promise<void>;
   /** PR5 wires the policy-backed full gate. Missing/unreadable refuses resume. */
   authorizeLaunch?: (
@@ -619,6 +620,7 @@ export class CrashRecovery {
               }`,
             );
           });
+      const providerRunId = crypto.randomUUID();
       const prepared = await adapter.prepareSpawn({
         daemonPort: this.daemonPort(),
         model,
@@ -637,6 +639,7 @@ export class CrashRecovery {
         hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
         ...(hasInstructions ? { instructionPath } : {}),
         sessionId: sessionKey,
+        providerRunId,
         resumeSessionId: sessionId,
         withCapability: true,
       });
@@ -666,6 +669,7 @@ export class CrashRecovery {
         command,
         argv[0] ?? record.tool,
         launchGrantId,
+        providerRunId,
       );
       // A freshly resumed TUI sits at its prompt with the conversation
       // restored: idle is the honest status until an event says otherwise.

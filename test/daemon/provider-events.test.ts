@@ -31,7 +31,9 @@ function run(value: AgentRecord): ProviderRun {
     runId:
       value.tool === "claude"
         ? "018f1e90-7b5a-7cc0-8000-000000000201"
-        : "018f1e90-7b5a-7cc0-8000-000000000202",
+        : value.tool === "codex"
+          ? "018f1e90-7b5a-7cc0-8000-000000000202"
+          : "018f1e90-7b5a-7cc0-8000-000000000203",
     agentId: value.id,
     terminal: {
       schemaVersion: 1,
@@ -136,6 +138,73 @@ describe("provider event normalization", () => {
           toolName: "Read",
         }),
       ).toMatchObject({ kind: "tool-finished", toolName: "Read" });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("normalizes Grok hook metadata and rejects every stale binding", () => {
+    const db = new HiveDatabase(":memory:");
+    try {
+      const value = agent("grok");
+      db.upsertAgent(value);
+      const active = run(value);
+      db.insertProviderRun(active);
+      const inputDigest = "a".repeat(64);
+      expect(
+        recordProviderHookEvent(db, value, {
+          kind: "tool-start",
+          agentName: value.name,
+          providerRunId: active.runId,
+          timestamp: at,
+          toolSessionId: "grok-session",
+          toolName: "read_file",
+          inputDigest,
+        }),
+      ).toMatchObject({
+        providerRunId: active.runId,
+        provider: "grok",
+        conversationId: "grok-session",
+        kind: "tool-started",
+        toolName: "read_file",
+        inputDigest,
+      });
+      expect(
+        recordProviderHookEvent(db, value, {
+          kind: "turn-end",
+          agentName: value.name,
+          providerRunId: "018f1e90-7b5a-7cc0-8000-000000000299",
+          timestamp: at,
+          toolSessionId: "grok-session",
+        }),
+      ).toBeNull();
+      expect(
+        recordProviderHookEvent(db, value, {
+          kind: "turn-end",
+          agentName: value.name,
+          timestamp: at,
+          toolSessionId: "grok-session",
+        }),
+      ).toBeNull();
+      expect(
+        recordProviderHookEvent(db, value, {
+          kind: "turn-end",
+          agentName: value.name,
+          providerRunId: active.runId,
+          timestamp: "2026-07-24T18:59:59.999Z",
+          toolSessionId: "grok-session",
+        }),
+      ).toBeNull();
+      expect(
+        recordProviderHookEvent(db, value, {
+          kind: "turn-end",
+          agentName: value.name,
+          providerRunId: active.runId,
+          timestamp: at,
+          toolSessionId: "other-session",
+        }),
+      ).toBeNull();
+      expect(db.listProviderEvents(active.runId)).toHaveLength(1);
     } finally {
       db.close();
     }

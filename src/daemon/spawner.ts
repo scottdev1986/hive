@@ -53,6 +53,7 @@ export interface Spawner {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
+    providerRunId?: string,
   ): Promise<void>;
   restartForControl?(
     agent: AgentRecord,

@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { grokAgentAdapter } from "../../../src/adapters/tools/agents/grok";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/tools/capability-env";
 import {
   buildGrokResumeCommand,
@@ -16,6 +18,8 @@ import {
   discoverGrokRecoverySessionId,
   findLatestGrokSessionId,
   GROK_COMPATIBILITY_ENV,
+  grokHookFilename,
+  inspectGrokProjectTrust,
   parseGrokCliVersion,
   probeGrokCliVersion,
   readLiveGrokModel,
@@ -196,6 +200,8 @@ describe("Grok adapter", () => {
     );
     await writeGrokAgentConfig(root, {
       daemonPort: 4317,
+      name: "maya",
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000220",
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
     const content = await readFile(join(root, ".grok", "config.toml"), "utf8");
@@ -218,7 +224,154 @@ describe("Grok adapter", () => {
     expect(cleaned).toContain("[mcp_servers.other]");
     expect(cleaned).not.toContain("[mcp_servers.hive]");
     expect(cleaned).not.toContain("[mcp_servers.graphify]");
+    expect(await readdir(join(root, ".grok", "hooks"))).toEqual([]);
   });
+
+  test("writes only real Grok lifecycle hooks with the exact run binding", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-grok-hooks-"));
+    roots.push(root);
+    const runId = "018f1e90-7b5a-7cc0-8000-000000000221";
+    await writeGrokAgentConfig(root, {
+      daemonPort: 4317,
+      name: "maya",
+      providerRunId: runId,
+      hiveCommand: ["/opt/Hive App/bin/hive"],
+    });
+    const parsed = JSON.parse(
+      await readFile(join(root, ".grok", "hooks", grokHookFilename()), "utf8"),
+    ) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+    };
+    expect(Object.keys(parsed.hooks).sort()).toEqual(
+      [
+        "PostCompact",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PreToolUse",
+        "SessionEnd",
+        "SessionStart",
+        "Stop",
+        "StopFailure",
+        "UserPromptSubmit",
+      ].sort(),
+    );
+    expect(JSON.stringify(parsed)).not.toContain("TaskCreated");
+    expect(JSON.stringify(parsed)).not.toContain("TaskCompleted");
+    for (const entries of Object.values(parsed.hooks)) {
+      expect(entries[0]?.hooks[0]?.command).toContain(
+        `--provider-run-id '${runId}'`,
+      );
+      expect(entries[0]?.hooks[0]?.command).toContain(
+        "'/opt/Hive App/bin/hive' event",
+      );
+    }
+  });
+
+  test("preserves a user's colliding hook file instead of overwriting it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-grok-user-hook-"));
+    roots.push(root);
+    await mkdir(join(root, ".grok", "hooks"), { recursive: true });
+    const userHook =
+      '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-hook"}]}]}}\n';
+    await writeFile(join(root, ".grok", "hooks", grokHookFilename()), userHook);
+    await writeGrokAgentConfig(root, {
+      daemonPort: 4317,
+      name: "maya",
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000222",
+    });
+    expect(
+      await readFile(join(root, ".grok", "hooks", grokHookFilename()), "utf8"),
+    ).toBe(userHook);
+    expect(
+      (await readdir(join(root, ".grok", "hooks"))).filter(
+        (name) => name !== grokHookFilename(),
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("detects both grok inspect trust states without changing capability", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-grok-trust-"));
+    roots.push(root);
+    const executable = async (name: string, trusted: "yes" | "no") => {
+      const path = join(root, name);
+      await writeFile(
+        path,
+        `#!/bin/sh\nprintf '%s\\n' 'Project trusted: ${trusted}'\n`,
+      );
+      await chmod(path, 0o755);
+      return path;
+    };
+    expect(
+      inspectGrokProjectTrust(root, await executable("trusted", "yes")),
+    ).toBe("trusted");
+    expect(
+      inspectGrokProjectTrust(root, await executable("untrusted", "no")),
+    ).toBe("untrusted");
+    expect(inspectGrokProjectTrust(root, join(root, "missing"))).toBe(
+      "unknown",
+    );
+  });
+
+  test("an untrusted worktree still launches and reports its evidence fallback", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-grok-untrusted-"));
+    roots.push(root);
+    const executable = join(root, "grok");
+    await writeFile(
+      executable,
+      "#!/bin/sh\nprintf '%s\\n' 'Project trusted: no'\n",
+    );
+    await chmod(executable, 0o755);
+    const warning = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const prepared = await grokAgentAdapter.prepareSpawn({
+        name: "maya",
+        model: "grok-4",
+        worktreePath: root,
+        daemonPort: 4317,
+        readOnly: false,
+        dangerous: false,
+        executable,
+        providerRunId: "018f1e90-7b5a-7cc0-8000-000000000224",
+      });
+      expect(prepared.argv[0]).toBe(executable);
+      expect(
+        await readFile(
+          join(root, ".grok", "hooks", grokHookFilename()),
+          "utf8",
+        ),
+      ).toContain("018f1e90-7b5a-7cc0-8000-000000000224");
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining("agent will run normally using updates.jsonl"),
+      );
+
+      warning.mockClear();
+      await mkdir(join(root, ".claude"), { recursive: true });
+      await writeFile(join(root, ".claude", "settings.json"), "{}\n");
+      await writeFile(
+        executable,
+        "#!/bin/sh\nprintf '%s\\n' 'Project trusted: yes'\n",
+      );
+      await grokAgentAdapter.prepareSpawn({
+        name: "maya",
+        model: "grok-4",
+        worktreePath: root,
+        daemonPort: 4317,
+        readOnly: false,
+        dangerous: false,
+        executable,
+        providerRunId: "018f1e90-7b5a-7cc0-8000-000000000225",
+      });
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "reads project .claude/settings.json hooks in trusted worktrees",
+        ),
+      );
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  test.todo("trusted Grok 0.2.112 fires the written hook after quota resets 2026-07-26T17:18Z", () => {});
 
   test("resolves encoded and long-path sessions only by summary cwd", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-grok-home-"));

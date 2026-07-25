@@ -57,9 +57,9 @@ describe("agent adapter factory", () => {
       },
       grok: {
         provider: "grok",
-        eventSource: "transcript",
+        eventSource: "hooks",
         nativeDelivery: false,
-        toolBoundaryEvents: false,
+        toolBoundaryEvents: true,
         turnBoundaryEvents: true,
         transcriptReader: true,
         nativeCancel: false,
@@ -167,6 +167,7 @@ describe("agent adapter factory", () => {
       dangerous: false,
       instructionPath: "/tmp/prompt.txt",
       newVendorSessionId: "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f",
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000223",
       kickoff: "Begin the assigned task.",
     });
     expect(prepared.argv).toEqual([

@@ -9,6 +9,7 @@ import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
   type GrokSpawnOptions,
+  inspectGrokProjectTrust,
   resolveWorkingGrokExecutable,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
@@ -17,25 +18,56 @@ import type { AgentAdapter } from "./agent-adapter";
 
 export const grokAgentAdapter: AgentAdapter = {
   id: "grok",
-  // TODO(C2): project-hook firing stays unclaimed until a live Grok turn can
-  // be verified after the quota reset at 2026-07-26T17:18Z.
+  // Project hooks cover session, turn, tool, failure, and compaction events
+  // when the user trusts the worktree. updates.jsonl remains the only
+  // structured interrupted source, and approval-waiting remains terminal-only.
   communication: {
     provider: "grok",
-    eventSource: "transcript",
+    eventSource: "hooks",
     nativeDelivery: false,
-    toolBoundaryEvents: false,
+    toolBoundaryEvents: true,
     turnBoundaryEvents: true,
     transcriptReader: true,
     nativeCancel: false,
     conversationResume: true,
   },
   async prepareSpawn(context) {
+    if (context.providerRunId === undefined) {
+      throw new Error("Grok launch requires a provider run id");
+    }
     await writeGrokAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
+      name: context.name,
+      providerRunId: context.providerRunId,
+      ...(context.hiveCommand === undefined
+        ? {}
+        : { hiveCommand: context.hiveCommand }),
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
     });
+    if (context.executable !== undefined) {
+      const trust = inspectGrokProjectTrust(
+        context.worktreePath,
+        context.executable,
+      );
+      if (trust === "untrusted") {
+        console.warn(
+          `Grok hooks are unavailable for ${context.name} until the user trusts ` +
+            `${context.worktreePath}; the agent will run normally using updates.jsonl, terminal, and process evidence.`,
+        );
+      } else if (trust === "trusted") {
+        console.warn(
+          `Grok reads project .claude/settings.json hooks in trusted worktrees; ` +
+            `any such hooks in ${context.worktreePath} are user-owned and may also fire.`,
+        );
+      } else {
+        console.warn(
+          `Hive could not verify Grok hook trust for ${context.worktreePath}; ` +
+            "the agent will run normally using updates.jsonl, terminal, and process evidence.",
+        );
+      }
+    }
     const options: GrokSpawnOptions = {
       model: context.model,
       ...(context.effort === undefined ? {} : { effort: context.effort }),

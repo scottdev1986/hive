@@ -212,6 +212,48 @@ describe("WP7 MCP status tools", () => {
     );
   });
 
+  test("a stale run-bound Grok hook cannot mutate lifecycle status", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent({ ...agent(), tool: "grok", model: "grok-4" });
+    const runId = "018f1e90-7b5a-7cc0-8000-000000000230";
+    db.insertProviderRun({
+      runId,
+      agentId: "agent-maya",
+      terminal: locator,
+      provider: "grok",
+      model: "grok-4",
+      effort: null,
+      conversationId: "grok-session",
+      pid: 4200,
+      startToken: "4200:1",
+      foregroundProcessGroupId: 4200,
+      capabilityEpoch: 0,
+      launchGrantId: "grok-hook-test",
+      startedAt: AT,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    });
+
+    await daemon.processEvent({
+      kind: "turn-end",
+      agentName: "maya",
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000231",
+      timestamp: "2026-07-16T12:00:01.000Z",
+      toolSessionId: "grok-session",
+    });
+    expect(db.getAgentByName("maya")?.status).toBe("working");
+
+    await daemon.processEvent({
+      kind: "turn-end",
+      agentName: "maya",
+      providerRunId: runId,
+      timestamp: "2026-07-16T12:00:02.000Z",
+      toolSessionId: "grok-session",
+    });
+    expect(db.getAgentByName("maya")?.status).toBe("idle");
+  });
+
   test("keeps one agent entity across live, snapshot, and resumed reduction", async () => {
     const { daemon } = harness();
     await daemon.processEvent({

@@ -159,9 +159,9 @@ describe("C3 context economy", () => {
       },
       grok: {
         provider: "grok",
-        eventSource: "transcript",
+        eventSource: "hooks",
         nativeDelivery: false,
-        toolBoundaryEvents: false,
+        toolBoundaryEvents: true,
         turnBoundaryEvents: true,
         transcriptReader: true,
         nativeCancel: false,

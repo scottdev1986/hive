@@ -246,20 +246,19 @@ const STUCK_DELIVERY_MS = 5 * 60_000;
  *
  * Every redelivery trigger Hive has hangs off that hook stream: flushQueued
  * fires on session-start and turn-end, flushUrgent on a tool boundary. Claude
- * and Codex post those events. GROK POSTS NOTHING — its CLI drives no hook
- * lifecycle hooks at all (adapters/tools/grok.ts), so it emits no session-start, no
- * turn boundary and no tool boundary, ever. Reading a grok agent through the
- * events table therefore answers "no turn events at all" for a healthy agent
- * and for a dead one alike, and waiting for one is waiting forever.
+ * and Codex always post those events. Grok now has project hooks too, but this
+ * vendor-only predicate cannot prove that the user trusted the worktree. It
+ * therefore stays conservative for Grok: hook events are ingested when
+ * present, while delivery timing continues to work from updates.jsonl,
+ * terminal, and process evidence when they are absent.
  *
- * Kimi and opencode post nothing either, for a different reason: their CLIs
+ * Kimi and opencode post nothing, for a different reason: their CLIs
  * have hook/plugin systems, but they are declared only in the operator's
  * global config, which Hive never writes — so no Hive-wired hook stream
  * exists for them.
  *
- * Grok's turns are still observable — just on another surface: its own session
- * transcript, which refreshToolTelemetry folds into the agent row's
- * lastEventAt and status. That is the surface to read for grok.
+ * Grok's transcript remains mandatory for interrupted turns and its terminal
+ * remains mandatory for approval-waiting, neither of which Grok hooks expose.
  */
 export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
   switch (tool) {
