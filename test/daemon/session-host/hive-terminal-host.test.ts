@@ -554,6 +554,90 @@ describe("HiveTerminalHostAdapter", () => {
     );
   });
 
+  test("does not manage a recycled foreground PID with a different start token", async () => {
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedShellRoot: createResult.inspection.shellRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000200",
+      agentId: "agent-fixture",
+      terminal: locator,
+      provider: "codex",
+      model: "gpt-fixture",
+      effort: null,
+      conversationId: null,
+      pid: 4_100,
+      startToken: "4100:original",
+      foregroundProcessGroupId: 4_100,
+      capabilityEpoch: 0,
+      launchGrantId: "launch-grant-fixture",
+      startedAt: "2026-07-18T01:00:00.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    const observed = {
+      ...inspection,
+      jobControl: {
+        ...required(inspection.jobControl),
+        foregroundProcessGroupId: run.foregroundProcessGroupId,
+      },
+    };
+    const adapter = new HiveTerminalHostAdapter(
+      {
+        issueAttach: async () => {
+          throw new Error("issueAttach not under test");
+        },
+        renewVisibility,
+        create: async () => createResult,
+        claimInput: async () => ({
+          state: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        submitInput: async () => ({
+          transactionId: "transaction-fixture",
+          stage: "unknown" as const,
+          byteRange: null,
+          orderedAt: null,
+          availableCreditBytes: 0,
+          consumedByProcess: "not-claimed" as const,
+          completeness: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        resize: async () => ({
+          state: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        list: async () => [observed],
+        inspect: async () => observed,
+        terminate: async () => termination,
+      },
+      bindings,
+      locator.instanceId,
+      {
+        processIdentity: () => ({ startToken: "4100:recycled" }),
+        providerRuns: {
+          getActiveProviderRunByTerminal: () => run,
+          endProviderRun: () => null,
+        },
+      },
+    );
+
+    expect((await adapter.inspect(locator)).foreground).toEqual({
+      state: "unmanaged",
+      runId: null,
+      pid: 4_100,
+      startToken: "4100:recycled",
+      foregroundProcessGroupId: 4_100,
+    });
+  });
+
   test("derives positive pixels and downgrades stale lifecycle evidence", async () => {
     const bindings = new MemoryBindings();
     bindings.bindTerminalHostSession({ locator, visibility });

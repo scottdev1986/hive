@@ -702,6 +702,8 @@ export class HiveTerminalHostAdapter {
       startToken,
       foregroundProcessGroupId,
     };
+    // pid and foregroundProcessGroupId coincide by construction here; the
+    // start token is the independent identity evidence that defeats PID reuse.
     if (
       active !== null &&
       active.pid === measured.pid &&
