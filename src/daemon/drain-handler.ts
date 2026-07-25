@@ -252,6 +252,9 @@ export class DrainHandler {
       run === null ||
       current.holdProviderRunId !== run.runId ||
       current.capabilityEpoch !== run.capabilityEpoch ||
+      // Two overlapping sweeps may both reach SIGCONT. Repeating SIGCONT on
+      // this already verified group is harmless; the durable delivery key
+      // below is the once-only boundary for the provider wake.
       !(await this.deps.resumeProvider(current, run))
     ) {
       return;

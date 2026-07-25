@@ -139,6 +139,12 @@ async function harness(
     db,
     quota,
     send: async (from, to, body, options) => {
+      if (
+        options?.idempotencyKey !== undefined &&
+        sent.some((message) => message.idempotencyKey === options.idempotencyKey)
+      ) {
+        return;
+      }
       sent.push({ from, to, body, idempotencyKey: options?.idempotencyKey });
     },
     pauseProvider: async (record) => {
@@ -222,6 +228,32 @@ describe("the drain handler", () => {
     // Past the reset, the existing sweep tells the agent to continue and
     // clears the hold — but only after exact run and epoch revalidation.
     now = new Date(now.getTime() + 31 * 60_000);
+    await h.quota.observe({
+      provider: "claude",
+      account: "default",
+      pool: "subscription",
+      fiveHourUsed: 100,
+      weeklyUsed: 40,
+      observedAt: now.toISOString(),
+      fiveHourResetAt: at(60),
+      weeklyResetAt: null,
+      source: "provider",
+      confidence: "authoritative",
+    });
+    await h.drain.sweep();
+    expect(h.resumed).toHaveLength(0);
+    await h.quota.observe({
+      provider: "claude",
+      account: "default",
+      pool: "subscription",
+      fiveHourUsed: 10,
+      weeklyUsed: 40,
+      observedAt: now.toISOString(),
+      fiveHourResetAt: at(60),
+      weeklyResetAt: null,
+      source: "provider",
+      confidence: "authoritative",
+    });
     h.db.upsertAgent({
       ...held,
       holdProviderRunId: "018f1e90-7b5a-7cc0-8000-000000000399",
@@ -245,10 +277,54 @@ describe("the drain handler", () => {
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]?.to).toBe("maya");
     expect(h.sent[0]?.body).toContain("reset");
-    expect(h.sent[0]?.idempotencyKey).toContain("quota-resume:");
+    expect(h.sent[0]?.idempotencyKey).toBe(
+      `quota-resume:${held.id}:${held.holdProviderRunId}:${held.holdResetAt}`,
+    );
     await h.drain.sweep();
     expect(h.resumed).toEqual(["maya"]);
     expect(h.sent).toHaveLength(1);
+  });
+
+  test("overlapping reset sweeps produce one idempotent wake", async () => {
+    const h = await harness([
+      {
+        provider: "claude",
+        fiveHourUsed: 100,
+        weeklyUsed: 40,
+        fiveHourResetAt: at(30),
+      },
+    ]);
+    insertRunningAgent(h, agent());
+    await h.drain.sweep();
+    const resetAt = h.db.getAgentById("agent-maya")!.holdResetAt;
+    now = new Date(now.getTime() + 31 * 60_000);
+
+    let resumeCalls = 0;
+    let release!: () => void;
+    const bothResuming = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deps = (
+      h.drain as unknown as {
+        deps: {
+          resumeProvider: (record: AgentRecord) => Promise<boolean>;
+        };
+      }
+    ).deps;
+    deps.resumeProvider = async (record) => {
+      h.resumed.push(record.name);
+      resumeCalls += 1;
+      if (resumeCalls === 2) release();
+      await bothResuming;
+      return true;
+    };
+
+    await Promise.all([h.drain.sweep(), h.drain.sweep()]);
+    expect(resumeCalls).toBe(2);
+    expect(h.sent).toHaveLength(1);
+    expect(h.sent[0]?.idempotencyKey).toBe(
+      `quota-resume:agent-maya:018f1e90-7b5a-7cc0-8000-000000000311:${resetAt}`,
+    );
   });
 
   test("§R5 seam: a distant reset freezes the source without destroying its terminal or worktree", async () => {
