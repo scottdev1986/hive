@@ -29,11 +29,19 @@
 // as an EXTERNAL bundle under ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME
 // override), provisioned and probe-verified by installing, updating, or
 // initializing Hive; the repo's node_modules stays the dev fallback. Each mode —
-// runtime missing, bundle broken, native lib unloadable — is a DISTINCT
-// labeled state, never one generic "unavailable".
+// runtime missing, bundle broken, native lib unloadable, bytes not matching the
+// digest this build shipped — is a DISTINCT labeled state, never one generic
+// "unavailable".
+//
+// A release build refuses to import a runtime whose loaded bytes are not the
+// ones it shipped with (release/embeddings-digest.ts): importing dist/entry.js
+// executes plain JavaScript out of a user-writable directory, so integrity is
+// checked immediately before the import, and fails closed.
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { embeddingsRuntimeDigest } from "../release/embeddings-digest";
 import type { MemoryEmbeddingModel } from "../schemas";
+import { HIVE_EMBEDDINGS_DIGEST } from "../version";
 import type { EpisodicStore, MemoryEmbeddingRow } from "./episodic-store";
 
 /** The embedder the rest of the daemon codes against. Unit tests substitute
@@ -51,7 +59,7 @@ export type MemoryEmbeddingStatus =
   | { state: "unavailable"; detail: string };
 
 /** The one-word state every user-facing surface (recall envelope, write
- * responses, hive_status) carries (defect D2). The three embedding-* labels
+ * responses, hive_status) carries (defect D2). The four embedding-* labels
  * are the distinct D1 runtime failure modes; "unavailable" is any other
  * failure; "disabled" is provider config that keeps the leg off. */
 export type MemoryEmbeddingStateLabel =
@@ -61,12 +69,14 @@ export type MemoryEmbeddingStateLabel =
   | "embedding-runtime-missing"
   | "embedding-runtime-broken"
   | "embedding-native-unloadable"
+  | "embedding-runtime-unverified"
   | "unavailable";
 
 const DISTINGUISHED_FAILURE_LABELS = [
   "embedding-runtime-missing",
   "embedding-runtime-broken",
   "embedding-native-unloadable",
+  "embedding-runtime-unverified",
 ] as const;
 
 /** Extract the state label an unavailable detail string carries. The D1
@@ -148,6 +158,44 @@ const errorDetail = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 /**
+ * Refuse a runtime whose loaded bytes are not the ones this build shipped.
+ *
+ * FAIL CLOSED, and the failure is loud: importing dist/entry.js executes plain
+ * JavaScript from a user-writable directory, so an unverifiable runtime is not
+ * loaded at all. Memory degrades to keyword-only with a distinct state rather
+ * than running code nobody vouched for.
+ *
+ * A build with no embedded digest (a source checkout, or any build without a
+ * release key) skips this: such a host is itself unsigned and rewritable, so
+ * verification would prove nothing, and a dev-staged runtime could never match a
+ * build-time constant. The gate is the presence of the compiled-in digest, which
+ * is a property of the signed artifact and deliberately not settable at runtime.
+ */
+async function verifyRuntimeIntegrity(runtimeDir: string): Promise<void> {
+  if (HIVE_EMBEDDINGS_DIGEST === null) return;
+  const remedy =
+    "reinstall or update Hive to restore the runtime this build shipped " +
+    "(a release build will not load a locally staged one)";
+  let actual: string;
+  try {
+    actual = await embeddingsRuntimeDigest(runtimeDir);
+  } catch (error) {
+    throw new Error(
+      `embedding-runtime-unverified: could not verify the embedding runtime ` +
+        `at ${runtimeDir} (${errorDetail(error)}) — refusing to load it; ` +
+        remedy,
+    );
+  }
+  if (actual !== HIVE_EMBEDDINGS_DIGEST) {
+    throw new Error(
+      `embedding-runtime-unverified: the embedding runtime at ${runtimeDir} ` +
+        `does not match this hive build (expected ${HIVE_EMBEDDINGS_DIGEST}, ` +
+        `found ${actual}) — refusing to load it; ${remedy}`,
+    );
+  }
+}
+
+/**
  * Recover the TRUE reason a bundle load failed, when the bundle lies about it.
  *
  * The tokenizers loader vendored inside the bundle swallows its own failure
@@ -187,8 +235,11 @@ async function importFastembedRuntime(): Promise<{
   runtime: FastembedRuntime;
   origin: string;
 }> {
-  const bundlePath = join(embeddingsRuntimeDir(), EMBEDDINGS_RUNTIME_BUNDLE);
+  const runtimeDir = embeddingsRuntimeDir();
+  const bundlePath = join(runtimeDir, EMBEDDINGS_RUNTIME_BUNDLE);
   if (await Bun.file(bundlePath).exists()) {
+    // Integrity BEFORE import: the next line executes whatever is on disk.
+    await verifyRuntimeIntegrity(runtimeDir);
     try {
       return {
         runtime: (await import(bundlePath)) as FastembedRuntime,
@@ -301,6 +352,9 @@ export async function probeExternalRuntime(
       `embedding-runtime-missing: no runtime bundle at ${bundlePath}`,
     );
   }
+  // Provisioning must fail loudly here rather than leave a runtime that looks
+  // installed and is refused on first load.
+  await verifyRuntimeIntegrity(runtimeDir);
   const runtime = (await import(bundlePath)) as FastembedRuntime;
   const embedder = await embedderFromRuntime(runtime, model, cacheDir);
   return {

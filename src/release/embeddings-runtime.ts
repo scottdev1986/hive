@@ -23,6 +23,7 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { EMBEDDINGS_RUNTIME_BUNDLE } from "../daemon/memory-embeddings";
+import { embeddingsRuntimeDigest } from "./embeddings-digest";
 
 /** The release asset name; listed in hive-release.json for both darwin arches. */
 export const EMBEDDINGS_RUNTIME_ASSET = "embeddings-runtime.tar.gz";
@@ -196,6 +197,14 @@ export interface EmbeddingsRuntimeArtifact {
   path: string;
   sha256: string;
   size: number;
+  /**
+   * SHA-256 of the staged tree's LOADED surface (see embeddings-digest.ts).
+   * Computed before the staging dir is torn down, and equal to what a user's
+   * machine has after unpacking, because the tarball extracts the same files at
+   * the same relative paths. This is the value compiled into the CLI so the
+   * loader can refuse a tampered runtime.
+   */
+  loadedDigest: string;
 }
 
 /**
@@ -215,8 +224,10 @@ export async function buildEmbeddingsRuntimeArtifact(options: {
   await mkdir(staging, { recursive: true });
   const tarball = join(options.outDir, EMBEDDINGS_RUNTIME_ASSET);
   await rm(tarball, { force: true });
+  let loadedDigest: string;
   try {
     await stageEmbeddingRuntime(options.sourceNodeModules, staging);
+    loadedDigest = await embeddingsRuntimeDigest(staging);
     const tar = Bun.spawn(
       ["tar", "-czf", tarball, "-C", options.outDir, TARBALL_TOPLEVEL],
       { stdout: "inherit", stderr: "inherit" },
@@ -235,5 +246,6 @@ export async function buildEmbeddingsRuntimeArtifact(options: {
     path: tarball,
     sha256: createHash("sha256").update(bytes).digest("hex"),
     size: bytes.byteLength,
+    loadedDigest,
   };
 }

@@ -101,11 +101,21 @@ fi
 
 # The embedding runtime is not Developer-ID-signed (its Mach-Os are upstream
 # napi binaries, not ours to re-sign) — its trust anchor is the manifest
-# SHA-256, verified at download time. What this
-# gate proves is that the published tarball has the layout the installer and
-# the daemon's loader expect: the bundled ESM, INSTALL.json, and the native
-# onnxruntime bin/ for BOTH darwin slices (the asset is universal, listed for
-# arm64 and x64 in the manifest).
+# SHA-256, verified at download time, plus a SECOND anchor at load time: the
+# release build stages this tree BEFORE compiling the CLI and compiles the
+# digest of its loaded surface (dist/ and bin/ in full; node_modules, which is
+# not loaded, and INSTALL.json, which is not stable across machines, are
+# excluded) into the binary as HIVE_EMBEDDINGS_DIGEST. The daemon refuses to
+# import a runtime that does not match, which is what stops attacker-written
+# JavaScript in dist/entry.js from executing inside a signed, notarized process.
+# A build with no release key embeds no digest and does not verify: such a host
+# is itself unsigned and rewritable, so verification there would prove nothing.
+# That split must stay a property of the build — never add a flag or env var to
+# turn verification off, because a check that can be switched off is not one.
+# What this gate proves is that the published tarball has the layout the
+# installer and the daemon's loader expect: the bundled ESM, INSTALL.json, and
+# the native onnxruntime bin/ for BOTH darwin slices (the asset is universal,
+# listed for arm64 and x64 in the manifest).
 RUNTIME_TARBALL="$DIST/embeddings-runtime.tar.gz"
 if [ -f "$RUNTIME_TARBALL" ]; then
   RUNTIME_WORK="$(mktemp -d)"

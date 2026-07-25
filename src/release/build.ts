@@ -264,6 +264,7 @@ async function compileCli(
   sourceHash: string,
   buildHash: string,
   signed: boolean,
+  embeddingsDigest: string | null,
 ): Promise<CliBuild> {
   const outfile = join(options.out, target.asset);
   const defines = [
@@ -275,6 +276,12 @@ async function compileCli(
     ...(options.publicKey === null
       ? []
       : [["HIVE_RELEASE_PUBLIC_KEY", options.publicKey]]),
+    // The embedding runtime's loaded-surface digest, so the binary can refuse a
+    // tampered runtime. Compiled in, never read from the environment: a digest
+    // an attacker could set is not a digest.
+    ...(embeddingsDigest === null
+      ? []
+      : [["HIVE_EMBEDDINGS_DIGEST", embeddingsDigest]]),
   ].flatMap(([name, value]) => [
     "--define",
     // JSON-encode so the value lands as a string literal in the bundle.
@@ -520,7 +527,7 @@ async function finalizeWorkspace(
  */
 async function buildEmbeddingsRuntime(
   options: Options,
-): Promise<ReleaseArtifact[]> {
+): Promise<{ artifacts: ReleaseArtifact[]; loadedDigest: string }> {
   const source = await findSourceNodeModules(
     join(options.repoRoot, "node_modules"),
   );
@@ -534,15 +541,18 @@ async function buildEmbeddingsRuntime(
     sourceNodeModules: source,
     outDir: options.out,
   });
-  return TARGETS.map((target) => ({
-    name: EMBEDDINGS_RUNTIME_ASSET,
-    kind: "embeddings" as const,
-    platform: "darwin" as const,
-    arch: target.arch,
-    buildHash: artifact.sha256,
-    sha256: artifact.sha256,
-    size: artifact.size,
-  }));
+  return {
+    artifacts: TARGETS.map((target) => ({
+      name: EMBEDDINGS_RUNTIME_ASSET,
+      kind: "embeddings" as const,
+      platform: "darwin" as const,
+      arch: target.arch,
+      buildHash: artifact.sha256,
+      sha256: artifact.sha256,
+      size: artifact.size,
+    })),
+    loadedDigest: artifact.loadedDigest,
+  };
 }
 
 export async function build(options: Options): Promise<ReleaseManifest> {
@@ -553,7 +563,23 @@ export async function build(options: Options): Promise<ReleaseManifest> {
     join(options.repoRoot, DEFAULT_ENTITLEMENTS),
   );
 
-  // Build everything first, unsigned, so signing sees final on-disk artifacts.
+  // The embedding runtime is staged FIRST, before the CLI compiles, because the
+  // CLI must carry the digest of the runtime it will be shipped beside — that
+  // constant is what lets a release binary refuse a tampered runtime, and the
+  // binary cannot be given it after it is compiled and signed. Not signed
+  // itself (upstream napi binaries, not ours to re-sign).
+  const embeddings = options.skipEmbeddings
+    ? null
+    : await buildEmbeddingsRuntime(options);
+  if (embeddings === null && options.publicKey !== null) {
+    throw new Error(
+      "refusing to build a keyed release with --skip-embeddings: the CLI would " +
+        "ship without the embedding runtime digest and could not verify the " +
+        "runtime it loads",
+    );
+  }
+
+  // Build everything else unsigned, so signing sees final on-disk artifacts.
   const cliBuilds: CliBuild[] = [];
   for (const target of TARGETS) {
     cliBuilds.push(
@@ -563,6 +589,7 @@ export async function build(options: Options): Promise<ReleaseManifest> {
         sourceHash,
         buildHashFor(sourceHash, options, target.bunTarget),
         signing !== null,
+        embeddings?.loadedDigest ?? null,
       ),
     );
   }
@@ -585,11 +612,6 @@ export async function build(options: Options): Promise<ReleaseManifest> {
   const appBundle = options.skipWorkspace
     ? null
     : await compileWorkspace(options);
-  // Not signed (upstream napi binaries, not ours to re-sign) — built here so
-  // it is digested alongside everything else below.
-  const embeddingsArtifacts = options.skipEmbeddings
-    ? null
-    : await buildEmbeddingsRuntime(options);
 
   // Sign, notarize, and staple in place. A no-op when no Developer ID is set.
   // Sessiond Mach-Os take the same Developer ID path as the CLI slices.
@@ -631,8 +653,8 @@ export async function build(options: Options): Promise<ReleaseManifest> {
   if (appBundle !== null) {
     artifacts.push(...(await finalizeWorkspace(options, appBundle)));
   }
-  if (embeddingsArtifacts !== null) {
-    artifacts.push(...embeddingsArtifacts);
+  if (embeddings !== null) {
+    artifacts.push(...embeddings.artifacts);
   }
 
   const manifest = parseReleaseManifest({

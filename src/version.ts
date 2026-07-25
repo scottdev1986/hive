@@ -58,6 +58,24 @@ export const HIVE_RELEASE_PUBLIC_KEY = defined(
   process.env.HIVE_RELEASE_PUBLIC_KEY,
 );
 
+/**
+ * SHA-256 of the embedding runtime's loaded surface, compiled in at build time
+ * (see release/embeddings-digest.ts). The loader refuses to import a runtime
+ * that does not match, so an attacker who can write ~/.hive/tools/embeddings
+ * cannot execute code inside this process — they would have to change this
+ * constant, which means re-signing the binary.
+ *
+ * Null in a source checkout and in any build that ships no release key: such a
+ * host is itself unsigned and rewritable, so verification there would be
+ * theatre, and dev provisioning stages a locally built tree that no build-time
+ * constant could match. That split is deliberate and MUST NOT become an
+ * override flag or an environment variable — its whole value is that a release
+ * binary cannot be talked out of verifying.
+ */
+export const HIVE_EMBEDDINGS_DIGEST = defined(
+  process.env.HIVE_EMBEDDINGS_DIGEST,
+);
+
 /** `owner/repo` the updater reads releases from. */
 export const HIVE_UPDATE_REPO =
   defined(process.env.HIVE_UPDATE_REPO) ?? "scottdev1986/hive";

@@ -5690,7 +5690,7 @@ export class HiveDaemon {
       {
         title: "Hive agent status",
         description:
-          'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed. The structuredContent memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs.',
+          'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed. The structuredContent memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / embedding-runtime-unverified / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs.',
         inputSchema: StatusRequestSchema,
       },
       async ({ detail, history, fields }) => {
