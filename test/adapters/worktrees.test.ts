@@ -489,7 +489,12 @@ describe("hive wiring", () => {
         newVendorSessionId: "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f",
         providerRunId: "018f1e90-7b5a-7cc0-8000-000000000223",
       });
-      await provisionSkills(created.path, tool, join(tempRoot, "no-skills"));
+      await provisionSkills(
+        repoRoot,
+        created.path,
+        tool,
+        join(tempRoot, "no-skills"),
+      );
 
       const stranded = await assessStrandedWork(
         repoRoot,
@@ -500,9 +505,57 @@ describe("hive wiring", () => {
     }
   });
 
+  // The user's own skills are symlinked in at every spawn under names only the
+  // user knows. Before the links were derived, they read as dirty files, and a
+  // worktree that always looks dirty is never swept.
+  test("discounts the user's own skills every vendor spawn links in", async () => {
+    // Uncommitted in the primary checkout, which is the whole point: this is
+    // what a person gets for dropping a directory into .hive/skills.
+    for (const name of ["zig-best-practices", "grok/only-grok"]) {
+      await mkdir(join(repoRoot, ".hive", "skills", name), { recursive: true });
+      await writeFile(
+        join(repoRoot, ".hive", "skills", name, "SKILL.md"),
+        `# ${name}\n`,
+      );
+    }
+
+    for (const tool of CAPABILITY_PROVIDERS) {
+      const created = await createWorktree(repoRoot, `user-${tool}`, "hive");
+      await provisionSkills(repoRoot, created.path, tool);
+
+      expect({
+        tool,
+        ...(await assessStrandedWork(repoRoot, created.path, created.branch)),
+      }).toEqual({ tool, dirtyFiles: [], unmergedCommits: 0 });
+    }
+  });
+
+  // A path Hive would have staged is not Hive's unless the thing there is that
+  // link: an agent's own directory of the same name is still its work.
+  test("does not hide agent work at a user skill's name", async () => {
+    const created = await createWorktree(repoRoot, "skillname", "hive wiring");
+    await mkdir(join(created.path, ".claude", "skills"), { recursive: true });
+    await writeFile(
+      join(created.path, ".claude", "skills", "zig-best-practices"),
+      "mine\n",
+    );
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.dirtyFiles).toEqual([".claude/skills/zig-best-practices"]);
+  });
+
   test("does not hide agent work beside a provisioned skill", async () => {
     const created = await createWorktree(repoRoot, "skillwork", "hive wiring");
-    await provisionSkills(created.path, "claude", join(tempRoot, "no-skills"));
+    await provisionSkills(
+      repoRoot,
+      created.path,
+      "claude",
+      join(tempRoot, "no-skills"),
+    );
     await writeFile(
       join(created.path, ".claude", "skills", "hive-claude", "notes.md"),
       "work\n",

@@ -1,4 +1,11 @@
-import { mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   hiveInstanceSuffix,
@@ -10,7 +17,7 @@ import {
   isLiveAgent,
 } from "../schemas";
 import { shippedSkillsFor } from "../skills/shipped";
-import { nativeSkillDirectory } from "./skills";
+import { nativeSkillDirectory, stagedSkillLinks } from "./skills";
 import { grokHookFilename, ownsGrokHook } from "./tools/grok";
 
 interface GitResult {
@@ -78,8 +85,11 @@ export async function observedWorktreeFiles(
     }
   }
   const observed: string[] = [];
+  const skillLinks = await stagedSkillLinks(repoRoot);
   for (const path of paths) {
-    if (!(await isHiveWorktreeWiring(path, worktreePath))) observed.push(path);
+    if (!(await isHiveWorktreeWiring(path, worktreePath, skillLinks))) {
+      observed.push(path);
+    }
   }
   return observed.sort();
 }
@@ -564,12 +574,12 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
  * exact path per skill per vendor — derived from the same two functions that
  * choose the write destinations, so the two cannot drift apart.
  *
- * Not derivable, and deliberately absent: the *user's* own skills, symlinked in
- * from `~/.hive/skills` and `<repo>/.hive/skills` under the same parents. Their
- * names are whatever the user wrote, and a directory entry to cover them would
- * hide agent work under `.claude/skills/` from the check that authorizes
- * worktree deletion. A user with their own skills still sees those links
- * reported as stranded work.
+ * The *user's* own skills, symlinked in from `~/.hive/skills` and
+ * `<repo>/.hive/skills` under the same parents, are covered too — but by
+ * `isStagedSkillLink` below rather than this constant, because their names are
+ * whatever the user wrote. They were once described as permanently unsweepable
+ * for that reason; they are not. Hive knows which links it created, so the
+ * exact paths are derivable from the same sources the staging reads.
  */
 const HIVE_WORKTREE_SKILLS: readonly string[] = CAPABILITY_PROVIDERS.flatMap(
   (provider) =>
@@ -582,11 +592,36 @@ const HIVE_WORKTREE_WIRING: readonly string[] = [
   ...new Set([...HIVE_WORKTREE_CONFIG, ...HIVE_WORKTREE_SKILLS]),
 ];
 
+/**
+ * One of the symlinks `provisionSkills` staged, still pointing where Hive
+ * pointed it. Both halves are required: a path Hive would have staged is not
+ * Hive's unless the thing at that path is that link, so an agent's own
+ * directory or file of the same name stays visible as work.
+ */
+const isStagedSkillLink = async (
+  path: string,
+  worktreePath: string,
+  skillLinks: Map<string, string>,
+): Promise<boolean> => {
+  const source = skillLinks.get(path);
+  if (source === undefined) return false;
+  const absolute = join(worktreePath, path);
+  const target = await readlink(absolute).catch(() => null);
+  return target !== null && resolve(dirname(absolute), target) === source;
+};
+
 const isHiveWorktreeWiring = async (
   path: string,
   worktreePath: string | null,
+  skillLinks: Map<string, string>,
 ): Promise<boolean> => {
   if (HIVE_WORKTREE_WIRING.includes(path)) return true;
+  if (
+    worktreePath !== null &&
+    (await isStagedSkillLink(path, worktreePath, skillLinks))
+  ) {
+    return true;
+  }
   if (
     worktreePath === null ||
     path !== join(".grok", "hooks", grokHookFilename())
@@ -606,6 +641,7 @@ export async function assessStrandedWork(
   mainBranch = "main",
 ): Promise<StrandedWork> {
   const dirtyFiles: string[] = [];
+  const skillLinks = await stagedSkillLinks(repoRoot);
   if (worktreePath !== null) {
     const statusResult = await runGit(worktreePath, [
       "status",
@@ -622,7 +658,7 @@ export async function assessStrandedWork(
         .filter((line) => line !== "")
         .map((line) => line.slice(3));
       for (const path of candidates) {
-        if (!(await isHiveWorktreeWiring(path, worktreePath))) {
+        if (!(await isHiveWorktreeWiring(path, worktreePath, skillLinks))) {
           dirtyFiles.push(path);
         }
       }
