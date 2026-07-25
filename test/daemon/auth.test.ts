@@ -379,7 +379,7 @@ describe("a foreign agent cannot act on another tenant", () => {
     const body = JSON.parse(first?.text ?? "{}").body;
     expect(Buffer.from(body, "utf8")).toEqual(Buffer.from(full, "utf8"));
     expect(createHash("sha256").update(body, "utf8").digest("hex")).toBe(
-      projection.sourceDigests[0],
+      required(projection.sourceDigests[0]),
     );
     await daemon.stop();
   });
