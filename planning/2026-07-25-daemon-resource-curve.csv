@@ -1,0 +1,2 @@
+timestamp,daemon_pid,child_processes,open_fds,rss_kib
+2026-07-25T16:57:21Z,5545,44,624,4743952
