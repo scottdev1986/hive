@@ -54,6 +54,17 @@ Codex receives Hive's role and protocol bootstrap as developer instructions, so
 a fresh root opens at an empty composer instead of showing the setup wall. A
 worker's assignment remains its visible initial user message.
 
+## Your own skills
+
+Drop a skill into `.hive/skills/` (this repository) or `~/.hive/skills/` (every repository) and every agent Hive spawns gets it. No commit is needed: Hive reads these from your checkout, so uncommitted, committed, and gitignored skills all behave the same. The repository's copy wins a name it shares with a global one, and both roots use the same layout:
+
+| Layout | Reaches |
+| --- | --- |
+| `.hive/skills/<skill>/SKILL.md` | every vendor |
+| `.hive/skills/<vendor>/<skill>/SKILL.md` | that vendor only — `claude`, `codex`, `grok`, `kimi`, `opencode` |
+
+A directory named exactly after a vendor is always a vendor bucket, so a skill cannot be named `claude`, `codex`, `grok`, `kimi`, or `opencode`.
+
 ## Commands
 
 | Command | Purpose |

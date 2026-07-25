@@ -13,10 +13,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   installShippedSkills,
+  nativeSkillDirectory,
   provisionSkills,
   skillAddressesEveryReader,
   skillReaders,
 } from "../../src/adapters/skills";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { required } from "../required";
 
@@ -54,17 +56,21 @@ describe("skill provisioning", () => {
     async (tool, nativeDirectory) => {
       const root = await mkdtemp(join(tmpdir(), `hive-skills-${tool}-`));
       tempRoots.push(root);
+      const primary = join(root, "primary");
       const worktree = join(root, "worktree");
       const global = join(root, "global-skills");
-      const repo = join(worktree, ".hive", "skills");
+      const repo = join(primary, ".hive", "skills");
       const globalOnly = await makeSkill(global, "global-only", "global");
       await makeSkill(global, "shared", "global shared");
       const repoShared = await makeSkill(repo, "shared", "repo shared");
       const repoOnly = await makeSkill(repo, "repo-only", "repo");
       await mkdir(join(global, "not-a-skill"), { recursive: true });
+      // The worktree's own copy is whatever was committed, which is why it is
+      // not a source: this stale one must not win, and must not be linked.
+      await makeSkill(join(worktree, ".hive", "skills"), "stale", "stale");
 
-      await provisionSkills(worktree, tool, global);
-      await provisionSkills(worktree, tool, global);
+      await provisionSkills(primary, worktree, tool, global);
+      await provisionSkills(primary, worktree, tool, global);
 
       const native = join(worktree, nativeDirectory);
       expect(await linkTarget(join(native, "global-only"))).toEqual(globalOnly);
@@ -74,8 +80,61 @@ describe("skill provisioning", () => {
         true,
       );
       await expect(realpath(join(native, "not-a-skill"))).rejects.toThrow();
+      await expect(realpath(join(native, "stale"))).rejects.toThrow();
     },
   );
+
+  test("a vendor bucket reaches that vendor and no other", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-skills-vendor-"));
+    tempRoots.push(root);
+    const primary = join(root, "primary");
+    const repo = join(primary, ".hive", "skills");
+    const global = join(root, "global-skills");
+    await makeSkill(repo, "everyone", "everyone");
+    for (const owner of CAPABILITY_PROVIDERS) {
+      await makeSkill(join(repo, owner), `only-${owner}`, owner);
+    }
+
+    for (const tool of CAPABILITY_PROVIDERS) {
+      const worktree = join(root, `worktree-${tool}`);
+      await provisionSkills(primary, worktree, tool, global);
+      const native = join(worktree, nativeSkillDirectory(tool));
+
+      expect(
+        await readFile(join(native, "everyone", "SKILL.md"), "utf8"),
+      ).toEqual("# everyone\n");
+      // Inclusion is half the claim; the other four must be absent. Codex,
+      // Grok and Kimi share `.agents/skills`, so this is where a bucket that
+      // resolved to a directory rather than a vendor would leak.
+      for (const owner of CAPABILITY_PROVIDERS) {
+        const skill = join(native, `only-${owner}`, "SKILL.md");
+        if (owner === tool) {
+          expect(await readFile(skill, "utf8")).toEqual(`# ${owner}\n`);
+        } else {
+          await expect(readFile(skill, "utf8")).rejects.toThrow();
+        }
+      }
+      // And the bucket itself is never staged as if it were a skill.
+      await expect(realpath(join(native, tool))).rejects.toThrow();
+    }
+  });
+
+  test("a vendor name is a bucket, so a skill cannot claim it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-skills-bucketname-"));
+    tempRoots.push(root);
+    const primary = join(root, "primary");
+    const worktree = join(root, "worktree");
+    // A SKILL.md directly inside a vendor directory is the ambiguous case: it
+    // looks like a skill named "claude". The bucket rule wins, so it is not
+    // staged — stated here so the limitation is asserted, not discovered.
+    await makeSkill(join(primary, ".hive", "skills"), "claude", "claude");
+
+    await provisionSkills(primary, worktree, "claude", join(root, "global"));
+
+    await expect(
+      realpath(join(worktree, ".claude", "skills", "claude")),
+    ).rejects.toThrow();
+  });
 
   test("preserves vendor-only skills and rejects same-name ambiguity", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-conflict-"));
@@ -87,7 +146,7 @@ describe("skill provisioning", () => {
     await makeSkill(join(worktree, ".hive", "skills"), "shared", "canonical");
 
     await expect(
-      provisionSkills(worktree, "claude", join(root, "global")),
+      provisionSkills(worktree, worktree, "claude", join(root, "global")),
     ).rejects.toThrow("native path already exists");
     expect(
       await readFile(join(native, "vendor-only", "SKILL.md"), "utf8"),
@@ -100,7 +159,12 @@ describe("skill provisioning", () => {
     const worktree = join(root, "worktree");
     await mkdir(worktree, { recursive: true });
 
-    await provisionSkills(worktree, "codex", join(root, "missing-global"));
+    await provisionSkills(
+      worktree,
+      worktree,
+      "codex",
+      join(root, "missing-global"),
+    );
 
     // Hive's own skills come from the binary, not from the user's disk, so an
     // agent gets them in a repo that has never heard of Hive.
@@ -127,7 +191,12 @@ describe("skill provisioning", () => {
     await mkdir(join(native, foreign.name), { recursive: true });
     await writeFile(join(native, foreign.name, "SKILL.md"), foreign.content);
 
-    await provisionSkills(worktree, "codex", join(root, "missing-global"));
+    await provisionSkills(
+      worktree,
+      worktree,
+      "codex",
+      join(root, "missing-global"),
+    );
 
     await expect(
       readFile(join(native, foreign.name, "SKILL.md"), "utf8"),
@@ -155,7 +224,12 @@ describe("skill provisioning", () => {
     await mkdir(join(native, "hive-claude"), { recursive: true });
     await writeFile(join(native, "hive-claude", "SKILL.md"), mine);
 
-    await provisionSkills(worktree, "codex", join(root, "missing-global"));
+    await provisionSkills(
+      worktree,
+      worktree,
+      "codex",
+      join(root, "missing-global"),
+    );
 
     expect(
       await readFile(join(native, "hive-claude", "SKILL.md"), "utf8"),
@@ -250,7 +324,12 @@ describe("skill provisioning", () => {
       "my own guidelines",
     );
 
-    await provisionSkills(worktree, "claude", join(root, "missing-global"));
+    await provisionSkills(
+      worktree,
+      worktree,
+      "claude",
+      join(root, "missing-global"),
+    );
 
     const native = join(worktree, ".claude", "skills");
     // Still their file, reached through their symlink — Hive did not write

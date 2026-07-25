@@ -473,7 +473,12 @@ describe("runInit — installing the shipped skills", () => {
 
         // Agent worktrees have one reader and receive only their own contract.
         const worktree = join(root, "grok-worktree");
-        await provisionSkills(worktree, "grok", join(root, "missing-global"));
+        await provisionSkills(
+          worktree,
+          worktree,
+          "grok",
+          join(root, "missing-global"),
+        );
         expect(
           await Bun.file(skillFile(worktree, ".agents", "hive-grok")).exists(),
         ).toBe(true);

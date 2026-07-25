@@ -12,7 +12,11 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { type CapabilityProvider, unknownVendor } from "../schemas";
+import {
+  CAPABILITY_PROVIDERS,
+  type CapabilityProvider,
+  unknownVendor,
+} from "../schemas";
 import { SHIPPED_SKILLS, shippedSkillsFor } from "../skills/shipped";
 
 /** The shared vendor enum keeps skill provisioning exhaustive. */
@@ -92,6 +96,81 @@ async function discoverSkills(root: string): Promise<Map<string, string>> {
     }
   }
   return skills;
+}
+
+/**
+ * The user's skills in one source root, for one vendor.
+ *
+ * `<root>/<skill>` reaches every vendor; `<root>/<vendor>/<skill>` reaches that
+ * vendor only. A directory named exactly after a vendor is always a bucket, so
+ * a skill cannot be named after one — the ambiguity is resolved here rather
+ * than discovered later, and the vendor bucket wins a name it shares with an
+ * all-vendor skill.
+ */
+async function discoverSkillsFor(
+  root: string,
+  tool: SkillTool,
+): Promise<Map<string, string>> {
+  const shared = await discoverSkills(root);
+  for (const vendor of CAPABILITY_PROVIDERS) {
+    shared.delete(vendor);
+  }
+  for (const [name, source] of await discoverSkills(join(root, tool))) {
+    shared.set(name, source);
+  }
+  return shared;
+}
+
+/**
+ * Every skill the user has, for one vendor, from both source roots.
+ *
+ * Both roots are read from outside any worktree — `~/.hive/skills` and the
+ * *primary checkout's* `.hive/skills` — because a worktree is checked out from
+ * a commit and would otherwise show only skills that had been committed. Read
+ * from the primary, a skill behaves the same whether it is uncommitted,
+ * committed, or gitignored, which is the only rule a person can hold in their
+ * head. This mirrors how memory resolves `.hive/memory`.
+ */
+async function userSkillsFor(
+  repoRoot: string,
+  tool: SkillTool,
+  globalSkillsPath: string,
+): Promise<Map<string, string>> {
+  const global = await discoverSkillsFor(globalSkillsPath, tool);
+  // The repository's skills intentionally override global ones of the name.
+  for (const [name, source] of await discoverSkillsFor(
+    join(repoRoot, ".hive", "skills"),
+    tool,
+  )) {
+    global.set(name, source);
+  }
+  return global;
+}
+
+/**
+ * The exact worktree-relative path of every symlink `provisionSkills` lays
+ * down for the user's own skills, mapped to the source it must point at.
+ *
+ * Derived from the same discovery and the same destination function the
+ * staging itself uses, so the two cannot drift apart. Names are whatever the
+ * user wrote, which is why this is a runtime lookup rather than a constant —
+ * but it is still an exact path per skill per vendor, never a directory rule.
+ */
+export async function stagedSkillLinks(
+  repoRoot: string,
+  globalSkillsPath = join(hiveHome(), "skills"),
+): Promise<Map<string, string>> {
+  const links = new Map<string, string>();
+  for (const tool of CAPABILITY_PROVIDERS) {
+    for (const [name, source] of await userSkillsFor(
+      repoRoot,
+      tool,
+      globalSkillsPath,
+    )) {
+      links.set(join(nativeSkillDirectory(tool), name), source);
+    }
+  }
+  return links;
 }
 
 async function linkSkill(source: string, destination: string): Promise<void> {
@@ -244,12 +323,13 @@ export async function installShippedSkills(
  * plus `installShippedSkills` — which is the same install, run at a different
  * moment. Hive's own skills are *in the binary*, so they are laid down here for
  * every agent regardless of what the user's repo happens to contain; the user's
- * own skills (`~/.hive/skills`, `<repo>/.hive/skills`) are symlinked in, as
- * before. The user's skills are linked first and a linked name is never written
+ * own skills are symlinked in from the primary checkout and `~/.hive/skills`.
+ * The user's skills are linked first and a linked name is never written
  * through, so precedence reads off the code: **a skill the user wrote beats a
  * skill Hive ships.**
  */
 export async function provisionSkills(
+  repoRoot: string,
   worktreePath: string,
   tool: SkillTool,
   globalSkillsPath = join(hiveHome(), "skills"),
@@ -258,13 +338,7 @@ export async function provisionSkills(
   // symlinked into a directory chosen for a different CLI, and must not get a
   // half-provisioned worktree that a later read would call provisioned.
   const nativeRoot = join(worktreePath, nativeSkillDirectory(tool));
-  const globalSkills = await discoverSkills(globalSkillsPath);
-  const repoSkills = await discoverSkills(
-    join(worktreePath, ".hive", "skills"),
-  );
-
-  // Repository skills intentionally override global skills of the same name.
-  const skills = new Map([...globalSkills, ...repoSkills]);
+  const skills = await userSkillsFor(repoRoot, tool, globalSkillsPath);
   if (skills.size > 0) {
     await mkdir(nativeRoot, { recursive: true });
     await Promise.all(

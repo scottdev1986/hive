@@ -52,6 +52,7 @@ import {
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import type { HiveDatabase } from "./db";
 import { getHiveHome } from "./db";
+import { classifyVendorDrainError } from "./drain-handler";
 import { resolveAutoEffort, validateEffort } from "./effort";
 import type { LaunchFailureLayer } from "./launch-failure";
 import { readinessFailureLayer } from "./launch-failure";
@@ -60,7 +61,6 @@ import { hiveCliSpawnArgv } from "./lifecycle";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
 import type { QuotaService } from "./quota";
 import { waitForMcpReporting, watchForProofOfLife } from "./readiness";
-import { classifyVendorDrainError } from "./drain-handler";
 import {
   type CommandOutput,
   parseProcessTable,
@@ -1702,7 +1702,11 @@ export class HiveSpawner implements Spawner {
           // Claude/Cursor MCP imports through its ten process environment switches.
           [];
     try {
-      await provisionSkills(agent.worktreePath, identity.tool);
+      await provisionSkills(
+        this.dependencies.repoRoot,
+        agent.worktreePath,
+        identity.tool,
+      );
       const adapter = getAgentAdapter(identity.tool);
       const assignmentAt = new Date().toISOString();
       this.dependencies.assignments?.close(prepared.record.id, assignmentAt);
@@ -2791,7 +2795,7 @@ export class HiveSpawner implements Spawner {
         readOnly ? "reader" : "writer",
         record.capabilityEpoch,
       );
-      await provisionSkills(worktree.path, tool);
+      await provisionSkills(this.dependencies.repoRoot, worktree.path, tool);
       // Before the config, because an untrusted workspace makes the CLI
       // discard the hooks and permissions the config write is about to lay
       // down (claude's folder-trust seed; the other vendors have none).
@@ -3086,8 +3090,7 @@ export class HiveSpawner implements Spawner {
     // §06: a vendor rate-limit error is a drain, not a route failure — the
     // quarantine would punish a healthy route for an empty meter.
     const vendorDrain =
-      layer === "model" &&
-      classifyVendorDrainError(record.tool, failureReason);
+      layer === "model" && classifyVendorDrainError(record.tool, failureReason);
     if (record.quotaReservationId !== undefined) {
       try {
         // A model-layer failure reached the provider and may quarantine that
