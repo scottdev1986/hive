@@ -999,8 +999,6 @@ export function resolveAgentName(
   return normalizedName;
 }
 
-export const LANDING_MAX_ATTEMPTS = 3;
-
 /** Categories whose prompt is trimmed to essentials. A summarization agent runs mechanical
  * work on a small model: it needs every *rule* the full prompt carries, but
  * none of the narration that justifies them. The trimmed text below is a
@@ -1050,55 +1048,14 @@ export const CODING_GUIDELINES = [
  * the prompt for the same reason the coding guidelines do: no agent should have
  * to elect to receive them.
  *
- * Rules 1 and 2 are additionally enforced where they are *decided* rather than
- * merely stated — `hive_send`'s tool description carries them, so an agent meets
- * them at the moment it picks a priority, not as something it had to remember.
- * Rules 3 and 4 are epistemic and have no such choke point: they are prose, and
- * prose is the weaker guarantee. */
+ * Message priority and delivery-state semantics live at the enforced
+ * `hive_send` boundary. The two epistemic rules below have no such choke point,
+ * so they remain concise prompt guidance. */
 export const HIVE_PROTOCOL_RULES = [
   "Hive protocol (non-negotiable):",
-  "1. Urgent is a turn kill, not a fast lane. An urgent or critical message CANCELS the recipient's in-flight turn, which is never resumed — the reasoning so far is discarded. Send ordinary guidance as normal; reserve urgent for genuine preemption.",
-  "2. Sent is not stopped. There is no preemption inside a running tool call: the boundary arrives only when the call returns, so an agent inside a 60-minute command holds your urgent — or your critical stop — for up to 60 minutes. Never report an agent as stopped or informed until it has acknowledged.",
-  '3. An absent field is unknown, never false. A missing or misspelled key does not raise — it reads back as "no". Before trusting a negative, prove your reader can see a positive (a positive control): an all-empty result is usually a bad key, not an empty world.',
-  '4. Measure, do not infer. Never accept an ACT as proof of a STATE: "the command exited 0" is not "the message was received"; "the skill shipped" is not "the agent read it"; "the screen redrew" is not "the agent is alive". Read the thing that records the state.',
+  '1. An absent field is unknown, never false. A missing or misspelled key does not raise — it reads back as "no". Before trusting a negative, prove your reader can see a positive (a positive control): an all-empty result is usually a bad key, not an empty world.',
+  '2. Measure, do not infer. Never accept an ACT as proof of a STATE: "the command exited 0" is not "the message was received"; "the skill shipped" is not "the agent read it"; "the screen redrew" is not "the agent is alive". Read the thing that records the state.',
 ].join("\n");
-
-export function buildLandingProtocol(
-  branch: string,
-  _repoRoot: string,
-  mainBranch = "main",
-  agentName = branch.split("/")[1]?.split("-")[0] ?? "agent",
-  capabilityEpoch = 0,
-  concise = false,
-): string {
-  // Repo-neutral wording: Hive no longer detects this repo's concrete test or
-  // typecheck command, so the gate names the rule without inventing a command.
-  const verify = {
-    test: "Re-run the tests",
-    typecheck: "your typechecker",
-    typecheckBackstop: "a passing test run does not typecheck",
-  };
-  if (concise) {
-    return [
-      `When your task is done and tests are green, land it on ${mainBranch} — unlanded work is lost work:`,
-      `1. Commit everything on \`${branch}\`.`,
-      `2. \`git rebase ${mainBranch}\` in your worktree. On conflict: \`git rebase --abort\`, message ${ORCHESTRATOR_NAME} with the conflicting file names, stop. Never force, never resolve another agent's code.`,
-      `3. ${verify.test} and typecheck with ${verify.typecheck}; ${verify.typecheckBackstop}, so a green suite alone can carry a type error onto ${mainBranch}. Skip both only if \`git diff --name-only ORIG_HEAD..HEAD\` lists \`.md\` files alone. Red tests never merge, and neither do type errors: fix them, or commit and report the failure. Exception: a red proven identical on unmodified ${mainBranch} is pre-existing and does not block — note it and proceed; any other red still blocks.`,
-      `4. Call \`hive_land\` with agent \`${agentName}\`, capabilityEpoch \`${capabilityEpoch}\`. Never merge into the primary checkout yourself.`,
-      `5. Rejected because ${mainBranch} moved? Back to step 2, at most ${LANDING_MAX_ATTEMPTS} attempts, then message ${ORCHESTRATOR_NAME}.`,
-      `6. Report the merge commit hash. Leave your branch and worktree in place.`,
-    ].join("\n");
-  }
-  return [
-    `When your task is complete and the tests are green, land your work on ${mainBranch} immediately — finished work left on your branch is lost work:`,
-    `1. Commit everything on your branch (${branch}); never leave work uncommitted.`,
-    `2. Rebase onto the latest ${mainBranch}: run \`git rebase ${mainBranch}\` in your worktree. If the rebase hits conflicts, run \`git rebase --abort\` and message ${ORCHESTRATOR_NAME} naming the conflicting files — never force anything and never resolve another agent's code alone.`,
-    `3. ${verify.test} on the rebased branch, and typecheck it with ${verify.typecheck}. Both must pass. ${verify.typecheckBackstop}, so a green suite alone will carry a type error onto ${mainBranch}: two agents whose work was separately green merge into a duplicate symbol that no test can see. You may skip both checks only when \`git diff --name-only ORIG_HEAD..HEAD\` — what the rebase pulled in — lists nothing but \`.md\` files that no test reads: your pre-rebase green run still holds, so go straight to step 4. Red tests never merge, and neither do type errors: fix them on your branch, or commit what you have and report the failure instead. The one exception: a red test proven identical on unmodified ${mainBranch} — checkout ${mainBranch} in a scratch copy, run it, same failure, unrelated to your change — is pre-existing, not yours to fix, and does not block; name it in your report and proceed. Any other red — one that passes on ${mainBranch}, or one you have not actually checked there — blocks like any other.`,
-    `4. Land through Hive's capability gate: call \`hive_land\` with agent \`${agentName}\` and capabilityEpoch \`${capabilityEpoch}\`. The daemon performs the fast-forward-only merge of \`${branch}\` into \`${mainBranch}\`; never merge into the primary checkout directly.`,
-    `5. If that merge is rejected because ${mainBranch} moved, return to step 2. After ${LANDING_MAX_ATTEMPTS} failed attempts, stop and message ${ORCHESTRATOR_NAME}.`,
-    `6. Include the merge commit hash in your completion report. Do not delete your branch or worktree; hive cleans up landed branches.`,
-  ].join("\n");
-}
 
 export interface AgentPromptOptions {
   tool?: CapabilityProvider;
@@ -1166,7 +1123,7 @@ export const SEARCH_HYGIENE =
   "Search hygiene: a repo-wide search with an unanchored pattern — one leading " +
   "with `.*` or `.{0,N}` — can allocate tens of GB on a large tree, and Hive's " +
   "memory watchdog will kill it. Anchor patterns on a real literal, scope the " +
-  "search to the directory that can hold the answer (src/, not the repo root), " +
+  "search to the subdirectory that can hold the answer rather than the repo root, " +
   "and stay out of build, vendor, and dependency trees. If a search is killed " +
   "for memory, never re-run it wider: a wider pattern is a bigger allocation, " +
   "not a better search.";
@@ -1179,7 +1136,7 @@ export const SEARCH_HYGIENE =
  * subset; the code-review skill keeps the long form. */
 export const CODE_REVIEW_RULES = [
   "Code review rules (Hive has no PRs; the code-review skill holds the long form):",
-  "1. Pin before reading: resolve the branch under review to an exact SHA and its merge-base with main, then review `git diff <base>..<sha>` from your own worktree — worktrees share one object database, so never check the branch out. Your verdict binds that SHA: if the branch moves, later commits are unreviewed — say so, never silently re-pin.",
+  "1. Pin before reading: resolve the primary checkout's current branch, the branch under review's exact SHA, and their merge-base, then review `git diff <base>..<sha>` from your own worktree — worktrees share one object database, so never check the branch out. Your verdict binds that SHA: if the branch moves, later commits are unreviewed — say so, never silently re-pin.",
   "2. Scope is the footprint — `git diff --name-only <base>..<sha>` — not the commit messages. Review every changed file, including ones the task never mentioned.",
   "3. Always report code the branch adds that nothing consumes: uncalled functions, unconsumed exports, unread config or flags, dead code paths. The finding is that it exists; whether it changes is the author's and the orchestrator's call. Note any justification the branch already gives.",
   "4. Verdict on evidence, never on the author's say-so: APPROVE requires verified green at the pinned SHA — a suite you ran with its exit code captured directly (never through a pager or `| tail`), or the author's recorded test output at that SHA. Missing evidence is NEEDS_DISCUSSION, naming exactly what is unverified. A green run does not prove a new test executed; confirm it ran by name or flag it.",
@@ -1197,7 +1154,6 @@ export function buildAgentPrompt(
   name: string,
   task: string,
   worktree: CreatedWorktree,
-  repoRoot: string,
   memoryIndex = "",
   options: AgentPromptOptions = {},
 ): string {
@@ -1240,14 +1196,7 @@ export function buildAgentPrompt(
           "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.",
         ]
       : [
-          buildLandingProtocol(
-            worktree.branch,
-            repoRoot,
-            "main",
-            name,
-            0,
-            concise,
-          ),
+          "Complete writer work must be committed, verified after rebasing the primary checkout's current branch, and landed through hive_land. Abort and report any rebase conflict; never merge into the primary checkout directly.",
         ]),
     ...(options.category === "code_review" ? [CODE_REVIEW_RULES] : []),
     ...(options.brief === undefined || options.brief === ""
@@ -2791,7 +2740,6 @@ export class HiveSpawner implements Spawner {
         name,
         request.task,
         worktree,
-        this.dependencies.repoRoot,
         memoryIndex,
         {
           tool,

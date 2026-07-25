@@ -6430,7 +6430,7 @@ export class HiveDaemon {
       {
         title: "Land an agent branch",
         description:
-          "Fast-forward land a writer branch only when its durable write capability epoch is current and not revoked.",
+          "Land completed writer work through Hive's capability-gated fast-forward. Commit first, rebase the primary checkout's current branch, then rerun the relevant tests and typecheck. Abort and report any rebase conflict; never merge into the primary checkout directly. If the target moved, rebase and retry.",
         inputSchema: LandRequestSchema,
       },
       async ({ agent: name, capabilityEpoch }) => {

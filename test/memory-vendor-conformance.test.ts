@@ -202,7 +202,6 @@ describe("vendor memory conformance (HM-4 static matrix)", () => {
           AGENT,
           "Conformance task",
           { path: worktree, branch: "hive/conformance" },
-          "/repo",
           `Memory index:\n${MEMORY_MARKER}`,
           { tool: row.vendor },
         );
