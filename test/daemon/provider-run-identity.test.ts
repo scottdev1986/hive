@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { getAgentAdapter } from "../../src/adapters/tools/agents/agent-factory";
 import { HiveDatabase } from "../../src/daemon/db";
+import { HiveSpawner } from "../../src/daemon/spawner-impl";
+import type {
+  SessionInspection as ProductSessionInspection,
+} from "../../src/daemon/session-host/contract";
 import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
@@ -12,6 +15,7 @@ import type { HiveTerminalBinding } from "../../src/daemon/session-host/terminal
 import type { SessionInspection } from "../../src/daemon/session-host/terminal-host-contract";
 import {
   CAPABILITY_PROVIDERS,
+  type AgentRecord,
   type CapabilityProvider,
   type ProviderRun,
 } from "../../src/schemas";
@@ -85,8 +89,54 @@ function neutralInspection(
   };
 }
 
+function productInspection(
+  terminal: HiveTerminalBinding["locator"],
+  foreground: ProductSessionInspection["foreground"],
+): ProductSessionInspection {
+  return {
+    schemaVersion: 1,
+    locator: terminal,
+    presence: "present",
+    complete: true,
+    hostPid: 3_900,
+    hostStartToken: "3900:1",
+    shellRoot: {
+      pid: 4_000,
+      startToken: "4000:1",
+      processGroupId: 4_000,
+    },
+    foreground,
+    expectedExecutable: "/bin/zsh",
+    executableVerified: true,
+    outputSeq: "0",
+    checkpointSeq: "0",
+    checkpointAvailable: false,
+    input: { state: "FREE", ownerViewerId: null, claimId: null },
+    viewerCount: 0,
+    geometry: {
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
+    },
+    resources: {},
+    visibility: {
+      state: "visible",
+      workspaceSessionId: "workspace-fixture",
+      openTerminalRevision: "1",
+      expiresAt: "2026-07-24T18:00:15.000Z",
+    },
+    exit: null,
+    survivors: [],
+    evidenceAt: endedAt,
+    diagnosticIds: [],
+  };
+}
+
 describe("C0 provider-run identity", () => {
-  test("an unbound queen foreground is not adoptable as an agent or dead as a job", () => {
+  test("a live provider run is not dead when its terminal foreground changes", () => {
     const root = {
       ...locator("codex"),
       subject: { kind: "root" as const },
@@ -102,6 +152,24 @@ describe("C0 provider-run identity", () => {
         foregroundProcessGroupId: 5_000,
       },
     };
+    const activeRun: ProviderRun = {
+      runId: crypto.randomUUID(),
+      agentId: "agent-fixture",
+      terminal: locator("codex"),
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      effort: "medium",
+      conversationId: null,
+      pid: 4_500,
+      startToken: "4500:1",
+      foregroundProcessGroupId: 4_500,
+      capabilityEpoch: 0,
+      launchGrantId: "grant-fixture",
+      startedAt: endedAt,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
     expect(requireSessiondRootLocator(root)).toEqual(root);
     expect(() =>
       requireSessiondAgentLocator({
@@ -110,12 +178,12 @@ describe("C0 provider-run identity", () => {
       }),
     ).toThrow("mismatched sessiond SessionLocator");
     expect(sessiondForegroundJobIsDead(unmanaged)).toBe(false);
-    expect(sessiondAgentProviderRunIsDead(unmanaged)).toBe(true);
+    expect(sessiondAgentProviderRunIsDead(unmanaged, activeRun)).toBe(false);
+    expect(sessiondAgentProviderRunIsDead(unmanaged, null)).toBe(true);
   });
 
   for (const provider of CAPABILITY_PROVIDERS) {
     test(`${provider}: provider exit leaves the zsh session shell-idle and a manual command is unmanaged`, async () => {
-      expect(getAgentAdapter(provider).id).toBe(provider);
       const db = new HiveDatabase(":memory:");
       const terminal = locator(provider);
       const visibility = {
@@ -203,6 +271,7 @@ describe("C0 provider-run identity", () => {
         exitReason: null,
       };
       db.insertProviderRun(run);
+      let providerStartToken = "5000:1";
       const adapter = new HiveTerminalHostAdapter(
         host,
         db,
@@ -210,7 +279,9 @@ describe("C0 provider-run identity", () => {
         {
           now: () => new Date(endedAt),
           providerRuns: db,
-          processIdentity: (pid) => ({ startToken: `${pid}:1` }),
+          processIdentity: (pid) => ({
+            startToken: pid === 5_000 ? providerStartToken : `${pid}:1`,
+          }),
         },
       );
 
@@ -227,10 +298,26 @@ describe("C0 provider-run identity", () => {
       expect(idle.presence).toBe("present");
       expect(idle.executableVerified).toBe(true);
       expect(idle.foreground).toEqual({ state: "shell-idle", runId: null });
+      expect(await adapter.list(terminal.instanceId)).toHaveLength(1);
+      expect(db.getProviderRun(run.runId)).toMatchObject({
+        state: "running",
+        endedAt: null,
+      });
+      expect(adapter.reconcileProviderRun(terminal)).toEqual(run);
+
+      measured = neutralInspection(binding, 5_000);
+      expect((await adapter.inspect(terminal)).foreground).toMatchObject({
+        state: "managed",
+        runId: run.runId,
+      });
+
+      measured = neutralInspection(binding, 4_000);
+      providerStartToken = "5000:2";
+      expect(adapter.reconcileProviderRun(terminal)).toBeNull();
       expect(db.getProviderRun(run.runId)).toMatchObject({
         state: "exited",
         endedAt,
-        exitReason: "foreground-provider-exited",
+        exitReason: "provider-process-exited",
       });
 
       measured = neutralInspection(binding, 6_000);
@@ -268,4 +355,108 @@ describe("C0 provider-run identity", () => {
   }
 
   test.todo("grok live launch: pending until its quota pool resets at 2026-07-26T17:18Z", () => {});
+
+  test("recovery launch waits for foreground identity before minting its run", async () => {
+    const db = new HiveDatabase(":memory:");
+    const terminal = locator("codex");
+    const record: AgentRecord = {
+      id: "agent-codex",
+      name: "codex-fixture",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "identity fixture",
+      worktreePath: "/tmp/codex-fixture",
+      branch: "hive/codex-fixture",
+      contextPct: null,
+      createdAt: endedAt,
+      lastEventAt: endedAt,
+      recoveryAttempts: 0,
+      capabilityEpoch: 2,
+      readOnly: false,
+      writeRevoked: false,
+      sessionLocator: terminal,
+    };
+    const idle = productInspection(terminal, {
+      state: "shell-idle",
+      runId: null,
+    });
+    const launched = productInspection(terminal, {
+      state: "unmanaged",
+      runId: null,
+      pid: 5_000,
+      startToken: "5000:1",
+      foregroundProcessGroupId: 5_000,
+    });
+    let inspections = 0;
+    let terminations = 0;
+    const spawner = new HiveSpawner({
+      db,
+      repoRoot: "/repo",
+      port: 4_321,
+      config: {},
+      sleep: async () => {},
+      stopSession: async () => ({ killed: [], survivors: [] }),
+      sessiond: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: terminal.engineBuildId,
+          visibility: {
+            workspaceSessionId: "workspace-fixture",
+            workspacePid: 3_800,
+            workspaceStartToken: "3800:1",
+            openTerminalRevision: "1",
+          },
+          geometry: idle.geometry,
+        }),
+        admit: async () => null,
+        terminalHost: {
+          create: async () => ({
+            locator: terminal,
+            inspection: idle,
+            created: true,
+          }),
+          inspect: async () => (++inspections < 2 ? idle : launched),
+          terminate: async () => {
+            terminations += 1;
+            return {
+              locator: terminal,
+              state: "terminated",
+              exit: null,
+              survivors: [],
+              errors: [],
+            };
+          },
+        },
+      },
+    });
+
+    await spawner.createRecoverySession(
+      record,
+      "codex --resume thread-fixture",
+      "codex",
+      "req_018f1e90-7b5a-7cc0-8000-000000000299",
+    );
+
+    expect(inspections).toBe(2);
+    expect(terminations).toBe(0);
+    expect(db.getActiveProviderRunByTerminal(terminal)).toMatchObject({
+      agentId: record.id,
+      provider: "codex",
+      pid: 5_000,
+      startToken: "5000:1",
+      capabilityEpoch: 2,
+    });
+    inspections = 0;
+    await expect(
+      spawner.createRecoverySession(
+        record,
+        "codex --resume thread-fixture",
+        "codex",
+        "req_018f1e90-7b5a-7cc0-8000-000000000300",
+      ),
+    ).rejects.toThrow();
+    expect(terminations).toBe(1);
+    db.close();
+  });
 });

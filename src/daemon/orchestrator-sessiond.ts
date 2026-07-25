@@ -1,6 +1,9 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { CapabilityProviderSchema } from "../schemas";
+import {
+  CapabilityProviderSchema,
+  type ProviderRun,
+} from "../schemas";
 import { domainUuidV7Schema } from "../schemas/session-protocol";
 import {
   mintRootSessiondLocator,
@@ -49,8 +52,18 @@ export type OrchestratorSessiondSnapshot = z.infer<
 export interface OrchestratorSessiondDependencies {
   terminalHost: Pick<
     HiveTerminalHostAdapter,
-    "create" | "inspect" | "renewVisibility"
+    | "create"
+    | "inspect"
+    | "reconcileProviderRun"
+    | "renewVisibility"
+    | "terminate"
   >;
+  providerRuns: Readonly<{
+    getActiveProviderRunByTerminal(
+      terminal: ProviderRun["terminal"],
+    ): ProviderRun | null;
+    insertProviderRun(run: ProviderRun): ProviderRun;
+  }>;
   bindings: TerminalHostBindingStore;
   visibility: Pick<WorkspaceVisibilityAuthority, "prepareAgentCreation">;
   instanceId: string;
@@ -133,6 +146,8 @@ export class OrchestratorSessiondController {
     signal: AbortSignal,
   ): Promise<OrchestratorSessiondSnapshot> {
     let locator: OrchestratorSessiondSnapshot["locator"] | null = null;
+    let createdHere = false;
+    let createdInspection: SessionInspection | null = null;
     try {
       let policy = null;
       while (policy === null && !signal.aborted) {
@@ -154,11 +169,62 @@ export class OrchestratorSessiondController {
         this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       if (existing?.createEvidence === undefined) {
         const shell = shellSessionLaunch(shellJoin(input.argv));
-        await this.dependencies.terminalHost.create(
+        const created = await this.dependencies.terminalHost.create(
           this.sessionSpec(input, locator, policy.geometry, shell),
           shell.initialInput,
           { locator, visibility: policy.visibility },
         );
+        createdInspection = created.inspection;
+        createdHere = true;
+      }
+      if (signal.aborted) throw new Error("queen sessiond creation canceled");
+      if (
+        this.dependencies.providerRuns.getActiveProviderRunByTerminal(
+          locator,
+        ) === null
+      ) {
+        let inspection: SessionInspection | null =
+          createdInspection?.foreground.state === "unmanaged"
+            ? createdInspection
+            : null;
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          if (inspection !== null) break;
+          const candidate =
+            await this.dependencies.terminalHost.inspect(locator);
+          if (candidate.foreground.state === "unmanaged") {
+            inspection = candidate;
+            break;
+          }
+          if (candidate.presence !== "present" || signal.aborted) break;
+          await this.wait(25, signal);
+        }
+        if (
+          inspection === null ||
+          inspection.foreground.state !== "unmanaged"
+        ) {
+          throw new Error(
+            "queen provider launch has no new foreground process identity",
+          );
+        }
+        const foreground = inspection.foreground;
+        this.dependencies.providerRuns.insertProviderRun({
+          runId: crypto.randomUUID(),
+          agentId: null,
+          terminal: locator,
+          provider: input.provider,
+          model: null,
+          effort: null,
+          conversationId: null,
+          pid: foreground.pid,
+          startToken: foreground.startToken,
+          foregroundProcessGroupId: foreground.foregroundProcessGroupId,
+          capabilityEpoch: 0,
+          launchGrantId: input.requestId,
+          startedAt: inspection.evidenceAt,
+          endedAt: null,
+          state: "running",
+          exitReason: null,
+        });
       }
       if (signal.aborted) throw new Error("queen sessiond creation canceled");
       await this.dependencies.terminalHost.renewVisibility(
@@ -183,10 +249,25 @@ export class OrchestratorSessiondController {
       );
       return ready;
     } catch (error) {
+      let failure = error;
+      if (locator !== null && createdHere) {
+        try {
+          await this.dependencies.terminalHost.terminate(locator, {
+            mode: "immediate",
+            reason: "queen launch identity was not established",
+            requestId: input.requestId,
+          });
+        } catch (cleanupError) {
+          failure = new AggregateError(
+            [error, cleanupError],
+            "queen launch failed and its terminal cleanup was not confirmed",
+          );
+        }
+      }
       if (locator !== null) {
         this.dependencies.bindings.releaseUncreatedTerminalHostSession(locator);
       }
-      throw error;
+      throw failure;
     }
   }
 
@@ -198,6 +279,7 @@ export class OrchestratorSessiondController {
     while (!signal.aborted) {
       let inspection: SessionInspection;
       try {
+        this.dependencies.terminalHost.reconcileProviderRun(locator);
         inspection = await this.dependencies.terminalHost.inspect(locator);
       } catch {
         if (signal.aborted) return;

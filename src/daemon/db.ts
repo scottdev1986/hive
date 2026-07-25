@@ -547,7 +547,7 @@ export class HiveDatabase {
       );
       CREATE TABLE IF NOT EXISTS provider_runs (
         runId TEXT PRIMARY KEY,
-        agentId TEXT NOT NULL,
+        agentId TEXT,
         terminalInstanceId TEXT NOT NULL,
         terminalSessionId TEXT NOT NULL,
         terminalGeneration INTEGER NOT NULL CHECK (terminalGeneration > 0),
@@ -599,6 +599,7 @@ export class HiveDatabase {
       CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
     `);
     this.rekeyTerminalHostBindingsOnLocator();
+    this.relaxProviderRunAgentIdNullability();
     this.addTerminalHostBindingEvidenceColumns();
     this.addMessageDeliveryDiagnosticColumns();
     const capabilityColumns = z
@@ -1069,6 +1070,48 @@ export class HiveDatabase {
     });
   }
 
+  private relaxProviderRunAgentIdNullability(): void {
+    const columns = z
+      .array(
+        z.object({
+          name: z.string(),
+          notnull: z.number(),
+        }),
+      )
+      .parse(this.database.query("PRAGMA table_info(provider_runs)").all());
+    const agentId = columns.find((column) => column.name === "agentId");
+    if (agentId?.notnull === 0) return;
+    this.transaction(() => {
+      this.database.exec(`
+        DROP INDEX IF EXISTS provider_runs_one_active_terminal;
+        DROP INDEX IF EXISTS provider_runs_agent;
+        ALTER TABLE provider_runs RENAME TO provider_runs_old_agent_id;
+        CREATE TABLE provider_runs (
+          runId TEXT PRIMARY KEY,
+          agentId TEXT,
+          terminalInstanceId TEXT NOT NULL,
+          terminalSessionId TEXT NOT NULL,
+          terminalGeneration INTEGER NOT NULL CHECK (terminalGeneration > 0),
+          state TEXT NOT NULL,
+          recordJson TEXT NOT NULL
+        );
+        INSERT INTO provider_runs (
+          runId, agentId, terminalInstanceId, terminalSessionId,
+          terminalGeneration, state, recordJson
+        ) SELECT
+          runId, agentId, terminalInstanceId, terminalSessionId,
+          terminalGeneration, state, recordJson
+        FROM provider_runs_old_agent_id;
+        DROP TABLE provider_runs_old_agent_id;
+        CREATE UNIQUE INDEX provider_runs_one_active_terminal
+          ON provider_runs (
+            terminalInstanceId, terminalSessionId, terminalGeneration
+          ) WHERE state = 'running';
+        CREATE INDEX provider_runs_agent ON provider_runs (agentId);
+      `);
+    });
+  }
+
   private addMessageDeliveryDiagnosticColumns(): void {
     const columns = new Set(
       z
@@ -1390,7 +1433,7 @@ export class HiveDatabase {
         WHERE runId = ? AND state = 'running'
       `)
         .run(JSON.stringify(exited), exited.runId);
-      return this.getProviderRun(exited.runId);
+      return exited;
     });
   }
 

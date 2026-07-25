@@ -62,11 +62,9 @@ export function sessiondAgentProviderRunIsDead(
     SessionInspection,
     "presence" | "diagnosticIds" | "foreground"
   >,
+  activeRun: ProviderRun | null,
 ): boolean {
-  return (
-    sessiondForegroundJobIsDead(inspection) ||
-    inspection.foreground.state === "unmanaged"
-  );
+  return sessiondTerminalIsDead(inspection) || activeRun === null;
 }
 
 /**
@@ -117,7 +115,7 @@ export type HiveTerminalPolicy = Pick<
 export interface HiveTerminalHostAdapterOptions {
   now?: () => Date;
   processIdentity?: (pid: number) => { startToken: string };
-  providerRuns?: ProviderRunStore;
+  providerRuns: ProviderRunStore;
 }
 
 export interface ProviderRunStore {
@@ -197,7 +195,7 @@ export class HiveTerminalHostAdapter {
     private readonly host: TerminalLifecycleHost,
     private readonly bindings: TerminalHostBindingStore,
     private readonly instanceId: string,
-    options: HiveTerminalHostAdapterOptions = {},
+    options: HiveTerminalHostAdapterOptions,
   ) {
     this.now = options.now ?? (() => new Date());
     this.processIdentity = options.processIdentity ?? macProcessIdentity;
@@ -206,7 +204,30 @@ export class HiveTerminalHostAdapter {
 
   private readonly now: () => Date;
   private readonly processIdentity: (pid: number) => { startToken: string };
-  private readonly providerRuns: ProviderRunStore | undefined;
+  private readonly providerRuns: ProviderRunStore;
+
+  /** Lifecycle reconciliation is explicit and measured. Inspection stays
+   * read-only, while callers that own lifecycle policy may close a run only
+   * after its exact pid/start-token identity disappears. */
+  reconcileProviderRun(locator: SessionLocator): ProviderRun | null {
+    const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
+    if (active === null) return null;
+    try {
+      if (
+        this.processIdentity(active.pid).startToken === active.startToken
+      ) {
+        return active;
+      }
+    } catch {
+      return active;
+    }
+    this.providerRuns.endProviderRun(
+      active.runId,
+      this.now().toISOString(),
+      "provider-process-exited",
+    );
+    return null;
+  }
 
   async create(
     spec: SessionSpec,
@@ -371,10 +392,9 @@ export class HiveTerminalHostAdapter {
     });
     const projected = this.projectTermination(locator, result);
     if (projected.state === "terminated") {
-      const active =
-        this.providerRuns?.getActiveProviderRunByTerminal(locator) ?? null;
+      const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
       if (active !== null) {
-        this.providerRuns?.endProviderRun(
+        this.providerRuns.endProviderRun(
           active.runId,
           this.now().toISOString(),
           result.reap.reaped ? "terminal-reaped" : "terminal-terminated",
@@ -497,17 +517,10 @@ export class HiveTerminalHostAdapter {
     inspection: NeutralSessionInspection,
     shellRoot: SessionInspection["shellRoot"],
   ): SessionInspection["foreground"] {
-    const active =
-      this.providerRuns?.getActiveProviderRunByTerminal(binding.locator) ??
-      null;
+    const active = this.providerRuns.getActiveProviderRunByTerminal(
+      binding.locator,
+    );
     if (inspection.lifecycle === "exited") {
-      if (active !== null) {
-        this.providerRuns?.endProviderRun(
-          active.runId,
-          this.now().toISOString(),
-          "terminal-exited",
-        );
-      }
       return { state: "unknown", runId: null };
     }
     if (
@@ -520,13 +533,6 @@ export class HiveTerminalHostAdapter {
     const foregroundProcessGroupId =
       inspection.jobControl.foregroundProcessGroupId;
     if (foregroundProcessGroupId === shellRoot.processGroupId) {
-      if (active !== null) {
-        this.providerRuns?.endProviderRun(
-          active.runId,
-          this.now().toISOString(),
-          "foreground-provider-exited",
-        );
-      }
       return { state: "shell-idle", runId: null };
     }
     let startToken: string;
@@ -547,13 +553,6 @@ export class HiveTerminalHostAdapter {
       active.foregroundProcessGroupId === measured.foregroundProcessGroupId
     ) {
       return { state: "managed", runId: active.runId, ...measured };
-    }
-    if (active !== null) {
-      this.providerRuns?.endProviderRun(
-        active.runId,
-        this.now().toISOString(),
-        "foreground-provider-exited",
-      );
     }
     return { state: "unmanaged", runId: null, ...measured };
   }

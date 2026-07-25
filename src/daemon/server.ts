@@ -976,6 +976,7 @@ export class HiveDaemon {
         ? null
         : new OrchestratorSessiondController({
             terminalHost: this.terminalHost,
+            providerRuns: this.db,
             bindings: this.db,
             visibility: this.workspaceVisibility,
             instanceId: hiveInstanceSuffix(),
@@ -1300,12 +1301,14 @@ export class HiveDaemon {
   }
 
   private async agentSessionPresent(agent: AgentRecord): Promise<boolean> {
+    const locator = requireSessiondAgentLocator(agent);
+    const activeRun = this.terminalHost.reconcileProviderRun(locator);
     const inspection = await this.terminalHost.inspect(
-      requireSessiondAgentLocator(agent),
+      locator,
     );
     return (
       inspection.presence === "present" &&
-      !sessiondAgentProviderRunIsDead(inspection)
+      !sessiondAgentProviderRunIsDead(inspection, activeRun)
     );
   }
 
@@ -1794,7 +1797,10 @@ export class HiveDaemon {
           const inspection = await this.terminalHost.inspect(
             requireSessiondRootLocator(root.locator),
           );
-          if (sessiondForegroundJobIsDead(inspection)) {
+          const activeRun = this.terminalHost.reconcileProviderRun(
+            root.locator,
+          );
+          if (sessiondAgentProviderRunIsDead(inspection, activeRun)) {
             faults.push("the queen vendor process is confirmed dead");
           } else if (inspection.presence !== "present") {
             faults.push(
@@ -1838,7 +1844,14 @@ export class HiveDaemon {
             faults.push(
               `${agent.name}'s sessiond session is not listed by the broker`,
             );
-          } else if (sessiondAgentProviderRunIsDead(match)) {
+          } else if (
+            sessiondAgentProviderRunIsDead(
+              match,
+              this.terminalHost.reconcileProviderRun(
+                requireSessiondAgentLocator(agent),
+              ),
+            )
+          ) {
             faults.push(
               `${agent.name}'s sessiond vendor process is confirmed dead`,
             );
@@ -1880,10 +1893,12 @@ export class HiveDaemon {
     agent: AgentRecord,
   ): Promise<PaneProcessState | "unknown"> {
     try {
+      const locator = requireSessiondAgentLocator(agent);
+      const activeRun = this.terminalHost.reconcileProviderRun(locator);
       const inspection = await this.terminalHost.inspect(
-        requireSessiondAgentLocator(agent),
+        locator,
       );
-      if (sessiondAgentProviderRunIsDead(inspection)) return "gone";
+      if (sessiondAgentProviderRunIsDead(inspection, activeRun)) return "gone";
       const shellPid = inspection.shellRoot?.pid;
       if (shellPid === null || shellPid === undefined) return "unknown";
       return foregroundJobState(
@@ -1937,7 +1952,12 @@ export class HiveDaemon {
     );
     if (
       inspection !== undefined &&
-      !sessiondAgentProviderRunIsDead(inspection)
+      !sessiondAgentProviderRunIsDead(
+        inspection,
+        this.db.getActiveProviderRunByTerminal(
+          requireSessiondAgentLocator(agent),
+        ),
+      )
     ) {
       return agent;
     }
@@ -5831,6 +5851,9 @@ export class HiveDaemon {
         const inspection = await this.terminalHost.inspect(
           requireSessiondAgentLocator(agent),
         );
+        const activeRun = this.terminalHost.reconcileProviderRun(
+          requireSessiondAgentLocator(agent),
+        );
         const presence = inspection.presence;
         if (presence === "unknown") {
           throw new Error(
@@ -5839,7 +5862,7 @@ export class HiveDaemon {
         }
         if (
           presence === "present" &&
-          !sessiondAgentProviderRunIsDead(inspection)
+          !sessiondAgentProviderRunIsDead(inspection, activeRun)
         ) {
           throw new Error(
             `Cannot mark ${agentName} dead: its terminal session is still running. Use hive_kill to stop a live agent.`,

@@ -233,6 +233,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             host,
             db,
             handshake.instanceId,
+            { providerRuns: db },
           );
           const _engineBuildId = await host.discoverEngineBuildId();
           const visibility = {

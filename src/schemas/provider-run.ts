@@ -5,10 +5,10 @@ import { SessionLocatorSchema } from "./session-protocol";
 export const ProviderRunBindingSchema = z
   .strictObject({
     runId: z.string().uuid(),
-    agentId: z.string().min(1),
+    agentId: z.string().min(1).nullable(),
     terminal: SessionLocatorSchema,
     provider: CapabilityProviderSchema,
-    model: z.string().min(1),
+    model: z.string().min(1).nullable(),
     effort: z.string().min(1).nullable(),
     conversationId: z.string().min(1).nullable(),
     pid: z.number().int().positive(),

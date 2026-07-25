@@ -41,6 +41,10 @@ const visibility: HiveTerminalBinding["visibility"] = {
   workspaceStartToken: "4000:123400",
   openTerminalRevision: "1",
 };
+const providerRuns = {
+  getActiveProviderRunByTerminal: () => null,
+  endProviderRun: () => null,
+};
 const geometry = {
   columns: 80,
   rows: 24,
@@ -327,7 +331,10 @@ describe("HiveTerminalHostAdapter", () => {
       host,
       bindings,
       locator.instanceId,
-      { now: () => new Date("2026-07-18T01:00:00.000Z") },
+      {
+        now: () => new Date("2026-07-18T01:00:00.000Z"),
+        providerRuns,
+      },
     );
 
     await expect(
@@ -508,6 +515,7 @@ describe("HiveTerminalHostAdapter", () => {
       host,
       bindings,
       locator.instanceId,
+      { providerRuns },
     );
 
     const listed = await adapter.list(locator.instanceId);
@@ -588,7 +596,10 @@ describe("HiveTerminalHostAdapter", () => {
       host,
       bindings,
       locator.instanceId,
-      { now: () => new Date("2026-07-18T01:00:00.000Z") },
+      {
+        now: () => new Date("2026-07-18T01:00:00.000Z"),
+        providerRuns,
+      },
     );
 
     const inspected = await adapter.inspect(locator);
@@ -674,6 +685,7 @@ describe("HiveTerminalHostAdapter", () => {
       host,
       bindings,
       locator.instanceId,
+      { providerRuns },
     );
 
     await expect(
@@ -741,6 +753,7 @@ describe("HiveTerminalHostAdapter", () => {
       host,
       bindings,
       locator.instanceId,
+      { providerRuns },
     );
 
     await expect(
@@ -772,6 +785,7 @@ describe("HiveTerminalHostAdapter", () => {
       incompleteHost,
       incompleteBindings,
       locator.instanceId,
+      { providerRuns },
     );
     await expect(incomplete.inspect(locator)).rejects.toBeInstanceOf(
       TerminalHostBindingIncompleteError,

@@ -92,32 +92,38 @@ describe("HiveDatabase", () => {
     try {
       expect(db.getProviderRun(run.runId)).toEqual(run);
       expect(db.getActiveProviderRunByTerminal(terminal)).toEqual(run);
+      expect(() =>
+        db.insertProviderRun({
+          ...run,
+          runId: "018f1e90-7b5a-7cc0-8000-000000000192",
+        }),
+      ).toThrow();
       const exited = db.endProviderRun(
         run.runId,
         "2026-07-24T17:30:00.000Z",
-        "foreground-provider-exited",
+        "provider-process-exited",
       );
       expect(exited).toMatchObject({
         state: "exited",
         endedAt: "2026-07-24T17:30:00.000Z",
-        exitReason: "foreground-provider-exited",
+        exitReason: "provider-process-exited",
       });
       expect(
         db.endProviderRun(
           run.runId,
           "2026-07-24T17:45:00.000Z",
-          "later-observation",
+          "terminal-terminated",
         ),
       ).toEqual(exited);
       expect(db.getActiveProviderRunByTerminal(terminal)).toBeNull();
 
       const next = {
         ...run,
-        runId: "018f1e90-7b5a-7cc0-8000-000000000192",
+        runId: "018f1e90-7b5a-7cc0-8000-000000000193",
         conversationId: run.conversationId,
       };
       expect(db.insertProviderRun(next).runId).not.toBe(run.runId);
-      expect(db.listProviderRunsForAgent(run.agentId)).toHaveLength(2);
+      expect(db.listProviderRunsForAgent(run.agentId!)).toHaveLength(2);
     } finally {
       db.close();
     }

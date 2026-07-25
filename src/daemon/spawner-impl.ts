@@ -35,7 +35,6 @@ import {
   type ModelEnablementDecision,
   modelCategoryFit,
   ORCHESTRATOR_NAME,
-  type ProviderRun,
   type RoutingCategory,
   type RoutingPolicy,
   selectionModeFor,
@@ -69,7 +68,11 @@ import {
   runPs,
   treeRunsCommand,
 } from "./resources";
-import type { SessionLocator, SessionSpec } from "./session-host/contract";
+import type {
+  SessionInspection,
+  SessionLocator,
+  SessionSpec,
+} from "./session-host/contract";
 import {
   type HiveTerminalHostAdapter,
   type HiveTerminalPolicy,
@@ -758,7 +761,10 @@ export type CredentialIssuer = (
 ) => string;
 
 export interface SessiondSpawnAdmission {
-  terminalHost: Pick<HiveTerminalHostAdapter, "create" | "inspect">;
+  terminalHost: Pick<
+    HiveTerminalHostAdapter,
+    "create" | "inspect" | "terminate"
+  >;
   /** Creation policy from the live Workspace process, independent of whether
    * the not-yet-created terminal appears in its public pane inventory. */
   prepareAgentCreation(
@@ -1333,34 +1339,62 @@ export class HiveSpawner implements Spawner {
         visibility: admission.visibility,
       },
     );
-    const inspection = await this.requireSessiondHost(record).inspect(
-      created.locator,
-    );
-    const foreground = inspection.foreground;
-    if (foreground.state !== "unmanaged") {
-      throw new Error(
-        `Provider launch for ${record.name} has no new foreground process identity`,
-      );
+    try {
+      let inspection: SessionInspection | null =
+        created.inspection.foreground.state === "unmanaged"
+          ? created.inspection
+          : null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        if (inspection !== null) break;
+        const candidate = await this.requireSessiondHost(record).inspect(
+          created.locator,
+        );
+        if (candidate.foreground.state === "unmanaged") {
+          inspection = candidate;
+          break;
+        }
+        if (candidate.presence !== "present") break;
+        await this.wait(25);
+      }
+      if (inspection === null || inspection.foreground.state !== "unmanaged") {
+        throw new Error(
+          `Provider launch for ${record.name} has no new foreground process identity`,
+        );
+      }
+      const foreground = inspection.foreground;
+      this.dependencies.db.insertProviderRun({
+        runId: crypto.randomUUID(),
+        agentId: record.id,
+        terminal: created.locator,
+        provider: record.tool,
+        model: record.model,
+        effort: record.executionIdentity?.effort ?? null,
+        conversationId: record.toolSessionId ?? null,
+        pid: foreground.pid,
+        startToken: foreground.startToken,
+        foregroundProcessGroupId: foreground.foregroundProcessGroupId,
+        capabilityEpoch: record.capabilityEpoch,
+        launchGrantId,
+        startedAt: inspection.evidenceAt,
+        endedAt: null,
+        state: "running",
+        exitReason: null,
+      });
+    } catch (error) {
+      try {
+        await this.requireSessiondHost(record).terminate(created.locator, {
+          mode: "immediate",
+          reason: "provider launch identity was not established",
+          requestId: launchGrantId,
+        });
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Provider launch for ${record.name} failed and terminal cleanup was not confirmed`,
+        );
+      }
+      throw error;
     }
-    const run: ProviderRun = {
-      runId: crypto.randomUUID(),
-      agentId: record.id,
-      terminal: created.locator,
-      provider: record.tool,
-      model: record.model,
-      effort: record.executionIdentity?.effort ?? null,
-      conversationId: record.toolSessionId ?? null,
-      pid: foreground.pid,
-      startToken: foreground.startToken,
-      foregroundProcessGroupId: foreground.foregroundProcessGroupId,
-      capabilityEpoch: record.capabilityEpoch,
-      launchGrantId,
-      startedAt: inspection.evidenceAt,
-      endedAt: null,
-      state: "running",
-      exitReason: null,
-    };
-    this.dependencies.db.insertProviderRun(run);
   }
 
   async createRecoverySession(

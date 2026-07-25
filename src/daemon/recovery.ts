@@ -112,7 +112,10 @@ type Sleep = (milliseconds: number) => Promise<void>;
 
 export interface CrashRecoveryDependencies {
   db: RecoveryStore;
-  terminalHost?: Pick<HiveTerminalHostAdapter, "inspect">;
+  terminalHost?: Pick<
+    HiveTerminalHostAdapter,
+    "inspect" | "reconcileProviderRun"
+  >;
   /** Resolved lazily because a daemon configured with port 0 learns its
    * ephemeral listening port only after Bun.serve() binds. */
   port: number | (() => number);
@@ -336,10 +339,10 @@ export class CrashRecovery {
     if (this.deps.terminalHost === undefined) {
       throw new Error("session recovery inspection is not configured");
     }
-    const inspection = await this.deps.terminalHost.inspect(
-      requireSessiondAgentLocator(agent),
-    );
-    if (sessiondAgentProviderRunIsDead(inspection)) return false;
+    const locator = requireSessiondAgentLocator(agent);
+    const activeRun = this.deps.terminalHost.reconcileProviderRun(locator);
+    const inspection = await this.deps.terminalHost.inspect(locator);
+    if (sessiondAgentProviderRunIsDead(inspection, activeRun)) return false;
     switch (inspection.presence) {
       case "present":
         return true;

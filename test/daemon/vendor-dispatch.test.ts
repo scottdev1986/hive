@@ -421,6 +421,7 @@ function deps(db: HiveDatabase, sessions: RecordingRecoverySessions) {
       async inspect() {
         return { presence: "exited", diagnosticIds: [] };
       },
+      reconcileProviderRun: () => null,
     },
     createRecoverySession: async (agent: AgentRecord, command: string) => {
       sessions.created.push({ name: agent.name, command });

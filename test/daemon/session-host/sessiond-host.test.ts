@@ -954,6 +954,7 @@ describe("SessiondHost landed frozen operations", () => {
       host,
       db,
       brokerLocator.instanceId,
+      { providerRuns: db },
     );
 
     try {

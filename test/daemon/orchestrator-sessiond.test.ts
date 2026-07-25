@@ -12,6 +12,7 @@ import type {
   TerminalHostBindingStore,
 } from "../../src/daemon/session-host/terminal-host-binding";
 import { required } from "../required";
+import type { ProviderRun } from "../../src/schemas";
 
 class MemoryBindings implements TerminalHostBindingStore {
   values: HiveTerminalBinding[] = [];
@@ -70,6 +71,38 @@ class MemoryBindings implements TerminalHostBindingStore {
   }
 }
 
+class MemoryProviderRuns {
+  values: ProviderRun[] = [];
+
+  getActiveProviderRunByTerminal(
+    terminal: ProviderRun["terminal"],
+  ): ProviderRun | null {
+    return (
+      this.values.find(
+        (run) =>
+          run.state === "running" &&
+          run.terminal.sessionId === terminal.sessionId,
+      ) ?? null
+    );
+  }
+
+  insertProviderRun(run: ProviderRun): ProviderRun {
+    this.values.push(run);
+    return run;
+  }
+}
+
+const terminalTermination = {
+  reconcileProviderRun: () => null,
+  terminate: async (locator: HiveTerminalBinding["locator"]) => ({
+    locator,
+    state: "terminated" as const,
+    exit: null,
+    survivors: [],
+    errors: [],
+  }),
+};
+
 const launch: OrchestratorSessiondLaunch = {
   requestId: mintSessionRequestId(1_750_000_000_000),
   provider: "codex",
@@ -107,7 +140,16 @@ function inspection(
     hostPid: presence === "present" ? 500 : null,
     hostStartToken: presence === "present" ? "500:1" : null,
     shellRoot: null,
-    foreground: { state: "unknown", runId: null },
+    foreground:
+      presence === "present"
+        ? {
+            state: "unmanaged",
+            runId: null,
+            pid: 600,
+            startToken: "600:1",
+            foregroundProcessGroupId: 600,
+          }
+        : { state: "unknown", runId: null },
     expectedExecutable: "codex",
     executableVerified: presence === "present",
     outputSeq: "0",
@@ -164,6 +206,7 @@ describe("OrchestratorSessiondController", () => {
     const controller = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
+      providerRuns: new MemoryProviderRuns(),
       visibility: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
@@ -172,6 +215,7 @@ describe("OrchestratorSessiondController", () => {
         }),
       },
       terminalHost: {
+        ...terminalTermination,
         create: async (_spec, _input, policy) => {
           bindings.bindTerminalHostSession(policy);
           throw new Error("native host registration failed");
@@ -198,9 +242,11 @@ describe("OrchestratorSessiondController", () => {
     let admissionAttempts = 0;
     let creates = 0;
     let renewals = 0;
+    const providerRuns = new MemoryProviderRuns();
     const controller = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
+      providerRuns,
       visibility: {
         prepareAgentCreation: async () =>
           ++admissionAttempts < 2
@@ -208,6 +254,7 @@ describe("OrchestratorSessiondController", () => {
             : { engineBuildId: "engine-a", visibility, geometry },
       },
       terminalHost: {
+        ...terminalTermination,
         create: async (spec, input, policy) => {
           expect(spec.geometry).toEqual(geometry);
           expect(spec.environment).toEqual({
@@ -257,6 +304,14 @@ describe("OrchestratorSessiondController", () => {
     expect(admissionAttempts).toBe(2);
     expect(creates).toBe(1);
     expect(renewals).toBe(1);
+    expect(providerRuns.values).toHaveLength(1);
+    expect(providerRuns.values[0]).toMatchObject({
+      agentId: null,
+      provider: "codex",
+      model: null,
+      effort: null,
+      launchGrantId: launch.requestId,
+    });
     expect(bindings.values[0]?.locator).toEqual(ready.locator);
     expect(controller.snapshot()).toMatchObject({
       state: "exited",
@@ -271,6 +326,7 @@ describe("OrchestratorSessiondController", () => {
     const controller = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
+      providerRuns: new MemoryProviderRuns(),
       visibility: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
@@ -279,6 +335,7 @@ describe("OrchestratorSessiondController", () => {
         }),
       },
       terminalHost: {
+        ...terminalTermination,
         create: async (spec, _input, policy) => {
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
@@ -311,10 +368,12 @@ describe("OrchestratorSessiondController", () => {
     const waiting = new OrchestratorSessiondController({
       bindings: new MemoryBindings(),
       instanceId: "instance-a",
+      providerRuns: new MemoryProviderRuns(),
       visibility: {
         prepareAgentCreation: async () => null,
       },
       terminalHost: {
+        ...terminalTermination,
         create: async () => {
           throw new Error("not reached");
         },
@@ -338,6 +397,7 @@ describe("OrchestratorSessiondController", () => {
     const monitoring = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
+      providerRuns: new MemoryProviderRuns(),
       visibility: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
@@ -346,6 +406,7 @@ describe("OrchestratorSessiondController", () => {
         }),
       },
       terminalHost: {
+        ...terminalTermination,
         create: async (spec, _input, policy) => {
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
@@ -382,8 +443,10 @@ describe("OrchestratorSessiondController", () => {
 
   test("a daemon restart resumes the same durable root binding without a second create", async () => {
     const bindings = new MemoryBindings();
+    const providerRuns = new MemoryProviderRuns();
     let creates = 0;
     const terminalHost: OrchestratorSessiondDependencies["terminalHost"] = {
+      ...terminalTermination,
       create: async (spec) => {
         creates += 1;
         throw new Error(
@@ -403,6 +466,7 @@ describe("OrchestratorSessiondController", () => {
       await new OrchestratorSessiondController({
         bindings,
         instanceId: "instance-a",
+        providerRuns,
         visibility: {
           prepareAgentCreation: async () => ({
             engineBuildId: "engine-a",
@@ -431,6 +495,7 @@ describe("OrchestratorSessiondController", () => {
     const restarted = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
+      providerRuns,
       visibility: {
         prepareAgentCreation: async () => ({
           engineBuildId: "engine-a",
