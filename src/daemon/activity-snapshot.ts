@@ -5,7 +5,8 @@ import type {
   ProviderRun,
 } from "../schemas";
 import { ActivitySnapshotSchema } from "../schemas";
-import type { CaptureResult, SessionInspection } from "./session-host/contract";
+import type { SessionInspection } from "./session-host/contract";
+import type { SessiondOutputObservation } from "./session-host/sessiond-output-observer";
 import type { FusedAgentStatus } from "./status-fusion";
 
 const ESC = String.fromCharCode(27);
@@ -21,7 +22,7 @@ export interface ActivitySnapshotInput {
   agent: AgentRecord;
   run: ProviderRun | null;
   inspection: SessionInspection | null;
-  capture: CaptureResult | null;
+  output: SessiondOutputObservation | null;
   gitPaths: readonly string[];
   events: readonly ProviderEvent[];
   providerEventThrough?: string | null;
@@ -92,8 +93,10 @@ function phase(status: FusedAgentStatus | null): ActivitySnapshot["phase"] {
   }
 }
 
-function terminalSummary(capture: CaptureResult | null): string | null {
-  const lines = (capture?.text ?? "")
+function terminalSummary(
+  output: SessiondOutputObservation | null,
+): string | null {
+  const lines = (output?.text ?? "")
     .replaceAll(ANSI, "")
     .split("\n")
     .map((line) => line.replaceAll(/\s+/g, " ").trim())
@@ -118,10 +121,10 @@ export function buildActivitySnapshot(
       observedAt: input.observedAt,
     });
   }
-  if (input.capture !== null) {
+  if (input.output !== null) {
     evidence.push({
       kind: "terminal-output",
-      ref: `terminal:${input.capture.locator.sessionId}:${input.capture.outputSeq}`,
+      ref: `terminal:${input.output.locator.sessionId}:${input.output.outputThrough}`,
       observedAt: input.observedAt,
     });
   }
@@ -160,15 +163,16 @@ export function buildActivitySnapshot(
     providerState: providerState(input),
     turnState: turnState(input.events),
     phase: phase(input.status),
-    summary: report?.summary ?? terminalSummary(input.capture),
+    summary: report?.summary ?? terminalSummary(input.output),
     evidence,
     providerEventThrough:
       input.providerEventThrough ?? latestEvent?.eventId ?? null,
-    outputThrough: input.capture?.outputSeq ?? "0",
+    outputThrough: input.output?.outputThrough ?? "0",
     completeness:
-      input.inspection === null || input.capture === null
+      input.inspection === null || input.output === null
         ? "unknown"
-        : input.capture.truncated || input.transcriptCompleteness === "gap"
+        : input.output.completeness === "gap" ||
+            input.transcriptCompleteness === "gap"
           ? "gap"
           : "complete",
   });

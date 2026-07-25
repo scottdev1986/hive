@@ -300,6 +300,60 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   expect(submitBody.claimToken).toBe("claim-token-1");
 });
 
+test("reads a bounded ordered OUTPUT tail from the checkpoint cursor", async () => {
+  const bytes = textEncoder.encode("first\nsecond\n");
+  const host = await startFakeHost({ streamOutput: bytes });
+  hosts.push(host);
+  const observed = await SessiondViewerAttachClient.observeOutput({
+    locator,
+    grant: {
+      ...grantFor(host.endpoint),
+      outputSeq: String(bytes.byteLength),
+    },
+    geometry,
+    viewerId: "hive-daemon:activity",
+  });
+  await settle();
+
+  expect(observed).toEqual({
+    outputThrough: String(bytes.byteLength),
+    text: "first\nsecond\n",
+    completeness: "complete",
+  });
+  const attach = required(
+    host.received.find((frame) => frame.type === "HOST_ATTACH"),
+  );
+  expect(JSON.parse(textDecoder.decode(attach.payload)).afterSeq).toBe("0");
+  expect(
+    host.received.some((frame) => {
+      if (frame.type !== "APPLIED") return false;
+      return (
+        JSON.parse(textDecoder.decode(frame.payload)).throughSeq ===
+        String(bytes.byteLength)
+      );
+    }),
+  ).toBeTrue();
+});
+
+test("labels local OUTPUT tail overflow as a gap", async () => {
+  const bytes = new Uint8Array(40 * 1024).fill("x".charCodeAt(0));
+  const host = await startFakeHost({ streamOutput: bytes });
+  hosts.push(host);
+  const observed = await SessiondViewerAttachClient.observeOutput({
+    locator,
+    grant: {
+      ...grantFor(host.endpoint),
+      outputSeq: String(bytes.byteLength),
+    },
+    geometry,
+    viewerId: "hive-daemon:activity",
+  });
+
+  expect(observed.outputThrough).toBe(String(bytes.byteLength));
+  expect(Buffer.byteLength(observed.text)).toBe(32 * 1024);
+  expect(observed.completeness).toBe("gap");
+});
+
 test("declines with the arbiter's reason and never submits when the claim is denied (never-steal)", async () => {
   const { host, client } = await attachTo({ claim: "denied" });
   const result = await client.injectAutomated({

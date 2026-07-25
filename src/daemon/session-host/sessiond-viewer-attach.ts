@@ -34,6 +34,8 @@ import type {
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
+const OUTPUT_TAIL_BYTES = 32 * 1024;
+const OUTPUT_REPLAY_TIMEOUT_MS = 1_000;
 
 const frameNames = new Map<number, FrameTypeName>(
   Object.entries(FRAME_TYPES).map(([name, code]) => [
@@ -174,6 +176,14 @@ export class SessiondViewerAttachClient {
   private failure: Error | null = null;
   private maxInputTransactionBytes = TERMINAL_LIMITS.inputTransactionBytes;
   private outputHighWater = 0n;
+  private outputTail = new Uint8Array();
+  private outputComplete = true;
+  private outputWaiter: Readonly<{
+    target: bigint;
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }> | null = null;
   private activeClaimToken: string | null = null;
   /** The engine's own SessionRef for the held claim. Never derived from the
    * Hive locator: incarnation is engine-assigned, not the generation (#68). */
@@ -182,6 +192,7 @@ export class SessiondViewerAttachClient {
   private constructor(
     private readonly socket: Socket,
     private readonly deps: ViewerAttachDependencies,
+    private readonly afterSeq: string,
   ) {
     socket.on("data", (chunk) =>
       this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk),
@@ -196,9 +207,39 @@ export class SessiondViewerAttachClient {
   static async attach(
     deps: ViewerAttachDependencies,
   ): Promise<SessiondViewerAttachClient> {
+    return SessiondViewerAttachClient.connect(deps, deps.grant.outputSeq);
+  }
+
+  static async observeOutput(deps: ViewerAttachDependencies): Promise<
+    Readonly<{
+      outputThrough: string;
+      text: string;
+      completeness: "complete" | "gap";
+    }>
+  > {
+    const client = await SessiondViewerAttachClient.connect(
+      deps,
+      deps.grant.checkpointSeq,
+    );
+    try {
+      await client.waitForOutput(deps.grant.outputSeq);
+      return {
+        outputThrough: client.outputHighWater.toString(),
+        text: new TextDecoder().decode(client.outputTail),
+        completeness: client.outputComplete ? "complete" : "gap",
+      };
+    } finally {
+      client.close();
+    }
+  }
+
+  private static async connect(
+    deps: ViewerAttachDependencies,
+    afterSeq: string,
+  ): Promise<SessiondViewerAttachClient> {
     const open = deps.connect ?? defaultConnect;
     const socket = await open(deps.grant.endpoint);
-    const client = new SessiondViewerAttachClient(socket, deps);
+    const client = new SessiondViewerAttachClient(socket, deps, afterSeq);
     try {
       await client.handshake();
       return client;
@@ -244,15 +285,28 @@ export class SessiondViewerAttachClient {
       locator: this.deps.locator,
       token: this.deps.grant.token,
       geometry: this.deps.geometry,
-      afterSeq: this.deps.grant.outputSeq,
+      afterSeq: this.afterSeq,
     });
-    this.outputHighWater = BigInt(this.deps.grant.outputSeq);
+    this.outputHighWater = BigInt(this.afterSeq);
     this.writeFrame(
       "HOST_ATTACH",
       0,
       0n,
       textEncoder.encode(JSON.stringify(hostAttach)),
     );
+  }
+
+  private waitForOutput(target: string): Promise<void> {
+    const through = BigInt(target);
+    if (this.outputHighWater >= through) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.outputWaiter = null;
+        reject(new Error("sessiond output replay timed out"));
+      }, OUTPUT_REPLAY_TIMEOUT_MS);
+      timeout.unref?.();
+      this.outputWaiter = { target: through, resolve, reject, timeout };
+    });
   }
 
   /**
@@ -513,7 +567,28 @@ export class SessiondViewerAttachClient {
   private acknowledgeOutput(frame: SessiondFrame): void {
     const throughSeq = frame.streamSeq + BigInt(frame.payload.byteLength);
     if (throughSeq <= this.outputHighWater) return;
+    if (frame.streamSeq !== this.outputHighWater) this.outputComplete = false;
+    const combined = new Uint8Array(
+      this.outputTail.byteLength + frame.payload.byteLength,
+    );
+    combined.set(this.outputTail);
+    combined.set(frame.payload, this.outputTail.byteLength);
+    if (combined.byteLength > OUTPUT_TAIL_BYTES) {
+      this.outputComplete = false;
+      this.outputTail = combined.slice(combined.byteLength - OUTPUT_TAIL_BYTES);
+    } else {
+      this.outputTail = combined;
+    }
     this.outputHighWater = throughSeq;
+    if (
+      this.outputWaiter !== null &&
+      this.outputHighWater >= this.outputWaiter.target
+    ) {
+      clearTimeout(this.outputWaiter.timeout);
+      const resolve = this.outputWaiter.resolve;
+      this.outputWaiter = null;
+      resolve();
+    }
     const ack = {
       schemaVersion: 1,
       resultKind: "output",
@@ -589,6 +664,11 @@ export class SessiondViewerAttachClient {
       pending.reject(error);
     }
     this.pending.clear();
+    if (this.outputWaiter !== null) {
+      clearTimeout(this.outputWaiter.timeout);
+      this.outputWaiter.reject(error);
+      this.outputWaiter = null;
+    }
   }
 }
 

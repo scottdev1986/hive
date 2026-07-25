@@ -56,6 +56,7 @@ import {
   requireSessiondAgentLocator,
 } from "../daemon/session-host/hive-terminal-host";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
+import { observeSessiondOutput } from "../daemon/session-host/sessiond-output-observer";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
 import {
   resolveSessiondBinary,
@@ -72,6 +73,8 @@ import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
   forEachProvider,
+  type SessionLocator,
+  type TerminalGeometry,
 } from "../schemas";
 import { HIVE_SOURCE_HASH } from "../version";
 
@@ -151,7 +154,13 @@ export function stopSpawnSession(
 export interface ProductionTerminalComposition {
   terminalHost: SessiondHost;
   spawnerDependencies: Readonly<Record<never, never>>;
-  daemonDependencies: Readonly<{ terminalHost: SessiondHost }>;
+  daemonDependencies: Readonly<{
+    terminalHost: SessiondHost;
+    observeTerminalOutput: (
+      locator: SessionLocator,
+      geometry: TerminalGeometry,
+    ) => ReturnType<typeof observeSessiondOutput>;
+  }>;
 }
 
 /** The production terminal composition has one constructor call and one host. */
@@ -166,7 +175,16 @@ export function createProductionTerminalComposition(
   return {
     terminalHost,
     spawnerDependencies: {},
-    daemonDependencies: { terminalHost },
+    daemonDependencies: {
+      terminalHost,
+      observeTerminalOutput: (locator, geometry) =>
+        observeSessiondOutput(
+          terminalHost,
+          locator,
+          geometry,
+          "hive-daemon:activity",
+        ),
+    },
   };
 }
 

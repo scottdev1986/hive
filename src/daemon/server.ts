@@ -62,6 +62,7 @@ import {
   RoutingPolicyMutationSchema,
   SessionLocatorSchema,
   StatuslineReportSchema,
+  type TerminalGeometry,
   TerminalGeometrySchema,
   unknownVendor,
 } from "../schemas";
@@ -206,6 +207,7 @@ import {
   type LandedTerminalHost,
   SessiondHost,
 } from "./session-host/sessiond-host";
+import type { SessiondOutputObservation } from "./session-host/sessiond-output-observer";
 import {
   ROOT_VISIBILITY_ID,
   type WorkspaceVisibilityAdmission,
@@ -566,8 +568,13 @@ export interface HiveDaemonOptions {
    * Production opens it via EpisodicStore.forProjectRoot so the store's
    * location comes from the daemon's own project identity. */
   episodicStore?: EpisodicStore;
-  /** WP2/WP3 bind these seams. Observation itself only calls capture. */
+  /** Visible-text capture for the separately authorized terminal-observe tool. */
   sessionHost?: Pick<SessionHost, "capture">;
+  /** Bounded raw output used by passive fleet activity observation. */
+  observeTerminalOutput?: (
+    locator: SessionLocator,
+    geometry: TerminalGeometry,
+  ) => Promise<SessiondOutputObservation | null>;
   /** Frozen neutral sessiond backend; Hive policy is applied by its binding adapter. */
   terminalHost?: LandedTerminalHost;
   /** Live Workspace-owned full inventory. Absent keeps sessiond admission closed. */
@@ -851,6 +858,9 @@ export class HiveDaemon {
     beforeKill?: () => void | Promise<void>,
   ) => Promise<ReapOutcome>;
   private readonly sessionHost: Pick<SessionHost, "capture"> | null;
+  private readonly observeTerminalOutput:
+    | NonNullable<HiveDaemonOptions["observeTerminalOutput"]>
+    | null;
   private readonly resolveSessionLocator: NonNullable<
     HiveDaemonOptions["resolveSessionLocator"]
   > | null;
@@ -909,6 +919,7 @@ export class HiveDaemon {
     }
     this.spawner = options.spawner;
     this.sessionHost = options.sessionHost ?? null;
+    this.observeTerminalOutput = options.observeTerminalOutput ?? null;
     this.resolveSessionLocator = options.resolveSessionLocator ?? null;
     this.statusIncarnationGenerationSource =
       options.statusIncarnationGenerationSource;
@@ -5532,14 +5543,13 @@ export class HiveDaemon {
               sessions?.find((session) =>
                 sameSessionLocator(session.locator, locator),
               ) ?? null;
-            const capture =
-              this.sessionHost === null
+            const output =
+              this.observeTerminalOutput === null || inspection === null
                 ? null
-                : await this.sessionHost
-                    .capture(locator, {
-                      include: "visible-text",
-                      maxRows: 24,
-                    })
+                : await this.observeTerminalOutput(
+                    locator,
+                    inspection.geometry,
+                  )
                     .catch(() => null);
             const run =
               this.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
@@ -5564,7 +5574,7 @@ export class HiveDaemon {
                 agent,
                 run,
                 inspection,
-                capture,
+                output,
                 gitPaths: files,
                 events: providerEvents,
                 status: fuseAgentStatus(
