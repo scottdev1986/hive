@@ -239,9 +239,6 @@ export class DrainHandler {
       }
       return;
     }
-    if (!isTerminal(agent)) {
-      await this.hold(agent, `all providers drained: ${drain.reason}`, null);
-    }
     this.deps.remember?.({
       agent: agent.name,
       type: "quota-drain",
@@ -253,10 +250,12 @@ export class DrainHandler {
     await this.deps.requestReplacement(agent, drain);
   }
 
+  /** A hold is a wait: it exists only for a reset the sweep can poke the agent
+   * past, so `resetsAt` is required and never invented. */
   private async hold(
     agent: AgentRecord,
     reason: string,
-    resetsAt: string | null,
+    resetsAt: string,
   ): Promise<boolean> {
     const run = this.deps.db.getActiveProviderRunForAgent(agent.id);
     if (run === null || !(await this.deps.pauseProvider(agent, run)))
@@ -307,11 +306,14 @@ export class DrainHandler {
     });
   }
 
+  /** The replacement seam owns freezing the source: it fences the epoch, pauses
+   * the run, persists the handoff, and leaves the agent in a state the daemon
+   * reports. A hold here would say "waiting for a reset" about an agent with no
+   * reset to wait for, and the sweep's resume can never act on that. */
   private async deferReplacement(
     agent: AgentRecord,
     drain: ReplacementDrain,
   ): Promise<void> {
-    if (!isTerminal(agent)) await this.hold(agent, drain.reason, null);
     await this.deps.requestReplacement(agent, drain);
   }
 }

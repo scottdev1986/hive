@@ -347,7 +347,9 @@ describe("the drain handler", () => {
     insertRunningAgent(h, agent());
 
     await h.drain.sweep();
-    expect(h.paused).toEqual(["maya"]);
+    // Freezing the source belongs to the seam, which pauses the exact run it
+    // fenced; the handler does not pause on its way there.
+    expect(h.paused).toEqual([]);
     expect(h.replacements).toEqual([
       {
         name: "maya",
@@ -360,11 +362,36 @@ describe("the drain handler", () => {
       },
     ]);
     expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "held",
-      holdResetAt: null,
       worktreePath: "/tmp/worktree",
       branch: "hive/maya-server",
     });
+  });
+
+  test("a drain with no reset to wait for never leaves the agent held", async () => {
+    const h = await harness([
+      {
+        provider: "claude",
+        fiveHourUsed: 100,
+        weeklyUsed: 40,
+        fiveHourResetAt: at(180),
+      },
+      {
+        provider: "codex",
+        fiveHourUsed: 10,
+        weeklyUsed: 20,
+        fiveHourResetAt: at(200),
+      },
+    ]);
+    insertRunningAgent(h, agent());
+
+    await h.drain.sweep();
+    // A `held` row with a null reset is a state the sweep's resume can never
+    // act on: the agent would wait for a poke that cannot arrive. The seam
+    // reports this agent instead of holding it.
+    const row = h.db.getAgentById("agent-maya")!;
+    expect({ status: row.status, holdResetAt: row.holdResetAt ?? null }).not
+      .toEqual({ status: "held", holdResetAt: null });
+    expect(h.replacements).toHaveLength(1);
   });
 
   test("§R6: when everything is drained, the agent waits for the nearest five-hour reset", async () => {
@@ -429,9 +456,13 @@ describe("the drain handler", () => {
     expect(h.memories[0]?.summary).toContain(
       "Resume it when any provider's usage returns",
     );
-    expect(h.paused).toEqual(["maya"]);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "held",
+    expect(h.paused).toEqual([]);
+    const retained = h.db.getAgentById("agent-maya")!;
+    expect({
+      status: retained.status,
+      holdResetAt: retained.holdResetAt ?? null,
+    }).not.toEqual({ status: "held", holdResetAt: null });
+    expect(retained).toMatchObject({
       worktreePath: "/tmp/worktree",
       branch: "hive/maya-server",
     });
