@@ -1283,7 +1283,12 @@ export class HiveSpawner implements Spawner {
     command: string,
     _expectedExecutable: string,
     launchGrantId: string,
-    providerRunId: string = crypto.randomUUID(),
+    // REQUIRED, and deliberately not defaulted. A minted-here id is one no
+    // provider hook carries, so recordProviderHookEvent rejects every event on
+    // run-id mismatch and the agent's events vanish silently — no test and no
+    // typecheck can see that. A caller that forgets to thread the id must fail
+    // to compile instead.
+    providerRunId: string,
   ): Promise<void> {
     const admission = await this.requireSessiondCreationPolicy(record);
     const shell = shellSessionLaunch(command);
@@ -1358,7 +1363,7 @@ export class HiveSpawner implements Spawner {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
-    providerRunId?: string,
+    providerRunId: string,
   ): Promise<void> {
     await this.createSession(
       record,

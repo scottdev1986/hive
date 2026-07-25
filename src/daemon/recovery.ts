@@ -22,6 +22,7 @@ import {
   requireAuthorizedLaunch,
 } from "./authorized-launch";
 import type { HiveDatabase } from "./db";
+import { classifyVendorDrainError } from "./drain-handler";
 import { launchPromptPath } from "./launch-prompt";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import {
@@ -29,7 +30,6 @@ import {
   waitForMcpReporting,
   watchForProofOfLife,
 } from "./readiness";
-import { classifyVendorDrainError } from "./drain-handler";
 import { parseProcessTable, runPs, treeRunsCommand } from "./resources";
 import {
   type HiveTerminalHostAdapter,
@@ -103,7 +103,7 @@ export interface CrashRecoveryDependencies {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
-    providerRunId?: string,
+    providerRunId: string,
   ) => Promise<void>;
   /** PR5 wires the policy-backed full gate. Missing/unreadable refuses resume. */
   authorizeLaunch?: (
@@ -611,15 +611,13 @@ export class CrashRecovery {
       const instructionPath = launchPromptPath(sessionKey);
       const hasInstructions = existsSync(instructionPath);
       const adapter = getAgentAdapter(record.tool);
-      await adapter
-        .prepareWorktree?.(worktreePath)
-        .catch((error: unknown) => {
-            console.error(
-              `Hive could not re-prepare ${record.name}'s worktree: ${
-                error instanceof Error ? error.message : "unknown error"
-              }`,
-            );
-          });
+      await adapter.prepareWorktree?.(worktreePath).catch((error: unknown) => {
+        console.error(
+          `Hive could not re-prepare ${record.name}'s worktree: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       const providerRunId = crypto.randomUUID();
       const prepared = await adapter.prepareSpawn({
         daemonPort: this.daemonPort(),

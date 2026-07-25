@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HiveDatabase } from "../../src/daemon/db";
-import { HiveSpawner } from "../../src/daemon/spawner-impl";
-import type {
-  SessionInspection as ProductSessionInspection,
-} from "../../src/daemon/session-host/contract";
+import type { SessionInspection as ProductSessionInspection } from "../../src/daemon/session-host/contract";
 import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
@@ -13,9 +10,10 @@ import {
 } from "../../src/daemon/session-host/hive-terminal-host";
 import type { HiveTerminalBinding } from "../../src/daemon/session-host/terminal-host-binding";
 import type { SessionInspection } from "../../src/daemon/session-host/terminal-host-contract";
+import { HiveSpawner } from "../../src/daemon/spawner-impl";
 import {
-  CAPABILITY_PROVIDERS,
   type AgentRecord,
+  CAPABILITY_PROVIDERS,
   type CapabilityProvider,
   type ProviderRun,
 } from "../../src/schemas";
@@ -461,6 +459,7 @@ describe("C0 provider-run identity", () => {
         "codex --resume thread-fixture",
         "codex",
         "req_018f1e90-7b5a-7cc0-8000-000000000300",
+        "018f1e90-7b5a-7cc0-8000-000000000301",
       ),
     ).rejects.toThrow();
     expect(terminations).toBe(1);

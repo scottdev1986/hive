@@ -53,7 +53,9 @@ export interface Spawner {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
-    providerRunId?: string,
+    /** Required: the run the provider's hooks will report under. An id minted
+     * downstream matches no hook and loses every event silently. */
+    providerRunId: string,
   ): Promise<void>;
   restartForControl?(
     agent: AgentRecord,
