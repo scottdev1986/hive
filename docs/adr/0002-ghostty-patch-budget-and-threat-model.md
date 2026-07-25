@@ -17,29 +17,43 @@ The Ghostty patch may implement only manual surface I/O, complete same-build ter
 
 - exactly one Hive public C header;
 - at most six modified upstream implementation files; and
-- at most 3,000 net non-test lines.
+- at most 3,250 net non-test lines.
 
 The line limit is measured, not guessed. With the full approved series known
 (manual I/O + checkpoint, terminal reply effects, checkpoint restore-in-place,
-semantic snapshot), `git apply --numstat` over the ordered series totals 3,876
-additions minus 107 deletions = 3,769 net lines, of which 828 added lines sit
-inside top-level Zig `test` blocks (all in patch 0001's checkpoint corpus), so
-the measured net non-test total is 2,941; the hard limit is that measurement
-plus modest review headroom. Per-patch measurement and upstream-omission
-rationale:
+semantic snapshot, streaming checkpoint export), the cumulative base-to-patched
+diff totals 4,346 additions minus 39 deletions = 4,307 net lines. Of those,
+1,103 added lines sit inside top-level Zig `test` blocks and 19 net lines are
+declared build wiring or fixtures, so the measured net non-test total is 3,185;
+the hard limit is that measurement plus 65 lines of review headroom. This line
+and file budget bounds the review and rebase cost of carrying the delta against
+upstream. It does not broaden the allowed behavior above.
 
-| Patch | Net lines | Why upstream cannot supply it |
+The increase from 3,000 is load-bearing rather than scope growth. The current
+delta still implements only the approved bridge: the fifth patch makes
+checkpoint export bounded and streaming and retains exact legacy-checkpoint
+compatibility. Removing it would trade the measured line limit for an
+unbounded contiguous export allocation or broken same-build recovery. No
+window, product, process, provider, or authorization behavior entered the
+Ghostty tree.
+
+Per-patch raw measurement and upstream-omission rationale:
+
+| Patch | Raw net lines | Why upstream cannot supply it |
 | --- | --- | --- |
-| 0001 manual I/O + checkpoint | 3,071 (2,243 non-test) | No embedding API for a PTY-less manual surface, ordered output ingestion, or complete opaque same-build checkpoint |
-| 0002 terminal reply effects | 160 | Stock reply generation is PTY-bound; the manual surface must route parser replies through the single host write callback with sessiond as the only canonical authority |
-| 0003 checkpoint restore-in-place | -3 | Restored stream state holds self-referential pointers; restore must replay in place at its final address, which only the bridge-owned surface restore path can do |
+| 0001 manual I/O + checkpoint | 3,241 | No embedding API for a PTY-less manual surface, ordered output ingestion, or complete opaque same-build checkpoint |
+| 0002 terminal reply effects | 167 | Stock reply generation is PTY-bound; the manual surface must route parser replies through the single host write callback with sessiond as the only canonical authority |
+| 0003 checkpoint restore-in-place | 6 | Restored stream state holds self-referential pointers; restore must replay in place at its final address, which only the bridge-owned surface restore path can do |
 | 0004 semantic snapshot | 541 | Stock independent reads (text, selection, cursor, geometry) can tear across renderer/termio mutation; the atomic single-lock capture with UTF-16 cursor/selection indices does not exist upstream |
+| 0005 streaming checkpoints | 352 | Stock export requires one contiguous payload; bounded callback streaming and exact legacy-checkpoint migration are required for recoverable large sessions |
 
-Modified-file tally against the six-file limit: five upstream implementation
+Modified-file tally against the six-file limit: six upstream implementation
 files (`Surface.zig`, `apprt/embedded.zig`, `terminal/c/terminal.zig`,
-`termio/backend.zig`, `terminal/stream_terminal.zig`); `hive_checkpoint.zig`
-is a new Hive-owned file, and the `build/*`, `build_options`, and `lib_vt`
-edits are build wiring.
+`termio/backend.zig`, `terminal/stream_terminal.zig`, `terminal/osc.zig`);
+`hive_checkpoint.zig` is a new Hive-owned file, and the `build/*`,
+`build_options`, and `lib_vt` edits are build wiring. The upstream file budget
+is therefore fully spent: any change requiring a seventh upstream
+implementation file must stop for a boundary decision before implementation.
 
 Generated bindings, tests, fixtures, and build wiring do not count toward those three limits. They remain reviewable release inputs and may not hide implementation logic. One Swift wrapper fences the C ABI on the Hive side.
 

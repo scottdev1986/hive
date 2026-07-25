@@ -11,6 +11,9 @@ UPSTREAM_REPO="$CACHE/ghostty-upstream"
 EXPECTED_COMMIT=$(/usr/bin/plutil -extract ghostty.commit raw -o - "$LOCK")
 EXPECTED_TREE=$(/usr/bin/plutil -extract ghostty.upstreamTree raw -o - "$LOCK")
 EXPECTED_PATCHED_TREE=$(/usr/bin/plutil -extract ghostty.patchedTree raw -o - "$LOCK")
+EXPECTED_PUBLIC_HEADERS=1
+MAX_UPSTREAM_IMPLEMENTATION_FILES=6
+MAX_NET_NON_TEST_LINES=3250
 
 usage() {
   echo "usage: $0 fetch|verify|patch-series-sha256" >&2
@@ -68,6 +71,64 @@ apply_series() {
   done
 }
 
+verify_patch_budget() {
+  target=$1
+  public_headers=$(/usr/bin/find "$ROOT/native/include" -maxdepth 1 -type f -name '*.h' | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+  if [ "$public_headers" -ne "$EXPECTED_PUBLIC_HEADERS" ]; then
+    echo "Ghostty patch budget exceeded: expected $EXPECTED_PUBLIC_HEADERS public C header, found $public_headers" >&2
+    exit 1
+  fi
+
+  # Make ignored new patch files visible to `git diff` without staging their
+  # contents. The base tree remains the index/HEAD comparison point.
+  git -C "$target" add -N -f .
+  set -- $(git -C "$target" diff --unified=1000000 --no-ext-diff | /usr/bin/awk '
+    BEGIN { additions = 0; deletions = 0; excluded_additions = 0; excluded_deletions = 0; tests = 0; upstream_files = 0 }
+    /^\+\+\+ b\// {
+      file = substr($0, 7)
+      excluded = file ~ /^src\/build\// || file == "src/terminal/build_options.zig" ||
+        file == "src/lib_vt.zig" || file ~ /^src\/testdata\//
+      if (!excluded && file != "src/hive_checkpoint.zig") upstream_files++
+      in_test = 0
+      next
+    }
+    /^@@ / { next }
+    /^\+/ && !/^\+\+\+/ {
+      content = substr($0, 2)
+      additions++
+      if (excluded) excluded_additions++
+      if (!excluded && !in_test && content ~ /^test /) in_test = 1
+      if (!excluded && in_test) tests++
+      if (in_test && content == "}") in_test = 0
+      next
+    }
+    /^-/ && !/^---/ {
+      deletions++
+      if (excluded) excluded_deletions++
+      next
+    }
+    /^ / {
+      content = substr($0, 2)
+      if (!excluded && !in_test && content ~ /^test /) in_test = 1
+      if (in_test && content == "}") in_test = 0
+    }
+    END {
+      excluded_net = excluded_additions - excluded_deletions
+      print upstream_files, additions - deletions - tests - excluded_net
+    }
+  ')
+  upstream_files=$1
+  net_non_test_lines=$2
+  if [ "$upstream_files" -gt "$MAX_UPSTREAM_IMPLEMENTATION_FILES" ]; then
+    echo "Ghostty patch budget exceeded: $upstream_files upstream implementation files > $MAX_UPSTREAM_IMPLEMENTATION_FILES" >&2
+    exit 1
+  fi
+  if [ "$net_non_test_lines" -gt "$MAX_NET_NON_TEST_LINES" ]; then
+    echo "Ghostty patch budget exceeded: $net_non_test_lines net non-test lines > $MAX_NET_NON_TEST_LINES" >&2
+    exit 1
+  fi
+}
+
 verify_vendor() {
   if [ ! -d "$VENDOR" ]; then
     echo "vendored Ghostty tree is missing; run scripts/vendor-ghostty.sh fetch" >&2
@@ -94,9 +155,8 @@ verify_vendor() {
     exit 1
   fi
 
-  /bin/rm -rf "$tmp/.git"
   apply_series "$tmp"
-  git -C "$tmp" init -q
+  verify_patch_budget "$tmp"
   git -C "$tmp" add -f .
   actual_patched_tree=$(git -C "$tmp" write-tree)
   if [ "$actual_patched_tree" != "$EXPECTED_PATCHED_TREE" ]; then
