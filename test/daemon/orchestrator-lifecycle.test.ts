@@ -68,11 +68,8 @@ test("compact status carries the passive activity projection", () => {
     completeness: "unknown" as const,
   };
   expect(
-    compactActiveTeam(
-      [value],
-      new Map(),
-      new Map([[value.id, activity]]),
-    )[0]?.activity,
+    compactActiveTeam([value], new Map(), new Map([[value.id, activity]]))[0]
+      ?.activity,
   ).toEqual(activity);
 });
 
@@ -224,6 +221,30 @@ describe("event-driven orchestrator lifecycle", () => {
     });
     expect(db.listMessageAttempts(message.id)).toHaveLength(1);
     expect(db.listMessageAttempts(message.id)[0]?.outcome).toBe("written");
+
+    const second = await delivery.send("sam", "maya", "Second message.");
+    const third = await delivery.send("queen", "maya", "Third message.");
+    expect([second.state, third.state]).toEqual(["queued", "queued"]);
+    const current = db.getAgentByName("maya");
+    if (current === null) throw new Error("agent disappeared");
+    db.upsertAgent({ ...current, status: "idle" });
+
+    const flushed = await delivery.flushQueued("maya");
+
+    expect(flushed.map((item) => item.id)).toEqual([second.id, third.id]);
+    expect(writes).toHaveLength(2);
+    const batch = new TextDecoder().decode(writes[1]?.bytes);
+    expect(batch.indexOf(second.id)).toBeLessThan(batch.indexOf(third.id));
+    expect(batch).toContain(`message ${second.id} from sam:`);
+    expect(batch).toContain(`message ${third.id} from queen:`);
+    expect(db.listMessageAttempts(second.id)[0]).toMatchObject({
+      outcome: "written",
+      terminalReceipt: { transactionId: writes[1]?.idempotencyKey },
+    });
+    expect(db.listMessageAttempts(third.id)[0]).toMatchObject({
+      outcome: "written",
+      terminalReceipt: { transactionId: writes[1]?.idempotencyKey },
+    });
     db.close();
   });
 
@@ -258,21 +279,25 @@ describe("event-driven orchestrator lifecycle", () => {
       exitReason: null,
     };
     db.insertProviderRun(run);
+    const writes: Parameters<SessiondAgentInput["writeAutomated"]>[0][] = [];
     const input: SessiondAgentInput = {
-      writeAutomated: async (value): Promise<SessiondInjectResult> => ({
-        outcome: "declined",
-        reason: "input receipt stage rejected: foreground-changed",
-        receipt: {
-          transactionId: value.idempotencyKey,
-          stage: "rejected",
-          byteRange: null,
-          orderedAt: null,
-          availableCreditBytes: 4_096,
-          consumedByProcess: "not-claimed",
-          completeness: "complete",
-          diagnostic: "foreground-changed",
-        },
-      }),
+      writeAutomated: async (value): Promise<SessiondInjectResult> => {
+        writes.push(value);
+        return {
+          outcome: "declined",
+          reason: "input receipt stage rejected: foreground-changed",
+          receipt: {
+            transactionId: value.idempotencyKey,
+            stage: "rejected",
+            byteRange: null,
+            orderedAt: null,
+            availableCreditBytes: 4_096,
+            consumedByProcess: "not-claimed",
+            completeness: "complete",
+            diagnostic: "foreground-changed",
+          },
+        };
+      },
     };
     const delivery = new MessageDelivery(
       db,
@@ -301,6 +326,27 @@ describe("event-driven orchestrator lifecycle", () => {
         diagnostic: "foreground-changed",
       },
     });
+
+    const second = await delivery.send("sam", "maya", "Second message.");
+    const third = await delivery.send("queen", "maya", "Third message.");
+    const current = db.getAgentByName("maya");
+    if (current === null) throw new Error("agent disappeared");
+    db.upsertAgent({ ...current, status: "idle" });
+    expect(await delivery.flushQueued("maya")).toEqual([]);
+    expect(writes).toHaveLength(2);
+    for (const id of [message.id, second.id, third.id]) {
+      expect(db.getMessage(id)).toMatchObject({
+        state: "queued",
+        deliveredAt: null,
+      });
+      expect(db.listMessageAttempts(id).at(-1)).toMatchObject({
+        outcome: "foreground-changed",
+        terminalReceipt: {
+          transactionId: writes[1]?.idempotencyKey,
+          byteRange: null,
+        },
+      });
+    }
     db.close();
   });
 

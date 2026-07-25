@@ -9,6 +9,7 @@ import {
   ORCHESTRATOR_NAME,
   type OrchestratorMessageEnvelope,
   orchestratorRecipientNames,
+  type ProviderRun,
   unknownVendor,
 } from "../schemas";
 import type { InputReceipt } from "./session-host/contract";
@@ -35,9 +36,17 @@ function agentSessionLockKey(agent: AgentRecord): string {
 }
 
 import { isComposerLeased } from "./composer-lease";
+import {
+  buildNormalMessageBatchProjection,
+  MESSAGE_BATCH_MAX_MESSAGES,
+} from "./context-projection";
 import type { HiveDatabase } from "./db";
 import type { ComposedMemoryDelta, WakeDeltaProvider } from "./memory-delta";
-import type { MemoryTriggerExecutor } from "./memory-triggers";
+import {
+  detectMemoryTrigger,
+  type MemoryTriggerExecutor,
+  memoryTriggerAuthority,
+} from "./memory-triggers";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
@@ -486,6 +495,16 @@ export class MessageDelivery {
       ) {
         return current;
       }
+      if (currentRun !== null && this.isBatchableNormal(current)) {
+        const normal = this.db
+          .getUndeliveredMessages(to)
+          .filter((candidate) => this.isBatchableNormal(candidate))
+          .slice(0, MESSAGE_BATCH_MAX_MESSAGES);
+        if (normal.length > 0) {
+          await this.deliverNormalBatch(normal, currentRecipient, currentRun);
+          return this.getStoredMessage(current.id);
+        }
+      }
       return this.deliver(current, currentRecipient);
     });
   }
@@ -498,6 +517,17 @@ export class MessageDelivery {
       recipient.status !== "dead" &&
       recipient.status !== "done" &&
       recipient.status !== "failed"
+    );
+  }
+
+  private isBatchableNormal(message: AgentMessage): boolean {
+    return (
+      message.priority === "normal" &&
+      !(
+        this.memoryTriggers !== undefined &&
+        memoryTriggerAuthority(message.from) !== null &&
+        detectMemoryTrigger(message.body) !== null
+      )
     );
   }
 
@@ -547,7 +577,9 @@ export class MessageDelivery {
       }
 
       const delivered: AgentMessage[] = [];
-      for (const queued of queuedMessages) {
+      for (let index = 0; index < queuedMessages.length; index += 1) {
+        const queued = queuedMessages[index];
+        if (queued === undefined) continue;
         try {
           const message = this.db.getMessage(queued.id);
           if (message === null || message.deliveredAt !== null) {
@@ -567,6 +599,43 @@ export class MessageDelivery {
             !canOpenTurn
           ) {
             continue;
+          }
+          if (this.isBatchableNormal(message)) {
+            const normal: AgentMessage[] = [];
+            for (
+              let offset = index;
+              offset < queuedMessages.length &&
+              normal.length < MESSAGE_BATCH_MAX_MESSAGES;
+              offset += 1
+            ) {
+              const candidate = queuedMessages[offset];
+              if (candidate === undefined) break;
+              const stored = this.db.getMessage(candidate.id);
+              if (
+                stored === null ||
+                stored.deliveredAt !== null ||
+                !this.isBatchableNormal(stored)
+              )
+                break;
+              normal.push(stored);
+            }
+            const activeRun =
+              latestRecipient.sessionLocator?.hostKind === "sessiond"
+                ? this.db.getActiveProviderRunByTerminal(
+                    latestRecipient.sessionLocator,
+                  )
+                : null;
+            if (normal.length > 0 && activeRun !== null) {
+              const results = await this.deliverNormalBatch(
+                normal,
+                latestRecipient,
+                activeRun,
+              );
+              delivered.push(...results);
+              index += normal.length - 1;
+              if (canOpenTurn) break;
+              continue;
+            }
           }
           if (this.nativeControl?.hasAgent(latestRecipient.name)) {
             delivered.push(await this.deliverNative(message, latestRecipient));
@@ -1000,6 +1069,145 @@ export class MessageDelivery {
       console.error(line);
       this.log?.(line);
     }
+  }
+
+  private async deliverNormalBatch(
+    messages: readonly AgentMessage[],
+    recipient: AgentRecord,
+    activeRun: ProviderRun,
+  ): Promise<AgentMessage[]> {
+    if (this.composerActive(recipient.name)) return [];
+    const projection = buildNormalMessageBatchProjection(
+      messages,
+      activeRun.runId,
+    );
+    const delta = await this.composeWakeDelta(recipient);
+    const text =
+      delta === null ? projection.body : `${projection.body}\n\n${delta.block}`;
+
+    if (this.sessiondInput !== undefined) {
+      const terminal = requireSessiondAgentLocator(recipient);
+      if (this.processState !== undefined) {
+        const state = await this.processState(recipient).catch(
+          () => "unknown" as const,
+        );
+        if (state !== "running") {
+          const at = new Date().toISOString();
+          for (const message of messages) {
+            this.db.recordMessageDeliveryDiagnostic(
+              message.id,
+              `sessiond inject declined: provider foreground state is ${state}`,
+              at,
+            );
+          }
+          return [];
+        }
+      }
+      const attempts = messages.map((message) =>
+        this.db.beginMessageAttempt({
+          attemptId: crypto.randomUUID(),
+          messageId: message.id,
+          expectedProviderRunId: activeRun.runId,
+          terminalGeneration: terminal.generation,
+          expectedForeground: {
+            pid: activeRun.pid,
+            startToken: activeRun.startToken,
+            processGroupId: activeRun.foregroundProcessGroupId,
+          },
+          attemptedAt: new Date().toISOString(),
+        }),
+      );
+      let result: SessiondInjectResult;
+      try {
+        result = await this.sessiondInput.writeAutomated({
+          terminal,
+          expectedForeground: {
+            providerRunId: activeRun.runId,
+            pid: activeRun.pid,
+            startToken: activeRun.startToken,
+            processGroupId: activeRun.foregroundProcessGroupId,
+          },
+          bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
+          idempotencyKey: projection.projectionId,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "unknown error";
+        const at = new Date().toISOString();
+        for (const attempt of attempts) {
+          this.db.finishMessageAttempt(attempt.attemptId, {
+            outcome: detail.includes("timed out") ? "timeout" : "unknown",
+            terminalReceipt: null,
+          });
+          this.db.recordMessageDeliveryDiagnostic(
+            attempt.messageId,
+            `sessiond inject failed: ${detail}`,
+            at,
+          );
+        }
+        return [];
+      }
+      if (result.outcome === "declined") {
+        const at = new Date().toISOString();
+        for (const attempt of attempts) {
+          this.db.finishMessageAttempt(attempt.attemptId, {
+            outcome: result.reason.includes("foreground-changed")
+              ? "foreground-changed"
+              : result.reason.startsWith("claim ")
+                ? "input-busy"
+                : "unknown",
+            terminalReceipt: result.receipt ?? null,
+          });
+          this.db.recordMessageDeliveryDiagnostic(
+            attempt.messageId,
+            `sessiond inject declined: ${result.reason}`,
+            at,
+          );
+        }
+        return [];
+      }
+      for (const attempt of attempts) {
+        this.db.finishMessageAttempt(attempt.attemptId, {
+          outcome: "written",
+          terminalReceipt: result.receipt,
+        });
+      }
+      const delivered = messages.map((message) => this.markInjected(message));
+      this.advanceWakeDelta(recipient, delta);
+      if (result.recovery !== undefined) {
+        const at = new Date().toISOString();
+        for (const message of messages) {
+          this.db.recordMessageDeliveryDiagnostic(
+            message.id,
+            `sessiond inject recovered: ${result.recovery}`,
+            at,
+          );
+        }
+      }
+      return delivered;
+    }
+
+    if (this.nativeControl?.hasAgent(recipient.name)) {
+      await this.nativeControl.deliver(recipient, text);
+      const delivered = messages.map((message) => this.markInjected(message));
+      this.advanceWakeDelta(recipient, delta);
+      return delivered;
+    }
+
+    const boundaryBefore = this.turnBoundaryAt(recipient.name);
+    await this.sessions.sendSessionMessage(recipient, text, {
+      messageId: projection.projectionId,
+    });
+    const live = this.db.getAgentByName(recipient.name) ?? recipient;
+    if (
+      live.status === "idle" &&
+      reportsTurnEvents(live.tool) &&
+      !(await this.turnStarted(recipient.name, boundaryBefore))
+    ) {
+      return [];
+    }
+    const delivered = messages.map((message) => this.markInjected(message));
+    this.advanceWakeDelta(recipient, delta);
+    return delivered;
   }
 
   private async deliver(
