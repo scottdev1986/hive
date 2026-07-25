@@ -35,6 +35,7 @@ function manifest(url = "https://example.test/graphify.tar.zst") {
 
 describe("Graphify runtime channel", () => {
   test("resolves the platform artifact from the published channel manifest", async () => {
+    delete process.env.HIVE_GRAPHIFY_MANIFEST;
     const artifactUrl =
       "https://github.com/owner/repo/releases/download/graphify-v0.9.25-hive.2/graphify.tar.zst";
     const fetcher = async (input: string | URL | Request) => {

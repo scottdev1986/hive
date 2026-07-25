@@ -4,7 +4,6 @@
 // here — `bun test` never downloads a model.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   collectFastembedClosure,
@@ -15,6 +14,7 @@ import {
   runEmbeddingsInstall,
 } from "../../src/cli/embeddings";
 import { HIVE_VERSION } from "../../src/version";
+import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const tempRoots: string[] = [];
 
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function makeTempDir(prefix: string): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), prefix));
+  const dir = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, prefix));
   tempRoots.push(dir);
   return dir;
 }

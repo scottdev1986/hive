@@ -13,6 +13,16 @@ const T1 = "2026-07-22T11:00:00.000Z";
 const T2 = "2026-07-22T12:00:00.000Z";
 
 const tempDir = () => mkdtempSync(join(tmpdir(), "hive-episodic-test-"));
+const projectRoot = () => {
+  const root = tempDir();
+  const initialized = Bun.spawnSync(["git", "init", "--quiet", root]);
+  if (initialized.exitCode !== 0) {
+    throw new Error(
+      `Failed to initialize isolated test repository: ${initialized.stderr.toString()}`,
+    );
+  }
+  return root;
+};
 
 const stores: EpisodicStore[] = [];
 const track = <T extends EpisodicStore>(store: T): T => {
@@ -36,7 +46,7 @@ describe("EpisodicStore location and lifecycle", () => {
     const home = tempDir();
     process.env.HIVE_HOME = home;
     try {
-      const root = tempDir();
+      const root = projectRoot();
       const hiveUuid = projectHiveUuid(root);
       const first = track(EpisodicStore.forProjectRoot(root));
       expect(first.path).toBe(join(home, "projects", hiveUuid, "episodic.db"));
@@ -66,8 +76,8 @@ describe("EpisodicStore location and lifecycle", () => {
     const previousHome = process.env.HIVE_HOME;
     process.env.HIVE_HOME = tempDir();
     try {
-      const rootA = tempDir();
-      const rootB = tempDir();
+      const rootA = projectRoot();
+      const rootB = projectRoot();
       const storeA = track(EpisodicStore.forProjectRoot(rootA));
       const storeB = track(EpisodicStore.forProjectRoot(rootB));
       expect(storeA.path).not.toBe(storeB.path);

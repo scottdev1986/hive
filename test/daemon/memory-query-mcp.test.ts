@@ -45,6 +45,12 @@ async function makeHome(): Promise<string> {
 async function makeRepo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "hive-memory-query-repo-"));
   tempRoots.push(root);
+  const initialized = Bun.spawnSync(["git", "init", "--quiet", root]);
+  if (initialized.exitCode !== 0) {
+    throw new Error(
+      `Failed to initialize isolated test repository: ${initialized.stderr.toString()}`,
+    );
+  }
   return root;
 }
 
