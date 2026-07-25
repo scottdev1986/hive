@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -6431,11 +6431,15 @@ export class HiveDaemon {
           this.memory,
           written,
         );
+        const [reportedPath, reportedRawPath] = await Promise.all([
+          realpath(written.path),
+          realpath(written.rawPath),
+        ]);
         return toolResult(
           {
             ...compactMemoryWriteResult(
-              written,
-              written.rawPath,
+              { ...written, path: reportedPath },
+              reportedRawPath,
               similarCandidates,
             ),
             // Defect D2: what actually happened to this write's vector

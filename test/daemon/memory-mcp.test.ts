@@ -5,7 +5,9 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -317,6 +319,45 @@ describe("memory MCP tools", () => {
         }),
       ) as { body: string };
       expect(read.body.trim()).toEqual(longBody.trim());
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+
+  test("memory_write reports physical paths when global memory is symlinked", async () => {
+    const home = await makeHome();
+    const durableHome = await mkdtemp(
+      join(tmpdir(), "hive-memory-mcp-durable-"),
+    );
+    tempRoots.push(durableHome);
+    const durableMemory = join(durableHome, "memory");
+    await mkdir(durableMemory, { recursive: true });
+    await symlink(durableMemory, join(home, "memory"));
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      repoRoot,
+    });
+    const client = await connectedClient(daemon);
+    try {
+      const written = textValue(
+        await client.callTool({
+          name: "memory_write",
+          arguments: validWrite({
+            scope: "global",
+            title: "Symlinked global memory stays durable",
+          }),
+        }),
+      ) as { path: string; rawPath: string };
+      const physicalRoot = await realpath(durableMemory);
+      expect(written.path.startsWith(`${physicalRoot}/wiki/`)).toBe(true);
+      expect(written.rawPath.startsWith(`${physicalRoot}/raw/`)).toBe(true);
+      expect(written.path).not.toContain(home);
+      expect(written.rawPath).not.toContain(home);
     } finally {
       await client.close().catch(() => undefined);
       await daemon.stop();
