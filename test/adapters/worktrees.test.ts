@@ -432,3 +432,55 @@ describe("unmerged hive branch inventory", () => {
     }
   });
 });
+
+describe("hive wiring exclusion", () => {
+  async function status(cwd: string): Promise<string> {
+    const process = Bun.spawn(["git", "-C", cwd, "status", "--porcelain"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([
+      new Response(process.stdout).text(),
+      process.exited,
+    ]);
+    return stdout;
+  }
+
+  test("hides Hive's own wiring from the worktree it creates", async () => {
+    const created = await createWorktree(repoRoot, "excluded", "hive wiring");
+
+    await mkdir(join(created.path, ".kimi-code"), { recursive: true });
+    await writeFile(join(created.path, ".kimi-code", "AGENTS.md"), "brief\n");
+    await writeFile(join(created.path, ".kimi-code", "mcp.json"), "{}\n");
+    await writeFile(join(created.path, ".mcp.json"), "{}\n");
+
+    expect(await status(created.path)).toBe("");
+    expect(
+      await assessStrandedWork(repoRoot, created.path, created.branch),
+    ).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
+  });
+
+  test("still shows real agent work beside the wiring it hides", async () => {
+    const created = await createWorktree(repoRoot, "realwork", "hive wiring");
+
+    await mkdir(join(created.path, ".kimi-code"), { recursive: true });
+    await writeFile(join(created.path, ".kimi-code", "mcp.json"), "{}\n");
+    await writeFile(join(created.path, ".kimi-code", "notes.md"), "work\n");
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.dirtyFiles).toEqual([".kimi-code/notes.md"]);
+  });
+
+  test("leaves the same names visible in the user's main checkout", async () => {
+    await createWorktree(repoRoot, "unleaked", "hive wiring");
+
+    await writeFile(join(repoRoot, ".mcp.json"), "{}\n");
+
+    expect(await status(repoRoot)).toContain(".mcp.json");
+    await rm(join(repoRoot, ".mcp.json"), { force: true });
+  });
+});
