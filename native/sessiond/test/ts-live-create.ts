@@ -292,6 +292,12 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
                   .hostPid,
             });
           };
+          let resolveAgentWorking!: () => void;
+          const nextAgentWorking = () =>
+            new Promise<void>((resolve) => {
+              resolveAgentWorking = resolve;
+            });
+          let agentWorking = nextAgentWorking();
           const spawner = new HiveSpawner({
             db,
             repoRoot,
@@ -374,6 +380,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
                     }
                   }
                   db.insertAgent({ ...agent, status: "working" });
+                  resolveAgentWorking();
                 }
               }
             },
@@ -398,7 +405,8 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             model: "gpt-sessiond-live",
           });
           expect(sessiondAgent.sessionLocator?.hostKind).toBe("sessiond");
-          expect(sessiondAgent.status).toBe("working");
+          await agentWorking;
+          expect(db.getAgentById(sessiondAgent.id)?.status).toBe("working");
           const sessiondLocator = requireSessiondAgentLocator(sessiondAgent);
           const sessiondBinding =
             db.getTerminalHostBindingByLocator(sessiondLocator);
@@ -720,6 +728,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           };
           workspaceVisibility = visibilityAuthority();
           registerAndPublishEmptyWorkspace();
+          agentWorking = nextAgentWorking();
           const expiryAgent = await spawner.spawn({
             task: "Exercise publisher-death lease expiry",
             category: "complex_coding",
@@ -727,6 +736,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             tool: "codex",
             model: "gpt-sessiond-live",
           });
+          await agentWorking;
           const expiryLocator = requireSessiondAgentLocator(expiryAgent);
           const expiryInspection = await adapter.inspect(expiryLocator);
           if (
