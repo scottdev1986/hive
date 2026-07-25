@@ -257,7 +257,16 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           let workspaceVisibility = visibilityAuthority();
           let admittedAgentName = "maya";
           let admittedVisibility = visibility;
-          const publishEmptyWorkspace = () => {
+          const registerAndPublishEmptyWorkspace = () => {
+            expect(
+              workspaceVisibility.register({
+                sessionId: admittedVisibility.workspaceSessionId,
+                process: {
+                  processId: admittedVisibility.workspacePid,
+                  startToken: admittedVisibility.workspaceStartToken,
+                },
+              }),
+            ).toMatchObject({ state: "accepted" });
             expect(
               workspaceVisibility.publish({
                 schemaVersion: 1,
@@ -273,7 +282,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               }),
             ).toMatchObject({ state: "accepted" });
           };
-          publishEmptyWorkspace();
+          registerAndPublishEmptyWorkspace();
 
           const stopSpawnedSession = async (agent: AgentRecord) => {
             return await stopSessiondAgentSession(agent, {
@@ -710,7 +719,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             openTerminalRevision: "3",
           };
           workspaceVisibility = visibilityAuthority();
-          publishEmptyWorkspace();
+          registerAndPublishEmptyWorkspace();
           const expiryAgent = await spawner.spawn({
             task: "Exercise publisher-death lease expiry",
             category: "complex_coding",
