@@ -210,13 +210,14 @@ per case, re-runs the tests meant to guard it, and demands RED.
 python3 workspace/scripts/c13-mutation-proof.py
 ```
 
-Result — **8/8 RED_GUARD**, working tree restored clean:
+Result — **9/9 RED_GUARD**, working tree restored clean:
 
 | Case | File | RED via |
 |---|---|---|
 | `replant-visual-effect-background` | PaneView.swift | RED_GUARD |
 | `blind-the-vibrancy-walk` | C13PaneChromeTests.swift | RED_GUARD |
 | `make-pane-background-transparent` | PaneBackgroundView.swift | RED_GUARD |
+| `hardcode-the-background-color` | PaneBackgroundView.swift | RED_GUARD |
 | `sublayer-becomes-an-overlay` | C13PaneChromeTests.swift | RED_GUARD |
 | `break-the-offscreen-instrument` | C13PaneChromeTests.swift | RED_GUARD |
 | `attenuate-the-focused-pane` | PaneAttenuationView.swift | RED_GUARD |
@@ -239,7 +240,7 @@ Harness properties, each of which has burned this repo before:
 - **Anchors must be unique** — `match_count != 1` aborts. A duplicated guard
   block once meant a mutation edited the wrong copy and measured nothing.
 - **RED is classified.** `RED_COMPILE` (did not build) is reported as
-  *inconclusive* and never counted as a guard firing. All 8 above are
+  *inconclusive* and never counted as a guard firing. All 9 above are
   `RED_GUARD` — a real assertion failed in a building binary.
 
 Verify restoration yourself: `git status --porcelain -uall` is empty after the
@@ -408,8 +409,8 @@ be read as satisfying the acceptance criterion.
 Sources/HiveWorkspace/PaneBackgroundView.swift    new — opaque, non-vibrancy pane background
 Sources/HiveWorkspace/PaneAttenuationView.swift   new — focus by attenuation
 Sources/HiveWorkspace/PaneView.swift              background type; attenuation view + constraints + focus wiring
-Tests/HiveWorkspaceTests/C13PaneChromeTests.swift new — 8 tests, the two demonstrations
+Tests/HiveWorkspaceTests/C13PaneChromeTests.swift new — 9 tests, the two demonstrations
 Tests/HiveWorkspaceTests/AppDelegateLifecycleTests.swift  locator only (NSVisualEffectView -> PaneBackgroundView)
-scripts/c13-mutation-proof.py                     new — 8-case mutation harness
+scripts/c13-mutation-proof.py                     new — 9-case mutation harness
 docs/c1-c13-chrome-focus-evidence.md              this document
 ```
