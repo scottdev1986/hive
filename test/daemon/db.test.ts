@@ -19,7 +19,12 @@ import {
   deleteMessageRow,
   listAgentsNamed,
 } from "../../src/daemon/testing";
-import type { AgentRecord, HookEvent, ProviderRun } from "../../src/schemas";
+import type {
+  AgentRecord,
+  HandoffBundle,
+  HookEvent,
+  ProviderRun,
+} from "../../src/schemas";
 import { type AgentMessage, AgentMessageSchema } from "../../src/schemas";
 import { required } from "../required";
 
@@ -51,6 +56,72 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 describe("HiveDatabase", () => {
+  test("persists one handoff per source run and records pickup without completing work", () => {
+    const db = new HiveDatabase(":memory:");
+    const bundle: HandoffBundle = {
+      handoffId: "018f1e90-7b5a-7cc0-8000-000000000180",
+      sourceRunId: "018f1e90-7b5a-7cc0-8000-000000000181",
+      reason: "quota-drain",
+      originalTaskRef: {
+        kind: "agent-task",
+        agentId: "agent-maya",
+        content: "Build the daemon",
+        digest: "a".repeat(64),
+      },
+      requirementRefs: [],
+      branch: { name: "hive/maya-daemon", base: "base", head: "head" },
+      worktree: {
+        dirtyPaths: ["src/daemon.ts"],
+        untrackedPaths: ["notes.txt"],
+        commits: [{ id: "head", subject: "Preserve work" }],
+      },
+      messagesThrough: 4,
+      pendingMessageIds: ["message-pending"],
+      memoryRefs: [],
+      activity: {
+        providerEventRefs: ["provider-event"],
+        terminalOutputRanges: [],
+        providerTranscriptRefs: [],
+        statusReportRef: null,
+      },
+      summary: null,
+      completeness: "partial",
+      createdAt: timestamp,
+    };
+
+    expect(db.insertHandoff(bundle)).toEqual(bundle);
+    expect(db.getHandoffForSourceRun(bundle.sourceRunId)).toEqual({
+      bundle,
+      pickup: null,
+    });
+    expect(() =>
+      db.insertHandoff({
+        ...bundle,
+        handoffId: "018f1e90-7b5a-7cc0-8000-000000000182",
+      }),
+    ).toThrow();
+
+    const pickup = db.acknowledgeHandoffPickup(
+      bundle.handoffId,
+      "agent-replacement",
+      "2026-07-09T12:01:00.000Z",
+    );
+    expect(pickup).toEqual({
+      handoffId: bundle.handoffId,
+      replacementAgentId: "agent-replacement",
+      pickedUpAt: "2026-07-09T12:01:00.000Z",
+    });
+    expect(
+      db.acknowledgeHandoffPickup(
+        bundle.handoffId,
+        "agent-other",
+        "2026-07-09T12:02:00.000Z",
+      ),
+    ).toBeNull();
+    expect(db.getAgentById("agent-replacement")).toBeNull();
+    db.close();
+  });
+
   test("persists each provider execution as a distinct run and closes it once", () => {
     const path = join(home, "provider-runs.db");
     const terminal = {

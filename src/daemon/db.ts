@@ -12,6 +12,10 @@ import {
   ExecutionIdentitySchema,
   type HookEvent,
   HookEventSchema,
+  type HandoffBundle,
+  HandoffBundleSchema,
+  type HandoffPickup,
+  HandoffPickupSchema,
   type Hv1CapabilityRecord,
   Hv1CapabilityRecordSchema,
   isTerminalAgentStatus,
@@ -190,6 +194,12 @@ const StoredProviderEventRowSchema = z.object({
   recordJson: z.string().min(1),
 });
 
+const StoredHandoffRowSchema = z.object({
+  recordJson: z.string().min(1),
+  replacementAgentId: z.string().nullable(),
+  pickedUpAt: z.string().nullable(),
+});
+
 function parseMessageAttemptRow(row: unknown): MessageAttempt {
   return MessageAttemptSchema.parse(
     JSON.parse(StoredMessageAttemptRowSchema.parse(row).recordJson),
@@ -206,6 +216,25 @@ function parseProviderEventRow(row: unknown): ProviderEvent {
   return ProviderEventSchema.parse(
     JSON.parse(StoredProviderEventRowSchema.parse(row).recordJson),
   );
+}
+
+function parseHandoffRow(row: unknown): {
+  bundle: HandoffBundle;
+  pickup: HandoffPickup | null;
+} {
+  const stored = StoredHandoffRowSchema.parse(row);
+  const bundle = HandoffBundleSchema.parse(JSON.parse(stored.recordJson));
+  return {
+    bundle,
+    pickup:
+      stored.replacementAgentId === null || stored.pickedUpAt === null
+        ? null
+        : HandoffPickupSchema.parse({
+            handoffId: bundle.handoffId,
+            replacementAgentId: stored.replacementAgentId,
+            pickedUpAt: stored.pickedUpAt,
+          }),
+  };
 }
 
 function parseTerminalHostBindingRow(row: unknown): HiveTerminalBinding {
@@ -601,6 +630,13 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS provider_events_run
         ON provider_events (providerRunId, occurredAt);
+      CREATE TABLE IF NOT EXISTS handoffs (
+        handoffId TEXT PRIMARY KEY,
+        sourceRunId TEXT NOT NULL UNIQUE,
+        recordJson TEXT NOT NULL,
+        replacementAgentId TEXT,
+        pickedUpAt TEXT
+      );
       -- Only sha256(secret) is stored, so a database or WAL leak yields no
       -- usable credential. The id is a lookup key, not a secret.
       CREATE TABLE IF NOT EXISTS capabilities (
@@ -1522,6 +1558,66 @@ export class HiveDatabase {
     `)
       .all(z.string().uuid().parse(providerRunId))
       .map(parseProviderEventRow);
+  }
+
+  insertHandoff(bundle: HandoffBundle): HandoffBundle {
+    const value = HandoffBundleSchema.parse(bundle);
+    this.database
+      .query(`
+        INSERT INTO handoffs (handoffId, sourceRunId, recordJson)
+        VALUES (?, ?, ?)
+      `)
+      .run(value.handoffId, value.sourceRunId, JSON.stringify(value));
+    return this.getHandoff(value.handoffId)?.bundle ?? value;
+  }
+
+  getHandoff(
+    handoffId: string,
+  ): { bundle: HandoffBundle; pickup: HandoffPickup | null } | null {
+    const row = this.database
+      .query(`
+        SELECT recordJson, replacementAgentId, pickedUpAt
+        FROM handoffs WHERE handoffId = ?
+      `)
+      .get(z.string().uuid().parse(handoffId));
+    return row === null ? null : parseHandoffRow(row);
+  }
+
+  getHandoffForSourceRun(
+    sourceRunId: string,
+  ): { bundle: HandoffBundle; pickup: HandoffPickup | null } | null {
+    const row = this.database
+      .query(`
+        SELECT recordJson, replacementAgentId, pickedUpAt
+        FROM handoffs WHERE sourceRunId = ?
+      `)
+      .get(z.string().uuid().parse(sourceRunId));
+    return row === null ? null : parseHandoffRow(row);
+  }
+
+  acknowledgeHandoffPickup(
+    handoffId: string,
+    replacementAgentId: string,
+    pickedUpAt: string,
+  ): HandoffPickup | null {
+    const id = z.string().uuid().parse(handoffId);
+    const agentId = z.string().min(1).parse(replacementAgentId);
+    const timestamp = z.iso.datetime({ offset: true }).parse(pickedUpAt);
+    this.database
+      .query(`
+        UPDATE handoffs
+        SET replacementAgentId = ?, pickedUpAt = ?
+        WHERE handoffId = ? AND replacementAgentId IS NULL
+      `)
+      .run(agentId, timestamp, id);
+    const stored = this.getHandoff(id);
+    if (
+      stored?.pickup === null ||
+      stored?.pickup.replacementAgentId !== agentId
+    ) {
+      return null;
+    }
+    return stored.pickup;
   }
 
   endProviderRun(
