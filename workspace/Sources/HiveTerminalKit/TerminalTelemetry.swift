@@ -33,6 +33,8 @@ public final class TerminalTelemetry: @unchecked Sendable {
     private var drawMaxUs = 0
     private var feedTotalUs = 0
     private var feedMaxUs = 0
+    private var axRefreshes = 0
+    private var axMaxUs = 0
     private var hopSamples: [Double] = []
     private var started = false
 
@@ -109,6 +111,18 @@ public final class TerminalTelemetry: @unchecked Sendable {
         lock.unlock()
     }
 
+    /// Main-thread accessibility refresh. This is the suspect for the residual
+    /// main-queue latency: the semantic export takes Ghostty's
+    /// renderer_state.mutex, which the terminal I/O thread holds for the whole
+    /// chunk parse — so main can block behind a feed even though the parse
+    /// itself was moved off main. If axMaxUs tracks mainHopMaxMs, that is it.
+    public func noteAccessibilityRefresh(microseconds: Int) {
+        lock.lock()
+        axRefreshes += 1
+        axMaxUs = max(axMaxUs, microseconds)
+        lock.unlock()
+    }
+
     private func flush() {
         lock.lock()
         let frames = outputFrames
@@ -119,10 +133,13 @@ public final class TerminalTelemetry: @unchecked Sendable {
         let drawMax = drawMaxUs
         let feedAvg = frames > 0 ? feedTotalUs / frames : 0
         let feedMax = feedMaxUs
+        let axCount = axRefreshes
+        let axMax = axMaxUs
         let hops = hopSamples.sorted()
         outputFrames = 0; outputBytes = 0; invalidates = 0
         drawsExecuted = 0; drawTotalUs = 0; drawMaxUs = 0
         feedTotalUs = 0; feedMaxUs = 0; hopSamples = []
+        axRefreshes = 0; axMaxUs = 0
         lock.unlock()
 
         // A quiet second is not interesting; only log when something happened.
@@ -134,6 +151,7 @@ public final class TerminalTelemetry: @unchecked Sendable {
             "frames=\(frames) kb=\(bytes / 1024) invalidates=\(inval) draws=\(draws) "
                 + "drawAvgUs=\(drawAvg) drawMaxUs=\(drawMax) "
                 + "feedAvgUs=\(feedAvg) feedMaxUs=\(feedMax) "
+                + "axRefreshes=\(axCount) axMaxUs=\(axMax) "
                 + "mainHopP50Ms=\(String(format: "%.2f", hopP50 * 1000)) "
                 + "mainHopMaxMs=\(String(format: "%.2f", hopMax * 1000))"
         )

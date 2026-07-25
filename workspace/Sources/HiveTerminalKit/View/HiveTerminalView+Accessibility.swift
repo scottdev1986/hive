@@ -142,7 +142,11 @@ private final class TerminalAccessibilityController {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.refreshScheduled = false
+            let axStart = ProcessInfo.processInfo.systemUptime // TELEMETRY — REMOVE
             self.refresh(postNotifications: true)
+            TerminalTelemetry.shared.noteAccessibilityRefresh( // TELEMETRY — REMOVE
+                microseconds: Int((ProcessInfo.processInfo.systemUptime - axStart) * 1_000_000)
+            )
             self.pendingSignals = []
             if self.pinDepth == 0 {
                 self.cacheValid = true
