@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import type { AgentRecord } from "../../schemas";
+import type { AgentRecord, ProviderRun } from "../../schemas";
+import { macProcessIdentity } from "../lifecycle";
 import type {
   AttachGrant,
   AttachRequest,
@@ -14,6 +15,7 @@ import type {
   VisibilityRequest,
 } from "./contract";
 import { sameSessionLocator } from "./locators";
+import { TERMINAL_SHELL } from "./shell-session";
 import {
   type HiveTerminalBinding,
   HiveTerminalBindingSchema,
@@ -29,16 +31,41 @@ import type {
   TerminalHost,
 } from "./terminal-host-contract";
 
-/** A sessiond host can outlive the vendor process it launched. A stale
- * executable identity is therefore death evidence, unlike missing identity
- * evidence during initial registration. */
-export function sessiondVendorProcessIsDead(
+/** Death of the verified zsh root is terminal death. Foreground provider
+ * lifecycle is separate and must never strengthen this evidence. */
+export function sessiondTerminalIsDead(
   inspection: Pick<SessionInspection, "presence" | "diagnosticIds">,
 ): boolean {
   return (
     inspection.presence === "exited" ||
     inspection.presence === "lost" ||
     inspection.diagnosticIds.includes("SESSIOND_EXECUTABLE_EVIDENCE_STALE")
+  );
+}
+
+/** The foreground job ended while its zsh may still be alive. An unmanaged
+ * command is alive, but it is not evidence for any agent run. */
+export function sessiondForegroundJobIsDead(
+  inspection: Pick<
+    SessionInspection,
+    "presence" | "diagnosticIds" | "foreground"
+  >,
+): boolean {
+  return (
+    sessiondTerminalIsDead(inspection) ||
+    inspection.foreground.state === "shell-idle"
+  );
+}
+
+export function sessiondAgentProviderRunIsDead(
+  inspection: Pick<
+    SessionInspection,
+    "presence" | "diagnosticIds" | "foreground"
+  >,
+): boolean {
+  return (
+    sessiondForegroundJobIsDead(inspection) ||
+    inspection.foreground.state === "unmanaged"
   );
 }
 
@@ -89,6 +116,17 @@ export type HiveTerminalPolicy = Pick<
 
 export interface HiveTerminalHostAdapterOptions {
   now?: () => Date;
+  processIdentity?: (pid: number) => { startToken: string };
+  providerRuns?: ProviderRunStore;
+}
+
+export interface ProviderRunStore {
+  getActiveProviderRunByTerminal(terminal: SessionLocator): ProviderRun | null;
+  endProviderRun(
+    runId: string,
+    endedAt: string,
+    exitReason: string,
+  ): ProviderRun | null;
 }
 
 export class TerminalHostBindingNotFoundError extends Error {
@@ -162,9 +200,13 @@ export class HiveTerminalHostAdapter {
     options: HiveTerminalHostAdapterOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
+    this.processIdentity = options.processIdentity ?? macProcessIdentity;
+    this.providerRuns = options.providerRuns;
   }
 
   private readonly now: () => Date;
+  private readonly processIdentity: (pid: number) => { startToken: string };
+  private readonly providerRuns: ProviderRunStore | undefined;
 
   async create(
     spec: SessionSpec,
@@ -175,6 +217,9 @@ export class HiveTerminalHostAdapter {
       throw new TerminalHostBindingNotFoundError();
     }
     if (!sameSessionLocator(spec.locator, policy.locator)) {
+      throw new TerminalHostBindingMismatchError();
+    }
+    if (spec.expectedExecutable !== TERMINAL_SHELL) {
       throw new TerminalHostBindingMismatchError();
     }
     this.bindings.bindTerminalHostSession(policy);
@@ -193,7 +238,7 @@ export class HiveTerminalHostAdapter {
     this.bindings.completeTerminalHostSession(policy.locator, {
       expectedExecutable: spec.expectedExecutable,
       executableVerified: result.inspection.executableVerified,
-      verifiedProviderRoot: result.inspection.providerRoot,
+      verifiedShellRoot: result.inspection.shellRoot,
       geometry: spec.geometry,
       visibility: result.inspection.visibility,
     });
@@ -324,7 +369,19 @@ export class HiveTerminalHostAdapter {
       ).toISOString(),
       idempotencyKey: terminationIdempotencyKey(request.requestId, session),
     });
-    return this.projectTermination(locator, result);
+    const projected = this.projectTermination(locator, result);
+    if (projected.state === "terminated") {
+      const active =
+        this.providerRuns?.getActiveProviderRunByTerminal(locator) ?? null;
+      if (active !== null) {
+        this.providerRuns?.endProviderRun(
+          active.runId,
+          this.now().toISOString(),
+          result.reap.reaped ? "terminal-reaped" : "terminal-terminated",
+        );
+      }
+    }
+    return projected;
   }
 
   private projectInspection(
@@ -337,7 +394,7 @@ export class HiveTerminalHostAdapter {
     diagnostics.add(VIEWER_COUNT_DIAGNOSTIC);
     diagnostics.add(RESOURCES_DIAGNOSTIC);
 
-    const providerRoot =
+    const shellRoot =
       inspection.child !== null &&
       inspection.jobControl?.completeness === "complete"
         ? {
@@ -346,16 +403,16 @@ export class HiveTerminalHostAdapter {
             processGroupId: inspection.jobControl.childProcessGroupId,
           }
         : null;
-    if (inspection.lifecycle === "running" && providerRoot === null) {
-      diagnostics.add("SESSIOND_PROVIDER_ROOT_UNAVAILABLE");
+    if (inspection.lifecycle === "running" && shellRoot === null) {
+      diagnostics.add("SESSIOND_SHELL_ROOT_UNAVAILABLE");
     }
 
     const executableVerified =
       inspection.lifecycle === "running" &&
       created.executableVerified &&
-      created.verifiedProviderRoot !== null &&
-      inspection.child?.processId === created.verifiedProviderRoot.pid &&
-      inspection.child.startToken === created.verifiedProviderRoot.startToken;
+      created.verifiedShellRoot !== null &&
+      inspection.child?.processId === created.verifiedShellRoot.pid &&
+      inspection.child.startToken === created.verifiedShellRoot.startToken;
     if (!executableVerified) {
       diagnostics.add(
         created.executableVerified
@@ -387,6 +444,7 @@ export class HiveTerminalHostAdapter {
       Date.parse(created.visibility.expiresAt) <= this.now().getTime()
         ? { ...created.visibility, state: "expired" as const }
         : created.visibility;
+    const foreground = this.projectForeground(binding, inspection, shellRoot);
 
     return {
       schemaVersion: 1,
@@ -396,7 +454,8 @@ export class HiveTerminalHostAdapter {
         inspection.completeness === "complete" && diagnostics.size === 0,
       hostPid: inspection.host?.processId ?? null,
       hostStartToken: inspection.host?.startToken ?? null,
-      providerRoot,
+      shellRoot,
+      foreground,
       expectedExecutable: created.expectedExecutable,
       executableVerified,
       outputSeq: inspection.output.retained.endExclusive,
@@ -431,6 +490,72 @@ export class HiveTerminalHostAdapter {
       evidenceAt: inspection.evidenceAt,
       diagnosticIds: [...diagnostics],
     };
+  }
+
+  private projectForeground(
+    binding: HiveTerminalBinding,
+    inspection: NeutralSessionInspection,
+    shellRoot: SessionInspection["shellRoot"],
+  ): SessionInspection["foreground"] {
+    const active =
+      this.providerRuns?.getActiveProviderRunByTerminal(binding.locator) ??
+      null;
+    if (inspection.lifecycle === "exited") {
+      if (active !== null) {
+        this.providerRuns?.endProviderRun(
+          active.runId,
+          this.now().toISOString(),
+          "terminal-exited",
+        );
+      }
+      return { state: "unknown", runId: null };
+    }
+    if (
+      inspection.lifecycle !== "running" ||
+      shellRoot === null ||
+      inspection.jobControl?.completeness !== "complete"
+    ) {
+      return { state: "unknown", runId: null };
+    }
+    const foregroundProcessGroupId =
+      inspection.jobControl.foregroundProcessGroupId;
+    if (foregroundProcessGroupId === shellRoot.processGroupId) {
+      if (active !== null) {
+        this.providerRuns?.endProviderRun(
+          active.runId,
+          this.now().toISOString(),
+          "foreground-provider-exited",
+        );
+      }
+      return { state: "shell-idle", runId: null };
+    }
+    let startToken: string;
+    try {
+      startToken = this.processIdentity(foregroundProcessGroupId).startToken;
+    } catch {
+      return { state: "unknown", runId: null };
+    }
+    const measured = {
+      pid: foregroundProcessGroupId,
+      startToken,
+      foregroundProcessGroupId,
+    };
+    if (
+      active !== null &&
+      active.pid === measured.pid &&
+      active.startToken === measured.startToken &&
+      active.foregroundProcessGroupId === measured.foregroundProcessGroupId
+    ) {
+      return { state: "managed", runId: active.runId, ...measured };
+    }
+    if (active !== null) {
+      this.providerRuns?.endProviderRun(
+        active.runId,
+        this.now().toISOString(),
+        "foreground-provider-exited",
+      );
+    }
+    return { state: "unmanaged", runId: null, ...measured };
   }
 
   private projectTermination(

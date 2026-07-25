@@ -106,7 +106,8 @@ function inspection(
     complete: true,
     hostPid: presence === "present" ? 500 : null,
     hostStartToken: presence === "present" ? "500:1" : null,
-    providerRoot: null,
+    shellRoot: null,
+    foreground: { state: "unknown", runId: null },
     expectedExecutable: "codex",
     executableVerified: presence === "present",
     outputSeq: "0",
@@ -147,7 +148,7 @@ function completeBinding(
   bindings.completeTerminalHostSession(locator, {
     expectedExecutable: value.expectedExecutable,
     executableVerified: value.executableVerified,
-    verifiedProviderRoot: value.providerRoot,
+    verifiedShellRoot: value.shellRoot,
     geometry: value.geometry,
     visibility: value.visibility,
   });

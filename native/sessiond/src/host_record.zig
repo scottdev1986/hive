@@ -227,7 +227,11 @@ pub fn encodeCreatedPayload(
     try inspection.put("complete", .{ .bool = registration.complete });
     try inspection.put("hostPid", .{ .integer = record.host_pid });
     try inspection.put("hostStartToken", .{ .string = record.host_start_token });
-    try inspection.put("providerRoot", try processRootValue(a, record.process_root));
+    try inspection.put("shellRoot", try processRootValue(a, record.process_root));
+    var foreground = std.json.ObjectMap.init(a);
+    try foreground.put("state", .{ .string = "unknown" });
+    try foreground.put("runId", .null);
+    try inspection.put("foreground", .{ .object = foreground });
     try inspection.put("expectedExecutable", .{ .string = record.expected_executable });
     try inspection.put("executableVerified", .{ .bool = registration.executable_verified });
     try inspection.put("outputSeq", .{ .string = try a.dupe(u8, output) });

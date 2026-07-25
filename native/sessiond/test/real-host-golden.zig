@@ -181,7 +181,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
             presence: []const u8,
             complete: bool,
             hostPid: i32,
-            providerRoot: struct { pid: i32 },
+            shellRoot: struct { pid: i32 },
         },
     };
     var parsed_created = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
@@ -192,9 +192,9 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         !std.mem.eql(u8, parsed_created.value.inspection.presence, "present") or
         parsed_created.value.inspection.hostPid == c.getpid() or
         parsed_created.value.inspection.hostPid == create_broker_pid or
-        parsed_created.value.inspection.providerRoot.pid == c.getpid() or
-        parsed_created.value.inspection.providerRoot.pid == create_broker_pid or
-        parsed_created.value.inspection.providerRoot.pid == parsed_created.value.inspection.hostPid)
+        parsed_created.value.inspection.shellRoot.pid == c.getpid() or
+        parsed_created.value.inspection.shellRoot.pid == create_broker_pid or
+        parsed_created.value.inspection.shellRoot.pid == parsed_created.value.inspection.hostPid)
         return error.ProductionHostCanaryFailed;
 
     var runtime = try broker.Runtime.open(allocator, root);
@@ -300,7 +300,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         locator,
         wire_locator,
         input_proof_path,
-        parsed_created.value.inspection.providerRoot.pid,
+        parsed_created.value.inspection.shellRoot.pid,
         parsed_grant.value.token,
     );
 
@@ -407,7 +407,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         parsed_inspected.value.inputOwner.?.token.len == 0 or
         parsed_inspected.value.inputOwner.?.leaseExpiresAt.len == 0 or
         parsed_inspected.value.child == null or
-        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid)
+        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.shellRoot.pid)
     {
         // stderr only — stdout may be a captured build-step pipe. The raw
         // payload names the failing condition; without it a red here is one
@@ -466,7 +466,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         parsed_terminated.value.diagnostics.len != 0 or
         std.mem.indexOf(u8, terminated, "neutral-host-control-unavailable") != null)
         return error.HostTerminationFailed;
-    try waitForProcessAbsence(parsed_created.value.inspection.providerRoot.pid);
+    try waitForProcessAbsence(parsed_created.value.inspection.shellRoot.pid);
     try waitForProcessAbsence(parsed_created.value.inspection.hostPid);
 
     const final_path = try std.fs.path.join(allocator, &.{
@@ -634,7 +634,7 @@ fn runDeadParentRecoveryDrill(allocator: std.mem.Allocator) !void {
     defer allocator.free(created);
     const CreatedProjection = struct {
         created: bool,
-        inspection: struct { hostPid: i32, providerRoot: struct { pid: i32 } },
+        inspection: struct { hostPid: i32, shellRoot: struct { pid: i32 } },
     };
     var parsed = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
         .ignore_unknown_fields = true,
@@ -642,7 +642,7 @@ fn runDeadParentRecoveryDrill(allocator: std.mem.Allocator) !void {
     defer parsed.deinit();
     if (!parsed.value.created) return error.DeadParentCreateFailed;
     const host_pid = parsed.value.inspection.hostPid;
-    const provider_pid = parsed.value.inspection.providerRoot.pid;
+    const provider_pid = parsed.value.inspection.shellRoot.pid;
     // A failure anywhere below would otherwise strand a host and a provider that
     // nothing else can wait. `host_killed` keeps this from signalling a pid the
     // drill already reaped and the system may have handed to someone else.
@@ -1890,7 +1890,7 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
     defer allocator.free(created);
     const CreatedProjection = struct {
         created: bool,
-        inspection: struct { hostPid: i32, providerRoot: struct { pid: i32 } },
+        inspection: struct { hostPid: i32, shellRoot: struct { pid: i32 } },
     };
     var parsed_created = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
         .ignore_unknown_fields = true,
@@ -1898,7 +1898,7 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
     defer parsed_created.deinit();
     if (!parsed_created.value.created) return error.BurstHostCreateFailed;
     const host_pid = parsed_created.value.inspection.hostPid;
-    const provider_pid = parsed_created.value.inspection.providerRoot.pid;
+    const provider_pid = parsed_created.value.inspection.shellRoot.pid;
     // A failure anywhere below would otherwise strand a host and its provider.
     // As in the dead-parent drill, do not signal the host after observing it gone.
     var host_killed = false;

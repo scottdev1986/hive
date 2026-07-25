@@ -13,7 +13,7 @@ export const HiveTerminalCreateEvidenceSchema = z
     expectedExecutable: SessionSpecSchema.unwrap().shape.expectedExecutable,
     executableVerified:
       SessionInspectionSchema.unwrap().shape.executableVerified,
-    verifiedProviderRoot: SessionInspectionSchema.unwrap().shape.providerRoot,
+    verifiedShellRoot: SessionInspectionSchema.unwrap().shape.shellRoot,
     geometry: SessionSpecSchema.unwrap().shape.geometry,
     visibility: SessionInspectionSchema.unwrap().shape.visibility,
   })

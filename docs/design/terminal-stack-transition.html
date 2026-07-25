@@ -998,11 +998,28 @@ export interface SessionHost {
   complete: boolean;
   hostPid: number | null;
   hostStartToken: string | null;
-  providerRoot: {
+  shellRoot: {
     pid: number;
     startToken: string;
     processGroupId: number;
   } | null;
+  foreground:
+    | Readonly&lt;{ state: "shell-idle"; runId: null }&gt;
+    | Readonly&lt;{
+        state: "managed";
+        runId: string;
+        pid: number;
+        startToken: string;
+        foregroundProcessGroupId: number;
+      }&gt;
+    | Readonly&lt;{
+        state: "unmanaged";
+        runId: null;
+        pid: number;
+        startToken: string;
+        foregroundProcessGroupId: number;
+      }&gt;
+    | Readonly&lt;{ state: "unknown"; runId: null }&gt;;
   expectedExecutable: string;
   executableVerified: boolean;
   outputSeq: string;

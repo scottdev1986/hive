@@ -15,6 +15,9 @@ import {
   type Hv1CapabilityRecord,
   Hv1CapabilityRecordSchema,
   isTerminalAgentStatus,
+  type ProviderRun,
+  ProviderRunBindingSchema,
+  ProviderRunSchema,
 } from "../schemas";
 import { VisibilityLeaseSchema } from "../schemas/session-protocol";
 import type { OrchestratorSignalKind } from "./orchestrator-status";
@@ -169,6 +172,16 @@ const StoredTerminalHostBindingRowSchema = z.object({
   createEvidenceJson: z.string().nullable(),
   terminationAuditJson: z.string().nullable(),
 });
+
+const StoredProviderRunRowSchema = z.object({
+  recordJson: z.string().min(1),
+});
+
+function parseProviderRunRow(row: unknown): ProviderRun {
+  return ProviderRunSchema.parse(
+    JSON.parse(StoredProviderRunRowSchema.parse(row).recordJson),
+  );
+}
 
 function parseTerminalHostBindingRow(row: unknown): HiveTerminalBinding {
   const stored = StoredTerminalHostBindingRowSchema.parse(row);
@@ -532,6 +545,21 @@ export class HiveDatabase {
         terminationAuditJson TEXT,
         PRIMARY KEY (locatorInstanceId, locatorSessionId, locatorGeneration)
       );
+      CREATE TABLE IF NOT EXISTS provider_runs (
+        runId TEXT PRIMARY KEY,
+        agentId TEXT NOT NULL,
+        terminalInstanceId TEXT NOT NULL,
+        terminalSessionId TEXT NOT NULL,
+        terminalGeneration INTEGER NOT NULL CHECK (terminalGeneration > 0),
+        state TEXT NOT NULL,
+        recordJson TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS provider_runs_one_active_terminal
+        ON provider_runs (
+          terminalInstanceId, terminalSessionId, terminalGeneration
+        ) WHERE state = 'running';
+      CREATE INDEX IF NOT EXISTS provider_runs_agent
+        ON provider_runs (agentId);
       -- Only sha256(secret) is stored, so a database or WAL leak yields no
       -- usable credential. The id is a lookup key, not a secret.
       CREATE TABLE IF NOT EXISTS capabilities (
@@ -1282,6 +1310,88 @@ export class HiveDatabase {
     `)
       .all(value)
       .map(parseTerminalHostBindingRow);
+  }
+
+  insertProviderRun(run: ProviderRun): ProviderRun {
+    const value = ProviderRunSchema.parse(run);
+    this.database
+      .query(`
+      INSERT INTO provider_runs (
+        runId, agentId, terminalInstanceId, terminalSessionId,
+        terminalGeneration, state, recordJson
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+      .run(
+        value.runId,
+        value.agentId,
+        value.terminal.instanceId,
+        value.terminal.sessionId,
+        value.terminal.generation,
+        value.state,
+        JSON.stringify(value),
+      );
+    return value;
+  }
+
+  getProviderRun(runId: string): ProviderRun | null {
+    const row = this.database
+      .query("SELECT recordJson FROM provider_runs WHERE runId = ?")
+      .get(z.string().uuid().parse(runId));
+    return row === null ? null : parseProviderRunRow(row);
+  }
+
+  getActiveProviderRunByTerminal(
+    terminal: ProviderRun["terminal"],
+  ): ProviderRun | null {
+    const locator =
+      ProviderRunBindingSchema.unwrap().shape.terminal.parse(terminal);
+    const row = this.database
+      .query(`
+      SELECT recordJson FROM provider_runs
+      WHERE terminalInstanceId = ?
+        AND terminalSessionId = ?
+        AND terminalGeneration = ?
+        AND state = 'running'
+    `)
+      .get(locator.instanceId, locator.sessionId, locator.generation);
+    return row === null ? null : parseProviderRunRow(row);
+  }
+
+  listProviderRunsForAgent(agentId: string): readonly ProviderRun[] {
+    return this.database
+      .query(`
+      SELECT recordJson FROM provider_runs
+      WHERE agentId = ?
+      ORDER BY rowid
+    `)
+      .all(z.string().min(1).parse(agentId))
+      .map(parseProviderRunRow);
+  }
+
+  endProviderRun(
+    runId: string,
+    endedAt: string,
+    exitReason: string,
+  ): ProviderRun | null {
+    return this.transaction(() => {
+      const current = this.getProviderRun(runId);
+      if (current === null) return null;
+      if (current.state === "exited") return current;
+      const exited = ProviderRunSchema.parse({
+        ...current,
+        state: "exited",
+        endedAt,
+        exitReason,
+      });
+      this.database
+        .query(`
+        UPDATE provider_runs
+        SET state = 'exited', recordJson = ?
+        WHERE runId = ? AND state = 'running'
+      `)
+        .run(JSON.stringify(exited), exited.runId);
+      return this.getProviderRun(exited.runId);
+    });
   }
 
   upsertAgent(agent: AgentRecord): AgentRecord {

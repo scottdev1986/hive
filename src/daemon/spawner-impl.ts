@@ -35,6 +35,7 @@ import {
   type ModelEnablementDecision,
   modelCategoryFit,
   ORCHESTRATOR_NAME,
+  type ProviderRun,
   type RoutingCategory,
   type RoutingPolicy,
   selectionModeFor,
@@ -707,6 +708,7 @@ type AgentStore = Pick<
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
+  | "insertProviderRun"
   | "listAgents"
   | "releaseAgentName"
   | "reserveAgentName"
@@ -1323,7 +1325,7 @@ export class HiveSpawner implements Spawner {
   ): Promise<void> {
     const admission = await this.requireSessiondCreationPolicy(record);
     const shell = shellSessionLaunch(command);
-    await this.requireSessiondHost(record).create(
+    const created = await this.requireSessiondHost(record).create(
       this.sessiondSpec(record, shell, launchGrantId, admission.geometry),
       shell.initialInput,
       {
@@ -1331,6 +1333,34 @@ export class HiveSpawner implements Spawner {
         visibility: admission.visibility,
       },
     );
+    const inspection = await this.requireSessiondHost(record).inspect(
+      created.locator,
+    );
+    const foreground = inspection.foreground;
+    if (foreground.state !== "unmanaged") {
+      throw new Error(
+        `Provider launch for ${record.name} has no new foreground process identity`,
+      );
+    }
+    const run: ProviderRun = {
+      runId: crypto.randomUUID(),
+      agentId: record.id,
+      terminal: created.locator,
+      provider: record.tool,
+      model: record.model,
+      effort: record.executionIdentity?.effort ?? null,
+      conversationId: record.toolSessionId ?? null,
+      pid: foreground.pid,
+      startToken: foreground.startToken,
+      foregroundProcessGroupId: foreground.foregroundProcessGroupId,
+      capabilityEpoch: record.capabilityEpoch,
+      launchGrantId,
+      startedAt: inspection.evidenceAt,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    this.dependencies.db.insertProviderRun(run);
   }
 
   async createRecoverySession(
@@ -1885,7 +1915,7 @@ export class HiveSpawner implements Spawner {
           await this.requireSessiondHost(record).inspect(
             requireSessiondAgentLocator(record),
           )
-        ).providerRoot?.pid,
+        ).shellRoot?.pid,
       ].filter((pid): pid is number => pid !== undefined && pid !== null);
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(

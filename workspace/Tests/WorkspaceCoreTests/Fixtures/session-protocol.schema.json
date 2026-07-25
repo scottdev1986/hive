@@ -2031,7 +2031,7 @@
                 }
               ]
             },
-            "providerRoot": {
+            "shellRoot": {
               "anyOf": [
                 {
                   "type": "object",
@@ -2060,6 +2060,118 @@
                 },
                 {
                   "type": "null"
+                }
+              ]
+            },
+            "foreground": {
+              "oneOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "shell-idle"
+                    },
+                    "runId": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "managed"
+                    },
+                    "runId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "foregroundProcessGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId",
+                    "pid",
+                    "startToken",
+                    "foregroundProcessGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "unmanaged"
+                    },
+                    "runId": {
+                      "type": "null"
+                    },
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "foregroundProcessGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId",
+                    "pid",
+                    "startToken",
+                    "foregroundProcessGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "unknown"
+                    },
+                    "runId": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             },
@@ -2327,7 +2439,8 @@
             "complete",
             "hostPid",
             "hostStartToken",
-            "providerRoot",
+            "shellRoot",
+            "foreground",
             "expectedExecutable",
             "executableVerified",
             "outputSeq",
@@ -9717,7 +9830,7 @@
             }
           ]
         },
-        "providerRoot": {
+        "shellRoot": {
           "anyOf": [
             {
               "type": "object",
@@ -9746,6 +9859,118 @@
             },
             {
               "type": "null"
+            }
+          ]
+        },
+        "foreground": {
+          "oneOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "shell-idle"
+                },
+                "runId": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "state",
+                "runId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "managed"
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "pid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "foregroundProcessGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "state",
+                "runId",
+                "pid",
+                "startToken",
+                "foregroundProcessGroupId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "unmanaged"
+                },
+                "runId": {
+                  "type": "null"
+                },
+                "pid": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "foregroundProcessGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "state",
+                "runId",
+                "pid",
+                "startToken",
+                "foregroundProcessGroupId"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "runId": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "state",
+                "runId"
+              ],
+              "additionalProperties": false
             }
           ]
         },
@@ -10013,7 +10238,8 @@
         "complete",
         "hostPid",
         "hostStartToken",
-        "providerRoot",
+        "shellRoot",
+        "foreground",
         "expectedExecutable",
         "executableVerified",
         "outputSeq",
@@ -10233,7 +10459,7 @@
                 }
               ]
             },
-            "providerRoot": {
+            "shellRoot": {
               "anyOf": [
                 {
                   "type": "object",
@@ -10262,6 +10488,118 @@
                 },
                 {
                   "type": "null"
+                }
+              ]
+            },
+            "foreground": {
+              "oneOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "shell-idle"
+                    },
+                    "runId": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "managed"
+                    },
+                    "runId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "foregroundProcessGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId",
+                    "pid",
+                    "startToken",
+                    "foregroundProcessGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "unmanaged"
+                    },
+                    "runId": {
+                      "type": "null"
+                    },
+                    "pid": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "foregroundProcessGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId",
+                    "pid",
+                    "startToken",
+                    "foregroundProcessGroupId"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "unknown"
+                    },
+                    "runId": {
+                      "type": "null"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "runId"
+                  ],
+                  "additionalProperties": false
                 }
               ]
             },
@@ -10529,7 +10867,8 @@
             "complete",
             "hostPid",
             "hostStartToken",
-            "providerRoot",
+            "shellRoot",
+            "foreground",
             "expectedExecutable",
             "executableVerified",
             "outputSeq",

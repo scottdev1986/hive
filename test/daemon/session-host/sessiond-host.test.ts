@@ -148,9 +148,9 @@ const createBeginPayload = CreateBeginPayloadSchema.parse({
   provider: "codex",
   toolSessionId: null,
   cwd: "/tmp",
-  argv: ["/bin/sh", "-lc", "printf ready"],
+  argv: ["/bin/zsh", "-lc", "printf ready"],
   environment: { PATH: "/usr/bin:/bin" },
-  expectedExecutable: "/bin/sh",
+  expectedExecutable: "/bin/zsh",
   readOnly: false,
   capabilityEpoch: 0,
   geometry: brokerGeometry,
@@ -196,12 +196,13 @@ const createdPayload = CreatedPayloadSchema.parse({
     complete: true,
     hostPid: 4_000,
     hostStartToken: "4000:123400",
-    providerRoot: {
+    shellRoot: {
       pid: 4_100,
       startToken: "4100:123456",
       processGroupId: 4_100,
     },
-    expectedExecutable: "/bin/sh",
+    foreground: { state: "unknown", runId: null },
+    expectedExecutable: "/bin/zsh",
     executableVerified: true,
     outputSeq: "0",
     checkpointSeq: "0",
@@ -966,7 +967,7 @@ describe("SessiondHost landed frozen operations", () => {
       const createEvidence = {
         expectedExecutable: sessionSpec.expectedExecutable,
         executableVerified: createdPayload.inspection.executableVerified,
-        verifiedProviderRoot: createdPayload.inspection.providerRoot,
+        verifiedShellRoot: createdPayload.inspection.shellRoot,
         geometry: sessionSpec.geometry,
         visibility: createdPayload.inspection.visibility,
       };
@@ -1016,12 +1017,13 @@ describe("SessiondHost landed frozen operations", () => {
         complete: false,
         hostPid: 4_000,
         hostStartToken: "4000:123400",
-        providerRoot: {
+        shellRoot: {
           pid: 4_100,
           startToken: "4100:123456",
           processGroupId: 4_100,
         },
-        expectedExecutable: "/bin/sh",
+        foreground: { state: "shell-idle", runId: null },
+        expectedExecutable: "/bin/zsh",
         executableVerified: true,
         outputSeq: "19",
         checkpointSeq: "2",

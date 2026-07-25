@@ -19,7 +19,12 @@ import {
   deleteMessageRow,
   listAgentsNamed,
 } from "../../src/daemon/testing";
-import type { AgentMessage, AgentRecord, HookEvent } from "../../src/schemas";
+import type {
+  AgentMessage,
+  AgentRecord,
+  HookEvent,
+  ProviderRun,
+} from "../../src/schemas";
 import { required } from "../required";
 
 const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
@@ -50,6 +55,74 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 describe("HiveDatabase", () => {
+  test("persists each provider execution as a distinct run and closes it once", () => {
+    const path = join(home, "provider-runs.db");
+    const terminal = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-provider-run",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000190",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-provider-run",
+    };
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000191",
+      agentId: "agent-maya",
+      terminal,
+      provider: "codex",
+      model: "gpt-5-codex",
+      effort: "high",
+      conversationId: "thread-fixture",
+      pid: 4_200,
+      startToken: "4200:1",
+      foregroundProcessGroupId: 4_200,
+      capabilityEpoch: 3,
+      launchGrantId: "grant-fixture",
+      startedAt: "2026-07-24T17:00:00.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    let db = new HiveDatabase(path);
+    db.insertProviderRun(run);
+    db.close();
+
+    db = new HiveDatabase(path);
+    try {
+      expect(db.getProviderRun(run.runId)).toEqual(run);
+      expect(db.getActiveProviderRunByTerminal(terminal)).toEqual(run);
+      const exited = db.endProviderRun(
+        run.runId,
+        "2026-07-24T17:30:00.000Z",
+        "foreground-provider-exited",
+      );
+      expect(exited).toMatchObject({
+        state: "exited",
+        endedAt: "2026-07-24T17:30:00.000Z",
+        exitReason: "foreground-provider-exited",
+      });
+      expect(
+        db.endProviderRun(
+          run.runId,
+          "2026-07-24T17:45:00.000Z",
+          "later-observation",
+        ),
+      ).toEqual(exited);
+      expect(db.getActiveProviderRunByTerminal(terminal)).toBeNull();
+
+      const next = {
+        ...run,
+        runId: "018f1e90-7b5a-7cc0-8000-000000000192",
+        conversationId: run.conversationId,
+      };
+      expect(db.insertProviderRun(next).runId).not.toBe(run.runId);
+      expect(db.listProviderRunsForAgent(run.agentId)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
   test("persists terminal policy binding by the exact Hive locator", () => {
     const path = join(home, "terminal-host-bindings.db");
     const binding: HiveTerminalBinding = {
@@ -70,9 +143,9 @@ describe("HiveDatabase", () => {
       },
     };
     const createEvidence = {
-      expectedExecutable: "/bin/sh",
+      expectedExecutable: "/bin/zsh",
       executableVerified: true,
-      verifiedProviderRoot: {
+      verifiedShellRoot: {
         pid: 4300,
         startToken: "4300:123456",
         processGroupId: 4300,

@@ -187,7 +187,9 @@ import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
   requireSessiondRootLocator,
-  sessiondVendorProcessIsDead,
+  sessiondAgentProviderRunIsDead,
+  sessiondForegroundJobIsDead,
+  sessiondTerminalIsDead,
 } from "./session-host/hive-terminal-host";
 import {
   mintSessionRequestId,
@@ -954,6 +956,7 @@ export class HiveDaemon {
       landedTerminalHost,
       this.db,
       hiveInstanceSuffix(),
+      { providerRuns: this.db },
     );
     this.workspaceVisibility = options.workspaceVisibility ?? null;
     this.quota = options.quota;
@@ -1309,7 +1312,7 @@ export class HiveDaemon {
     );
     return (
       inspection.presence === "present" &&
-      !sessiondVendorProcessIsDead(inspection)
+      !sessiondAgentProviderRunIsDead(inspection)
     );
   }
 
@@ -1798,7 +1801,7 @@ export class HiveDaemon {
           const inspection = await this.terminalHost.inspect(
             requireSessiondRootLocator(root.locator),
           );
-          if (sessiondVendorProcessIsDead(inspection)) {
+          if (sessiondForegroundJobIsDead(inspection)) {
             faults.push("the queen vendor process is confirmed dead");
           } else if (inspection.presence !== "present") {
             faults.push(
@@ -1842,7 +1845,7 @@ export class HiveDaemon {
             faults.push(
               `${agent.name}'s sessiond session is not listed by the broker`,
             );
-          } else if (sessiondVendorProcessIsDead(match)) {
+          } else if (sessiondAgentProviderRunIsDead(match)) {
             faults.push(
               `${agent.name}'s sessiond vendor process is confirmed dead`,
             );
@@ -1887,8 +1890,8 @@ export class HiveDaemon {
       const inspection = await this.terminalHost.inspect(
         requireSessiondAgentLocator(agent),
       );
-      if (sessiondVendorProcessIsDead(inspection)) return "gone";
-      const shellPid = inspection.providerRoot?.pid;
+      if (sessiondAgentProviderRunIsDead(inspection)) return "gone";
+      const shellPid = inspection.shellRoot?.pid;
       if (shellPid === null || shellPid === undefined) return "unknown";
       return foregroundJobState(
         parseForegroundProcessTable(await runPsForeground()),
@@ -1911,7 +1914,7 @@ export class HiveDaemon {
       const inspection = await this.terminalHost.inspect(
         requireSessiondRootLocator(current.locator),
       );
-      const shellPid = inspection.providerRoot?.pid;
+      const shellPid = inspection.shellRoot?.pid;
       if (shellPid === null || shellPid === undefined) return false;
       return (
         foregroundJobState(
@@ -1939,7 +1942,10 @@ export class HiveDaemon {
       (candidate) =>
         candidate.locator.sessionId === agent.sessionLocator?.sessionId,
     );
-    if (inspection !== undefined && !sessiondVendorProcessIsDead(inspection)) {
+    if (
+      inspection !== undefined &&
+      !sessiondAgentProviderRunIsDead(inspection)
+    ) {
       return agent;
     }
     return {
@@ -2380,9 +2386,9 @@ export class HiveDaemon {
           sessions.push({
             owner: ORCHESTRATOR_NAME,
             rootPids:
-              inspection.providerRoot === null
+              inspection.shellRoot === null
                 ? []
-                : [inspection.providerRoot.pid],
+                : [inspection.shellRoot.pid],
           });
         } catch {
           // A vanished session has no processes left to watch.
@@ -2400,9 +2406,9 @@ export class HiveDaemon {
           sessions.push({
             owner: agent.name,
             rootPids:
-              inspection.providerRoot === null
+              inspection.shellRoot === null
                 ? []
-                : [inspection.providerRoot.pid],
+                : [inspection.shellRoot.pid],
           });
         } catch {
           // A vanished session has no processes left to watch.
@@ -2646,7 +2652,7 @@ export class HiveDaemon {
       const inspection = await this.terminalHost.inspect(
         requireSessiondAgentLocator(agent),
       );
-      return sessiondVendorProcessIsDead(inspection);
+      return sessiondTerminalIsDead(inspection);
     } catch {
       return false;
     }
@@ -4346,7 +4352,7 @@ export class HiveDaemon {
       }
       if (
         inspection.visibility.state !== "expired" ||
-        !sessiondVendorProcessIsDead(inspection)
+        !sessiondTerminalIsDead(inspection)
       )
         continue;
       try {
@@ -5845,7 +5851,7 @@ export class HiveDaemon {
         }
         if (
           presence === "present" &&
-          !sessiondVendorProcessIsDead(inspection)
+          !sessiondAgentProviderRunIsDead(inspection)
         ) {
           throw new Error(
             `Cannot mark ${agentName} dead: its terminal session is still running. Use hive_kill to stop a live agent.`,

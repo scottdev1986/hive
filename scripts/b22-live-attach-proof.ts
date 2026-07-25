@@ -339,7 +339,7 @@ const createdHostPid = created.inspection.hostPid;
 if (createdHostPid === null)
   throw new Error("session create returned no live host pid");
 log(
-  `session created: hostPid=${createdHostPid} provider=${created.inspection.providerRoot?.pid}`,
+  `session created: hostPid=${createdHostPid} shell=${created.inspection.shellRoot?.pid}`,
 );
 if (realShell)
   log(`interactive login shell: ${shellExecutable} -l (cwd ${repoRoot})`);

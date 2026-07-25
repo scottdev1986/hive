@@ -529,7 +529,7 @@ describe("WP7 MCP status tools", () => {
     db.completeTerminalHostSession(current, {
       expectedExecutable: "codex",
       executableVerified: true,
-      verifiedProviderRoot: null,
+      verifiedShellRoot: null,
       geometry: {
         columns: 80,
         rows: 24,

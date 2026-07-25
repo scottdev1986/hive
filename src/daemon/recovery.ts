@@ -61,7 +61,7 @@ import { parseProcessTable, runPs, treeRunsCommand } from "./resources";
 import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
-  sessiondVendorProcessIsDead,
+  sessiondAgentProviderRunIsDead,
 } from "./session-host/hive-terminal-host";
 import { nextAgentSessionLocator } from "./session-host/locators";
 import { shellJoin } from "./session-host/shell-session";
@@ -338,7 +338,7 @@ export class CrashRecovery {
     const inspection = await this.deps.terminalHost.inspect(
       requireSessiondAgentLocator(agent),
     );
-    if (sessiondVendorProcessIsDead(inspection)) return false;
+    if (sessiondAgentProviderRunIsDead(inspection)) return false;
     switch (inspection.presence) {
       case "present":
         return true;
@@ -1045,7 +1045,7 @@ export class CrashRecovery {
           await this.deps.terminalHost?.inspect(
             requireSessiondAgentLocator(record),
           )
-        )?.providerRoot?.pid,
+        )?.shellRoot?.pid,
       ].filter((pid): pid is number => pid !== undefined && pid !== null);
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(await (this.deps.ps ?? runPs)());

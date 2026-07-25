@@ -571,6 +571,33 @@ const SessionVisibilitySchema = z.strictObject({
   expiresAt: Rfc3339UtcMillisecondsSchema,
 });
 
+const ForegroundIdentityShape = {
+  pid: z.number().int().positive(),
+  startToken: z.string().min(1),
+  foregroundProcessGroupId: z.number().int().positive(),
+} as const;
+
+const SessionForegroundSchema = z.discriminatedUnion("state", [
+  z
+    .strictObject({ state: z.literal("shell-idle"), runId: z.null() })
+    .readonly(),
+  z
+    .strictObject({
+      state: z.literal("managed"),
+      runId: z.string().uuid(),
+      ...ForegroundIdentityShape,
+    })
+    .readonly(),
+  z
+    .strictObject({
+      state: z.literal("unmanaged"),
+      runId: z.null(),
+      ...ForegroundIdentityShape,
+    })
+    .readonly(),
+  z.strictObject({ state: z.literal("unknown"), runId: z.null() }).readonly(),
+]);
+
 export const SessionInspectionSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
@@ -579,7 +606,8 @@ export const SessionInspectionSchema = z
     complete: z.boolean(),
     hostPid: z.number().int().positive().nullable(),
     hostStartToken: z.string().min(1).nullable(),
-    providerRoot: ProcessRootSchema.nullable(),
+    shellRoot: ProcessRootSchema.nullable(),
+    foreground: SessionForegroundSchema,
     expectedExecutable: z.string().min(1),
     executableVerified: z.boolean(),
     outputSeq: DecimalUint64Schema,

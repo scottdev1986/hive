@@ -50,13 +50,13 @@
         "toolSessionId": "tool-session-fixture",
         "cwd": "/tmp/hive-fixture",
         "argv": [
-          "/usr/local/bin/codex",
-          "--quiet"
+          "/bin/zsh",
+          "-l"
         ],
         "environment": {
           "TERM": "xterm-ghostty"
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "readOnly": false,
         "capabilityEpoch": 9,
         "geometry": {
@@ -92,12 +92,19 @@
         "complete": true,
         "hostPid": 4100,
         "hostStartToken": "4100:123456",
-        "providerRoot": {
+        "shellRoot": {
           "pid": 4101,
           "startToken": "4101:123457",
           "processGroupId": 4101
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "foreground": {
+          "state": "managed",
+          "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+          "pid": 4102,
+          "startToken": "4102:123458",
+          "foregroundProcessGroupId": 4102
+        },
+        "expectedExecutable": "/bin/zsh",
         "executableVerified": true,
         "outputSeq": "4096",
         "checkpointSeq": "2048",
@@ -165,12 +172,19 @@
           "complete": true,
           "hostPid": 4100,
           "hostStartToken": "4100:123456",
-          "providerRoot": {
+          "shellRoot": {
             "pid": 4101,
             "startToken": "4101:123457",
             "processGroupId": 4101
           },
-          "expectedExecutable": "/usr/local/bin/codex",
+          "foreground": {
+            "state": "managed",
+            "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+            "pid": 4102,
+            "startToken": "4102:123458",
+            "foregroundProcessGroupId": 4102
+          },
+          "expectedExecutable": "/bin/zsh",
           "executableVerified": true,
           "outputSeq": "4096",
           "checkpointSeq": "2048",
@@ -732,7 +746,7 @@
           "startToken": "4101:123457",
           "processGroupId": 4101
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "executableBuildHash": "executable-build-fixture",
         "engineBuildId": "engine-fixture",
         "protocol": {
@@ -781,13 +795,13 @@
         "toolSessionId": "tool-session-fixture",
         "cwd": "/tmp/hive-fixture",
         "argv": [
-          "/usr/local/bin/codex",
-          "--quiet"
+          "/bin/zsh",
+          "-l"
         ],
         "environment": {
           "TERM": "xterm-ghostty"
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "readOnly": false,
         "capabilityEpoch": 9,
         "geometry": {
@@ -852,12 +866,19 @@
           "complete": true,
           "hostPid": 4100,
           "hostStartToken": "4100:123456",
-          "providerRoot": {
+          "shellRoot": {
             "pid": 4101,
             "startToken": "4101:123457",
             "processGroupId": 4101
           },
-          "expectedExecutable": "/usr/local/bin/codex",
+          "foreground": {
+            "state": "managed",
+            "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+            "pid": 4102,
+            "startToken": "4102:123458",
+            "foregroundProcessGroupId": 4102
+          },
+          "expectedExecutable": "/bin/zsh",
           "executableVerified": true,
           "outputSeq": "4096",
           "checkpointSeq": "2048",
@@ -1400,7 +1421,7 @@
             "startToken": "4101:123457",
             "processGroupId": 4101
           },
-          "expectedExecutable": "/usr/local/bin/codex",
+          "expectedExecutable": "/bin/zsh",
           "executableBuildHash": "executable-build-fixture",
           "engineBuildId": "engine-fixture",
           "protocol": {
@@ -1480,7 +1501,7 @@
         },
         "hostPid": 4100,
         "hostStartToken": "4100:123456",
-        "executable": "/usr/local/bin/codex",
+        "executable": "/bin/zsh",
         "executableBuildHash": "executable-build-fixture",
         "engineBuildId": "engine-fixture",
         "protocol": {
@@ -2419,12 +2440,19 @@
         "complete": true,
         "hostPid": 4100,
         "hostStartToken": "4100:123456",
-        "providerRoot": {
+        "shellRoot": {
           "pid": 4101,
           "startToken": "4101:123457",
           "processGroupId": 4101
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "foreground": {
+          "state": "managed",
+          "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+          "pid": 4102,
+          "startToken": "4102:123458",
+          "foregroundProcessGroupId": 4102
+        },
+        "expectedExecutable": "/bin/zsh",
         "executableVerified": true,
         "outputSeq": "4096",
         "checkpointSeq": "2048",
@@ -2524,7 +2552,7 @@
         "environment": {
           "TERM": "xterm-ghostty"
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "readOnly": false,
         "capabilityEpoch": 9,
         "geometry": {
@@ -2560,12 +2588,19 @@
         "complete": true,
         "hostPid": 4100,
         "hostStartToken": "4100:123456",
-        "providerRoot": {
+        "shellRoot": {
           "pid": 4101,
           "startToken": "4101:123457",
           "processGroupId": 4101
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "foreground": {
+          "state": "managed",
+          "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+          "pid": 4102,
+          "startToken": "4102:123458",
+          "foregroundProcessGroupId": 4102
+        },
+        "expectedExecutable": "/bin/zsh",
         "executableVerified": true,
         "outputSeq": "4096",
         "checkpointSeq": "2048",
@@ -2620,12 +2655,19 @@
         "complete": true,
         "hostPid": 4100,
         "hostStartToken": "4100:123456",
-        "providerRoot": {
+        "shellRoot": {
           "pid": 4101,
           "startToken": "4101:123457",
           "processGroupId": 4101
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "foreground": {
+          "state": "managed",
+          "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+          "pid": 4102,
+          "startToken": "4102:123458",
+          "foregroundProcessGroupId": 4102
+        },
+        "expectedExecutable": "/bin/zsh",
         "executableVerified": true,
         "outputSeq": "4096",
         "checkpointSeq": "2048",
@@ -2693,12 +2735,19 @@
           "complete": true,
           "hostPid": 4100,
           "hostStartToken": "4100:123456",
-          "providerRoot": {
+          "shellRoot": {
             "pid": 4101,
             "startToken": "4101:123457",
             "processGroupId": 4101
           },
-          "expectedExecutable": "/usr/local/bin/codex",
+          "foreground": {
+            "state": "managed",
+            "runId": "018f1e90-7b5a-7cc0-8000-000000000010",
+            "pid": 4102,
+            "startToken": "4102:123458",
+            "foregroundProcessGroupId": 4102
+          },
+          "expectedExecutable": "/bin/zsh",
           "executableVerified": true,
           "outputSeq": "4096",
           "checkpointSeq": "2048",
@@ -3307,7 +3356,7 @@
           "startToken": "4101:123457",
           "processGroupId": 4101
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "executableBuildHash": "executable-build-fixture",
         "engineBuildId": "engine-fixture",
         "protocol": {
@@ -3344,13 +3393,13 @@
         "toolSessionId": "tool-session-fixture",
         "cwd": "/tmp/hive-fixture",
         "argv": [
-          "/usr/local/bin/codex",
-          "--quiet"
+          "/bin/zsh",
+          "-l"
         ],
         "environment": {
           "TERM": "xterm-ghostty"
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "readOnly": false,
         "capabilityEpoch": 9,
         "geometry": {
@@ -3392,13 +3441,13 @@
         "toolSessionId": "tool-session-fixture",
         "cwd": "/tmp/hive-fixture",
         "argv": [
-          "/usr/local/bin/codex",
-          "--quiet"
+          "/bin/zsh",
+          "-l"
         ],
         "environment": {
           "TERM": "xterm-ghostty"
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "readOnly": false,
         "capabilityEpoch": 9,
         "geometry": {
@@ -3434,13 +3483,13 @@
         "toolSessionId": "tool-session-fixture",
         "cwd": "/tmp/hive-fixture",
         "argv": [
-          "/usr/local/bin/codex",
-          "--quiet"
+          "/bin/zsh",
+          "-l"
         ],
         "environment": {
           "TERM": "xterm-ghostty"
         },
-        "expectedExecutable": "/usr/local/bin/codex",
+        "expectedExecutable": "/bin/zsh",
         "readOnly": false,
         "capabilityEpoch": 9,
         "geometry": {
@@ -3844,7 +3893,7 @@
             "startToken": "4101:123457",
             "processGroupId": 4101
           },
-          "expectedExecutable": "/usr/local/bin/codex",
+          "expectedExecutable": "/bin/zsh",
           "executableBuildHash": "executable-build-fixture",
           "engineBuildId": "engine-fixture",
           "protocol": {

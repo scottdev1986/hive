@@ -75,11 +75,28 @@ export type SessionInspection = Readonly<{
   complete: boolean;
   hostPid: number | null;
   hostStartToken: string | null;
-  providerRoot: {
+  shellRoot: {
     pid: number;
     startToken: string;
     processGroupId: number;
   } | null;
+  foreground:
+    | Readonly<{ state: "shell-idle"; runId: null }>
+    | Readonly<{
+        state: "managed";
+        runId: string;
+        pid: number;
+        startToken: string;
+        foregroundProcessGroupId: number;
+      }>
+    | Readonly<{
+        state: "unmanaged";
+        runId: null;
+        pid: number;
+        startToken: string;
+        foregroundProcessGroupId: number;
+      }>
+    | Readonly<{ state: "unknown"; runId: null }>;
   expectedExecutable: string;
   executableVerified: boolean;
   outputSeq: string;

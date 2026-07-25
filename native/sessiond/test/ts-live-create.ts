@@ -423,11 +423,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           expect(sessiondInspection.visibility.state).toBe("attaching");
           expect(sessiondInspection.hostPid).not.toBeNull();
           expect(sessiondInspection.hostStartToken).not.toBeNull();
-          expect(sessiondInspection.providerRoot).not.toBeNull();
+          expect(sessiondInspection.shellRoot).not.toBeNull();
           if (
             sessiondInspection.hostPid === null ||
             sessiondInspection.hostStartToken === null ||
-            sessiondInspection.providerRoot === null
+            sessiondInspection.shellRoot === null
           ) {
             throw new Error(
               "sessiond spawner omitted measured process identity",
@@ -437,7 +437,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             pid: sessiondInspection.hostPid,
             startToken: sessiondInspection.hostStartToken,
           };
-          spawnedProvider = sessiondInspection.providerRoot;
+          spawnedProvider = sessiondInspection.shellRoot;
           expect(spawnedHost.pid).not.toBe(process.pid);
           expect(spawnedHost.pid).not.toBe(broker.pid);
           expect(spawnedProvider.pid).not.toBe(process.pid);
@@ -702,7 +702,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           if (
             expiryInspection.hostPid === null ||
             expiryInspection.hostStartToken === null ||
-            expiryInspection.providerRoot === null
+            expiryInspection.shellRoot === null
           ) {
             throw new Error(
               "publisher-death session omitted measured process identity",
@@ -712,7 +712,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             pid: expiryInspection.hostPid,
             startToken: expiryInspection.hostStartToken,
           };
-          spawnedProvider = expiryInspection.providerRoot;
+          spawnedProvider = expiryInspection.shellRoot;
           expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
             spawnedHost.startToken,
           );

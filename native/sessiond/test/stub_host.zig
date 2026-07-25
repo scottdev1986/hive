@@ -195,7 +195,7 @@ fn fixtureCreateRecord(lease_remaining_ns: u64) broker.HostRecord {
     record.locator.instance_id = "hive-fixture";
     record.locator.subject = .{ .agent = "agent-fixture" };
     record.locator.engine_build_id = "engine-fixture";
-    record.expected_executable = "/usr/local/bin/codex";
+    record.expected_executable = "/bin/zsh";
     record.executable_build_hash = "executable-build-fixture";
     record.engine_build_id = "engine-fixture";
     record.visibility.state = .attaching;
@@ -1118,7 +1118,7 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
     record.locator.instance_id = "hive-fixture";
     record.locator.subject = .{ .agent = "agent-fixture" };
     record.locator.engine_build_id = "engine-fixture";
-    record.expected_executable = "/usr/local/bin/codex";
+    record.expected_executable = "/bin/zsh";
     record.executable_build_hash = "executable-build-fixture";
     record.engine_build_id = "engine-fixture";
     record.visibility.state = .attaching;
@@ -2077,7 +2077,7 @@ test "restart walks private records then publishes only challenged hosts" {
     record.locator.instance_id = "hive-fixture";
     record.locator.subject = .{ .agent = "agent-fixture" };
     record.locator.engine_build_id = "engine-fixture";
-    record.expected_executable = "/usr/local/bin/codex";
+    record.expected_executable = "/bin/zsh";
     record.executable_build_hash = "executable-build-fixture";
     record.engine_build_id = "engine-fixture";
     record.visibility.state = .attaching;

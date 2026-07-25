@@ -55,9 +55,9 @@ const sessionSpec: SessionSpec = {
   provider: "codex",
   toolSessionId: null,
   cwd: "/tmp",
-  argv: ["/bin/sh", "-c", "read line"],
+  argv: ["/bin/zsh", "-c", "read line"],
   environment: {},
-  expectedExecutable: "/bin/sh",
+  expectedExecutable: "/bin/zsh",
   readOnly: false,
   capabilityEpoch: 0,
   geometry,
@@ -74,11 +74,12 @@ const createResult: CreateResult = {
     complete: true,
     hostPid: 3_900,
     hostStartToken: "3900:123400",
-    providerRoot: {
+    shellRoot: {
       pid: 4_000,
       startToken: "4000:123400",
       processGroupId: 4_000,
     },
+    foreground: { state: "unknown", runId: null },
     expectedExecutable: sessionSpec.expectedExecutable,
     executableVerified: true,
     outputSeq: "0",
@@ -335,7 +336,7 @@ describe("HiveTerminalHostAdapter", () => {
     const createEvidence = {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
-      verifiedProviderRoot: createResult.inspection.providerRoot,
+      verifiedShellRoot: createResult.inspection.shellRoot,
       geometry,
       visibility: createResult.inspection.visibility,
     };
@@ -347,12 +348,13 @@ describe("HiveTerminalHostAdapter", () => {
       complete: false,
       hostPid: 3_900,
       hostStartToken: "3900:123400",
-      providerRoot: {
+      shellRoot: {
         pid: 4_000,
         startToken: "4000:123400",
         processGroupId: 4_000,
       },
-      expectedExecutable: "/bin/sh",
+      foreground: { state: "shell-idle" as const, runId: null },
+      expectedExecutable: "/bin/zsh",
       executableVerified: true,
       outputSeq: "19",
       checkpointSeq: "2",
@@ -459,7 +461,7 @@ describe("HiveTerminalHostAdapter", () => {
     bindings.completeTerminalHostSession(locator, {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
-      verifiedProviderRoot: createResult.inspection.providerRoot,
+      verifiedShellRoot: createResult.inspection.shellRoot,
       geometry,
       visibility: createResult.inspection.visibility,
     });
@@ -527,7 +529,7 @@ describe("HiveTerminalHostAdapter", () => {
     bindings.completeTerminalHostSession(locator, {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
-      verifiedProviderRoot: createResult.inspection.providerRoot,
+      verifiedShellRoot: createResult.inspection.shellRoot,
       geometry,
       visibility: createResult.inspection.visibility,
     });
@@ -630,7 +632,7 @@ describe("HiveTerminalHostAdapter", () => {
     bindings.completeTerminalHostSession(locator, {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
-      verifiedProviderRoot: createResult.inspection.providerRoot,
+      verifiedShellRoot: createResult.inspection.shellRoot,
       geometry,
       visibility: createResult.inspection.visibility,
     });
