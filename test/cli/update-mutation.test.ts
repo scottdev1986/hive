@@ -261,7 +261,7 @@ describe("machine mutation leases in update commands", () => {
     expect(report).toContain("DEGRADED");
     expect(report).toContain("FTS-only");
     expect(report).toContain("network unreachable");
-    expect(report).toContain("hive embeddings install");
+    expect(report).toContain("re-run `hive init`");
   });
 
   test("a throwing embeddings install is the same loud warning, never a failed update", async () => {
@@ -290,7 +290,7 @@ describe("machine mutation leases in update commands", () => {
     const report = lines.join("\n");
     expect(report).toContain("EMBEDDINGS NOT INSTALLED");
     expect(report).toContain("disk full");
-    expect(report).toContain("hive embeddings install");
+    expect(report).toContain("re-run `hive init`");
   });
 
   test("a failed Graphify install is loud; the update still stands", async () => {

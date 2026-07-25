@@ -21,7 +21,7 @@
  * failed download or build is reported as a loud deferred state. Init also
  * installs the probe-verified embedding runtime under
  * ~/.hive/tools/embeddings. On a machine without network access, semantic
- * memory stays on full-text search until `hive embeddings install` completes,
+ * memory stays on full-text search until a later `hive init` completes it,
  * and the rest of init still finishes.
  * Model-authored narrative is supplied by the caller — hive's models are its
  * agents, not this CLI — and written through the same seeding path.
@@ -433,7 +433,7 @@ export async function runInit(
   }
 
   // 5. Embedding runtime. Init installs the local semantic-memory tool. When
-  //    setup cannot complete, the message names `hive embeddings install`
+  //    setup cannot complete, the message names `hive init` as the retry
   //    and recall stays on full-text search in the meantime.
   messages.push(await provisionEmbeddings(deps));
 
@@ -451,7 +451,7 @@ export async function runInit(
   return { agentsScaffolded, factsSeeded, skills, messages };
 }
 
-const EMBEDDINGS_FIX_HINT = "run `hive embeddings install`";
+const EMBEDDINGS_FIX_HINT = "re-run `hive init` once the cause is fixed";
 
 async function provisionEmbeddings(deps: InitDeps): Promise<string> {
   let outcome: EmbeddingsInstallOutcome;

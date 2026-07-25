@@ -299,7 +299,7 @@ export function memoryEmbeddingNotice(
   return (
     `⚠ embedding unavailable (${state}) — this write is ` +
     "keyword-searchable only; see ~/.hive/logs/daemon.log or run " +
-    "`hive embeddings install`"
+    "`hive init`"
   );
 }
 

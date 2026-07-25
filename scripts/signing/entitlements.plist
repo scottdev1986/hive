@@ -6,5 +6,27 @@
   <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
+  <!--
+    WHY LIBRARY VALIDATION IS DISABLED. Hive's semantic-memory leg loads
+    third-party native modules that cannot live inside the single-file binary:
+    fastembed's @anush008/tokenizers napi binding and onnxruntime-node's
+    dylibs, unpacked into ~/.hive/tools/embeddings. They come from npm
+    adhoc/linker-signed with TeamIdentifier=not set, and a hardened runtime
+    refuses to dlopen a library whose Team ID differs from the process's:
+    "mapping process and mapped file (non-platform) have different Team IDs".
+    Without this entitlement a Developer-ID-signed hive cannot load them at
+    all, which is why semantic memory never worked in a signed release.
+
+    WHAT IT PERMITS: the hive process may load libraries regardless of who
+    signed them — not only these. Their bytes are still anchored by the
+    SHA-256 pinned in the Ed25519-signed release manifest, verified before
+    anything is unpacked, but nothing re-checks that digest at load time.
+    Note this is not the only unsigned code the process runs: the runtime's
+    bundle (dist/entry.js) is plain JavaScript loaded from the same directory
+    with no signature check, so library validation was not providing code
+    integrity for this process before the entitlement either.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
 </dict>
 </plist>

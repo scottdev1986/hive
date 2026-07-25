@@ -83,9 +83,12 @@ fetch HiveWorkspace.tar.gz
 # Every artifact's digest must be the one the manifest names. The manifest is
 # served over TLS from GitHub Release hosting; `hive update` additionally
 # verifies its Ed25519 signature against the embedded release key.
+digest_in_manifest() {
+  tr -d ' \n' < "$TMP/hive-release.json" |
+    sed -n "s/.*\"name\":\"$1\",[^}]*\"sha256\":\"\([0-9a-f]\{64\}\)\".*/\1/p" | head -1
+}
 verify() {
-  want="$(tr -d ' \n' < "$TMP/hive-release.json" |
-    sed -n "s/.*\"name\":\"$1\",[^}]*\"sha256\":\"\([0-9a-f]\{64\}\)\".*/\1/p" | head -1)"
+  want="$(digest_in_manifest "$1")"
   [ -n "$want" ] || die "manifest names no sha256 for $1"
   got="$(shasum -a 256 "$TMP/$1" | cut -d' ' -f1)"
   [ "$want" = "$got" ] || die "$1 sha256 mismatch (expected $want, got $got)"
@@ -136,7 +139,44 @@ printf '{\n  "active": "%s",\n  "previous": %s\n}\n' "$RESOLVED" \
   "$([ -n "${PREVIOUS:-}" ] && printf '"%s"' "$PREVIOUS" || printf 'null')" \
   > "$ROOT/state.json"
 
+# Semantic memory needs an embedding runtime that cannot live inside the
+# single-file binary (native napi graph), so installing Hive installs it too:
+# there is no separate command to run. It is fetched with the same manifest
+# SHA-256 check as everything above and unpacked into the machine-level tools
+# dir the daemon loads from. A failure here is loud but not fatal — the binary
+# is already installed and `hive init` provisions (and load-verifies) the
+# runtime again — because keyword-only memory is a worse product, not a broken
+# one. What is never acceptable is a silent gap.
+EMBEDDINGS_DIR="${HIVE_EMBEDDINGS_HOME:-${HIVE_HOME:-$HOME/.hive}/tools/embeddings}"
+embeddings_note=""
+printf 'Fetching the embedding runtime...\n'
+if ! fetch_optional embeddings-runtime.tar.gz 2>/dev/null; then
+  embeddings_note="the release publishes no embeddings-runtime.tar.gz, or it could not be downloaded"
+elif [ "$(digest_in_manifest embeddings-runtime.tar.gz)" != \
+  "$(shasum -a 256 "$TMP/embeddings-runtime.tar.gz" | cut -d' ' -f1)" ]; then
+  embeddings_note="embeddings-runtime.tar.gz does not match the SHA-256 in the release manifest"
+else
+  EMBEDDINGS_STAGE="$TMP/embeddings-stage"
+  if mkdir -p "$EMBEDDINGS_STAGE" &&
+    tar -xzf "$TMP/embeddings-runtime.tar.gz" -C "$EMBEDDINGS_STAGE" --strip-components 1 &&
+    [ -f "$EMBEDDINGS_STAGE/dist/entry.js" ] &&
+    mkdir -p "$(dirname "$EMBEDDINGS_DIR")" &&
+    rm -rf "$EMBEDDINGS_DIR.old" &&
+    { [ ! -d "$EMBEDDINGS_DIR" ] || mv "$EMBEDDINGS_DIR" "$EMBEDDINGS_DIR.old"; } &&
+    mv "$EMBEDDINGS_STAGE" "$EMBEDDINGS_DIR"; then
+    rm -rf "$EMBEDDINGS_DIR.old"
+  else
+    embeddings_note="the runtime tarball could not be unpacked into $EMBEDDINGS_DIR"
+  fi
+fi
+
 printf '\nhive %s installed.\n' "$RESOLVED"
+if [ -n "$embeddings_note" ]; then
+  printf '\n! EMBEDDING RUNTIME NOT INSTALLED: %s.\n' "$embeddings_note"
+  printf '  Hive memory will be keyword-only until it lands. `hive init` retries it.\n'
+else
+  printf 'Embedding runtime installed at %s.\n' "$EMBEDDINGS_DIR"
+fi
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) printf 'Add %s to your PATH.\n' "$BIN_DIR" ;;

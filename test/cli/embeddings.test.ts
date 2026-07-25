@@ -1,17 +1,19 @@
-// Unit tests for `hive embeddings install` helpers: the dependency-closure
-// walk and the source node_modules discovery. The full install (copy + bun
-// build + model probe) is proven against the compiled binary end-to-end, not
-// here — `bun test` never downloads a model.
+// Unit tests for the embedding-runtime provisioning helpers: the
+// dependency-closure walk, the source node_modules discovery, and the
+// already-installed fast path every provisioning caller shares. The full
+// install (copy + bun build + model probe) is proven against the compiled
+// binary end-to-end, not here — `bun test` never downloads a model.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   collectFastembedClosure,
+  EMBEDDINGS_SOURCE_ENV,
   type EmbeddingsProvisionDeps,
+  ensureEmbeddingsRuntime,
   ensureEmbeddingsRuntimeForRelease,
   findSourceNodeModules,
   provisionEmbeddingsRuntime,
-  runEmbeddingsInstall,
 } from "../../src/cli/embeddings";
 import { HIVE_VERSION } from "../../src/version";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
@@ -114,21 +116,28 @@ describe("findSourceNodeModules", () => {
   });
 });
 
-describe("runEmbeddingsInstall fast path", () => {
+describe("ensureEmbeddingsRuntime — the fast path every provisioning caller shares", () => {
   // The runtime dir is HIVE_EMBEDDINGS_HOME-relative; point it at a temp dir
-  // per test so `bun test` never touches a real install. The injected probe
-  // stands in for the model-loading probe — `bun test` never downloads one.
+  // per test so `bun test` never touches a real install. HIVE_EMBEDDINGS_SOURCE
+  // names a source with no fastembed in it, so the full provisioning path can
+  // only fail here — a successful outcome can therefore only be the skip.
   async function withRuntimeHome<T>(
     run: (runtimeDir: string) => Promise<T>,
   ): Promise<T> {
     const runtimeDir = await makeTempDir("hive-embed-runtime-");
-    const previous = process.env.HIVE_EMBEDDINGS_HOME;
+    const source = await makeTempDir("hive-embed-empty-");
+    const previousHome = process.env.HIVE_EMBEDDINGS_HOME;
+    const previousSource = process.env[EMBEDDINGS_SOURCE_ENV];
     process.env.HIVE_EMBEDDINGS_HOME = runtimeDir;
+    process.env[EMBEDDINGS_SOURCE_ENV] = source;
     try {
       return await run(runtimeDir);
     } finally {
-      if (previous === undefined) delete process.env.HIVE_EMBEDDINGS_HOME;
-      else process.env.HIVE_EMBEDDINGS_HOME = previous;
+      if (previousHome === undefined) delete process.env.HIVE_EMBEDDINGS_HOME;
+      else process.env.HIVE_EMBEDDINGS_HOME = previousHome;
+      if (previousSource === undefined)
+        delete process.env[EMBEDDINGS_SOURCE_ENV];
+      else process.env[EMBEDDINGS_SOURCE_ENV] = previousSource;
     }
   }
 
@@ -148,19 +157,13 @@ describe("runEmbeddingsInstall fast path", () => {
   test("an installed bundle + a passing probe skips the reinstall entirely", async () => {
     await withRuntimeHome(async (runtimeDir) => {
       await plantBundle(runtimeDir);
-      // No fastembed anywhere under `from`: the full path WOULD fail here, so
-      // a zero exit can only come from the skip path.
-      const empty = await makeTempDir("hive-embed-empty-");
       let probes = 0;
-      const code = await runEmbeddingsInstall({
-        from: empty,
-        probe: async (...args) => {
-          probes += 1;
-          expect(args[0]).toBe(runtimeDir);
-          return okProbe();
-        },
+      const outcome = await ensureEmbeddingsRuntime(async (dir) => {
+        probes += 1;
+        expect(dir).toBe(runtimeDir);
+        return okProbe();
       });
-      expect(code).toBe(0);
+      expect(outcome.ok).toBe(true);
       expect(probes).toBe(1);
     });
   });
@@ -168,35 +171,36 @@ describe("runEmbeddingsInstall fast path", () => {
   test("an installed bundle whose probe fails falls through to a full reinstall", async () => {
     await withRuntimeHome(async (runtimeDir) => {
       await plantBundle(runtimeDir);
-      const empty = await makeTempDir("hive-embed-empty-");
       let probes = 0;
-      const code = await runEmbeddingsInstall({
-        from: empty,
-        probe: async () => {
-          probes += 1;
-          throw new Error("embedding-runtime-broken: planted probe failure");
-        },
+      const outcome = await ensureEmbeddingsRuntime(async () => {
+        probes += 1;
+        throw new Error("embedding-runtime-broken: planted probe failure");
       });
       // The skip is refused and the full path runs — which fails here only
       // because this fixture has no fastembed source to copy from.
-      expect(code).toBe(1);
+      expect(outcome.ok).toBe(false);
       expect(probes).toBe(1);
     });
   });
 
   test("no bundle on disk means no skip-path probe at all", async () => {
     await withRuntimeHome(async () => {
-      const empty = await makeTempDir("hive-embed-empty-");
       let probes = 0;
-      const code = await runEmbeddingsInstall({
-        from: empty,
-        probe: async () => {
-          probes += 1;
-          return okProbe();
-        },
+      const outcome = await ensureEmbeddingsRuntime(async () => {
+        probes += 1;
+        return okProbe();
       });
-      expect(code).toBe(1);
+      expect(outcome.ok).toBe(false);
       expect(probes).toBe(0);
+    });
+  });
+
+  test("a HIVE_EMBEDDINGS_SOURCE with no fastembed fails loudly rather than downloading", async () => {
+    await withRuntimeHome(async () => {
+      const outcome = await ensureEmbeddingsRuntime(okProbe);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.reason).toContain("no node_modules containing fastembed");
     });
   });
 });
@@ -245,7 +249,7 @@ describe("provisionEmbeddingsRuntime — dev checkout first, release download se
     expect(calls).toEqual(["release"]);
   });
 
-  test("an explicit --from that names no fastembed fails loudly — no silent network fallback", async () => {
+  test("an explicit source that names no fastembed fails loudly — no silent network fallback", async () => {
     const root = await makeTempDir("hive-embed-order-");
     const { calls, deps } = recorder(join(root, "runtime"));
 
@@ -254,7 +258,7 @@ describe("provisionEmbeddingsRuntime — dev checkout first, release download se
     expect(outcome.ok).toBe(false);
     if (!outcome.ok) {
       expect(outcome.reason).toContain(root);
-      expect(outcome.reason).toContain("--from");
+      expect(outcome.reason).toContain("HIVE_EMBEDDINGS_SOURCE");
     }
     expect(calls).toEqual([]);
   });

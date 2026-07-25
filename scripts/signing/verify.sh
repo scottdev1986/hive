@@ -101,7 +101,7 @@ fi
 
 # The embedding runtime is not Developer-ID-signed (its Mach-Os are upstream
 # napi binaries, not ours to re-sign) — its trust anchor is the manifest
-# SHA-256, verified by `hive embeddings install` at download time. What this
+# SHA-256, verified at download time. What this
 # gate proves is that the published tarball has the layout the installer and
 # the daemon's loader expect: the bundled ESM, INSTALL.json, and the native
 # onnxruntime bin/ for BOTH darwin slices (the asset is universal, listed for

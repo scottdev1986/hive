@@ -387,7 +387,7 @@ async function embeddingsUpdateLine(
   return [
     `⚠ EMBEDDINGS NOT INSTALLED — hive ${version} is active but memory is`,
     `DEGRADED: semantic recall is unavailable (FTS-only) (${outcome.reason}).`,
-    "Fix: run `hive embeddings install`.",
+    "Fix: re-run `hive init` in a project.",
   ].join("\n");
 }
 

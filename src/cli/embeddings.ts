@@ -1,13 +1,18 @@
-// `hive embeddings install` — provision the external embedding runtime the
-// compiled daemon loads (defect D1; see the header of
-// src/daemon/memory-embeddings.ts for why a single-file binary cannot carry
-// fastembed's native graph).
+// Provision the external embedding runtime the compiled daemon loads (defect
+// D1; see the header of src/daemon/memory-embeddings.ts for why a single-file
+// binary cannot carry fastembed's native graph).
 //
-// A runtime already on disk that probe-verifies is kept: install is a no-op
-// with the probe's detail, because re-staging (or re-downloading) over a
-// healthy install buys nothing. Anything else provisions, trying in order:
+// There is no user-facing install command: installing Hive installs the
+// runtime (install.sh unpacks it from the release), updating Hive updates it
+// (`hive update`), and `hive init` provisions and load-verifies it. A dev run
+// points HIVE_EMBEDDINGS_SOURCE at a checkout so the same init step stages
+// from node_modules instead of downloading.
+//
+// A runtime already on disk that probe-verifies is kept, because re-staging
+// (or re-downloading) over a healthy install buys nothing. Anything else
+// provisions, trying in order:
 //   1. DEV: copy fastembed and its full dependency closure from a checkout's
-//      node_modules (--from, or walking up from the cwd) into
+//      node_modules (HIVE_EMBEDDINGS_SOURCE, or walking up from the cwd) into
 //      ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override) and bundle it
 //      with `bun build`. The staging pipeline itself lives in
 //      src/release/embeddings-runtime.ts, shared with the release build so
@@ -122,6 +127,12 @@ async function installFromRelease(
   );
 }
 
+/** The env var a dev run sets to the checkout whose node_modules the runtime is
+ * staged from, so provisioning does not depend on where the CLI was invoked.
+ * When it is set and holds no fastembed, provisioning fails loudly instead of
+ * quietly downloading a release the dev build is not pinned to. */
+export const EMBEDDINGS_SOURCE_ENV = "HIVE_EMBEDDINGS_SOURCE";
+
 export interface EmbeddingsProvisionDeps {
   runtimeDir: string;
   /** Where the dev flow looks for a checkout's node_modules. */
@@ -134,11 +145,11 @@ export interface EmbeddingsProvisionDeps {
 }
 
 /**
- * The one provisioning flow both `hive embeddings install` and `hive init`
- * use: a checkout copy when a checkout is in reach (dev), the release
- * download when there is none (prod). An explicit `--from` is a promise —
- * when it names no fastembed source that is a loud failure, never a silent
- * fallback to the network.
+ * The one provisioning flow: a checkout copy when a checkout is in reach
+ * (dev), the release download when there is none (prod). An explicit `from`
+ * — HIVE_EMBEDDINGS_SOURCE, which a dev run sets — is a promise: when it names
+ * no fastembed source that is a loud failure, never a silent fallback to the
+ * network.
  */
 export async function provisionEmbeddingsRuntime(
   options: { from?: string },
@@ -153,7 +164,8 @@ export async function provisionEmbeddingsRuntime(
       ok: false,
       reason:
         `no node_modules containing fastembed found from ${options.from} — ` +
-        "run this from a Hive checkout (or fix the --from path)",
+        `point ${EMBEDDINGS_SOURCE_ENV} at a Hive checkout with ` +
+        "`bun install` already run, or unset it to download the runtime",
     };
   }
   return deps.installFromRelease(deps.runtimeDir);
@@ -169,33 +181,6 @@ function defaultProvisionDeps(probe: EmbeddingsProbe): EmbeddingsProvisionDeps {
   };
 }
 
-export async function runEmbeddingsInstall(options: {
-  from?: string;
-  /** Injectable probe; `bun test` never downloads a model. */
-  probe?: EmbeddingsProbe;
-}): Promise<0 | 1> {
-  const probe = options.probe ?? defaultProbe;
-  const deps = defaultProvisionDeps(probe);
-  console.log(`runtime dir: ${deps.runtimeDir}`);
-
-  // A healthy install is left exactly as it is; a broken one is reinstalled
-  // over, and an absent one is provisioned.
-  const existing = await probeExisting(deps.runtimeDir, probe);
-  if (existing !== null) {
-    console.log(existing.detail);
-    return 0;
-  }
-
-  const outcome = await provisionEmbeddingsRuntime(options, deps);
-  if (!outcome.ok) {
-    console.error(`hive embeddings install failed: ${outcome.reason}`);
-    return 1;
-  }
-  console.log(outcome.detail);
-  console.log("embedding runtime installed and probe-verified");
-  return 0;
-}
-
 /**
  * Init's auto-provisioning: a runtime that is already on disk and probes
  * healthy is kept (a re-init never re-downloads); anything else gets the full
@@ -209,7 +194,11 @@ export async function ensureEmbeddingsRuntime(
   const deps = defaultProvisionDeps(probe);
   const existing = await probeExisting(deps.runtimeDir, probe);
   if (existing !== null) return existing;
-  return provisionEmbeddingsRuntime({}, deps);
+  const source = Bun.env[EMBEDDINGS_SOURCE_ENV];
+  return provisionEmbeddingsRuntime(
+    source === undefined || source === "" ? {} : { from: source },
+    deps,
+  );
 }
 
 export interface EnsureForReleaseDeps {

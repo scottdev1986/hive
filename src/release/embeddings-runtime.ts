@@ -2,7 +2,7 @@
  * The embedding runtime bundling pipeline, shared by the two producers of the
  * exact same output:
  *
- *   - `hive embeddings install` (src/cli/embeddings.ts) stages it into
+ *   - provisioning (src/cli/embeddings.ts) stages it into
  *     ~/.hive/tools/embeddings from a checkout's node_modules — the dev flow.
  *   - the release build (src/release/build.ts) stages the identical tree into
  *     a scratch dir and tars it as `embeddings-runtime.tar.gz`, the artifact a

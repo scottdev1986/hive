@@ -137,8 +137,15 @@ SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 	$(LOCK) \
 	$(GHOSTTY_ENGINE_INPUTS)
 
+# HIVE_EMBEDDINGS_SOURCE points provisioning at this checkout's node_modules, so
+# `hive init` stages the embedding runtime from source instead of downloading a
+# release the dev version is not pinned to. A dev run provisions through init
+# like every other path — there is no separate install command — and
+# scripts/verify-dev-run.ts refuses to hand over a daemon whose embeddings are
+# not "ready" after a live recall probe.
 DEV_ENV := \
 	HIVE_HOME=$(DEV_HOME) \
+	HIVE_EMBEDDINGS_SOURCE=$(ROOT) \
 	HIVE_INSTALL_ROOT=$(INSTALL_ROOT) \
 	HIVE_BIN_LINK=$(DEV)/bin/hive \
 	HIVE_DISABLE_UPDATES=1 \
@@ -281,10 +288,6 @@ run:
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp"; \
 	bun run "$(ROOT)/scripts/dev-memory-setup.ts" "$(DEV_HOME)" "$(HOME)/.hive"; \
-	if ! env $(DEV_ENV) "$(HIVE_BIN)" embeddings install --from "$(ROOT)"; then \
-	  echo "make run: embedding runtime provisioning failed — refusing to start a dev daemon without the semantic leg (defect D1)" >&2; \
-	  exit 1; \
-	fi; \
 	cd "$$proj"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" init; \
 	/bin/rm -f "$(DAEMON_STARTUP_LOG)"; \

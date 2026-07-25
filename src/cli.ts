@@ -20,7 +20,6 @@ import {
 } from "./cli/control";
 import { runCredentialHelper } from "./cli/credential";
 import { runDaemon } from "./cli/daemon";
-import { runEmbeddingsInstall } from "./cli/embeddings";
 import {
   type HookEventOptions,
   readHookStdin,
@@ -683,35 +682,6 @@ export function createProgram(): Command {
     .command("graphify-runtime-install", { hidden: true })
     .action(async () => {
       process.exitCode = await provisionGraphifyRuntime();
-    });
-
-  const embeddings = program
-    .command("embeddings")
-    .description(
-      "Local semantic-memory embedding runtime (required, external to the single-file binary)",
-    );
-
-  embeddings
-    .command("install")
-    .description(
-      "Install the embedding runtime into ~/.hive/tools/embeddings " +
-        "(HIVE_EMBEDDINGS_HOME override). A required memory component that " +
-        "`hive init` and `hive update` provision automatically — this command " +
-        "repairs a failed or deferred install: from a checkout's node_modules when " +
-        "one is in reach, otherwise downloaded from this binary's own Hive " +
-        "release and verified against its signed manifest — then loaded and " +
-        "probe-verified (dimensions=384); install is only done when the probe passes",
-    )
-    .option(
-      "--from <path>",
-      "repo root or node_modules dir to copy fastembed + deps from " +
-        "(default: walk up from the current directory; falls back to the " +
-        "release download when no checkout is found)",
-    )
-    .action(async (options: { from?: string }) => {
-      process.exitCode = await runEmbeddingsInstall({
-        ...(options.from === undefined ? {} : { from: options.from }),
-      });
     });
 
   const memory = program

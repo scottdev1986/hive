@@ -69,7 +69,6 @@ worker's assignment remains its visible initial user message.
 | `hive routing ...` | Read and edit provider, model, effort, selection, and fallback-chain policy |
 | `hive quota` | Show provider capacity, reservations, provenance, and reset times |
 | `hive memory ...` | Search, read, write, delete, reindex, self-test, or consolidate durable memory |
-| `hive embeddings install` | Install the local semantic-memory embedding runtime |
 | `hive graphify status` | Inspect Hive's required local code graph |
 | `hive update [version]` | Install the latest or an exact release, including its Graphify runtime |
 | `hive update check\|status\|rollback\|skip` | Check, inspect, roll back, or skip an offered release |
@@ -108,7 +107,7 @@ Memory has three layers. The curated wiki holds verified project knowledge as Ma
 
 Recall is summoned, never left to agent goodwill. Every agent is briefed with a ranked memory index at spawn — pitfalls matching the assignment first — and receives a bounded delta of what changed when it wakes. queen or the operator can summon memory explicitly with message triggers the daemon executes: `recall: <question>` searches and injects the results, `note this: <fact>` records an observation, and `document this: <topic>` scaffolds a curated article.
 
-Semantic (meaning-based) recall runs locally on Hive's bundled bge-small model (~360 MB RSS warm). `hive init` installs the embedding runtime and Hive updates it with the product. If the machine is offline during setup, recall uses keyword search until `hive embeddings install` completes the local runtime.
+Semantic (meaning-based) recall runs locally on Hive's bundled bge-small model (~360 MB RSS warm). The embedding runtime is provisioned by installing Hive, updated by updating Hive, and load-verified by `hive init` — there is no separate command to run. If the machine is offline during setup, install and init both say so and recall uses keyword search until a later `hive init` completes the local runtime.
 
 ```sh
 hive memory search "quota"                 # full-text search compiled articles
@@ -118,7 +117,6 @@ hive memory delete repo <id>               # reference-checked delete
 hive memory reindex                        # rebuild the search index after manual edits
 hive memory self-test [--live] [--strict]  # golden-canary health proof
 hive memory consolidate [--apply]          # report, then merge, duplicate memories
-hive embeddings install                    # provision the embedding runtime
 ```
 
 Memory behavior is tuned under `[memory]` and `[memory.retention]` in `~/.hive/config.toml`: the wake-delta budget defaults to 300 tokens, episodic events stay hot for 30 days, and verified articles demote to stale after 90 days.

@@ -168,7 +168,7 @@ export function defaultReleaseInstallDeps(options: {
   runtimeDir: string;
   probe: (runtimeDir: string) => Promise<EmbeddingsProbeResult>;
   /** Defaults to this binary's own version (the `hive init` /
-   * `hive embeddings install` pin). */
+   * `hive init` pin). */
   version?: string;
 }): EmbeddingsReleaseInstallDeps {
   return {

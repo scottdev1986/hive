@@ -7,7 +7,7 @@
  * Two CLI binaries (`darwin-arm64`, `darwin-x64`), two `hive-sessiond` broker
  * binaries (same arches), one universal Workspace application, and the
  * universal embedding runtime tarball (`embeddings-runtime.tar.gz`) that
- * `hive embeddings install` downloads on machines without a checkout — built
+ * the installer downloads on machines without a checkout — built
  * through the same pipeline the CLI's dev install uses, so the shipped bytes
  * are those bytes. Sessiond is
  * built ReleaseFast so its embedded Ghostty VT engine fingerprint matches the
@@ -508,7 +508,7 @@ async function finalizeWorkspace(
 }
 
 /**
- * The embedding runtime `hive embeddings install` downloads on machines
+ * The embedding runtime the installer downloads on machines
  * without a checkout. Staged from this checkout's node_modules through the
  * exact pipeline the CLI's own install uses (src/release/embeddings-runtime.ts),
  * so the shipped bytes are the bytes the dev flow produces. The bundle is

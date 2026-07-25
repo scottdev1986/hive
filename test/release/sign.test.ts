@@ -103,11 +103,24 @@ describe("the hardened-runtime entitlements", () => {
     ...plist.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g),
   ].map((m) => m[1]);
 
-  test("grant exactly the two JavaScriptCore JIT needs, in order", () => {
+  test("grant exactly the three the binary needs, in order", () => {
+    // Two for JavaScriptCore's JIT, and library validation off because the
+    // embedding runtime's napi natives are adhoc-signed with no Team ID, so a
+    // hardened runtime otherwise refuses to dlopen them and semantic memory
+    // cannot load at all (ratified 2026-07-25; the plist records why).
     expect(grantedKeys).toEqual([
       "com.apple.security.cs.allow-jit",
       "com.apple.security.cs.allow-unsigned-executable-memory",
+      "com.apple.security.cs.disable-library-validation",
     ]);
+  });
+
+  test("the grant of library validation carries its justification", () => {
+    // An entitlement that weakens the hardened runtime is only honest if an
+    // auditor finds the reason beside it, so the explanation is part of the
+    // contract, not a comment that may drift away.
+    expect(plist).toContain("WHY LIBRARY VALIDATION IS DISABLED");
+    expect(plist).toContain("WHAT IT PERMITS");
   });
 
   test("do not grant the broad entitlements Hive deliberately omits", () => {
@@ -115,7 +128,6 @@ describe("the hardened-runtime entitlements", () => {
     // surface. If a future change adds one, it should be a deliberate edit that
     // fails this test first.
     for (const forbidden of [
-      "com.apple.security.cs.disable-library-validation",
       "com.apple.security.cs.disable-executable-page-protection",
       "com.apple.security.cs.allow-dyld-environment-variables",
     ]) {

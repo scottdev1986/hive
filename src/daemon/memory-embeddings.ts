@@ -27,12 +27,12 @@
 // pre-bundled single ESM file by absolute path, whose internal runtime
 // `require()` of relative native assets then loads fine. So the runtime ships
 // as an EXTERNAL bundle under ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME
-// override), provisioned and probe-verified by `hive embeddings install`;
-// the repo's node_modules stays the dev fallback. Each failure mode —
+// override), provisioned and probe-verified by installing, updating, or
+// initializing Hive; the repo's node_modules stays the dev fallback. Each mode —
 // runtime missing, bundle broken, native lib unloadable — is a DISTINCT
 // labeled state, never one generic "unavailable".
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { MemoryEmbeddingModel } from "../schemas";
 import type { EpisodicStore, MemoryEmbeddingRow } from "./episodic-store";
 
@@ -111,7 +111,7 @@ export function memoryModelsDir(): string {
 /** The env override for the external embedding runtime dir. */
 export const EMBEDDINGS_RUNTIME_HOME_ENV = "HIVE_EMBEDDINGS_HOME";
 
-/** The bundle (relative to the runtime dir) `hive embeddings install`
+/** The bundle (relative to the runtime dir) provisioning
  * produces: one pre-bundled ESM file plus its native assets alongside. */
 export const EMBEDDINGS_RUNTIME_BUNDLE = join("dist", "entry.js");
 
@@ -147,6 +147,36 @@ interface FastembedRuntime {
 const errorDetail = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/**
+ * Recover the TRUE reason a bundle load failed, when the bundle lies about it.
+ *
+ * The tokenizers loader vendored inside the bundle swallows its own failure
+ * (`} catch {}`) and then reports the last leg of a per-architecture cascade,
+ * so a dlopen problem on the darwin-universal binding surfaces as
+ * "Cannot require module @anush008/tokenizers-darwin-arm64" — naming a package
+ * that is not supposed to exist and sending the reader after a missing file
+ * that was never missing. Loading the native libraries beside the bundle
+ * directly reproduces the real error (code-signature rejection, missing
+ * dependent library, wrong architecture), so the diagnostic can name the actual
+ * cause. Returns null when every native library loads, which means the failure
+ * is genuinely elsewhere in the bundle.
+ */
+async function nativeLoadFailure(bundlePath: string): Promise<string | null> {
+  const distDir = dirname(bundlePath);
+  try {
+    for await (const name of new Bun.Glob("*.node").scan(distDir)) {
+      try {
+        import.meta.require(join(distDir, name));
+      } catch (error) {
+        return `${name} could not be loaded: ${errorDetail(error)}`;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 /** Resolve the fastembed module: the external runtime bundle first (the only
  * path that works in the compiled daemon), then the repo's node_modules (the
  * dev path under plain `bun`). Every failure is thrown with a DISTINCT label
@@ -163,13 +193,17 @@ async function importFastembedRuntime(): Promise<{
         origin: bundlePath,
       };
     } catch (error) {
-      const message = errorDetail(error);
-      const label = /\.node|\.dylib|dlopen/i.test(message)
-        ? "embedding-native-unloadable"
-        : "embedding-runtime-broken";
+      // The bundle's own message can name a false cause (see nativeLoadFailure),
+      // so a reproducible native failure wins over whatever it reported.
+      const native = await nativeLoadFailure(bundlePath);
+      const message = native ?? errorDetail(error);
+      const label =
+        native !== null || /\.node|\.dylib|dlopen/i.test(message)
+          ? "embedding-native-unloadable"
+          : "embedding-runtime-broken";
       throw new Error(
         `${label}: the external embedding runtime bundle at ${bundlePath} ` +
-          `failed to load: ${message} — reinstall with \`hive embeddings install\``,
+          `failed to load: ${message} — re-run \`hive init\` to reprovision it`,
       );
     }
   }
@@ -182,7 +216,7 @@ async function importFastembedRuntime(): Promise<{
     throw new Error(
       `embedding-runtime-missing: no external runtime bundle at ${bundlePath} ` +
         `and the fastembed package is not resolvable (${errorDetail(error)}) — ` +
-        "run `hive embeddings install`",
+        "run `hive init` to provision it",
     );
   }
 }
@@ -249,7 +283,7 @@ async function loadLocalEmbedder(
   return embedderFromRuntime(runtime, model, cacheDir);
 }
 
-/** The strict post-install probe `hive embeddings install` runs: load the
+/** The strict post-install probe every provisioning path runs: load the
  * bundle at `runtimeDir` — and ONLY that bundle, never the node_modules
  * fallback, so a broken install can never be masked by a checkout's dev
  * path — and embed a probe string, asserting the model width. Install is

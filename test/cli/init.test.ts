@@ -733,7 +733,7 @@ describe("the embeddings step in init", () => {
       expect(report).toContain("DEGRADED");
       expect(report).toContain("network unreachable");
       expect(report).toContain("FTS-only");
-      expect(report).toContain("hive embeddings install");
+      expect(report).toContain("re-run `hive init`");
       // A deferred runtime is not a failed init: the stamp still lands.
       expect(isRepoInitialized(root)).toBe(true);
     } finally {
