@@ -4,7 +4,11 @@ import {
   hiveInstanceSuffix,
   isDefaultHiveHome,
 } from "../daemon/instance-identity";
-import { CAPABILITY_PROVIDERS } from "../schemas";
+import {
+  type AgentRecord,
+  CAPABILITY_PROVIDERS,
+  isLiveAgent,
+} from "../schemas";
 import { shippedSkillsFor } from "../skills/shipped";
 import { nativeSkillDirectory } from "./skills";
 import { grokHookFilename, ownsGrokHook } from "./tools/grok";
@@ -86,6 +90,34 @@ export interface UnmergedBranch {
   unmergedCommits: number;
   preserved?: boolean;
   ownerInstanceId?: string;
+}
+
+export interface WorktreeReconciliationOutcome {
+  path: string;
+  branch: string | null;
+  action: "kept" | "removed";
+  rule:
+    | "live-agent"
+    | "preserved-agent"
+    | "stranded-work"
+    | "assessment-failed"
+    | "cleanup-failed"
+    | "foreign-instance"
+    | "unregistered-path"
+    | "clean-orphan";
+  dirtyFiles: string[];
+  unmergedCommits: number;
+  note?: string;
+}
+
+export interface PreservedRefReconciliation {
+  removed: Array<{ branch: string; tip: string }>;
+  kept: Array<{ branch: string; tip: string; unmergedCommits: number }>;
+}
+
+export interface WorktreeReconciliationReport {
+  worktrees: WorktreeReconciliationOutcome[];
+  preservedRefs: PreservedRefReconciliation;
 }
 
 export class WorktreeNameCollisionError extends Error {}
@@ -175,6 +207,50 @@ async function isBranchPreserved(
     preservedRef(branch),
   ]);
   return result.exitCode === 0;
+}
+
+async function reconcilePreservedRefs(
+  repoRoot: string,
+  mainBranch: string,
+): Promise<PreservedRefReconciliation> {
+  const result = await runGit(repoRoot, [
+    "for-each-ref",
+    "--format=%(refname) %(objectname)",
+    "refs/hive-preserved",
+  ]);
+  assertGitSuccess(result, "for-each-ref");
+  const report: PreservedRefReconciliation = { removed: [], kept: [] };
+  for (const line of result.stdout.split("\n")) {
+    const [ref, tip] = line.trim().split(" ");
+    if (
+      ref === undefined ||
+      tip === undefined ||
+      !ref.startsWith("refs/hive-preserved/")
+    ) {
+      continue;
+    }
+    const branch = ref.slice("refs/hive-preserved/".length);
+    const countResult = await runGit(repoRoot, [
+      "rev-list",
+      "--count",
+      `${mainBranch}..${tip}`,
+    ]);
+    assertGitSuccess(countResult, "rev-list");
+    const unmergedCommits = Number(countResult.stdout.trim());
+    if (!Number.isSafeInteger(unmergedCommits) || unmergedCommits < 0) {
+      throw new Error("git rev-list failed: invalid preserved-ref count");
+    }
+    if (unmergedCommits > 0) {
+      report.kept.push({ branch, tip, unmergedCommits });
+      continue;
+    }
+    // Compare-and-delete: a concurrent preservation update must not be erased
+    // because the tip measured above happened to be merged.
+    const remove = await runGit(repoRoot, ["update-ref", "-d", ref, tip]);
+    assertGitSuccess(remove, "update-ref");
+    report.removed.push({ branch, tip });
+  }
+  return report;
 }
 
 async function runGit(repoRoot: string, args: string[]): Promise<GitResult> {
@@ -416,13 +492,18 @@ export async function unavailableAgentNames(
   repoRoot: string,
   candidates: readonly string[],
 ): Promise<Set<string>> {
-  const [worktrees, branchResult] = await Promise.all([
+  const worktreesDir = join(repoRoot, ".hive", "worktrees");
+  const [worktrees, branchResult, diskEntries] = await Promise.all([
     listWorktrees(repoRoot),
     runGit(repoRoot, [
       "for-each-ref",
       "--format=%(refname:short)",
       "refs/heads/hive",
     ]),
+    readdir(worktreesDir).catch((error: unknown) => {
+      if (isMissingFileError(error)) return [] as string[];
+      throw error;
+    }),
   ]);
   const marker = `${join(".hive", "worktrees")}/`;
   const worktreeNames = new Set(
@@ -435,6 +516,7 @@ export async function unavailableAgentNames(
   return new Set(
     candidates.filter(
       (name) =>
+        diskEntries.includes(name) ||
         worktreeNames.has(name) ||
         branches.some((branch) => branch.startsWith(`hive/${name}-`)),
     ),
@@ -615,6 +697,137 @@ export async function listUnmergedHiveBranches(
     });
   }
   return branches;
+}
+
+export async function reconcileOrphanedWorktrees(
+  repoRoot: string,
+  agents: readonly AgentRecord[],
+  mainBranch = "main",
+  operations: {
+    assess?: typeof assessStrandedWork;
+    remove?: typeof removeWorktree;
+  } = {},
+): Promise<WorktreeReconciliationReport> {
+  const assess = operations.assess ?? assessStrandedWork;
+  const remove = operations.remove ?? removeWorktree;
+  const worktreesRoot = resolve(repoRoot, ".hive", "worktrees");
+  const registered = (await listWorktrees(repoRoot)).filter(
+    (worktree) => dirname(resolve(worktree.path)) === worktreesRoot,
+  );
+  const outcomes: WorktreeReconciliationOutcome[] = [];
+  const registeredPaths = new Set(
+    registered.map((worktree) => resolve(worktree.path)),
+  );
+
+  for (const worktree of registered) {
+    const path = resolve(worktree.path);
+    const agent = agents.find(
+      (candidate) =>
+        (candidate.worktreePath !== null &&
+          resolve(candidate.worktreePath) === path) ||
+        (worktree.branch !== null && candidate.branch === worktree.branch),
+    );
+    const base = {
+      path,
+      branch: worktree.branch,
+      dirtyFiles: [] as string[],
+      unmergedCommits: 0,
+    };
+    if (agent !== undefined && isLiveAgent(agent)) {
+      outcomes.push({ ...base, action: "kept", rule: "live-agent" });
+      continue;
+    }
+    if (
+      agent !== undefined &&
+      agent.failureReason !== undefined &&
+      agent.failureReason.trim() !== ""
+    ) {
+      outcomes.push({ ...base, action: "kept", rule: "preserved-agent" });
+      continue;
+    }
+    if (worktree.branch !== null) {
+      const owner = await branchOwner(repoRoot, worktree.branch);
+      if (owner !== undefined && owner !== hiveInstanceSuffix()) {
+        outcomes.push({ ...base, action: "kept", rule: "foreign-instance" });
+        continue;
+      }
+    }
+
+    let stranded: StrandedWork;
+    try {
+      stranded = await assess(repoRoot, path, worktree.branch, mainBranch);
+    } catch (error) {
+      outcomes.push({
+        ...base,
+        action: "kept",
+        rule: "assessment-failed",
+        note: error instanceof Error ? error.message : "unknown error",
+      });
+      continue;
+    }
+    if (stranded.dirtyFiles.length > 0 || stranded.unmergedCommits > 0) {
+      outcomes.push({
+        ...base,
+        ...stranded,
+        action: "kept",
+        rule: "stranded-work",
+      });
+      continue;
+    }
+    try {
+      await remove(repoRoot, path, {
+        deleteBranch: true,
+        ...(worktree.branch === null ? {} : { branch: worktree.branch }),
+      });
+      outcomes.push({
+        ...base,
+        action: "removed",
+        rule: "clean-orphan",
+      });
+    } catch (error) {
+      outcomes.push({
+        ...base,
+        action: "kept",
+        rule: "cleanup-failed",
+        note: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+  }
+
+  const entries = await readdir(worktreesRoot, { withFileTypes: true }).catch(
+    (error: unknown) => {
+      if (isMissingFileError(error)) return [];
+      throw error;
+    },
+  );
+  for (const entry of entries) {
+    const path = resolve(worktreesRoot, entry.name);
+    if (registeredPaths.has(path)) continue;
+    const agent = agents.find(
+      (candidate) =>
+        candidate.worktreePath !== null &&
+        resolve(candidate.worktreePath) === path,
+    );
+    outcomes.push({
+      path,
+      branch: agent?.branch ?? null,
+      action: "kept",
+      rule:
+        agent !== undefined && isLiveAgent(agent)
+          ? "live-agent"
+          : agent?.failureReason !== undefined &&
+              agent.failureReason.trim() !== ""
+            ? "preserved-agent"
+            : "unregistered-path",
+      dirtyFiles: [],
+      unmergedCommits: 0,
+    });
+  }
+
+  return {
+    worktrees: outcomes,
+    preservedRefs: await reconcilePreservedRefs(repoRoot, mainBranch),
+  };
 }
 
 export async function removeWorktree(

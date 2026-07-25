@@ -194,6 +194,52 @@ describe("stranded-branch reconciliation", () => {
       db.close();
     }
   });
+
+  test("the existing maintenance sweep runs worktree reconciliation", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertAgent(
+      agent({
+        worktreePath: "/tmp/repo/.hive/worktrees/david",
+        branch: "hive/david-widgets",
+      }),
+    );
+    let reconciliations = 0;
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      sessionSender: new SilentSessionSender(db),
+      rootProtocol: offlineRootProtocol,
+      repoRoot: "/tmp/repo",
+      lifecycle: { idleReap: false, idleReapMinutes: 10 },
+      listUnmergedHiveBranches: async () => [],
+      reconcileOrphanedWorktrees: async () => {
+        reconciliations += 1;
+        return {
+          worktrees: [
+            {
+              path: "/tmp/repo/.hive/worktrees/david",
+              branch: "hive/david-widgets",
+              action: "removed",
+              rule: "clean-orphan",
+              dirtyFiles: [],
+              unmergedCommits: 0,
+            },
+          ],
+          preservedRefs: { removed: [], kept: [] },
+        };
+      },
+    });
+    try {
+      await daemon.runMaintenance();
+      expect(reconciliations).toBe(1);
+      expect(db.getAgentByName("david")?.worktreePath).toBeNull();
+      expect(db.getAgentByName("david")?.branch).toBeNull();
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
 });
 
 import { required } from "../required";

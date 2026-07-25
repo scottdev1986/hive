@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { provisionSkills } from "../../src/adapters/skills";
+import { getAgentAdapter } from "../../src/adapters/tools/agents/agent-factory";
 import { writeGrokAgentConfig } from "../../src/adapters/tools/grok";
 import {
   assessStrandedWork,
@@ -470,9 +471,24 @@ describe("hive wiring", () => {
 
   // The fixture repository has no .gitignore, which is the arbitrary project
   // Hive has to work on: every shipped skill is untracked there.
-  test("includes the skills every spawn provisions, for every vendor", async () => {
+  test("discounts the config and skills every vendor spawn provisions", async () => {
     for (const tool of CAPABILITY_PROVIDERS) {
       const created = await createWorktree(repoRoot, tool, "hive wiring");
+      await getAgentAdapter(tool).prepareSpawn({
+        name: tool,
+        model: "default",
+        effort: "medium",
+        worktreePath: created.path,
+        daemonPort: 41_000,
+        readOnly: false,
+        dangerous: false,
+        withCapability: true,
+        instructionPath: "/tmp/prompt.txt",
+        sessionId: `session-${tool}`,
+        kickoff: "Begin the assigned task.",
+        newVendorSessionId: "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f",
+        providerRunId: "018f1e90-7b5a-7cc0-8000-000000000223",
+      });
       await provisionSkills(created.path, tool, join(tempRoot, "no-skills"));
 
       const stranded = await assessStrandedWork(

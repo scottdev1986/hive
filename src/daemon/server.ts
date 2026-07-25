@@ -28,10 +28,12 @@ import {
   listUnmergedHiveBranches,
   markBranchPreserved,
   observedWorktreeFiles,
+  reconcileOrphanedWorktrees as reconcileWorktrees,
   type RemoveWorktreeOptions,
   removeWorktree,
   type StrandedWork,
   type UnmergedBranch,
+  type WorktreeReconciliationReport,
 } from "../adapters/worktrees";
 import { type AutonomyControl, isAutonomy } from "../config/autonomy";
 import type {
@@ -629,6 +631,7 @@ export interface HiveDaemonOptions {
     branch: string | null,
   ) => Promise<StrandedWork>;
   listUnmergedHiveBranches?: (repoRoot: string) => Promise<UnmergedBranch[]>;
+  reconcileOrphanedWorktrees?: typeof reconcileWorktrees;
   liveInstanceIds?: () => Promise<ReadonlySet<string>>;
   landBranch?: LandBranch;
   readLandReadiness?: ReadLandReadiness;
@@ -800,6 +803,7 @@ export class HiveDaemon {
   private readonly listUnmergedBranches: NonNullable<
     HiveDaemonOptions["listUnmergedHiveBranches"]
   >;
+  private readonly reconcileWorktrees: typeof reconcileWorktrees;
   private readonly liveInstanceIds: () => Promise<ReadonlySet<string>>;
   /** Stranded branches already reported this boot, keyed by branch and tip.
    * In memory on purpose: a restart must re-report, because the orchestrator
@@ -1245,6 +1249,8 @@ export class HiveDaemon {
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.listUnmergedBranches =
       options.listUnmergedHiveBranches ?? listUnmergedHiveBranches;
+    this.reconcileWorktrees =
+      options.reconcileOrphanedWorktrees ?? reconcileWorktrees;
     this.liveInstanceIds =
       options.liveInstanceIds ??
       (async () =>
@@ -2188,6 +2194,18 @@ export class HiveDaemon {
           }`,
         );
       });
+      // Like idle reap, repository cleanup is off for embedded daemons that
+      // were not given lifecycle policy. Production always receives the
+      // schema-default lifecycle config.
+      if (this.lifecycleConfig !== null) {
+        await this.reconcileOrphanedWorktrees().catch((error) => {
+          console.error(
+            `Hive worktree reconciliation failed: ${
+              error instanceof Error ? error.message : "unknown error"
+            }`,
+          );
+        });
+      }
       // Runs at startup, which is the moment that matters: a restart is
       // precisely when work whose agent row is gone would otherwise fall out
       // of the world unannounced.
@@ -3509,6 +3527,85 @@ export class HiveDaemon {
         );
       }
     }
+  }
+
+  async reconcileOrphanedWorktrees(): Promise<WorktreeReconciliationReport> {
+    const agents = this.db.listAgents();
+    const report = await this.reconcileWorktrees(
+      this.repoRoot,
+      agents,
+      "main",
+      {
+        assess: this.assessStranded,
+        remove: this.cleanupWorktree,
+      },
+    );
+    for (const outcome of report.worktrees) {
+      if (outcome.action !== "removed") continue;
+      const owner = agents.find(
+        (agent) =>
+          agent.worktreePath === outcome.path ||
+          (outcome.branch !== null && agent.branch === outcome.branch),
+      );
+      if (owner === undefined || LIVE_STATUSES.includes(owner.status)) continue;
+      this.db.upsertAgent({
+        ...owner,
+        worktreePath: null,
+        branch: null,
+      });
+    }
+    const noteworthy =
+      report.worktrees.some((outcome) => outcome.rule !== "live-agent") ||
+      report.preservedRefs.removed.length > 0 ||
+      report.preservedRefs.kept.length > 0;
+    if (!noteworthy) return report;
+
+    const worktrees = report.worktrees.map((outcome) => {
+      const subject = outcome.branch ?? outcome.path;
+      switch (outcome.rule) {
+        case "live-agent":
+          return `${subject}: kept (live agent row owns it)`;
+        case "preserved-agent":
+          return `${subject}: kept (closed agent row carries an explicit preservation reason)`;
+        case "stranded-work":
+          return `${subject}: kept (${outcome.unmergedCommits} unmerged commit(s), ${outcome.dirtyFiles.length} real uncommitted path(s))`;
+        case "foreign-instance":
+          return `${subject}: kept (branch is owned by another Hive instance)`;
+        case "unregistered-path":
+          return `${subject}: kept (disk path is not registered as a git worktree; manual inspection required)`;
+        case "assessment-failed":
+          return `${subject}: kept (stranded-work assessment failed: ${outcome.note ?? "unknown error"})`;
+        case "cleanup-failed":
+          return `${subject}: kept (clean-orphan removal failed: ${outcome.note ?? "unknown error"})`;
+        case "clean-orphan":
+          return `${subject}: removed (no owning row, no unmerged commits, no real uncommitted paths)`;
+        default:
+          return unknownVendor(outcome.rule, "worktree reconciliation rule");
+      }
+    });
+    const removedRefs = report.preservedRefs.removed.map(
+      (ref) => `${ref.branch} (fully merged)`,
+    );
+    const keptRefs = report.preservedRefs.kept.map(
+      (ref) => `${ref.branch} (${ref.unmergedCommits} unmerged)`,
+    );
+    const body = [
+      "Hive worktree reconciliation:",
+      ...worktrees.map((line) => `- ${line}`),
+      `Preserved refs removed: ${removedRefs.length}${
+        removedRefs.length === 0 ? "" : ` — ${removedRefs.join(", ")}`
+      }.`,
+      `Preserved refs kept: ${keptRefs.length}${
+        keptRefs.length === 0 ? "" : ` — ${keptRefs.join(", ")}`
+      }. Nothing with unmerged commits or real uncommitted paths was deleted.`,
+    ].join("\n");
+    const digest = createHash("sha256").update(body).digest("hex").slice(0, 16);
+    await this.delivery
+      .send("hive-lifecycle", ORCHESTRATOR_NAME, body, {
+        idempotencyKey: `worktree-reconciliation:${this.bootId}:${digest}`,
+      })
+      .catch(logAlertDeliveryFailure);
+    return report;
   }
 
   /**
