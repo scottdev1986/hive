@@ -83,6 +83,7 @@ import {
   nextAgentSessionLocator,
   sessionInstanceId,
 } from "./session-host/locators";
+import type { SessiondAgentInput } from "./session-host/sessiond-agent-input";
 import { SessiondWireError } from "./session-host/sessiond-host";
 import {
   type ShellSessionLaunch,
@@ -708,6 +709,7 @@ export const NAME_POOL = [
 type AgentStore = Pick<
   HiveDatabase,
   | "getAgentById"
+  | "getActiveProviderRunByTerminal"
   | "getLiveAgentByName"
   | "insertAgent"
   | "insertProviderRun"
@@ -824,6 +826,10 @@ export interface HiveSpawnerDependencies {
   readRoutingPolicy?: () => RoutingPolicy;
   /** Workspace-owned terminal creation and visibility admission. */
   sessiond: SessiondSpawnAdmission;
+  /** Kimi's persistent TUI has no launch-time user-turn argument. Production
+   * supplies the same exact-foreground terminal injector used for later
+   * messages; other providers never read this dependency. */
+  sessiondInput?: SessiondAgentInput;
   stopSession: StopAgentSession;
   createWorktree?: WorktreeCreator;
   unavailableAgentNames?: typeof unavailableAgentNames;
@@ -1358,6 +1364,40 @@ export class HiveSpawner implements Spawner {
         );
       }
       throw error;
+    }
+  }
+
+  private async submitKimiKickoff(
+    record: AgentRecord,
+    providerRunId: string,
+    kickoff: string,
+  ): Promise<void> {
+    const input = this.dependencies.sessiondInput;
+    if (input === undefined) {
+      throw new Error(
+        "Cannot start Kimi: sessiond terminal input is unavailable",
+      );
+    }
+    const terminal = requireSessiondAgentLocator(record);
+    const run = this.dependencies.db.getActiveProviderRunByTerminal(terminal);
+    if (run === null || run.runId !== providerRunId) {
+      throw new Error(
+        "Cannot start Kimi: provider foreground identity is unavailable",
+      );
+    }
+    const result = await input.writeAutomated({
+      terminal,
+      expectedForeground: {
+        providerRunId,
+        pid: run.pid,
+        startToken: run.startToken,
+        processGroupId: run.foregroundProcessGroupId,
+      },
+      bytes: new TextEncoder().encode(`\x1b[200~${kickoff}\x1b[201~\r`),
+      idempotencyKey: `kimi-kickoff:${providerRunId}`,
+    });
+    if (result.outcome === "declined") {
+      throw new Error(`Cannot start Kimi: ${result.reason}`);
     }
   }
 
@@ -2845,6 +2885,7 @@ export class HiveSpawner implements Spawner {
         // down (claude's folder-trust seed; the other vendors have none).
         await adapter.prepareWorktree?.(worktree.path);
         const providerRunId = crypto.randomUUID();
+        const kickoff = "Begin the assigned task.";
         const preparedLaunch = await adapter.prepareSpawn({
           daemonPort: this.daemonPort(),
           model,
@@ -2864,7 +2905,7 @@ export class HiveSpawner implements Spawner {
             ? {}
             : { newVendorSessionId: grokSessionId }),
           excludeMcpServers,
-          kickoff: "Begin the assigned task.",
+          kickoff,
         });
         const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
           const revalidated = await requireGate({
@@ -2949,6 +2990,9 @@ export class HiveSpawner implements Spawner {
             );
             return;
           }
+        }
+        if (tool === "kimi") {
+          await this.submitKimiKickoff(record, providerRunId, kickoff);
         }
         // Hook traffic normally performs this transition first. A live provider
         // can still prove itself through its process-backed screen heartbeat,

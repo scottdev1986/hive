@@ -102,32 +102,25 @@ export function buildKimiResumeCommand(
 }
 
 /**
- * Kimi has no `--append-system-prompt`/`--rules` flag, and its interactive TUI
- * rejects a positional prompt ("unknown command"). Its project instruction
- * surface is `<project>/.kimi-code/AGENTS.md`, which the CLI loads into the
- * system context (verified against kimi 0.28.1): the shared 0600 prompt file
- * is installed there, and the kickoff — which claude/codex pass as the opening
- * positional and grok as its trailing prompt — rides as the closing section
- * because Kimi offers no launch-time user-message channel at all.
+ * Kimi has no interactive `--append-system-prompt`/`--rules` flag, and its TUI
+ * rejects a positional prompt ("unknown command"). Kimi 0.29.1 does offer
+ * `-p`/`--prompt`, but that runs one non-interactive turn and exits, so it
+ * cannot launch Hive's persistent agent. The TUI's project instruction surface
+ * is `<project>/.kimi-code/AGENTS.md`, which loads the shared 0600 prompt file
+ * into system context. The opening user turn is submitted separately through
+ * sessiond after the TUI is ready.
  */
 export function wrapKimiWithInstructionFile(
   command: string,
   path: string,
-  initialPrompt?: string,
 ): string {
   const target = ".kimi-code/AGENTS.md";
   const copy = `mkdir -p .kimi-code && install -m 600 ${shellQuote(
     path,
   )} ${shellQuote(target)}`;
-  const kickoff =
-    initialPrompt === undefined
-      ? ""
-      : ` && printf '\\n\\n## Opening instruction\\n\\n%s\\n' ${shellQuote(
-          initialPrompt,
-        )} >> ${shellQuote(target)}`;
   // No `exec` here: the wrapped command may carry an env-assignment prefix
   // (wrapKimiSpawnWithEffort), which `exec` would try to run as a program.
-  return `${copy}${kickoff} && ${command}`;
+  return `${copy} && ${command}`;
 }
 
 /**

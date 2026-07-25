@@ -57,11 +57,7 @@ export const kimiAgentAdapter: AgentAdapter = {
     // its own `mkdir && install`, and an assignment placed in front of that
     // would reach those commands instead of kimi.
     if (context.instructionPath !== undefined) {
-      command = wrapKimiWithInstructionFile(
-        command,
-        context.instructionPath,
-        context.kickoff,
-      );
+      command = wrapKimiWithInstructionFile(command, context.instructionPath);
     }
     return { argv, command };
   },

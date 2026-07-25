@@ -55,6 +55,10 @@ import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "../daemon/session-host/hive-terminal-host";
+import {
+  type SessiondAgentInput,
+  SessiondViewerAgentInput,
+} from "../daemon/session-host/sessiond-agent-input";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import { observeSessiondOutput } from "../daemon/session-host/sessiond-output-observer";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
@@ -153,9 +157,10 @@ export function stopSpawnSession(
 
 export interface ProductionTerminalComposition {
   terminalHost: SessiondHost;
-  spawnerDependencies: Readonly<Record<never, never>>;
+  spawnerDependencies: Readonly<{ sessiondInput: SessiondAgentInput }>;
   daemonDependencies: Readonly<{
     terminalHost: SessiondHost;
+    sessiondInput: SessiondAgentInput;
     observeTerminalOutput: (
       locator: SessionLocator,
       geometry: TerminalGeometry,
@@ -172,11 +177,18 @@ export function createProductionTerminalComposition(
   ) => SessiondHost = (_kind, hostOptions) => new SessiondHost(hostOptions),
 ): ProductionTerminalComposition {
   const terminalHost = construct("sessiond", options);
+  const sessiondInput = new SessiondViewerAgentInput(
+    terminalHost,
+    `hive-daemon:${hiveInstanceSuffix()}`,
+    undefined,
+    (locator, mode) => terminalHost.discardInputOrphan(locator, mode),
+  );
   return {
     terminalHost,
-    spawnerDependencies: {},
+    spawnerDependencies: { sessiondInput },
     daemonDependencies: {
       terminalHost,
+      sessiondInput,
       observeTerminalOutput: (locator, geometry) =>
         observeSessiondOutput(
           terminalHost,

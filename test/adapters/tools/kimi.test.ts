@@ -86,17 +86,12 @@ describe("Kimi adapter", () => {
     const command = wrapKimiWithInstructionFile(
       "kimi -m model --yolo",
       "/tmp/prompt.txt",
-      "Begin the assigned task.",
     );
     expect(command).toContain(
       "install -m 600 '/tmp/prompt.txt' '.kimi-code/AGENTS.md'",
     );
-    expect(command).toContain("'Begin the assigned task.'");
-    expect(command).toContain(">> '.kimi-code/AGENTS.md'");
     expect(command).toContain("&& kimi -m model --yolo");
-    // No kickoff means no append step at all.
-    const bare = wrapKimiWithInstructionFile("kimi", "/tmp/prompt.txt");
-    expect(bare).not.toContain("printf");
+    expect(command).not.toContain("Opening instruction");
   });
 
   test("effort enters through the environment, never an argv", () => {
@@ -178,6 +173,7 @@ describe("Kimi adapter", () => {
     expect(prepared.command).toContain(
       "install -m 600 '/tmp/prompt.txt' '.kimi-code/AGENTS.md'",
     );
+    expect(prepared.command).not.toContain("Begin the assigned task.");
     expect(prepared.command).toContain("KIMI_MODEL_THINKING_EFFORT='high'");
     expect(prepared.command).not.toContain("secret-token");
     // Both env prefixes belong directly in front of kimi, after the brief

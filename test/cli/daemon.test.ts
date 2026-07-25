@@ -26,12 +26,16 @@ test("production terminal composition constructs sessiond only", () => {
   expect(constructed).toEqual(["sessiond"]);
   expect(composition).toEqual({
     terminalHost,
-    spawnerDependencies: {},
+    spawnerDependencies: { sessiondInput: expect.any(Object) },
     daemonDependencies: {
       terminalHost,
+      sessiondInput: expect.any(Object),
       observeTerminalOutput: expect.any(Function),
     },
   });
+  expect(composition.spawnerDependencies.sessiondInput).toBe(
+    composition.daemonDependencies.sessiondInput,
+  );
   expect("tmux" in composition.spawnerDependencies).toBe(false);
   expect("tmux" in composition.daemonDependencies).toBe(false);
   expect("sessionSender" in composition.daemonDependencies).toBe(false);
