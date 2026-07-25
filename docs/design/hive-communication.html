@@ -321,7 +321,7 @@ failed     the attempt ended; the message may remain queued for an explicit retr
           </table>
         </div>
 
-        <p>The terminal host contract names <code>foreground-group</code>, <code>session-members</code>, and <code>process-tree</code> targets, but the current sessiond <code>foreground-group</code> termination resolves the group from the durable creation record. In a zsh-hosted provider session that record names the shell group, not the later provider job. Provider control therefore re-verifies the live foreground PID, start token, and group immediately before signaling it; terminal teardown continues to use <code>process-tree</code>. Capability revocation precedes any critical stop or replacement.</p>
+        <p>The terminal host contract names <code>foreground-group</code>, <code>session-members</code>, and <code>process-tree</code> targets, but the current sessiond <code>foreground-group</code> termination resolves the group from the durable creation record. In a zsh-hosted provider session that record names the shell group, not the later provider job. Provider control therefore re-verifies the live foreground PID, start token, and group immediately before signaling it; this narrows but does not make the read-then-signal window atomic. The residual worst case is process-group recycling after the re-read: another process may be created with a PID equal to the recorded group and become its leader, for example a freshly forked zsh belonging to a different agent. Terminal teardown continues to use <code>process-tree</code>. Capability revocation precedes any critical stop or replacement.</p>
       </div>
     </section>
 
