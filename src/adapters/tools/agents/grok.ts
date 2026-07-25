@@ -18,9 +18,14 @@ import type { AgentAdapter } from "./agent-adapter";
 
 export const grokAgentAdapter: AgentAdapter = {
   id: "grok",
-  // Project hooks cover session, turn, tool, failure, and compaction events
-  // when the user trusts the worktree. updates.jsonl remains the only
-  // structured interrupted source, and approval-waiting remains terminal-only.
+  // Project hooks cover session, turn, tool, failure, and compaction events,
+  // but only fire once the user trusts the worktree — that is Grok's own
+  // behaviour, not a gate Hive applies. Hive writes the hook config
+  // unconditionally (see prepareSpawn: the write happens before trust is even
+  // inspected) and only REPORTS what trust it observed, degrading the evidence
+  // it claims when the worktree is untrusted or unverifiable. Trust-reported,
+  // never trust-gated. updates.jsonl remains the only structured interrupted
+  // source, and approval-waiting remains terminal-only.
   communication: {
     provider: "grok",
     eventSource: "hooks",
@@ -58,8 +63,12 @@ export const grokAgentAdapter: AgentAdapter = {
         );
       } else if (trust === "trusted") {
         console.warn(
-          `Grok reads project .claude/settings.json hooks in trusted worktrees; ` +
-            `any such hooks in ${context.worktreePath} are user-owned and may also fire.`,
+          // Name settings.local.json first: it is the file that actually exists
+          // in a Hive worktree (see the worktree wiring list), so warning only
+          // about settings.json named the file least likely to fire.
+          `Grok reads project .claude/settings.local.json and .claude/settings.json ` +
+            `hooks in trusted worktrees; any such hooks in ${context.worktreePath} ` +
+            "are user-owned and may also fire.",
         );
       } else {
         console.warn(

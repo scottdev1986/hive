@@ -361,10 +361,14 @@ describe("Grok adapter", () => {
         executable,
         providerRunId: "018f1e90-7b5a-7cc0-8000-000000000225",
       });
+      // The disclosure must name settings.local.json, which is the file that
+      // actually exists in a Hive worktree; naming only settings.json warned
+      // about the one least likely to fire.
       expect(warning).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "reads project .claude/settings.json hooks in trusted worktrees",
-        ),
+        expect.stringContaining(".claude/settings.local.json"),
+      );
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(".claude/settings.json"),
       );
     } finally {
       warning.mockRestore();
