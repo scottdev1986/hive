@@ -8,7 +8,7 @@
  * so a release binary cannot be relabelled by exporting an environment
  * variable at it. That immutability is the point: the build hash below is what
  * a running daemon presents in its handshake, and a value the caller could
- * forge would make the stale-daemon check a decoration.
+ * forge would make that handshake a decoration.
  *
  * Running from a source checkout (`bun run src/cli.ts`) leaves the defines
  * unset, so the fallbacks below identify the process honestly as a dev build.

@@ -65,7 +65,6 @@ import {
 } from "../schemas";
 import type { WorkspaceEventV2 } from "../schemas/status-envelope";
 import { HIVE_VERSION } from "../version";
-import { type BuildFreshness, checkBuildFreshness } from "./build-freshness";
 import {
   type Action,
   bearerToken,
@@ -601,9 +600,6 @@ export interface HiveDaemonOptions {
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
   graphify?: GraphifyService;
-  /** Is the binary this daemon runs older than main? Injectable so a test can
-   * exercise a stale release without building one (see build-freshness.ts). */
-  buildFreshness?: () => Promise<BuildFreshness>;
   repoRoot?: string;
   removeWorktree?: (
     repoRoot: string,
@@ -780,7 +776,6 @@ export class HiveDaemon {
     toolSessionId: string | undefined,
   ) => Promise<string | null>;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
-  private readonly buildFreshness: () => Promise<BuildFreshness>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
     HiveDaemonOptions["assessStrandedWork"]
@@ -1178,8 +1173,6 @@ export class HiveDaemon {
           ? Promise.resolve(null)
           : readLiveGrokModel(worktreePath, toolSessionId));
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
-    this.buildFreshness =
-      options.buildFreshness ?? (() => checkBuildFreshness(this.repoRoot));
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.listUnmergedBranches =
@@ -5500,10 +5493,6 @@ export class HiveDaemon {
             });
           }),
         );
-        // Landed is not live: the daemon runs a compiled binary, so main can be
-        // ahead of the code answering this call. Status says so unasked — the
-        // failure mode is precisely that nobody thinks to ask.
-        const build = await this.buildFreshness();
         const result =
           detail === "full" ? agents : compactActiveTeam(agents, evidence);
         // Defect D2: the semantic leg's health is an operator-visible status
@@ -5521,14 +5510,13 @@ export class HiveDaemon {
               ),
             ),
             "agents",
-            build.message,
           );
           return {
             ...base,
             structuredContent: { ...base.structuredContent, memory },
           };
         }
-        const base = toolResult(result, "agents", build.message);
+        const base = toolResult(result, "agents");
         return {
           ...base,
           structuredContent: { ...base.structuredContent, memory },
@@ -6139,15 +6127,7 @@ export class HiveDaemon {
             );
           }
           this.status.openAssignment(persisted.id, persisted.createdAt);
-          // An agent spawned to test a fix that is not in the running binary is
-          // wasted money, so a spawn that Hive cannot vouch for carries the reason
-          // with it. Warn, never block: the caller stays in control.
-          const build = await this.buildFreshness();
-          return toolResult(
-            compactSpawnResult(persisted),
-            "agent",
-            build.state === "current" ? null : build.message,
-          );
+          return toolResult(compactSpawnResult(persisted), "agent");
         } finally {
           operation?.release();
         }
