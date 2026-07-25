@@ -121,8 +121,8 @@
         <h3>With HiveMemory</h3>
         <ul>
           <li>Agents pick up exactly where the team left off</li>
-          <li>Facts are captured once, recalled forever</li>
-          <li>A mistake made once is never made twice</li>
+          <li>Facts persist across sessions in Hive's configured durable store</li>
+          <li>Verified mistakes are surfaced before agents repeat them</li>
           <li>Knowledge compounds across sessions</li>
           <li>Every agent benefits from every agent's work</li>
         </ul>
@@ -297,9 +297,10 @@
       <li><strong>Yesterday can't silently steer today.</strong> Memories carry validity dates. A decision overturned five months ago is marked superseded and drops out of circulation — but remains auditable, like a versioned contract.</li>
       <li><strong>Hard walls between projects.</strong> Each project's memory is isolated and provably cannot leak into another — tested by planting markers and proving they don't cross.</li>
       <li><strong>Permission gates, not promises.</strong> Dangerous actions like deleting memory are blocked by the system itself for agents — not by instructions agents are merely asked to follow.</li>
-      <li><strong>No duplicate memories.</strong> The system checks every new fact against what it already holds and refuses to store the same thing twice — updates merge into the existing record instead of piling up copies.</li>
+      <li><strong>Duplicates are controlled.</strong> Exact duplicates are refused, near-duplicates are returned for review, and semantic consolidation reports likely overlaps — updates preserve raw history instead of piling up indistinguishable articles.</li>
       <li><strong>The system checks itself.</strong> Automated health tests plant known facts and prove every one can actually be recalled — because a dashboard that says "healthy" can lie.</li>
     </ul>
+    <p class="lede"><strong>Known durability boundary.</strong> Hive retains knowledge across sessions while its configured memory store exists. Today, deleting that store is read as an empty corpus rather than a distinct missing-store alarm; a later write recreates it without rebuilding lost articles. Operators must therefore treat the configured store as durable data, not disposable runtime state.</p>
   </div>
 </section>
 
