@@ -819,17 +819,6 @@ export class QuotaService {
   ): ReserveQuotaInput[] {
     return entries.map((entry) => {
       const estimate = this.estimateFor(entry.limit, category);
-      const bounds = this.windowBounds(entry.limit, now);
-      const supplemental = this.supplemental(entry.limit, entry.status, now);
-      // A window this pool does not meter cannot refuse the run. Handing the
-      // ledger an unbounded allowance for it says exactly that, and keeps the
-      // metered window — the weekly cap that actually governs — doing the gating.
-      const allowanceFor = (window: "fiveHour" | "weekly"): number =>
-        this.meters(entry.limit, entry.status, window)
-          ? window === "fiveHour"
-            ? entry.limit.fiveHourAllowance
-            : entry.limit.weeklyAllowance
-          : Number.POSITIVE_INFINITY;
       return {
         id: crypto.randomUUID(),
         agentName,
@@ -843,14 +832,6 @@ export class QuotaService {
         estimatedWeeklyUnits: estimate.weekly,
         now: iso(now),
         expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-        fiveHourStart: bounds.fiveHourStart,
-        weeklyStart: bounds.weeklyStart,
-        supplementalFiveHourUsed: supplemental.five,
-        supplementalWeeklyUsed: supplemental.week,
-        fiveHourAllowance: allowanceFor("fiveHour"),
-        weeklyAllowance: allowanceFor("weekly"),
-        fiveHourFloor: 0,
-        weeklyFloor: 0,
         ...(purpose ?? {}),
       };
     });
@@ -1469,31 +1450,6 @@ export class QuotaService {
     };
   }
 
-  private supplemental(
-    limit: ResolvedQuotaLimit,
-    status: QuotaPoolStatus,
-    now: Date,
-  ): { five: number; week: number } {
-    const bounds = this.windowBounds(limit, now);
-    const totals = this.ledger.usageTotals(
-      limit,
-      bounds.fiveHourStart,
-      bounds.weeklyStart,
-    );
-    // What the ledger does *not* already account for. The reserve path adds the
-    // ledger's own total back on top of this, so handing it `used - ledgerUsed`
-    // makes the committed figure come out at exactly `used` — the same number
-    // `hive quota` publishes. It is deliberately allowed to go negative: when
-    // Hive's estimates have over-counted against what the provider actually
-    // measured, the correction must be able to give that headroom back, or the
-    // gate would go on refusing spawns on the strength of a fiction the provider
-    // has already contradicted.
-    return {
-      five: (status.fiveHour.used ?? 0) - totals.fiveHour,
-      week: (status.weekly.used ?? 0) - totals.weekly,
-    };
-  }
-
   /**
    * A pool can only constrain a spawn when every window it meters has a measured
    * usage. An unmeasured window is unknown, and Hive will not subtract an
@@ -1647,14 +1603,6 @@ export class QuotaService {
           estimatedUnits: 10,
           now: iso(now),
           expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-          fiveHourStart: iso(now),
-          weeklyStart: iso(now),
-          supplementalFiveHourUsed: 0,
-          supplementalWeeklyUsed: 0,
-          fiveHourAllowance: 0,
-          weeklyAllowance: 0,
-          fiveHourFloor: 0,
-          weeklyFloor: 0,
         }]
         : this.reservationInputs(
           request.agentName,

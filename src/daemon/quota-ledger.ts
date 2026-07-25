@@ -343,14 +343,6 @@ export interface ReserveQuotaInput extends QuotaScope {
   estimatedWeeklyUnits?: number;
   now: string;
   expiresAt: string;
-  fiveHourStart: string;
-  weeklyStart: string;
-  supplementalFiveHourUsed: number;
-  supplementalWeeklyUsed: number;
-  fiveHourAllowance: number;
-  weeklyAllowance: number;
-  fiveHourFloor: number;
-  weeklyFloor: number;
   purpose?: "agent" | "control";
   controlMessageId?: string;
 }
@@ -1354,19 +1346,7 @@ export class QuotaLedger {
     });
   }
 
-  insertUnboundedReservation(
-    input: Omit<
-      ReserveQuotaInput,
-      | "fiveHourStart"
-      | "weeklyStart"
-      | "supplementalFiveHourUsed"
-      | "supplementalWeeklyUsed"
-      | "fiveHourAllowance"
-      | "weeklyAllowance"
-      | "fiveHourFloor"
-      | "weeklyFloor"
-    >,
-  ): QuotaReservation {
+  insertUnboundedReservation(input: ReserveQuotaInput): QuotaReservation {
     return this.immediate(() => {
       if (input.controlMessageId !== undefined) {
         const existing = this.getActiveControlReservation(
@@ -1374,20 +1354,7 @@ export class QuotaLedger {
         );
         if (existing !== null) return existing;
       }
-      this.insert(
-        {
-          ...input,
-          fiveHourStart: input.now,
-          weeklyStart: input.now,
-          supplementalFiveHourUsed: 0,
-          supplementalWeeklyUsed: 0,
-          fiveHourAllowance: 0,
-          weeklyAllowance: 0,
-          fiveHourFloor: 0,
-          weeklyFloor: 0,
-        },
-        input.id,
-      );
+      this.insert(input, input.id);
       return this.requireReservation(input.id);
     });
   }

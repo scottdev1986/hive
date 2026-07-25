@@ -310,14 +310,6 @@ function reserve(
       estimatedUnits: 4,
       now: now.toISOString(),
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
-      fiveHourStart: now.toISOString(),
-      weeklyStart: now.toISOString(),
-      supplementalFiveHourUsed: 0,
-      supplementalWeeklyUsed: 0,
-      fiveHourAllowance: 100,
-      weeklyAllowance: 100,
-      fiveHourFloor: 0,
-      weeklyFloor: 0,
     },
   ]);
 }
