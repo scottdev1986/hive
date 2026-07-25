@@ -726,6 +726,11 @@ export class CrashRecovery {
               dangerous,
               worktreePath,
               executable: this.codexExecutable,
+              // Codex names its bearer env var on the command line, not in the
+              // config file. Without this the resume exports the variable and
+              // then never references it, and the agent comes back
+              // unauthenticated.
+              withCapabilityToken: true,
               ...(hasInstructions
                 ? {
                     profile: codexInstructionProfileName(sessionKey),

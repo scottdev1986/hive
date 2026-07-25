@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../src/adapters/tools/capability-env";
+import { credentialPath } from "../../src/daemon/credentials";
 import { HiveDatabase } from "../../src/daemon/db";
 import { CrashRecovery } from "../../src/daemon/recovery";
 import type { AgentRecord } from "../../src/schemas";
@@ -148,6 +150,38 @@ describe("hive MCP reachability at resume (#57)", () => {
     expect(outcome.reason).toContain("maya");
     // The mute agent was torn down, not left burning quota looking healthy.
     expect(db.getAgentById("agent-maya")?.status).toBe("dead");
+    db.close();
+  });
+
+  test("the resumed command both exports the capability and names it", async () => {
+    // Exporting HIVE_CAPABILITY_TOKEN is only half the wiring: codex names the
+    // variable it reads through `bearer_token_env_var` on the command line, so
+    // a resume that omits that override exports a secret nothing consumes and
+    // comes back unauthenticated. Both halves have to be in the one command.
+    const db = new HiveDatabase(join(home, "mcp-auth.db"));
+    db.insertAgent(agent());
+    agentReportsLife(db);
+    const sessions: { created: { name: string; command: string }[] } = {
+      created: [],
+    };
+    const recovery = new CrashRecovery({
+      authorizeLaunch: async (identity) =>
+        required((await authorizeForQuotaTest([identity]))[0]),
+      ...deps(db, sessions, {
+        mcpClientSeen: () => true,
+        mcpReportingTimeoutMs: 0,
+      }),
+    });
+
+    await recovery.sweep();
+
+    const command = required(sessions.created[0]).command;
+    expect(command).toContain(
+      `${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')"`,
+    );
+    expect(command).toContain(
+      `mcp_servers.hive.bearer_token_env_var="${HIVE_CAPABILITY_TOKEN_ENV}"`,
+    );
     db.close();
   });
 
