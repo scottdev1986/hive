@@ -1,300 +1,549 @@
-<!DOCTYPE html>
-<html lang="en" class="doc-terminal doc-hierarchy">
+<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light dark">
-  <title>Hive: Quota Lifecycle Redesign</title>
-  <link rel="stylesheet" href="hive-design.css">
+  <title>Hive Quota Lifecycle — Implemented Technical Map</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d12;
+      --panel: #101720;
+      --panel-2: #151e29;
+      --line: #2b3948;
+      --text: #d8e2ec;
+      --muted: #91a1b2;
+      --accent: #7dd3fc;
+      --test: #8ab4f8;
+      --process: #63e6be;
+      --vendor: #c9a7f5;
+      --live: #a3f7bf;
+      --unproven: #ffd166;
+      --absent: #ff7b8b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        linear-gradient(rgba(125, 211, 252, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 211, 252, .035) 1px, transparent 1px),
+        var(--bg);
+      background-size: 32px 32px;
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+    a { color: var(--accent); }
+    code, pre { font-family: var(--mono); }
+    code { color: #b9e6ff; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 72px 0 34px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 8px 0 12px; font: 650 clamp(2rem, 5vw, 4.3rem)/1.02 var(--sans); letter-spacing: -.045em; }
+    header p { max-width: 850px; color: var(--muted); font-size: 1.05rem; }
+    .eyebrow, .section-label { color: var(--accent); font: 700 .72rem/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+    nav { padding: 24px 0; border-bottom: 1px solid var(--line); background: rgba(9, 13, 18, .88); }
+    nav ol { margin: 0; padding: 0; columns: 3; list-style-position: inside; }
+    nav li { margin: 5px 0; color: var(--muted); font-family: var(--mono); font-size: .82rem; }
+    section { padding: 52px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 20px; }
+    .section-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 480px); gap: 40px; align-items: end; margin-bottom: 28px; }
+    h2 { margin: 6px 0 0; font-size: clamp(1.6rem, 3vw, 2.5rem); letter-spacing: -.025em; }
+    h3 { margin: 34px 0 12px; font-size: 1.05rem; letter-spacing: .02em; }
+    p, li { max-width: 980px; }
+    .section-head > p, .note { color: var(--muted); }
+    .status {
+      display: inline-block;
+      margin-right: .5em;
+      padding: .18rem .45rem;
+      border: 1px solid currentColor;
+      border-radius: 3px;
+      font: 750 .67rem/1 var(--mono);
+      letter-spacing: .08em;
+      vertical-align: .1em;
+      white-space: nowrap;
+    }
+    .r-test { color: var(--test); }
+    .r-process { color: var(--process); }
+    .r-vendor { color: var(--vendor); }
+    .r-live { color: var(--live); }
+    .unproven { color: var(--unproven); }
+    .absent { color: var(--absent); }
+    .prove { display: block; margin-top: .5em; color: var(--muted); font-size: .84rem; }
+    .prove::before { content: "PROVE → "; color: var(--accent); font: 750 .67rem/1 var(--mono); letter-spacing: .08em; }
+    .claim {
+      padding: 14px 16px;
+      border-left: 3px solid var(--line);
+      background: rgba(16, 23, 32, .82);
+    }
+    .claim + .claim { margin-top: 10px; }
+    .claim.test-border { border-color: var(--test); }
+    .claim.process-border { border-color: var(--process); }
+    .claim.live-border { border-color: var(--live); }
+    .claim.unproven-border { border-color: var(--unproven); }
+    .claim.absent-border { border-color: var(--absent); }
+    .banner { padding: 18px 20px; border: 1px solid var(--absent); border-left-width: 4px; background: rgba(255, 123, 139, .07); }
+    .banner strong { color: #ffb9c2; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); background: rgba(16, 23, 32, .9); }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td { padding: 12px 13px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font: 700 .72rem/1.25 var(--mono); letter-spacing: .06em; text-transform: uppercase; background: var(--panel-2); }
+    tr:last-child td { border-bottom: 0; }
+    pre { overflow-x: auto; padding: 18px; border: 1px solid var(--line); background: #080c11; color: #c5d8e8; font-size: .82rem; line-height: 1.5; }
+    .diagram { margin: 24px 0; border: 1px solid var(--line); background: #0b1118; }
+    .diagram svg { display: block; width: 100%; height: auto; }
+    .diagram figcaption { padding: 11px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+    .diagram text { font-family: var(--mono); fill: var(--text); }
+    .diagram .muted { fill: var(--muted); }
+    .diagram .box { fill: #111b26; stroke: #34485c; }
+    .diagram .ok { stroke: var(--process); }
+    .diagram .warn { stroke: var(--unproven); }
+    .diagram .bad { stroke: var(--absent); }
+    .diagram .arrow { stroke: #72879b; stroke-width: 1.5; fill: none; }
+    .measure-diagram .arrow { marker-end: url(#measure-arrow); }
+    .arm-diagram .arrow { marker-end: url(#arm-arrow); }
+    .diagram .dash { stroke-dasharray: 6 5; }
+    .source { color: var(--muted); font-size: .79rem; }
+    .source code { color: #b6c7d7; }
+    .matrix td:first-child { white-space: nowrap; }
+    footer { padding: 40px 0 70px; color: var(--muted); font-size: .84rem; }
+    @media (max-width: 760px) {
+      nav ol { columns: 1; }
+      .section-head { grid-template-columns: 1fr; gap: 10px; }
+      .shell { width: min(100% - 24px, 1180px); }
+      section { padding: 38px 0; }
+    }
+  </style>
 </head>
 <body>
-  <header class="shell topbar">
-    <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
-    <div class="doc-meta">QUOTA LIFECYCLE REDESIGN · REVIEW DRAFT · 2026-07-24</div>
+  <header id="status">
+    <div class="shell">
+      <p class="eyebrow">00 · Verification basis</p>
+      <h1>Hive quota lifecycle</h1>
+      <p>A present-tense map of how Hive measures provider usage, what that measurement is allowed to decide, how a mid-work drain is classified and handled, and where quota's authority ends. Every factual claim carries the rung of evidence that stands behind it and, below the top rung, the exact check that would raise it.</p>
+
+      <div class="banner">
+        <p><strong>Quota does not refuse a launch for usage.</strong> The launch gate's five refusals — resolution, enablement, availability, capability-floor, effort — contain no usage check, and <code>routeAndReserve</code> contains no headroom veto. Exhaustion is a mid-work condition handled by the drain handler. Two refusals do still originate inside quota's call, and neither is about usage: a request naming a provider that has no route for the category, and a ledger whose persisted history cannot be read. §05 states both exactly.</p>
+        <p><strong>The deployed system is not this source.</strong> The installed CLI reports <code>hive 0.0.38 (8ff0a55f, 2026-07-24, darwin-arm64)</code>; <code>git rev-list --count 8ff0a55f..bc5e4938</code> printed <code>104</code>. The running daemon's build was not measured for this document, so no claim here rests on it being current. The <code>live</code> rows below are readings taken <em>from</em> the running daemon and its <code>quota.db</code>; they establish that the serving system behaves as described, not that it is built from this commit.</p>
+      </div>
+
+      <h3>Evidence rungs</h3>
+      <ul>
+        <li><span class="status r-test">TEST</span>An in-process test exercises it. The row names the test.</li>
+        <li><span class="status r-process">PROCESS</span>A real process, PTY, or signal was exercised. The row names it. This is strictly stronger than <code>test</code> and is never flattened into it.</li>
+        <li><span class="status r-vendor">VENDOR</span>A real vendor CLI or binary was in the loop. The row names the command and version.</li>
+        <li><span class="status r-live">LIVE</span>Observed in a running Hive daemon serving real agents. Four rows reach this rung, all in §04 and §03; they are readings of the daemon's own quota surface and durable alert state.</li>
+        <li><span class="status unproven">UNPROVEN</span>Implemented, with nothing exercising it at any rung. The row names the observation needed.</li>
+        <li><span class="status absent">NOT IMPLEMENTED</span>The row names the substitute that runs now and the concrete implementation needed.</li>
+      </ul>
+
+      <h3>Raising a rung</h3>
+      <p class="claim test-border"><span class="status r-test">TEST</span>Source basis: commit <code>bc5e4938dff01d9366c36c4efbc5a6e6ef94eaa8</code>. Verification command at that commit: <code>bun test test/daemon/drain-handler.test.ts test/daemon/quota.test.ts test/daemon/quota-discovery.test.ts test/daemon/quota-statusline.test.ts test/daemon/handoff.test.ts</code> → <code>122 pass, 0 fail, 423 expect() calls</code>.</p>
+      <p class="claim unproven-border"><span class="status unproven">UNPROVEN</span>Every <code>PROVE →</code> entry below that names an observation on a restarted daemon presumes one prior step, stated once here and not repeated per row: build this source and restart the daemon and CLI, so that <code>hive --version</code> reports a commit at or after <code>bc5e4938</code>.</p>
+    </div>
   </header>
 
-  <main>
+  <nav aria-label="Document sections">
     <div class="shell">
-      <div class="hero">
-        <div>
-          <p class="eyebrow">Quota lifecycle · current state vs. dictated policy</p>
-          <h1>Quota stops launches today. <span>Tomorrow it only stops work.</span></h1>
-          <p class="hero-copy">Hive’s quota system is an extensive measurement stack whose only enforcement point is the spawn gate: it can refuse to <em>start</em> an agent, but once an agent runs, quota does nothing but bookkeep and warn. The dictated policy inverts that — never block a spawn, always handle the mid-work drain — and in doing so makes most of the measurement stack’s booking machinery dead code.</p>
-        </div>
-        <aside class="hero-aside" aria-label="The one-paragraph summary">
-          <p class="kicker">Decision · dictated by the user</p>
-          <h2>Never refuse a spawn for usage. Handle exhaustion where it actually happens: mid-work.</h2>
-          <p>Refresh at boot and every 15 minutes and at every agent close. When a provider drains: hold-and-poke if a window resets within the hour, hand the branch to another provider otherwise. When everything is drained: wait out a near reset, or preserve the branch and write a memory.</p>
-          <div class="decision-line">Scope: src/daemon/quota*.ts · spawner-impl.ts · server.ts — plus one new hold/handoff path</div>
-        </aside>
-      </div>
+      <ol>
+        <li><a href="#scope">Scope</a></li>
+        <li><a href="#authority">Authority discipline</a></li>
+        <li><a href="#measurement">Measurement and refresh</a></li>
+        <li><a href="#readings">Readings and the never-invent rule</a></li>
+        <li><a href="#spawn">Routing and booking</a></li>
+        <li><a href="#reservations">Reservation lifecycle</a></li>
+        <li><a href="#drain">Drain classification</a></li>
+        <li><a href="#hold">Hold and the resume wake</a></li>
+        <li><a href="#replacement">Replacement seam</a></li>
+        <li><a href="#unmetered">Unmetered providers</a></li>
+        <li><a href="#alerting">Alerting to the root</a></li>
+        <li><a href="#verification">Acceptance matrix</a></li>
+        <li><a href="#boundary">Ownership boundary</a></li>
+      </ol>
     </div>
+  </nav>
 
-    <section id="current-state">
+  <main>
+    <section id="scope">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">01 · Current state</p><h2>What the quota system does today, measured against the code.</h2></div>
-          <p>Every claim below is a file:line in the tree as of 2026-07-24. The short version: measurement is thorough and wired; actuation is one gate and some messages.</p>
+          <div><p class="section-label">01</p><h2>Scope</h2></div>
+          <p>Four files carry the whole subject: the service, the ledger, the probe sources, and the drain handler.</p>
         </div>
-
-        <div class="split">
-          <article class="panel">
-            <h3>When readings are fetched</h3>
-            <p><strong>Boot:</strong> a forced refresh of every registered probe at daemon start — but fire-and-forget, so the first spawn can race it (<code>src/daemon/server.ts:1543-1551</code>, <code>refreshQuota</code> at <code>server.ts:1710-1713</code>). Probes are registered per vendor at <code>src/cli/daemon.ts:265-286</code> (codex/claude/grok/kimi stdio+HTTP).</p>
-            <p><strong>Cadence:</strong> the 30-second maintenance sweep calls <code>needsRefresh()</code> (<code>server.ts:1917-1924</code>), which re-reads when the last refresh is older than <code>refreshIntervalMinutes</code> — default <strong>15 minutes</strong> (<code>src/schemas/quota.ts:192</code>) — or when a routable pool has “gone blind” because its window’s reset passed (<code>src/daemon/quota.ts:1228-1246</code>). Inside a refresh, <code>hasFreshReading</code> skips providers already live in both windows (<code>quota.ts:1203-1214</code>).</p>
-            <p><strong>Event-driven:</strong> codex rate-limit notifications ride the app-server event stream (<code>quota.observeCodexRateLimits</code>, <code>quota.ts:450</code>, wired at <code>src/cli/daemon.ts:297-300</code>); claude statusline observations land via <code>observeStatusline</code> (<code>quota.ts:2208</code>, wired at <code>server.ts:3793</code>).</p>
-            <p><strong>Nothing today refreshes on agent close.</strong> Killing an agent settles its reservation (<code>server.ts:2560-2567</code>) and nothing more.</p>
-          </article>
-          <article class="panel">
-            <h3>How quota influences spawning</h3>
-            <p>The launch gate itself (<code>src/daemon/authorized-launch.ts:58-80</code>) runs five checks — resolution, enablement, availability, capability-floor, effort — and <strong>none of them is quota</strong>. Quota enters only afterwards, in <code>routeAndReserve</code> (<code>src/daemon/quota.ts:1645</code>), called for explicit pins (<code>spawner-impl.ts:2361</code>) and for chain selection (<code>spawner-impl.ts:2456</code>).</p>
-            <p><code>routeAndReserve</code> can <strong>refuse</strong>: unbound model-scoped pools put a model in “explicit-pin only” quarantine (<code>quota.ts:1671-1702</code>); a model whose every metering pool is spent fails <code>hasRoom</code> (<code>quota.ts:915-951</code>) with per-category reserve floors (15% 5-hour / 20% weekly, <code>src/schemas/quota.ts:196-197</code>); a launch-failure cooldown holds routes back (<code>quarantinedUntil</code>, <code>quota.ts:865-912</code>). Selection is <code>spread</code> (default: rank-biased by remaining headroom) or <code>strict</code> (rank order) (<code>spawner-impl.ts:2380-2385</code>). A candidate with <em>no</em> measured pool is admitted in “compatibility mode” — unconstrained, with a warning and an alert (<code>quota.ts:1860-1878</code>).</p>
-            <p>The walk is category chain → default chain → remaining enabled models, and only when all refuse does the spawn fail with every reason listed (<code>spawner-impl.ts:2527-2542</code>). A successful pick creates a <strong>reservation</strong> with an estimated cost (<code>quota.ts:1879-1887</code>, <code>estimateFor</code> at <code>quota.ts:780</code>).</p>
-          </article>
-        </div>
-
-        <div class="split">
-          <article class="panel">
-            <h3>Mid-work exhaustion: what happens today</h3>
-            <p><strong>Nothing structural.</strong> A running agent whose provider drains is not paused, not held, not killed, and its deliveries are not gated. Turn boundaries settle accounting (<code>server.ts:5229-5242</code>: <code>markStarted</code> on session/turn-start, <code>reconcile</code> on turn-end, <code>cancel</code> on dead). Threshold crossings fire an alert (<code>alertPool</code>, <code>quota.ts:2471-2529</code>; warning at 25% / critical at 10% remaining with 5% hysteresis, <code>src/schemas/quota.ts:194-195</code>) which is delivered as a message <em>to the queen</em> (<code>server.ts:1121-1123</code>, <code>delivery.send("hive-quota", ORCHESTRATOR_NAME, …)</code>) — and her brief merely tells her to summarize quota warnings to the user. The agent keeps burning. The queen may react; the system does not.</p>
-          </article>
-          <article class="panel">
-            <h3>Stale and unavailable readings today</h3>
-            <p>Probe failure records the reason and alerts once per outage, re-arming on recovery (<code>quota.ts:1066-1084</code>, <code>alertProbeFailure</code> at <code>quota.ts:2435-2459</code>); the last good reading stays in the ledger with its provenance and ages honestly. A model with no measured pool spawns unconstrained (compatibility mode, above) with an explicit “headroom unknown” alert (<code>alertUnknown</code>, <code>quota.ts:2403-2432</code>) — <strong>unknown never blocks</strong>, and unknown is never filled in with an invented number. On the billing display path, a 30-minute TTL memory serves the last real reading at its true age (<code>readBillingWithMemory</code>, <code>src/daemon/usage-credits.ts:592-697</code>). The only estimates anywhere are labelled cost guesses for <em>future</em> runs (<code>estimateFor</code>, <code>quota.ts:780-794</code>).</p>
-          </article>
-        </div>
-
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr><th>quota.db / QuotaService machinery</th><th>Status today</th><th>What it actually does</th></tr>
-            </thead>
+            <thead><tr><th>Rung</th><th>Owned here</th><th>Code boundary and proof path</th></tr></thead>
             <tbody>
-              <tr><td>Provider probes + refresh cycle (<code>quota-sources.ts</code>)</td><td><strong>Wired, load-bearing</strong></td><td>The only source of truth for pools; boot + 15-min + event-driven refresh, persisted per pool with provenance (<code>quota.ts:1054-1137</code>).</td></tr>
-              <tr><td>Discovered pools + model catalogs (quota.db)</td><td><strong>Wired, load-bearing</strong></td><td>Read at every spawn selection and at every status read; catalogs bind metered sub-pools to models (<code>quota.ts:1089-1097</code>).</td></tr>
-              <tr><td><code>routeAndReserve</code> selection + refusal</td><td><strong>Wired — the one enforcement point</strong></td><td>Filters, ranks, and can refuse spawns; creates the reservation (<code>quota.ts:1645-1980</code>).</td></tr>
-              <tr><td>Reservations (<code>tryReserveGroup</code>, guard, <code>markStarted</code>, <code>reconcile</code>, <code>cancel</code>)</td><td><strong>Wired — but only as accounting</strong></td><td>Lifecycle is complete (guard before session create <code>spawner-impl.ts:2786</code>, start on events <code>server.ts:5233</code>, turn-end reconcile, settle on kill <code>server.ts:2560</code>, TTL sweep <code>quota.ts:2180</code>). Nothing downstream <em>acts</em> on the numbers except spawn admission and alerts.</td></tr>
-              <tr><td>Launch-failure quarantine (route health)</td><td><strong>Wired, thin</strong></td><td>Model-layer spawn failures cool a route down (≤ 4×15 min); released on success (<code>quota.ts:865-933</code>, fed from <code>spawner-impl.ts:3058</code>). Not usage — orthogonal to this redesign.</td></tr>
-              <tr><td>Threshold + unknown + probe-failure alerts → queen</td><td><strong>Wired — and that’s all they do</strong></td><td>Durable messages to the queen (<code>server.ts:1121</code>). No automatic action follows them, ever.</td></tr>
-              <tr><td>Estimates tables (<code>estimatesPct</code>, <code>estimates</code>)</td><td><strong>Wired but entirely speculative numbers</strong></td><td>Hive’s own cost guesses per category (<code>src/schemas/quota.ts:193,199</code>) — every reservation is built on them and every reconcile falls back to them.</td></tr>
-              <tr><td>Catalog quarantine (unbound model pools → pin-only)</td><td><strong>Wired, rarely exercised</strong></td><td>Only meaningful for claude-style model-scoped weekly caps (<code>quota.ts:1671-1702</code>).</td></tr>
-              <tr><td><code>reconcileAgentModel</code> (mid-session model swap re-booking)</td><td><strong>Wired, rarely exercised</strong></td><td>Re-books a reservation when the live model differs (<code>quota.ts:730-778</code>).</td></tr>
-              <tr><td>Reset credits surfacing</td><td><strong>Wired, display-only</strong></td><td>Shown inside refusal text, never redeemed (<code>quota.ts:1981-1993</code>).</td></tr>
-              <tr><td>Statusline observation path (claude)</td><td><strong>Wired, single-vendor</strong></td><td>Live pool updates between refreshes (<code>quota.ts:2208-2353</code>).</td></tr>
-              <tr><td>Escalations (<code>hive_escalate</code>, wrong-model ledger)</td><td><strong>Wired — not quota</strong></td><td>Capability escalations recorded in the instance db and printed by <code>hive routing</code> (<code>server.ts:5860</code>, <code>src/cli/routing.ts:141-148</code>). Out of scope here.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Provider usage observation, pool and catalog resolution, freshness and provenance, reservation accounting, dispatch fairness.</td><td><code>src/daemon/quota.ts: QuotaService</code>; <code>src/daemon/quota-ledger.ts: QuotaLedger</code>; <code>src/daemon/quota-sources.ts</code>; <code>src/schemas/quota.ts</code>.<span class="prove">Run the §00 command; it must stay green at the basis commit.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Drain classification, hold state, resume eligibility, and the arm decision between hold, wait, and replacement.</td><td><code>src/daemon/drain-handler.ts: DrainHandler, classifyVendorDrainError</code>; <code>src/daemon/quota.ts: drainedWindowFor, drainFor, allMeteredDrained, nearestDrainResets</code>.<span class="prove">Drain one real route on a restarted daemon and read the classification, pool, and reset time against the vendor's own reported reset.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Handoff persistence and the durable drain notice.</td><td><code>src/daemon/server.ts: replaceWithHandoff</code>; <code>src/daemon/handoff.ts: buildHandoffBundle</code>. The delivery of that notice, its lifecycle states, and the message-attempt record are the communication subject and are mapped in <code>hive-communication.html</code> §06 and §08.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Choosing and launching a replacement agent after a drain, excluding the drained pool.</td><td>A durable root notice carrying provider, pool, reset time, and handoff ID is emitted instead. §09 states the seam exactly.<span class="prove">Nothing to observe until the edge exists; the implementation requirement is the row.</span></td></tr>
+              <tr><td colspan="3" class="source">Not owned here: pausing, resuming, and stopping a provider process, and the terminal identity those signals verify against — that is the native terminal host, mapped in <code>terminal-stack-transition.html</code>. Quota calls those operations; it does not implement them.</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="hero-copy" style="margin-top:18px"><strong>The candid read:</strong> almost none of this is dormant. The over-engineering is not dead code, it is <em>actuation asymmetry</em> — a large booking apparatus whose only teeth are “don’t start” and “tell the queen a number.” The dictated policy deletes the first and automates the second, at which point most of the booking apparatus genuinely does become dead weight (§05).</p>
       </div>
     </section>
 
-    <section id="target-policy">
+    <section id="authority">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">02 · Target policy</p><h2>The dictated rules, as one decision flow.</h2></div>
-          <p>Verbatim policy, structured for review. “Window” is always the provider’s own 5-hour or 7-day quota window.</p>
+          <div><p class="section-label">02</p><h2>Authority discipline</h2></div>
+          <p>What a quota number is permitted to cause, and what it is not.</p>
         </div>
-        <div class="principles" aria-label="The dictated policy rules">
-          <article class="principle"><span class="num">R1 / BOOT</span><strong>Fresh readings from every provider at start</strong><p>No stale numbers at boot: the boot refresh is a startup <em>gate</em> for the quota picture, not a background task that races the first spawn.</p></article>
-          <article class="principle"><span class="num">R2 / CADENCE</span><strong>Refresh every 15 minutes, and on every agent close</strong><p>The existing 15-minute cadence stays; an agent closing is a new refresh trigger (its last spend is only knowable afterwards).</p></article>
-          <article class="principle"><span class="num">R3 / SPAWN</span><strong>Never deny a spawn because of usage</strong><p>Agents run all the way down to zero. Quota may still <em>rank</em> candidates (pick the pool with the most room); it may never <em>block</em> one.</p></article>
-          <article class="principle"><span class="num">R4 / DRAIN ≤ 1h</span><strong>Hold, then poke on reset</strong><p>A mid-work agent whose provider drains holds in place when a window resets within the hour; at reset, Hive proactively tells it to continue — it will not resume on its own.</p></article>
-          <article class="principle"><span class="num">R5 / DRAIN &gt; 1h</strong><strong>Hand the branch to another provider</strong><p>A capable provider’s agent picks up the drained agent’s branch and continues; the drained agent is closed down.</p></article>
-          <article class="principle"><span class="num">R6 / ALL DRAINED</span><strong>Wait, or preserve and remember</strong><p>No provider has usage left: wait for the nearest 5-hour reset, or the 7-day reset if it lands within 5 hours. Further out: preserve the branch and write a memory so work resumes when availability returns.</p></article>
-          <article class="principle"><span class="num">R7 / API DOWN</span><strong>Estimate from last known numbers</strong><p>When a provider API is down, drain decisions may use the last known readings as estimates — a user-ruled exception to the never-invent posture, for this case only.</p></article>
-        </div>
+        <ul>
+          <li><span class="status r-test">TEST</span>A usage number never refuses a launch. <code>AuthorizedLaunch.gate</code> runs exactly five guards in fixed order — <code>resolution</code>, <code>enablement</code>, <code>availability</code>, <code>capability-floor</code>, <code>effort</code> — and none reads a pool. <code>routeAndReserve</code> requires an already-gated <code>AuthorizedLaunch</code> for every candidate and adds no usage test of its own. <code>src/daemon/authorized-launch.ts: AuthorizedLaunch.gate</code>; <code>src/daemon/quota.ts: routeAndReserve, requireAuthorizedLaunch</code>.<span class="prove">Drive a live spawn against a provider whose pool reads 0% remaining: the agent launches, and the returned decision names that provider.</span></li>
+          <li><span class="status r-test">TEST</span>An unmeasured window is unknown, never empty. <code>drainedWindowFor</code> skips any window whose <code>availability</code> is not <code>available</code> and any whose <code>remainingPct</code> is null; only a measured value at or below zero drains. Test: <code>test/daemon/drain-handler.test.ts — a measured window at zero drains, an unknown or unmetered one never does</code>.<span class="prove">On a restarted daemon, disable one provider's probe, let its reading go missing, and confirm no agent on that provider is held.</span></li>
+          <li><span class="status r-test">TEST</span>A provider that will not answer never becomes a fabricated number. The refresh records the failure reason in <code>probeErrors</code>, reports the provider <code>unavailable</code>, and leaves the last real observation in the ledger with its own timestamp and provenance. <code>src/daemon/quota.ts: refreshFromProviders</code>. Live confirmation is the §04 row.</li>
+          <li><span class="status r-test">TEST</span>Every reservation is Hive's own workload guess and is labelled one. <code>estimateFor</code> reads <code>DEFAULT_PERCENT_ESTIMATES</code> per routing category for percent pools and a flat 10 units for unit pools; no provider supplies these. <code>src/schemas/quota.ts: DEFAULT_PERCENT_ESTIMATES</code>; <code>src/daemon/quota.ts: estimateFor</code>. Live confirmation: every pool in <code>hive_quota_status</code> reports <code>reservedIsEstimate: true</code>.</li>
+          <li><span class="status r-test">TEST</span>Route health is failure evidence, not usage, and it is a cooldown rather than a ban. <code>quarantinedUntil</code> reads <code>QuotaLedger.routeHealth</code>; a route that just failed to produce a working agent is passed over for <code>launchQuarantineMinutes</code> (default 15). If every candidate is quarantined the code launches anyway and says so in a warning rather than refusing. Any successful start clears it at once: <code>markStarted</code> calls <code>recordLaunchSuccess</code>. <code>src/daemon/quota.ts: quarantinedUntil, markStarted</code>.<span class="prove">Fail one live launch at the model layer, then read the next spawn decision: that route is named in the warnings and skipped, and a later successful start on it removes the warning.</span></li>
+          <li><span class="status r-test">TEST</span>Selection never compares unlike windows. <code>reserveFairGroups</code> ranks by weighted-fair dispatch deficit computed from <code>quota_fair_dispatch</code> history; quota percentages do not enter the comparison at all, so a provider with no meter needs no invented headroom score. Tests: <code>test/daemon/quota.test.ts — fair dispatch starts with the stable primary instead of comparing unlike headroom windows</code> and <code>— sole-capable assignments create no fairness debt</code>.<span class="prove">Spawn repeatedly across two live providers with very different remaining percentages and count the dispatches: they converge on equal share, not on headroom share.</span></li>
+        </ul>
       </div>
     </section>
 
-    <section id="diagram">
+    <section id="measurement">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">03 · The flow</p><h2>One pass through the new lifecycle.</h2></div>
+          <div><p class="section-label">03</p><h2>Measurement and refresh</h2></div>
+          <p>Four probes, four triggers, one skip rule.</p>
         </div>
-        <figure class="diagram" aria-label="Quota lifecycle flow: boot refresh, cadence refresh, never-blocked spawn, mid-work drain decision, total-exhaustion decision">
-          <svg viewBox="0 0 1100 520" role="img" aria-labelledby="quota-flow-title quota-flow-desc">
-            <title id="quota-flow-title">Quota lifecycle under the dictated policy</title>
-            <desc id="quota-flow-desc">Boot forces a refresh from all providers. A 15-minute timer and every agent close refresh again. Spawns are ranked by headroom but never blocked. A mid-work drain branches on reset distance: within one hour, hold and poke on reset; beyond one hour, hand the branch to another provider. If every provider is drained, wait for a near reset or preserve the branch and write a memory.</desc>
-            <defs>
-              <marker id="q-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/>
-              </marker>
-              <marker id="q-arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
-              </marker>
-              <marker id="q-arrow-amber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--amber)"/>
-              </marker>
-            </defs>
-
-            <text x="36" y="34" class="svg-label svg-muted">Measure → never block → handle the drain where it happens</text>
-
-            <rect x="30" y="52" width="220" height="72" rx="14" class="node node-queen"/>
-            <text x="140" y="82" text-anchor="middle" class="svg-title">Boot</text>
-            <text x="140" y="103" text-anchor="middle" class="svg-copy">forced refresh, ALL providers</text>
-
-            <rect x="300" y="52" width="220" height="72" rx="14" class="node node-queen"/>
-            <text x="410" y="82" text-anchor="middle" class="svg-title">Refresh loop</text>
-            <text x="410" y="103" text-anchor="middle" class="svg-copy">every 15 min + every agent close</text>
-
-            <rect x="570" y="52" width="220" height="72" rx="14" class="node node-lead"/>
-            <text x="680" y="82" text-anchor="middle" class="svg-title">Spawn</text>
-            <text x="680" y="103" text-anchor="middle" class="svg-copy">ranked by headroom · never blocked</text>
-
-            <rect x="840" y="52" width="230" height="72" rx="14" class="node node-worker"/>
-            <text x="955" y="82" text-anchor="middle" class="svg-title">Agent runs to zero</text>
-            <text x="955" y="103" text-anchor="middle" class="svg-copy">mid-work drain detected at window 0%</text>
-
-            <line x1="250" y1="88" x2="292" y2="88" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
-            <line x1="520" y1="88" x2="562" y2="88" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
-            <line x1="790" y1="88" x2="832" y2="88" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
-
-            <rect x="60" y="220" width="300" height="86" rx="14" class="node node-review"/>
-            <text x="210" y="252" text-anchor="middle" class="svg-title">Window resets ≤ 1h?</text>
-            <text x="210" y="273" text-anchor="middle" class="svg-copy">5-hour or 7-day, whichever is nearer</text>
-            <line x1="955" y1="124" x2="955" y2="170" stroke="var(--line-strong)" stroke-width="2"/>
-            <line x1="955" y1="170" x2="210" y2="170" stroke="var(--line-strong)" stroke-width="2"/>
-            <line x1="210" y1="170" x2="210" y2="212" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
-
-            <rect x="60" y="360" width="300" height="86" rx="14" class="node node-queen"/>
-            <text x="210" y="392" text-anchor="middle" class="svg-title">HOLD the agent</text>
-            <text x="210" y="413" text-anchor="middle" class="svg-copy">at reset: poke it to continue</text>
-            <line x1="210" y1="306" x2="210" y2="352" stroke="var(--green)" stroke-width="2" marker-end="url(#q-arrow-green)"/>
-            <text x="222" y="334" class="svg-small">yes</text>
-
-            <rect x="430" y="360" width="300" height="86" rx="14" class="node node-lead"/>
-            <text x="580" y="392" text-anchor="middle" class="svg-title">HANDOFF</text>
-            <text x="580" y="413" text-anchor="middle" class="svg-copy">other provider continues the branch · drained agent closed</text>
-            <line x1="360" y1="263" x2="580" y2="263" stroke="var(--amber)" stroke-width="2"/>
-            <line x1="580" y1="263" x2="580" y2="352" stroke="var(--amber)" stroke-width="2" marker-end="url(#q-arrow-amber)"/>
-            <text x="588" y="250" class="svg-small">no</text>
-
-            <rect x="790" y="220" width="280" height="86" rx="14" class="node node-review"/>
-            <text x="930" y="252" text-anchor="middle" class="svg-title">ALL providers drained?</text>
-            <text x="930" y="273" text-anchor="middle" class="svg-copy">evaluated on every drain event</text>
-            <line x1="730" y1="403" x2="760" y2="403" stroke="var(--line-strong)" stroke-width="2"/>
-            <line x1="760" y1="403" x2="760" y2="263" stroke="var(--line-strong)" stroke-width="2"/>
-            <line x1="760" y1="263" x2="782" y2="263" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
-
-            <rect x="790" y="360" width="280" height="60" rx="14" class="node node-queen"/>
-            <text x="930" y="384" text-anchor="middle" class="svg-title">WAIT for the reset</text>
-            <text x="930" y="404" text-anchor="middle" class="svg-copy">nearest 5h reset, or 7d if ≤ 5h away</text>
-            <line x1="930" y1="306" x2="930" y2="352" stroke="var(--green)" stroke-width="2" marker-end="url(#q-arrow-green)"/>
-            <text x="942" y="334" class="svg-small">near</text>
-
-            <rect x="790" y="446" width="280" height="60" rx="14" class="node node-worker"/>
-            <text x="930" y="470" text-anchor="middle" class="svg-title">PRESERVE + MEMORY</text>
-            <text x="930" y="490" text-anchor="middle" class="svg-copy">branch preserved · resume when availability returns</text>
-            <line x1="1070" y1="390" x2="1086" y2="390" stroke="var(--line-strong)" stroke-width="2"/>
-            <line x1="1086" y1="390" x2="1086" y2="476" stroke="var(--line-strong)" stroke-width="2"/>
-            <line x1="1086" y1="476" x2="1078" y2="476" stroke="var(--line-strong)" stroke-width="2" marker-end="url(#q-arrow)"/>
-            <text x="1094" y="440" class="svg-small">far</text>
+        <figure class="diagram">
+          <svg class="measure-diagram" viewBox="0 0 1100 430" role="img" aria-labelledby="measure-title measure-desc">
+            <title id="measure-title">Refresh triggers feeding the pool ledger</title>
+            <desc id="measure-desc">Boot, the maintenance cadence, an agent close, and two free vendor feeds all write observations into the pool ledger. The first spawn awaits the boot refresh. A provider whose pools already read live is skipped unless the refresh is forced.</desc>
+            <defs><marker id="measure-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker></defs>
+            <rect class="box ok" x="32" y="34" width="252" height="62" rx="7"/><text x="52" y="62" font-size="14">boot: force all</text><text class="muted" x="52" y="82" font-size="11">quotaBootRefresh · awaited by spawn</text>
+            <rect class="box ok" x="32" y="116" width="252" height="62" rx="7"/><text x="52" y="144" font-size="14">maintenance tick</text><text class="muted" x="52" y="164" font-size="11">needsRefresh() · 15 min default</text>
+            <rect class="box ok" x="32" y="198" width="252" height="62" rx="7"/><text x="52" y="226" font-size="14">agent close</text><text class="muted" x="52" y="246" font-size="11">force, that provider only</text>
+            <rect class="box ok" x="32" y="280" width="252" height="62" rx="7"/><text x="52" y="308" font-size="14">codex rate-limit push</text><text class="muted" x="52" y="328" font-size="11">observeCodexRateLimits</text>
+            <rect class="box ok" x="32" y="362" width="252" height="62" rx="7"/><text x="52" y="390" font-size="14">claude statusLine</text><text class="muted" x="52" y="410" font-size="11">observeStatusline · live model</text>
+            <rect class="box ok" x="410" y="120" width="272" height="218" rx="7"/>
+            <text x="432" y="152" font-size="16">refreshFromProviders</text>
+            <text x="432" y="186" font-size="12">skip if fresh, unless forced</text>
+            <text x="432" y="212" font-size="12">probe.read() per provider</text>
+            <text x="432" y="238" font-size="12">unavailable → record reason</text>
+            <text x="432" y="264" font-size="12">catalog before pools</text>
+            <text x="432" y="290" font-size="12">observation stamped per window</text>
+            <text x="432" y="316" font-size="12">no reading is ever synthesized</text>
+            <rect class="box ok" x="810" y="152" width="258" height="154" rx="7"/>
+            <text x="832" y="185" font-size="16">quota.db</text>
+            <text x="832" y="216" font-size="12">quota_pools · quota_observations</text>
+            <text x="832" y="240" font-size="12">quota_model_catalog</text>
+            <text x="832" y="264" font-size="12">quota_route_health · quota_alerts</text>
+            <text x="832" y="288" font-size="12">quota_reservations · quota_usage</text>
+            <path class="arrow" d="M284 65 C350 65 350 168 410 168"/>
+            <path class="arrow" d="M284 147 C350 147 350 196 410 196"/>
+            <path class="arrow" d="M284 229 H410"/>
+            <path class="arrow dash" d="M284 311 C350 311 350 262 410 262"/>
+            <path class="arrow dash" d="M284 393 C350 393 350 290 410 290"/>
+            <path class="arrow" d="M682 229 H810"/>
           </svg>
+          <figcaption><span class="status r-test">TEST</span><code>src/daemon/quota.ts: refreshFromProviders, needsRefresh, hasFreshReading</code>; probe construction in <code>src/cli/daemon.ts</code>. Dashed edges are the two push feeds, which write observations without any probe subprocess.</figcaption>
         </figure>
-      </div>
-    </section>
-
-    <section id="delta">
-      <div class="shell">
-        <div class="section-head">
-          <div><p class="section-label">04 · What needs to change</p><h2>The concrete delta, with the simplest implementation point for each.</h2></div>
-          <p>Ordered by policy rule. “Simplest” means the least new machinery against the code as it stands.</p>
-        </div>
-
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr><th>Rule</th><th>Change</th><th>Simplest implementation point</th></tr>
-            </thead>
+            <thead><tr><th>Rung</th><th>Trigger</th><th>Behaviour and promotion</th></tr></thead>
             <tbody>
-              <tr><td>R1 · fresh at boot</td><td><strong>CHANGE</strong> — the boot refresh already exists and is already forced (<code>server.ts:1546</code>); it is fire-and-forget. Make the first quota-aware spawn wait for it instead of racing it.</td><td>Await the existing boot <code>refreshQuota({force:true})</code> before the spawner accepts work (a latch in <code>HiveSpawner.spawn</code>’s quota branch, <code>spawner-impl.ts:2356+</code>), or gate <code>needsRefresh</code> to force until the first successful cycle. No new machinery.</td></tr>
-              <tr><td>R2 · close-trigger refresh</td><td><strong>ADD</strong></td><td>One line in the one teardown funnel: <code>killAgentTeardown</code> already settles quota at <code>server.ts:2679</code> — fire <code>this.refreshQuota()</code> right after (same catch-and-log shape as <code>server.ts:1918</code>). Covers kill, idle-reap, and shutdown, since all funnel through there.</td></tr>
-              <tr><td>R2 · 15-min cadence</td><td><strong>KEEP</strong> — already the default (<code>src/schemas/quota.ts:192</code>, driven at <code>server.ts:1917</code>).</td><td>Nothing to do.</td></tr>
-              <tr><td>R3 · never deny spawn for usage</td><td><strong>REMOVE</strong> — quota as a spawn blocker</td><td>In <code>routeAndReserve</code> (<code>quota.ts:1645</code>): delete the <code>hasRoom</code> exclusion (<code>quota.ts:915-951</code>) and the <code>QuotaExhaustedError</code> pool-block refusal; rank all gated candidates by headroom and always pick one (spread) or the first (strict). Reservations become accounting-only — <code>tryReserveGroup</code> must stop refusing (<code>quota.ts:1879-1887</code> becomes an unchecked booking, the already-existing <code>reserveGroupUnchecked</code> path at <code>quota.ts:758</code>). Catalog quarantine (<code>quota.ts:1671-1702</code>) and reserve floors (<code>src/schemas/quota.ts:196-197</code>) go with them. <strong>Keep every non-quota refusal</strong>: enablement/consent, availability, capability-floor, effort (<code>authorized-launch.ts:63-76</code>) — those are the user’s own policy, not usage.</td></tr>
-              <tr><td>R4 · hold + poke (≤1h)</td><td><strong>ADD</strong> — the only genuinely new mechanism</td><td>Detect at the existing read points: <code>alertPool</code>’s threshold evaluation (<code>quota.ts:2471-2529</code>) or the turn-end reconcile (<code>server.ts:5233</code>) — when a routable pool hits 0% remaining and its <code>resetsAt ≤ now+1h</code>, mark the agent held (a status, or the existing <code>control-paused</code>) and record the reset time. The 30s maintenance sweep (<code>server.ts:1914+</code>) already runs; add: held agents whose reset has passed get a <code>delivery.send</code> “your quota window has reset, continue” (the same envelope recovery already uses to wake resumed agents, <code>src/daemon/recovery.ts:924-937</code>), then unhold. No new timers, no new tables — one flag + one timestamp on the agent row.</td></tr>
-              <tr><td>R5 · branch handoff (&gt;1h)</td><td><strong>ADD</strong></td><td>Same detection point as R4. On &gt;1h: <code>killAgentTeardown</code> (<code>server.ts:2570+</code>) already preserves unlanded work as a ref and removes nothing over stranded work — reuse it, then spawn a replacement via the normal spawn path with the preserved branch in its brief (the exact pattern the orchestrator’s integrator flow already dictates for rebase conflicts). The drained agent’s reservation settles through the existing <code>settleAgentQuota</code>.</td></tr>
-              <tr><td>R6 · all drained: wait or preserve+memory</td><td><strong>ADD</strong></td><td>The drain detector computes nearest-reset across providers from the pools it already holds (<code>resolvedLimits</code> + <code>statusForLimit</code>, <code>quota.ts:1266-1289</code>). Near (5h reset, or 7d ≤ 5h): hold as R4, poked at reset. Far: the handoff path’s preserve step (<code>killAgentTeardown</code>) plus one memory write through the existing episodic/memory store (<code>EpisodicStore</code>, already injected at <code>cli/daemon.ts:308-315</code>).</td></tr>
-              <tr><td>R7 · estimate when API down</td><td><strong>CHANGE</strong> — scoped relaxation of never-invent</td><td>The drain detector (R4/R5/R6) may read the ledger’s last-known windows with their provenance when the probe is failing (<code>probeErrors</code>, <code>quota.ts:1216-1219</code>), treating them as estimates. Scope it to the drain decision only; spawn ranking keeps today’s honesty, and every estimate-driven hold/handoff is labelled estimated in the alert it emits.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Boot — awaited, not raced</td><td>Daemon start assigns <code>quotaBootRefresh = this.refreshQuota({ force: true })</code>. <code>HiveDaemon.quotaReady()</code> awaits that one settled promise, and the spawner awaits it at all three of its quota entry points before routing. The dependency is optional in the spawner's interface and is supplied in production: <code>src/cli/daemon.ts</code> passes <code>quotaReady: () =&gt; daemon.quotaReady()</code>. A provider that will not answer leaves its pool honestly unknown and does not block startup. <code>src/daemon/server.ts: quotaReady</code>; <code>src/daemon/spawner-impl.ts</code>.<span class="prove">On a restarted daemon, spawn within the first second and read the routing decision's pool status: it must carry a boot-refresh observation, not a missing one.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Cadence — 15 minutes, plus blindness</td><td>The maintenance tick calls <code>refreshQuota()</code> when <code>needsRefresh()</code> is true. That predicate returns true when discovery is on and either no refresh has happened, the last one is older than <code>refreshIntervalMinutes</code> (default 15, <code>QuotaConfigSchema</code>), or any routable percent-denominated pool currently has no measured reading. <code>src/daemon/quota.ts: needsRefresh</code>; <code>src/daemon/server.ts: runMaintenance</code>.<span class="prove">On a restarted daemon, read <code>refreshedAt()</code> twice sixteen minutes apart; it must advance without any spawn occurring.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Agent close — forced, provider-scoped</td><td>An agent's last spend lands on the provider's own counter only once it closes, so teardown fires a forced refresh for that one provider after the reservation settles. It is deliberately not awaited: teardown does not block on a vendor subprocess. <code>src/daemon/server.ts: killAgentTeardown</code>, immediately after <code>settleAgentQuota</code>.<span class="prove">Close a live agent and read that provider's <code>observedAt</code>: it must advance within one probe round-trip of the close.</span></td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td>Codex push feed</td><td>The app-server manager forwards every rate-limit payload to <code>QuotaService.observeCodexRateLimits</code>, wired in <code>src/cli/daemon.ts</code> as the manager's <code>observeRateLimits</code> callback. Observed: <code>hive_quota_status</code> on the running daemon reports the <code>codex</code> pool at <code>confidence: "authoritative", source: "provider", freshness: "fresh"</code> with <code>observedAt: 2026-07-25T12:21:54.768Z</code>, and a second model-scoped pool <code>codex_bengalfox</code> read in the same pass. <span class="status r-vendor">VENDOR</span>The probe transport is <code>codex app-server --stdio</code>; installed binary <code>codex-cli 0.145.0</code>.</td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td>Claude statusLine feed</td><td>Statusline payloads reach <code>QuotaService.observeStatusline</code>, bound to the model the session is <em>running</em> — <code>reconcileModel(agent)</code> is resolved first, so an in-session model switch cannot charge a model nobody is running. Observed: the <code>claude/subscription</code> pool reports <code>source: "statusline", confidence: "reported", freshness: "fresh"</code> at <code>2026-07-25T12:38:16.678Z</code>, ahead of any probe read. <code>src/daemon/server.ts</code>, statusline handler; <code>src/daemon/quota.ts: observeStatusline</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Freshness skip</td><td>Inside an unforced refresh, <code>hasFreshReading</code> skips a provider that already has a routable pool reading <code>authoritative</code> or <code>reported</code> in <em>both</em> windows. Each probe costs a subprocess and Claude's usage surface rate-limits under polling, so the free feeds carry a busy hive and probing answers the question at startup and when the feeds fall silent.<span class="prove">On a restarted daemon with a live statusline feed, count probe subprocesses over an hour: fewer than four for Claude.</span></td></tr>
+              <tr><td><span class="status r-vendor">VENDOR</span></td><td>Probe registry</td><td>Four probes are constructed in <code>src/cli/daemon.ts</code>, each over a real vendor stdio transport: <code>codex app-server --stdio</code> (<code>codex-cli 0.145.0</code>), <code>claude -p --input-format stream-json --output-format stream-json --verbose</code> (<code>2.1.220</code>), <code>grok agent stdio</code> (<code>grok 0.2.112</code>), and <code>KimiQuotaProbe</code> over its HTTP surface (<code>kimi 0.29.1</code>). <strong>opencode has no probe</strong>, which is exactly what makes it unmetered to <code>isMetered</code>. Versions above were read from the installed binaries at the basis commit; the quota tests themselves drive stub transports, not these binaries.<span class="prove">Force a refresh on a restarted daemon with each vendor CLI on PATH and read the four resulting <code>source: "provider"</code> observations.</span></td></tr>
             </tbody>
           </table>
-        </div>
-
-        <div class="split">
-          <article class="panel">
-            <h3>Invariant conflicts to rule on</h3>
-            <p><strong>“Never deny for usage” vs. the consent boundary.</strong> No conflict — but the line must be drawn in the code review, not left to taste: enablement (the user’s per-model click) and capability gates stay as refusals; only pool-exhaustion refusals die. The gate (<code>authorized-launch.ts</code>) already separates these cleanly.</p>
-            <p><strong>R7 vs. “unknown, never invent.”</strong> This is the one real weakening of a load-bearing invariant. It is tolerable because it is narrow (drain decisions only, provenance-stamped, user-ruled) — but it should live in exactly one function with a comment naming this ruling, so the exception cannot leak into spawn admission or billing by copy-paste.</p>
-          </article>
-          <article class="panel">
-            <h3>What the policy deliberately does not say</h3>
-            <p>Selection ranking survives: “never deny” does not mean “ignore headroom” — spread-by-remaining-quota is still the fairest dispatcher, it just can’t say no. Alerts to the queen survive as information; they are no longer the only response. Recovery, delivery, landing, and the terminal stack are untouched.</p>
-          </article>
         </div>
       </div>
     </section>
 
-    <section id="simplification">
+    <section id="readings">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">05 · Simplification opportunities</p><h2>Machinery that becomes dead under the new policy.</h2></div>
-          <p>The simplest code is deleted code. Under R3 these lose their only enforcement consumer; under R4–R6 their alerting role is subsumed by the drain handler.</p>
+          <div><p class="section-label">04</p><h2>Readings, staleness, and the never-invent rule</h2></div>
+          <p>A reading has a value, a provenance, an age, and an availability. Missing is one of the values it can carry.</p>
         </div>
+        <p class="claim live-border"><span class="status r-live">LIVE</span><strong>A probe that returns no usable reading keeps the existing readings, marks them stale, and invents nothing.</strong> Observed today on the running daemon. The durable alert row exists: <code>sqlite3 ~/.hive/quota.db "select * from quota_alerts"</code> returns <code>kimi|default|live-probe|data|unknown|2026-07-25T04:38:09.468Z|</code>. The readings that outage did not disturb are still served at their true age: <code>hive_quota_status</code> reports the <code>kimi/subscription</code> pool as <code>confidence: "stale", freshness: "stale"</code>, with its weekly window still carrying the last real numbers (<code>used: 51, remainingPct: 0.49, resetsAt: 2026-07-29T21:38:00.343Z</code>) stamped <code>observedAt: 2026-07-25T04:12:41.178Z</code> — before the outage — while its five-hour window reads <code>availability: "unknown", confidence: "missing", source: "none", remainingPct: null</code>. No substitute number appears anywhere in that row. The code path is <code>src/daemon/quota.ts: refreshFromProviders → alertProbeFailure</code>, whose message states the rule verbatim: <em>"Existing readings are kept and marked stale; no capacity number is being invented in their place."</em></p>
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr><th>Machinery</th><th>Fate</th><th>Why</th></tr>
-            </thead>
+            <thead><tr><th>Rung</th><th>Reading state</th><th>Exact meaning and promotion</th></tr></thead>
             <tbody>
-              <tr><td>Reserve floors + <code>hasRoom</code> (<code>quota.ts:915-951</code>, <code>src/schemas/quota.ts:196-197</code>)</td><td><strong>DELETE</strong></td><td>Exists only to refuse spawns. R3 outlaws the refusal.</td></tr>
-              <tr><td><code>tryReserveGroup</code> refusal path</td><td><strong>DELETE</strong> (keep unchecked booking if reservations stay)</td><td>Same. <code>reserveGroupUnchecked</code> already exists (<code>quota.ts:758</code>).</td></tr>
-              <tr><td>Catalog quarantine (<code>quota.ts:1671-1702</code>)</td><td><strong>DELETE</strong></td><td>A second, rarer spawn refusal. Gone with the first.</td></tr>
-              <tr><td>Threshold/hysteresis alert machinery (<code>alertPool</code>, <code>quota.ts:2461-2529</code>)</td><td><strong>DELETE or shrink to one drain event</strong></td><td>R4/R5/R6 replace “warn at 25%/10%” with “act at 0%.” The hysteresis state table in quota.db goes with it.</td></tr>
-              <tr><td>Compatibility-mode unknown-admit + <code>alertUnknown</code> (<code>quota.ts:1860-1878</code>)</td><td><strong>SIMPLIFY</strong></td><td>When nothing can be refused, unknown-quota is no longer a special case at spawn — it is the same as everything else. The alert can survive as one line, not a mode.</td></tr>
-              <tr><td>Reservations, TTL sweeps, settle/reconcile lifecycle</td><td><strong>CANDIDATE DELETE — the big one</strong></td><td>With no admission control and drain handled by windows directly, the reservation book keeps no one honest. If mid-work spend <em>accounting</em> is not a stated requirement, the whole reservation subsystem (≈ half of <code>quota-ledger.ts</code>’s 2,029 lines, plus <code>recoverExpired</code>, <code>requireActiveReservation</code>, <code>reconcileAgentModel</code>, control reservations) can go. If usage accounting for the MCC/status displays is wanted, keep it as append-only observation and delete the guard/reconcile/settle verbs.</td></tr>
-              <tr><td>Estimates tables (<code>estimatesPct</code>, <code>estimates</code>)</td><td><strong>DELETE with reservations</strong></td><td>They exist solely to price future bookings. R7’s last-known-as-estimate is a different, much smaller thing.</td></tr>
-              <tr><td>Launch-failure quarantine (route health)</td><td><strong>KEEP</strong></td><td>Not usage — it encodes “this route just failed to produce a live agent,” which R3 does not touch. (If it too is judged speculative, it is a separate deletion with its own review.)</td></tr>
-              <tr><td>Probes, pools, catalogs, refresh cycle</td><td><strong>KEEP — this is the system</strong></td><td>Measurement is what R1/R2/R4/R6 all run on.</td></tr>
-              <tr><td>Billing display path (<code>usage-credits.ts</code>, MCC surfaces)</td><td><strong>KEEP</strong></td><td>Display, not enforcement; untouched by the policy.</td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td><code>authoritative</code> / <code>reported</code></td><td>The provider supplied the number in this window. <code>authoritative</code> is the vendor's own accounting surface; <code>reported</code> is a vendor-rendered figure such as a statusline. Both count as fresh for the skip rule. Observed simultaneously on the running daemon: <code>codex/codex</code> authoritative from the app-server, <code>claude/subscription</code> reported from statusline.</td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td><code>stale</code></td><td>A real past reading, past its pool's <code>observationMaxAgeMinutes</code> (default 360). It keeps its value, its source, and its own <code>observedAt</code>; nothing refreshes the timestamp without a new measurement. Observed on <code>kimi/subscription</code> and on <code>claude/weekly:Fable</code> in the same status read. Test: <code>test/daemon/quota.test.ts — marks old provider observations stale and takes the conservative maximum</code>.</td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td><code>missing</code> / <code>unknown</code></td><td>No measurement exists for this window. It is served as null, never as zero and never as full. Observed: <code>kimi</code> five-hour reads <code>availability: "unknown", source: "none"</code>; the three <code>opencode</code> rows read <code>configured: false, confidence: "missing"</code> with the reason <em>"Hive has not read live limits from opencode yet; usage is unknown and routing is unconstrained"</em>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Partial vendor snapshot</td><td>A snapshot that reports one window does not license a value for the other. Test: <code>test/daemon/quota.test.ts — does not invent an authoritative weekly value from a partial Codex snapshot</code>.<span class="prove">Feed a live Codex session a five-hour-only rate-limit payload and read the weekly window: unchanged, with its prior <code>observedAt</code>.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Observation and local spend combine by maximum</td><td>A fresh provider reading tightens the picture; a missing one never loosens it. Spend at the reading's own millisecond is counted exactly once, and re-reporting the same instant does not swallow later spend. Tests: the four boundary cases in <code>test/daemon/quota.test.ts</code> beginning <code>a spend at the reading's own millisecond is counted, not dropped</code>.<span class="prove">On a live agent, reconcile a turn in the same millisecond as a provider observation and read the pool: the spend appears once.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Corrupt persisted history is fail-closed</td><td>Truncated usage rows are distinguished from a genuinely empty ledger; the ledger raises <code>QuotaLedgerUnknownError</code> rather than reading zero. Tests: <code>test/daemon/quota.test.ts — distinguishes a genuine zero ledger from truncated spend and refuses a new reservation</code>; <code>— fails closed before reservation when persisted telemetry is corrupt</code>; <code>— refuses to repair non-contiguous usage growth</code>.<span class="prove">Corrupt a scratch copy of <code>quota.db</code>, point a daemon at it, and confirm the spawn error names the quota database rather than routing on a fabricated zero.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Drain detection reads the last measurement, whatever its age</td><td><code>drainedWindowFor</code> tests <code>availability</code> and <code>remainingPct</code>; it does not test freshness. A stale reading at zero therefore drains, carrying its stale provenance; an unknown one never does. This is the one place a past reading governs an action rather than a display. <code>src/daemon/quota.ts: drainedWindowFor</code>.<span class="prove">On a restarted daemon, let one provider's probe fail while its last reading sits at zero, and confirm the agent on it is held with the reset time from that stale reading.</span></td></tr>
             </tbody>
           </table>
         </div>
-        <p class="hero-copy" style="margin-top:18px"><strong>The one-line summary for review:</strong> keep the eyes (probes, pools, catalogs), cut the bookings (reservations, floors, refusal paths, threshold alerting), and add exactly one muscle — the drain handler (hold/poke, handoff, preserve+memory) at the read points that already exist.</p>
+      </div>
+    </section>
+
+    <section id="spawn">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">05</p><h2>Routing and booking</h2></div>
+          <p><code>routeAndReserve</code> chooses a candidate and books it. It does not gate.</p>
+        </div>
+        <h3>The walk</h3>
+        <p class="claim test-border"><span class="status r-test">TEST</span>Every candidate must already be an <code>AuthorizedLaunch</code>. The request is then narrowed twice — to <code>explicitTool</code> when the caller pinned a provider, and away from <code>reviewOfTool</code> when the category is <code>code_review</code> — after which each surviving candidate is evaluated into its governing pools. A candidate whose pools yield no measured entry is marked <code>unknown</code> and carries an empty entry list; it is not warned about and not treated as a special mode. Route health then partitions the list into viable and quarantined, <em>and if every candidate is quarantined the whole list is attemptable anyway</em>. <code>src/daemon/quota.ts: routeAndReserve</code>.</p>
+        <p class="claim test-border"><span class="status r-test">TEST</span><code>spread</code> hands the attemptable list to <code>QuotaLedger.reserveFairGroups</code>, which atomically picks by dispatch deficit and books the winner in the same transaction; concurrent spawns therefore land on different providers. <code>strict</code> takes the first attemptable candidate in rank order and books it through <code>reserveGroupUnchecked</code>. Both paths always return a decision. Tests: <code>test/daemon/quota.test.ts — atomic fair dispatch gives concurrent spawns different providers</code>; <code>— strict mode preserves chain order despite unequal headroom</code>; <code>— routes review to the other vendor when quota is equally healthy</code>.<span class="prove">Launch two live agents simultaneously in <code>spread</code> and read their providers: different, and the <code>quota_fair_dispatch</code> table gains one row each.</span></p>
+        <h3>What can and cannot end a spawn inside quota's call</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Condition</th><th>Outcome and promotion</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Refusal because a pool is spent</td><td>No such path exists. There is no headroom predicate, no per-category reserve floor in <code>QuotaConfigSchema</code>, no checked group reservation, and no model-scoped catalog quarantine that demotes a model to explicit-pin. Booking is unconditional: <code>reserveGroupUnchecked</code> and <code>reserveFairGroups</code> are the only reservation entry points for a spawn, and <code>insertUnboundedReservation</code> the only one for an unmeasured control run. What exists instead is the drain handler in §07.<span class="prove">Nothing to observe; the absence is the row. The nearest positive check is the §02 live spawn against a 0% pool.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>No route for the requested provider</td><td><code>QuotaExhaustedError</code> — despite the name, a routing absence, not a usage verdict. It is thrown only when the <code>explicitTool</code> or review-exclusion filter leaves the candidate list empty, before any pool is read. <code>src/daemon/quota.ts: routeAndReserve</code>.<span class="prove">Pin a live spawn to a provider with no chain link for its category and read the error: it names the provider and the category, not a percentage.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Unreadable ledger history</td><td><code>QuotaLedgerUnknownError</code> propagates out of the booking call and no reservation is written. This is an integrity fail-closed, and it is the only surviving way a quota number's <em>absence</em> stops a launch. Test: <code>test/daemon/quota.test.ts — distinguishes a genuine zero ledger from truncated spend and refuses a new reservation</code>, which asserts both the raised error and that no active reservation exists for the agent afterwards.<span class="prove">The §04 corrupt-database check is the same observation from the storage side.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Every route recently failed to start</td><td>Not a refusal. The quarantined list becomes attemptable and the decision carries a warning naming the failure and saying it is launching anyway. A permanent exclusion could never produce the success that would lift it. <code>src/daemon/quota.ts: routeAndReserve, quarantinedUntil</code>.<span class="prove">Fail every live route at the model layer, then spawn: an agent launches and the decision's warnings name each failed route.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="reservations">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">06</p><h2>Reservation lifecycle</h2></div>
+          <p>The book is complete and it is accounting. Nothing downstream refuses on its numbers.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Verb</th><th>Where it fires and what it writes</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status r-test">TEST</span></td><td>Book</td><td>One row per pool the run spends from, grouped under the primary's ID, with the category estimate, a TTL from <code>reservationTtlMinutes</code> (default 360), and <code>status: 'active'</code>. A candidate with no measured pool books against <code>unconfigured:&lt;model&gt;</code> at 10 units. <code>src/daemon/quota-ledger.ts: reserveGroupUnchecked, reserveFairGroups, insert</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td><code>markStarted</code></td><td>Fired from the spawn path once the session exists and again from <code>session-start</code> and <code>turn-start</code> provider events. It is also what clears route health: a run that proved life supersedes any earlier launch-failure conclusion. <code>src/daemon/quota.ts: markStarted</code>; <code>src/daemon/server.ts</code>, provider-event handler; <code>src/daemon/spawner-impl.ts</code>.<span class="prove">Launch a live agent on a quarantined route and read <code>quota_route_health</code> after its first turn starts: cleared.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td><code>reconcile</code></td><td>Turn-end writes the observed usage and its source (<code>reported</code> or <code>estimated</code>) against the same reservation ID and is idempotent. Test: <code>test/daemon/quota.test.ts — reconciles a lifecycle turn with reported usage and remains idempotent</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td><code>cancel</code> / settle</td><td>A dead provider event, a spawn failure, a control-message completion, and agent teardown all settle the held reservation. Teardown settles before firing the provider-scoped refresh. <code>src/daemon/server.ts: settleAgentQuota, killAgentTeardown</code>; <code>src/daemon/spawner-impl.ts</code>. Test: <code>test/daemon/quota.test.ts — persists reconciliation, releases unstarted cancellations, and conservatively recovers started reservations</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>TTL recovery</td><td>The maintenance tick calls <code>recoverQuotaReservations</code>, which settles expired rows; a reservation that had started is recovered conservatively rather than dropped. <code>src/daemon/server.ts: recoverQuotaReservations</code>.<span class="prove">Strand a live reservation by killing the daemon mid-run, restart, and read the row after one maintenance tick: settled, with its started spend retained.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Control runs</td><td><code>reserveControlRun</code> is idempotent per <code>controlMessageId</code>; only the group primary carries the key, since stamping every row would violate its unique index. A control run no pool can measure gets an explicit unbounded reservation rather than none. Tests: <code>test/daemon/quota.test.ts — gives a control restart its own idempotent reservation without double-counting the interrupted run</code>; <code>— idempotently reserves a multi-pool critical control run</code>.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td><code>reconcileAgentModel</code></td><td>A live model that differs from the booked one causes a release-then-rebook onto the pools that meter the new model, replaying <code>markStarted</code> so the run is not recorded as never having run. Usage already reconciled stays where it is, because nothing records when mid-run the switch happened and an invented split would look like a measurement. Nothing exercises this against a real in-session model change. <code>src/daemon/quota.ts: reconcileAgentModel</code>.<span class="prove">On a live Claude agent, run <code>/model</code> mid-session, then read the active reservation: its pool set must match the new model and its <code>startedAt</code> must survive the swap.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Cross-instance safety</td><td>Reservations are keyed by instance ID and home so sibling daemons on the same repo do not alias agent names, and a sibling preserves a live owner's hold until that owner dies. Tests: the two sharing cases in <code>test/daemon/quota.test.ts</code>.</td></tr>
+              <tr><td colspan="3" class="source"><span class="status unproven">UNPROVEN</span>Eight fields of <code>ReserveQuotaInput</code> — <code>fiveHourStart</code>, <code>weeklyStart</code>, <code>supplementalFiveHourUsed</code>, <code>supplementalWeeklyUsed</code>, <code>fiveHourAllowance</code>, <code>weeklyAllowance</code>, <code>fiveHourFloor</code>, <code>weeklyFloor</code> — are computed by <code>QuotaService.reservationInputs</code> on every booking and read by no consumer: <code>QuotaLedger.insert</code> persists none of them, and both floor fields are the literal <code>0</code> at every call site. They cost one window-bounds and one supplemental computation per pool per spawn.<span class="prove">Delete all eight from the interface and its producers; the §00 command must stay green. That is the check, and it is a cleanup, not a behaviour change.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="drain">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">07</p><h2>Drain classification</h2></div>
+          <p>Two signals produce a drain: a measured window at zero, and a vendor error whose text says so.</p>
+        </div>
+        <figure class="diagram">
+          <svg class="arm-diagram" viewBox="0 0 1100 470" role="img" aria-labelledby="arm-title arm-desc">
+            <title id="arm-title">Drain signals and the three arms</title>
+            <desc id="arm-desc">A measured zero window or a classified vendor error produces a drain. A reset within one hour holds the agent. Otherwise, if every metered provider is drained and every unmetered route has errored, the agent waits for the nearest reset or is retained with a memory. All other drains freeze the agent and request replacement.</desc>
+            <defs><marker id="arm-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker></defs>
+            <rect class="box ok" x="30" y="52" width="228" height="70" rx="7"/><text x="50" y="82" font-size="14">measured window ≤ 0</text><text class="muted" x="50" y="102" font-size="11">drainedWindowFor · earliest reset</text>
+            <rect class="box ok" x="30" y="150" width="228" height="70" rx="7"/><text x="50" y="180" font-size="14">vendor error matched</text><text class="muted" x="50" y="200" font-size="11">classifyVendorDrainError</text>
+            <rect class="box warn" x="30" y="248" width="228" height="70" rx="7"/><text x="50" y="278" font-size="14">unmatched failure</text><text class="muted" x="50" y="298" font-size="11">crash → route quarantine</text>
+            <rect class="box ok" x="336" y="98" width="222" height="80" rx="7"/><text x="358" y="130" font-size="15">reset ≤ 1 hour?</text><text class="muted" x="358" y="154" font-size="11">null reset counts as no</text>
+            <rect class="box ok" x="336" y="238" width="222" height="96" rx="7"/><text x="358" y="270" font-size="15">all drained?</text><text class="muted" x="358" y="294" font-size="11">every metered pool spent AND</text><text class="muted" x="358" y="314" font-size="11">every unmetered route errored</text>
+            <rect class="box ok" x="646" y="42" width="240" height="86" rx="7"/><text x="668" y="74" font-size="15">HOLD</text><text class="muted" x="668" y="98" font-size="11">pause · held + reset + run id</text><text class="muted" x="668" y="118" font-size="11">sweep resumes past the reset</text>
+            <rect class="box ok" x="646" y="182" width="240" height="86" rx="7"/><text x="668" y="214" font-size="15">WAIT</text><text class="muted" x="668" y="238" font-size="11">nearest 5-hour reset, or the</text><text class="muted" x="668" y="258" font-size="11">weekly one if ≤ 5 hours away</text>
+            <rect class="box ok" x="646" y="304" width="240" height="86" rx="7"/><text x="668" y="336" font-size="15">RETAIN + REMEMBER</text><text class="muted" x="668" y="360" font-size="11">freeze · episodic quota-drain</text><text class="muted" x="668" y="380" font-size="11">branch and worktree kept</text>
+            <rect class="box warn" x="646" y="404" width="240" height="52" rx="7"/><text x="668" y="436" font-size="15">REPLACEMENT SEAM</text>
+            <rect class="box bad" x="936" y="404" width="140" height="52" rx="7"/><text x="954" y="428" font-size="13">launch:</text><text x="954" y="448" font-size="13">not automatic</text>
+            <path class="arrow" d="M258 87 C300 87 300 130 336 130"/>
+            <path class="arrow" d="M258 185 C300 185 300 146 336 146"/>
+            <path class="arrow dash" d="M258 283 H336"/>
+            <path class="arrow" d="M558 118 H646"/>
+            <path class="arrow" d="M447 178 V238"/>
+            <path class="arrow" d="M558 268 C600 268 604 224 646 224"/>
+            <path class="arrow" d="M558 300 C600 300 604 346 646 346"/>
+            <path class="arrow" d="M766 390 V404"/>
+            <path class="arrow dash" d="M886 430 H936"/>
+          </svg>
+          <figcaption><span class="status r-test">TEST</span><code>src/daemon/drain-handler.ts: DrainHandler.sweep, handle, allDrained, allDrainedArm, deferReplacement</code>; <code>src/daemon/quota.ts: drainedWindowFor, allMeteredDrained, nearestDrainResets</code>. Tests: the six arm cases in <code>test/daemon/drain-handler.test.ts</code>. <span class="status absent">NOT IMPLEMENTED</span>The dashed edge out of the replacement seam does not exist.</figcaption>
+        </figure>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Element</th><th>Exact behaviour and promotion</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status r-test">TEST</span></td><td>Window drain</td><td>Any pool governing the model with a measured window at or below zero drains it — a model-scoped cap at zero empties the model while the general pool still has room. Among several, the earliest reset wins, because it is the soonest the work can continue. <code>src/daemon/quota.ts: drainedWindowFor, drainFor</code>. Test: <code>test/daemon/drain-handler.test.ts — a measured window at zero drains, an unknown or unmetered one never does</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Vendor-error drain</td><td>A small per-provider regex table decides whether a failure means "out of usage" — rate-limit shapes, HTTP 429, Anthropic's credit-balance text, Codex and Grok usage-limit text, Kimi's <code>rate_limit</code>. Anything it cannot name stays a crash and feeds route health instead. Tests: <code>test/daemon/drain-handler.test.ts — rate-limit and billing text is a drain, per vendor</code>; <code>— a crash is never a drain — it stays with the quarantine</code>.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td>Vendor-error call sites</td><td>Two production sites classify and route: a model-layer spawn failure in <code>src/daemon/spawner-impl.ts</code>, which also suppresses the quarantine reason so a healthy route is not blamed for an empty meter, and a resume that died in <code>src/daemon/recovery.ts</code>. Both call an optional <code>drainError</code> dependency; both are wired in production by <code>src/cli/daemon.ts</code> to <code>daemon.onVendorDrainError</code>. The classifier is tested in isolation; neither call site is driven by a test.<span class="prove">On a restarted daemon, fail one live spawn with a real vendor 429 and read the outcome: a <code>ReplacementDrain</code> for that provider and <em>no</em> new <code>quota_route_health</code> row for the route.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Who the sweep looks at</td><td>Every maintenance tick. The root agent is skipped by name, and only <code>working</code>, <code>idle</code>, and <code>awaiting-approval</code> agents are evaluated; already-<code>held</code> agents are diverted to the resume check instead. The model tested is the agent's <em>execution identity</em> model, falling back to its spawn-time model. <code>src/daemon/drain-handler.ts: sweep</code>. Test: <code>— a metered-but-undrained provider is not touched</code>, which asserts the agent stays <code>working</code> with no pause and no replacement.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>All-drained predicate</td><td>Two conjuncts: <code>QuotaService.allMeteredDrained</code> requires every probed provider's account-wide pool to be drained, and the handler requires its own drain-error record to hold an entry for every provider that has no probe. A provider proving life clears its entry — <code>noteProviderAlive</code> is called on <code>session-start</code> and <code>turn-start</code>. Test: <code>— §R6: when everything is drained, the agent waits for the nearest five-hour reset</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Wait target</td><td>The nearest five-hour reset across drained routable general pools, or the weekly one if it lands within five hours. Anything further is not waited for. <code>src/daemon/quota.ts: nearestDrainResets</code>; <code>src/daemon/drain-handler.ts: allDrainedArm</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Retain and remember</td><td>With no wait target, the agent is frozen, an episodic event of type <code>quota-drain</code> is written naming the agent, its branch, and its task, and the replacement seam is entered. The memory write is an optional dependency supplied in production from <code>EpisodicStore.appendEvent</code> in <code>src/daemon/server.ts</code>. Test: <code>— §R6: no near reset anywhere preserves the branch and writes the memory</code>.<span class="prove">Drain every live route with no near reset and read the project's episodic store: one <code>quota-drain</code> row naming the branch, and the worktree still on disk.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Immediate re-evaluation</td><td>A vendor error may flip the all-drained verdict for every other live agent, so <code>onVendorError</code> runs a full sweep synchronously rather than waiting for the next tick. <code>src/daemon/drain-handler.ts: onVendorError</code>.</td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td>A drained pool exists right now</td><td><code>hive_quota_status</code> on the running daemon reports <code>grok/subscription</code> weekly at <code>used: 100, remaining: 0, remainingPct: 0</code> with <code>resetsAt: 2026-07-26T17:18:56.768Z</code> and <code>availability: "available"</code> — the exact shape <code>drainedWindowFor</code> classifies as drained. No Grok agent is running against it, so no arm has fired.<span class="prove">Launch a live Grok agent while that pool reads zero and observe the arm taken: the reset is further than an hour out, so the replacement seam, not a hold.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="hold">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">08</p><h2>Hold and the resume wake</h2></div>
+          <p>A hold pauses a real process and records what would make resuming it safe. Two different holds exist, and only one of them ever resumes.</p>
+        </div>
+        <h3>Taking the hold</h3>
+        <p class="claim test-border"><span class="status r-test">TEST</span><code>hold</code> requires an active provider run and a successful pause of that exact run; if either is missing it returns false and the caller falls through to the replacement seam with the reason extended to say the source could not be held. On success it writes four fields to the agent row in one upsert: <code>status: "held"</code>, <code>holdReason</code>, <code>holdResetAt</code>, and <code>holdProviderRunId</code>. The pause itself is the terminal host's verified group signal, not quota's. <code>src/daemon/drain-handler.ts: hold</code>. Test: <code>test/daemon/drain-handler.test.ts — §R4: a drain resetting within the hour holds the agent, and the sweep pokes it past the reset</code>, which asserts the status, the reason text carrying both the pool name and the reset time, the reset field, and the pause call.<span class="prove">Drain a live route with a near reset and read the agent row plus <code>ps -o stat</code> for its group: <code>held</code> with the reset time and run ID, and every non-leader member in state <code>T</code>.</span></p>
+        <p class="claim test-border"><span class="status r-test">TEST</span><strong>A hold with a null reset is a freeze, not a wait.</strong> Both the replacement seam and the no-near-reset arm hold with <code>holdResetAt: null</code>, and the sweep's resume branch requires a non-null hold reset that has passed — so a frozen agent is never woken by quota. Its terminal, worktree, and branch are retained. Test: <code>— §R5 seam: a distant reset freezes the source without destroying its terminal or worktree</code>, which asserts <code>status: "held"</code> with <code>holdResetAt: null</code> alongside the intact <code>worktreePath</code> and <code>branch</code>.</p>
+        <h3>What is revalidated before the one wake</h3>
+        <p>The resume runs entirely inside the maintenance sweep. Seven conditions are checked in this order, and every one of them can silently abandon the resume, leaving the agent held for the next tick:</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>#</th><th>Revalidation</th><th>Why it is not redundant</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>Refresh that provider's quota first</td><td>The reset time is a vendor prediction. Resuming on a predicted reset without re-reading would wake an agent into an empty meter.</td></tr>
+              <tr><td>2</td><td>Re-read the agent; it must still be <code>held</code></td><td>The row read at the top of the sweep is stale by the time the refresh returns; the agent may have been killed or handed off in between.</td></tr>
+              <tr><td>3</td><td><code>drainFor</code> must now return null</td><td>The reset passing is not the same fact as the usage returning. A provider that reset into a still-spent window does not wake anyone.</td></tr>
+              <tr><td>4</td><td>An active provider run must exist</td><td>A held agent whose process died has nothing to continue.</td></tr>
+              <tr><td>5</td><td><code>holdProviderRunId</code> must equal the active run ID</td><td>Waking a <em>different</em> run than the one that was paused would resume a process this hold never fenced.</td></tr>
+              <tr><td>6</td><td><code>capabilityEpoch</code> must equal the run's epoch</td><td>An epoch revoked while held means authority was withdrawn; the wake would hand work to a run that may no longer write or land.</td></tr>
+              <tr><td>7</td><td>The resume signal must succeed</td><td>The terminal host verifies foreground identity before <code>SIGCONT</code>. A failed resume must not be followed by a message telling a stopped process to continue.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="claim test-border" style="margin-top:14px"><span class="status r-test">TEST</span>Conditions 3, 5, and 6 are each driven to failure and back in one test: <code>test/daemon/drain-handler.test.ts — §R4: a drain resetting within the hour holds the agent, and the sweep pokes it past the reset</code> observes a still-drained provider, then a drifted <code>holdProviderRunId</code>, then a drifted <code>capabilityEpoch</code>, asserting no resume each time, and only then the successful wake. After the wake it asserts the agent is <code>idle</code> with all three hold fields cleared, and that a further sweep produces no second resume and no second message. <code>src/daemon/drain-handler.ts: resumeHeld</code>.</p>
+        <p class="claim unproven-border"><span class="status unproven">UNPROVEN</span><strong>Exactly one wake reaches the agent</strong> — proven in halves, never end to end. The handler's half is real and tested: it emits one message with the stable idempotency key <code>quota-resume:&lt;agentId&gt;:&lt;runId&gt;:&lt;holdResetAt&gt;</code>, and <code>test/daemon/drain-handler.test.ts — overlapping reset sweeps produce one idempotent wake</code> drives two concurrent sweeps through a barrier so both reach <code>SIGCONT</code>, then asserts one message with that key. But the de-duplication in that fixture lives in the harness's own <code>send</code> stub, so the test proves the key is stable and passed, not that anything honours it. The production honouring is implemented and separately reasoned: <code>MessageDelivery.send</code> looks the key up across the sender's aliases before inserting and falls back to the same lookup when the unique index rejects the insert (<code>src/daemon/delivery.ts: send</code>), and that mechanism is exercised for control messages by <code>test/daemon/control-messages.test.ts</code>. Nothing exercises the quota-resume key through real delivery.<span class="prove">On a restarted daemon, hold a live agent, force two overlapping maintenance ticks across its reset, and count rows in the message table with that idempotency key: exactly one.</span></p>
+        <p class="claim test-border"><span class="status r-test">TEST</span>Repeating <code>SIGCONT</code> on an already-verified group is accepted as harmless; the durable message key, not the signal, is the once-only boundary. The same overlapping-sweep test asserts two resume calls and one message.</p>
+      </div>
+    </section>
+
+    <section id="replacement">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">09</p><h2>Replacement seam</h2></div>
+          <p>Everything up to and including a durable, pickup-ready handoff exists. The launch does not.</p>
+        </div>
+        <p class="claim absent-border"><span class="status absent">NOT IMPLEMENTED</span><strong>No code selects or launches a replacement agent after a drain.</strong> <code>replaceWithHandoff</code> ends by sending the root a durable notice carrying the provider, the pool, the reset time, the handoff ID, and the drain reason, keyed <code>handoff-awaiting-route:&lt;handoffId&gt;</code>, and stops. The gap is marked in the source as <code>TODO(router)</code>. Implementing it requires an owner that accepts a measured provider/pool exclusion and returns either a launch decision or a durable no-candidate outcome; quota supplies the exclusion, it does not choose. <code>src/daemon/server.ts: replaceWithHandoff</code>.<span class="prove">Nothing to observe until the edge exists. The nearest positive check is reading a live drain notice: it carries no launch decision and no replacement agent appears.</span></p>
+        <h3>What the seam does do, in order</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Step</th><th>Behaviour</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status r-test">TEST</span></td><td>Preconditions</td><td>The agent's most recent provider run is required; without one the call raises and says the terminal and worktree remain retained. A handoff already existing for that source run returns immediately, so the seam is idempotent per run.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Fence</td><td>The capability epoch is revoked in the database, the subject's capabilities are revoked, and its credential is removed — before any process control. The durable write is the boundary; signalling then targets the exact old run. The revocation also moves the agent out of <code>held</code> and into <code>control-paused</code> with <code>writeRevoked</code> set, so an agent that entered the seam frozen does not stay in a state the resume sweep inspects.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Measure</td><td>Pause the run if it is still running, inspect the terminal, observe retained output, and measure the worktree read-only for branch head, base, commits, and dirty and untracked paths. Every one of those is failure-tolerant and contributes null on error rather than aborting.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Persist</td><td><code>buildHandoffBundle</code> with <code>reason: "quota-drain"</code>, embedding the frozen task, run outcome, worktree measurement, messages, provider and status events, output, and explicit memory refs; then <code>insertHandoff</code>. Persistence is the boundary: nothing after it can erase the task or the evidence. Tests: <code>test/daemon/handoff.test.ts</code>, and the one-handoff-per-source-run persistence case in <code>test/daemon/db.test.ts</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Stop and notify</td><td>The provider is stopped only if the pause succeeded. The terminal and the worktree are retained in every path. The notice then goes to the root.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>The whole seam, in order</td><td><code>test/daemon/handoff.test.ts — the replacement seam persists before stop and defers routing, then pickup leaves work open</code> drives the real <code>replaceWithHandoff</code> on a real daemon and database with a spawner that throws if called. It asserts the call order <code>["pause", "stop"]</code>, that the handoff row already exists when <code>stopProvider</code> is entered, that a failed terminal inspection degrades the bundle to <code>completeness: "unknown"</code> rather than aborting, that the agent ends <code>control-paused</code> with <code>writeRevoked</code>, epoch bumped, and its <code>worktreePath</code> and <code>branch</code> intact, and that the last message body names the drained pool with its reset and says replacement is deferred.</td></tr>
+              <tr><td><span class="status unproven">UNPROVEN</span></td><td>The seam on a live drain</td><td>The order and persistence are tested above with stubbed process control. No drained live agent has been carried through fence, measure, persist, stop, and notice against a real terminal on a running daemon.<span class="prove">Drain one live agent past the hold window and read the result: a handoff row for its source run, its worktree still on disk, its provider actually stopped in <code>ps</code>, and one root notice naming the pool and reset.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
 
     <section id="unmetered">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">06 · Unmetered providers</p><h2>opencode in the chain: usable without a usage surface.</h2></div>
-          <p>opencode has no quota API hive can read — confirmed during the adapter work (no billing endpoint, no usage surface; its models are billed on the user's upstream accounts, e.g. an OpenAI key, which hive cannot see either). Under the old admission-control design that was a problem. Under this policy it mostly dissolves, because quota never says no.</p>
+          <div><p class="section-label">10</p><h2>Unmetered providers</h2></div>
+          <p>opencode has no usage surface Hive can read. Four claims are commonly made about what that implies; three hold, and one is more precise than usually stated.</p>
         </div>
         <div class="table-wrap">
           <table>
-            <thead>
-              <tr><th>Question</th><th>Answer under the new policy</th><th>Why it's simple</th></tr>
-            </thead>
+            <thead><tr><th>Rung</th><th>Claim</th><th>What the code does</th></tr></thead>
             <tbody>
-              <tr><td>Can the user put opencode in a chain?</td><td><strong>Yes, anywhere, and it always spawns.</strong></td><td>"Never deny for usage" already covers "usage unknown" — unknown is not a refusal. Today's compatibility-mode admit (<code>quota.ts:1860-1878</code>) is exactly this; the new policy makes it the normal case rather than a warned-about exception. The MCC row badges it honestly: <em>unmetered</em>, not a fake 100%.</td></tr>
-              <tr><td>How does spread-selection rank it?</td><td><strong>It doesn't — spread skips what it can't measure.</strong></td><td>Spread-by-headroom ranks only metered pools; an unmetered link holds its chain position and is taken in order. No invented headroom number, no pseudo-quota.</td></tr>
-              <tr><td>How is its drain detected?</td><td><strong>By the vendor's own error, nowhere else.</strong></td><td>The only exhaustion signal an unmetered provider can produce is failing — a rate-limit or billing error at spawn or mid-turn. That failure is classified as a <em>vendor-error drain</em> and fed to the same drain handler as a metered 0% — deliberately NOT to launch-failure quarantine, which is for crashes. Classification is one check on the vendor's error text/code at the failure site that already exists.</td></tr>
-              <tr><td>Hold-and-poke (≤1h to reset)?</td><td><strong>Never. opencode is always handoff.</strong></td><td>Hold needs <code>resetsAt</code>; an unmetered provider has none. The drain handler's rule degrades honestly: no reset visibility → the "more than 1 hour" arm → hand the branch to a provider with known capacity and close the drained agent.</td></tr>
-              <tr><td>All-drained wait / preserve?</td><td><strong>Only when EVERYTHING is known-drained.</strong></td><td>While any unmetered provider remains in the chain, "no provider has usage" cannot be asserted — opencode might still work. So the total-exhaustion arm (wait for reset / preserve+memory) fires only when every metered pool is drained AND every unmetered route has errored. Until then, keep spawning.</td></tr>
+              <tr><td><span class="status r-live">LIVE</span></td><td>Always spawnable</td><td><strong>Holds.</strong> A candidate with no measured pool is evaluated as <code>unknown</code>, carries an empty entry list, and books against <code>unconfigured:&lt;model&gt;</code> at 10 units. There is no mode, no warning, and no admission question. Observed: <code>hive_quota_status</code> lists three opencode models with <code>configured: false, confidence: "missing"</code> and the reason <em>"usage is unknown and routing is unconstrained"</em>, two of them already carrying recorded local spend.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Never ranked by headroom</td><td><strong>Holds, and more broadly than stated:</strong> <em>nothing</em> is ranked by headroom. <code>reserveFairGroups</code> ranks by dispatch deficit and quota percentages never enter the comparison, so an unmetered provider needs no fabricated score and holds a fully equal position rather than merely keeping its chain slot. <code>src/daemon/quota-ledger.ts: reserveFairGroups</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Never held for a reset</td><td><strong>Holds as stated; the unqualified form does not.</strong> A hold needs a <code>resetsAt</code> and an unmetered provider has none, so no unmetered agent is ever <em>waited on</em>. But a non-terminal agent entering the replacement seam is still marked <code>held</code> — with <code>holdResetAt: null</code>, which the sweep never resumes. That is the freeze described in §08, not a wait. The test named for this case, <code>— an unmetered provider's drain is never held — a rate-limit error hands off directly</code>, uses a fixture whose agent is already <code>failed</code>, so it exercises the terminal path and does not observe the freeze.<span class="prove">Drive <code>onVendorError</code> with a <code>working</code> unmetered agent and read the row: <code>held</code> with a null reset, then a replacement request. Today no test covers that shape.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Drain known only from the vendor error</td><td><strong>Holds.</strong> <code>isMetered</code> is exactly "a probe exists for this provider", and opencode has none, so it can never produce a measured drain. Its only exhaustion signal is a classified failure, which routes to the drain handler rather than route health. A metered provider whose pool has simply not been read yet is unknown, not unmetered, and stays spawnable.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Effect on the all-drained verdict</td><td>While any unmetered provider has <em>not</em> errored, "no provider has usage" cannot be asserted, so the wait-or-retain arm cannot fire. <code>allDrained</code> requires a drain-error entry for every provider without a probe. A live start clears that entry immediately. Test: <code>— an unmetered provider's drain is never held</code> asserts the clear-on-alive behaviour by re-erroring after <code>noteProviderAlive</code>.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Any usage reading for opencode</td><td>No probe, no billing endpoint, no usage surface. Its models bill to the user's own upstream accounts, which Hive cannot see either. If it grows a usage surface it joins the metered path with no change to the drain arms, which speak windows.<span class="prove">Blocked on the vendor, not on code.</span></td></tr>
             </tbody>
           </table>
         </div>
-        <div class="panel-grid" style="margin-top:18px">
-          <article class="panel">
-            <h3>The one-sentence rule</h3>
-            <p>An unmetered provider is an <strong>always-spawnable wildcard</strong>: never refused, never ranked by headroom, never held — its drain is detected when the vendor errors, and the response is always handoff. If it later grows a usage surface (the way kimi did), it joins the metered pool path with no policy change — the drain handler already speaks windows.</p>
-          </article>
-          <article class="panel">
-            <h3>What this costs in code</h3>
-            <p>Three small things: the <em>unmetered</em> badge in the MCC (a display state, not a mode), vendor-error classification at the existing failure site (rate-limit/billing text → drain handler, not quarantine), and the drain handler's "no <code>resetsAt</code> → handoff" fallback (an <code>else</code> that already exists as the &gt;1h arm). No estimation, no synthetic quotas, no special chain semantics.</p>
-          </article>
+      </div>
+    </section>
+
+    <section id="alerting">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">11</p><h2>Alerting to the root</h2></div>
+          <p>One alert survives, and it reports a measurement outage rather than a measurement.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Alert</th><th>Behaviour and promotion</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status r-live">LIVE</span></td><td>Probe outage</td><td>The only alert quota emits. <code>alertProbeFailure</code> writes one <code>quota_alerts</code> row scoped to the synthetic <code>live-probe</code> pool at level <code>unknown</code>, sends one durable message, and then stays silent for the rest of the outage — a prior row at <code>unknown</code> short-circuits the whole function. The next successful read of that provider rewrites the row to <code>normal</code>, re-arming the announcement. The body states the honesty rule explicitly rather than reporting a number. Observed: the <code>kimi</code> row in §04. <code>src/daemon/quota.ts: alertProbeFailure, refreshFromProviders</code>.<span class="prove">On a restarted daemon, take one vendor CLI off PATH and read the root inbox: exactly one message for that outage, and one more only after a successful read then a second failure.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Sink and failure posture</td><td>The sink is set once at daemon construction to <code>delivery.send("hive-quota", ORCHESTRATOR_NAME, body)</code>. <code>sendAlert</code> swallows sink errors: accounting and routing must survive an unreachable root viewer, and the message is persisted by delivery before any wake is attempted, so a normal failure remains recoverable from the root inbox. <code>src/daemon/server.ts</code>, sink wiring; <code>src/daemon/quota.ts: sendAlert</code>.</td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Threshold alerting on remaining capacity</td><td>No code path warns the root at a percentage. There is no warning or critical threshold, no hysteresis band, and no per-pool threshold evaluator; <code>QuotaConfigSchema</code> carries no such knobs. The storage schema still admits <code>warning</code> and <code>critical</code> levels and the <code>quota_alerts</code> table retains rows at those levels, but the only writers in the tree are the probe-outage arm and its re-arm. What exists instead is action rather than notification: a pool reaching zero produces a drain arm (§07), not a message.<span class="prove">Grep the tree for <code>setAlertState</code>: two call sites, both in the probe-outage path. That is the check.</span></td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Unknown-headroom alerting at spawn</td><td>No alert fires when a candidate has no measured pool. Unknown is the ordinary case for an unmetered or quiet provider and is surfaced on the status read (§10) rather than announced.<span class="prove">Spawn a live opencode agent and read the root inbox: no quota message.</span></td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Reset-credit surfacing</td><td>No code computes or displays a redeemable credit at a window reset. Reset times are surfaced as timestamps on pool status and inside drain reasons and the handoff notice.<span class="prove">Grep <code>src/daemon/quota.ts</code> for <code>credit</code>: no match. That is the check.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="verification">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">12</p><h2>Acceptance matrix</h2></div>
+          <p>Every item has a rung. A test proves only what its fixture observes.</p>
+        </div>
+        <div class="table-wrap matrix">
+          <table>
+            <thead><tr><th>#</th><th>Rung</th><th>Acceptance item</th><th>Evidence and promotion</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td><span class="status r-test">TEST</span></td><td>A spawn is never refused because a pool is spent.</td><td>No usage predicate exists on the path; the launch gate's five guards contain none.<span class="prove">Spawn live against a 0% pool and observe the launch.</span></td></tr>
+              <tr><td>2</td><td><span class="status r-test">TEST</span></td><td>An unreadable ledger stops a booking rather than routing on a fabricated zero.</td><td><code>quota.test.ts — distinguishes a genuine zero ledger from truncated spend and refuses a new reservation</code>.</td></tr>
+              <tr><td>3</td><td><span class="status r-test">TEST</span></td><td>The first spawn awaits the boot refresh.</td><td><code>quotaReady</code> awaited at all three spawner entry points; wired in <code>src/cli/daemon.ts</code>.<span class="prove">Spawn within the first second of a restarted daemon and read the decision's pool provenance.</span></td></tr>
+              <tr><td>4</td><td><span class="status r-test">TEST</span></td><td>An agent close forces a provider-scoped refresh.</td><td><code>killAgentTeardown</code>, immediately after settlement.<span class="prove">Close a live agent and watch that provider's <code>observedAt</code> advance.</span></td></tr>
+              <tr><td>5</td><td><span class="status r-live">LIVE</span></td><td>A failed probe keeps prior readings, marks them stale, and invents nothing.</td><td>The <code>kimi</code> alert row and status read in §04.</td></tr>
+              <tr><td>6</td><td><span class="status r-live">LIVE</span></td><td>Both push feeds write observations without a probe subprocess.</td><td>Codex authoritative and Claude statusline-reported pools in one live status read (§03).</td></tr>
+              <tr><td>7</td><td><span class="status r-test">TEST</span></td><td>A near reset holds the exact run and records the reset and run ID.</td><td><code>drain-handler.test.ts — §R4: a drain resetting within the hour holds the agent, and the sweep pokes it past the reset</code>.<span class="prove">Hold a live agent and read the row plus its process states.</span></td></tr>
+              <tr><td>8</td><td><span class="status r-test">TEST</span></td><td>Resume revalidates quota, hold state, run identity, epoch, and control before waking.</td><td>Same test; three of the seven conditions are driven to failure in it.</td></tr>
+              <tr><td>9</td><td><span class="status unproven">UNPROVEN</span></td><td>Exactly one wake reaches the agent through production delivery.</td><td>Key stability is tested; the fixture's own stub performs the de-duplication.<span class="prove">Two overlapping live ticks across a reset; count message rows with the resume key.</span></td></tr>
+              <tr><td>10</td><td><span class="status r-test">TEST</span></td><td>A distant or unmetered drain freezes without destroying terminal, worktree, or branch.</td><td><code>drain-handler.test.ts — §R5 seam: a distant reset freezes the source without destroying its terminal or worktree</code>.</td></tr>
+              <tr><td>11</td><td><span class="status r-test">TEST</span></td><td>Total exhaustion waits for a near reset, or retains the work and writes a memory.</td><td>The two all-drained tests in <code>drain-handler.test.ts</code>.<span class="prove">Drain every live route and read the episodic store and the worktree.</span></td></tr>
+              <tr><td>12</td><td><span class="status r-test">TEST</span></td><td>An unrecognised failure is a crash, not a drain.</td><td><code>drain-handler.test.ts — a crash is never a drain — it stays with the quarantine</code>.</td></tr>
+              <tr><td>13</td><td><span class="status unproven">UNPROVEN</span></td><td>The two production vendor-error call sites route to the drain handler.</td><td>Classifier tested in isolation; call sites untested.<span class="prove">Fail one live spawn with a real 429 and confirm a drain and no route-health row.</span></td></tr>
+              <tr><td>14</td><td><span class="status r-test">TEST</span></td><td>The handoff persists before the provider is stopped, and no replacement is launched.</td><td><code>handoff.test.ts — the replacement seam persists before stop and defers routing, then pickup leaves work open</code>, whose spawner throws if called.</td></tr>
+              <tr><td>14b</td><td><span class="status unproven">UNPROVEN</span></td><td>The same seam against a real terminal on a live drain.</td><td>Process control is stubbed in that test.<span class="prove">Carry one live agent through fence, measure, persist, stop, notice.</span></td></tr>
+              <tr><td>15</td><td><span class="status unproven">UNPROVEN</span></td><td><code>reconcileAgentModel</code> re-keys correctly under a real in-session model change.</td><td>No fixture drives a live <code>/model</code>.<span class="prove">Switch model mid-session and read the reservation's pool set and <code>startedAt</code>.</span></td></tr>
+              <tr><td>16</td><td><span class="status unproven">UNPROVEN</span></td><td>A frozen non-terminal unmetered agent is marked held with a null reset.</td><td>The named test's fixture is already terminal.<span class="prove">Drive <code>onVendorError</code> with a <code>working</code> unmetered agent and read the row.</span></td></tr>
+              <tr><td>17</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Automatic replacement launch excluding the drained pool.</td><td>Durable notice with provider, pool, reset, and handoff ID instead; marked <code>TODO(router)</code>.</td></tr>
+              <tr><td>18</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Threshold, hysteresis, and unknown-headroom alerting.</td><td>Two <code>setAlertState</code> call sites exist, both in the probe-outage path.</td></tr>
+              <tr><td>19</td><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Any usage reading for opencode.</td><td>No probe exists; drain is knowable only from a classified vendor error.<span class="prove">Blocked on the vendor.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="boundary">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">13</p><h2>Ownership boundary</h2></div>
+          <p>Quota measures, classifies, and holds. It does not choose providers and it does not move bytes.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Rung</th><th>Owner</th><th>Owned state and operation</th><th>Boundary and promotion</th></tr></thead>
+            <tbody>
+              <tr><td><span class="status r-test">TEST</span></td><td>Quota</td><td>Provider usage observation and provenance; pool, catalog, and window resolution; reservation accounting; dispatch fairness; drain classification and reset time; hold state and resume eligibility; route-health cooldown.</td><td><code>quota.ts</code>, <code>quota-ledger.ts</code>, <code>quota-sources.ts</code>, <code>drain-handler.ts</code>.<span class="prove">The union of the live row checks in §03–§08.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>The launch gate</td><td>Every refusal a spawn can receive: resolution, enablement, availability, capability-floor, effort.</td><td><code>authorized-launch.ts</code>. Quota consumes the gate's output and adds no refusal of its own; the two exceptions in §05 are a routing absence and a storage-integrity failure, neither a usage verdict.<span class="prove">Read a live refusal: its reason is one of the five gate reasons.</span></td></tr>
+              <tr><td><span class="status absent">NOT IMPLEMENTED</span></td><td>Quota → selection</td><td>No executable edge consumes a <code>ReplacementDrain</code> to choose and launch a replacement while excluding the proven drained pool.</td><td>Quota supplies the measured exclusion — provider, pool, reset time. It requires a selection-owned call that returns a launch decision or a durable no-candidate outcome.<span class="prove">Nothing to observe until the API exists.</span></td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Communication</td><td>Delivering the resume wake and the handoff notice, their lifecycle states, attempt records, and idempotency.</td><td>Quota hands <code>MessageDelivery</code> a body and a key and reads nothing back. The delivery semantics are mapped in <code>hive-communication.html</code> §06, and its §08 maps the same drain flow from the delivery side; this document does not restate them.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Terminal host</td><td>Pausing, resuming, and stopping a provider process against a verified foreground identity.</td><td>Quota calls <code>pauseProvider</code> and <code>resumeProvider</code> through injected dependencies and treats a false return as "could not hold". The signal path, its identity verification, and the residual read/signal race are the terminal subject, mapped in <code>terminal-stack-transition.html</code>.</td></tr>
+              <tr><td><span class="status r-test">TEST</span></td><td>Episodic memory</td><td>Storing the retention record written when everything is drained.</td><td>Quota calls <code>appendEvent</code> with an agent, a type, and a summary. It reads nothing back and does not consume memory in any decision.<span class="prove">Read a live <code>quota-drain</code> episodic row and confirm no quota code path queries it.</span></td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
   </main>
+
+  <footer>
+    <div class="shell">Source basis <code>bc5e4938dff01d9366c36c4efbc5a6e6ef94eaa8</code>. Installed CLI <code>0.0.38 (8ff0a55f)</code>, 104 commits behind this source; the running daemon's build was not measured. Raising a rung requires the observation named by the relevant row; lowering one requires only that the named evidence stop establishing the claim.</div>
+  </footer>
 </body>
 </html>
