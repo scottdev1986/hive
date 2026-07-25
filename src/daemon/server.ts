@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,8 +22,8 @@ import {
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
-import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/tools/codex";
 import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/tools/codex";
 import {
   type CodexAppServerManager,
   type ReapOrphanDependencies,
@@ -28,8 +35,8 @@ import {
   listUnmergedHiveBranches,
   markBranchPreserved,
   observedWorktreeFiles,
-  reconcileOrphanedWorktrees as reconcileWorktrees,
   type RemoveWorktreeOptions,
+  reconcileOrphanedWorktrees as reconcileWorktrees,
   removeWorktree,
   type StrandedWork,
   type UnmergedBranch,
@@ -44,6 +51,7 @@ import type {
 import {
   type ActivitySnapshot,
   type AgentRecord,
+  type CapabilityProvider,
   ControlIntentSchema,
   canonicalOrchestratorName,
   compactMemoryWriteResult,
@@ -54,7 +62,6 @@ import {
   HookEventSchema,
   isOrchestratorName,
   isTerminalAgentStatus,
-  type CapabilityProvider,
   type MemoryScope,
   MemoryScopeSchema,
   type MemoryWriteInput,
@@ -71,7 +78,7 @@ import {
 } from "../schemas";
 import type { WorkspaceEventV2 } from "../schemas/status-envelope";
 import { HIVE_VERSION } from "../version";
-import { recordProviderHookEvent } from "./provider-events";
+import { buildActivitySnapshot } from "./activity-snapshot";
 import {
   type Action,
   bearerToken,
@@ -88,7 +95,6 @@ import {
   writeCredential,
 } from "./credentials";
 import { DaemonLog } from "./daemon-log";
-import { buildActivitySnapshot } from "./activity-snapshot";
 import { type Approval, HiveDatabase } from "./db";
 import {
   MessageDelivery,
@@ -96,6 +102,7 @@ import {
   type RootProtocolDeliverer,
   type SessionSender,
 } from "./delivery";
+import { DrainHandler, type ReplacementDrain } from "./drain-handler";
 import {
   compileDigest,
   isDigestBoundaryEvent,
@@ -107,12 +114,9 @@ import {
   MemoryQueryInputSchema,
   runMemoryQuery,
 } from "./episodic-projections";
-import {
-  buildHandoffBundle,
-  measureHandoffWorktree,
-} from "./handoff";
 import type { EpisodicStore } from "./episodic-store";
 import type { GraphifyService } from "./graphify-service";
+import { buildHandoffBundle, measureHandoffWorktree } from "./handoff";
 import { expectedDaemonHandshake } from "./handshake";
 import { hiveInstanceSuffix } from "./instance-identity";
 import { listInstances } from "./instances";
@@ -169,6 +173,7 @@ import {
 import { deriveOrchestratorStatus } from "./orchestrator-status";
 import { harvestPitfalls } from "./pitfall-harvest";
 import { projectHiveUuid } from "./project-state";
+import { recordProviderHookEvent } from "./provider-events";
 import type { QuotaService } from "./quota";
 import {
   CrashRecovery,
@@ -217,16 +222,16 @@ import {
 import type { SessiondOutputObservation } from "./session-host/sessiond-output-observer";
 import {
   ROOT_VISIBILITY_ID,
+  WorkspaceOwnerSchema,
   type WorkspaceVisibilityAdmission,
   type WorkspaceVisibilityAuthority,
   type WorkspaceVisibilityCandidate,
-  WorkspaceOwnerSchema,
   type WorkspaceVisibilitySnapshot,
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
 import type { SessiondBrokerSupervisor } from "./sessiond-broker";
-import { fuseAgentStatus } from "./status-fusion";
 import { type Spawner, type SpawnRequest, SpawnRequestSchema } from "./spawner";
+import { fuseAgentStatus } from "./status-fusion";
 import {
   type StatusIncarnationGenerationSource,
   StatusIncarnationUnavailableError,
@@ -241,7 +246,6 @@ import {
   stopSessiondAgentSession,
 } from "./teardown";
 import { TokenUsageStore } from "./token-usage";
-import { DrainHandler, type ReplacementDrain } from "./drain-handler";
 import {
   type ClaudeTelemetryReader,
   clampPct,
@@ -868,9 +872,9 @@ export class HiveDaemon {
     beforeKill?: () => void | Promise<void>,
   ) => Promise<ReapOutcome>;
   private readonly sessionHost: Pick<SessionHost, "capture"> | null;
-  private readonly observeTerminalOutput:
-    | NonNullable<HiveDaemonOptions["observeTerminalOutput"]>
-    | null;
+  private readonly observeTerminalOutput: NonNullable<
+    HiveDaemonOptions["observeTerminalOutput"]
+  > | null;
   private readonly resolveSessionLocator: NonNullable<
     HiveDaemonOptions["resolveSessionLocator"]
   > | null;
@@ -1259,7 +1263,6 @@ export class HiveDaemon {
             .filter((instance) => instance.running)
             .map((instance) => instance.instanceId),
         ));
-    const createRecoverySession = this.spawner.createRecoverySession;
     const autonomy = options.autonomy;
     this.drainHandler = new DrainHandler({
       db: this.db,
@@ -1267,7 +1270,10 @@ export class HiveDaemon {
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
       pauseProvider: (agent, run) =>
-        this.terminalHost.pauseProvider(requireSessiondAgentLocator(agent), run),
+        this.terminalHost.pauseProvider(
+          requireSessiondAgentLocator(agent),
+          run,
+        ),
       resumeProvider: (agent, run) =>
         this.terminalHost.resumeProvider(
           requireSessiondAgentLocator(agent),
@@ -1279,8 +1285,8 @@ export class HiveDaemon {
       ...(this.episodic === null
         ? {}
         : {
-          remember: (event) => this.episodic!.appendEvent(event),
-        }),
+            remember: (event) => this.episodic!.appendEvent(event),
+          }),
     });
     this.recovery = new CrashRecovery({
       db: this.db,
@@ -1300,23 +1306,30 @@ export class HiveDaemon {
           this.capabilities.revokeSubject(agent.name);
           removeCredential(agent.name);
         }),
-      ...(createRecoverySession === undefined
+      // Called on the spawner, never as a detached reference: the method body
+      // uses `this`, and a hoisted `const fn = this.spawner.method` type-checks
+      // while silently losing the receiver — which is how every crash resume
+      // came to die on `undefined is not an object (evaluating
+      // 'this.createSession')`. Presence is still probed on the spawner, so an
+      // implementation that does not offer the method stays absent here.
+      ...(this.spawner.createRecoverySession === undefined
         ? {}
         : {
-            createRecoverySession: (
+            createRecoverySession: async (
               agent,
               command,
               expectedExecutable,
               launchGrantId,
               providerRunId,
-            ) =>
-              createRecoverySession(
+            ) => {
+              await this.spawner.createRecoverySession?.(
                 agent,
                 command,
                 expectedExecutable,
                 launchGrantId,
                 providerRunId,
-              ),
+              );
+            },
           }),
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
@@ -1398,7 +1411,9 @@ export class HiveDaemon {
         ? await this.terminalHost.pauseProvider(locator, run)
         : false;
 
-    const inspection = await this.terminalHost.inspect(locator).catch(() => null);
+    const inspection = await this.terminalHost
+      .inspect(locator)
+      .catch(() => null);
     const output =
       this.observeTerminalOutput === null || inspection === null
         ? null
@@ -1451,9 +1466,7 @@ export class HiveDaemon {
   private async agentSessionPresent(agent: AgentRecord): Promise<boolean> {
     const locator = requireSessiondAgentLocator(agent);
     const activeRun = this.terminalHost.reconcileProviderRun(locator);
-    const inspection = await this.terminalHost.inspect(
-      locator,
-    );
+    const inspection = await this.terminalHost.inspect(locator);
     return (
       inspection.presence === "present" &&
       !sessiondAgentProviderRunIsDead(inspection, activeRun)
@@ -1877,7 +1890,10 @@ export class HiveDaemon {
    * missing one never loosens it.
    */
   async refreshQuota(
-    options: { force?: boolean; providers?: readonly CapabilityProvider[] } = {},
+    options: {
+      force?: boolean;
+      providers?: readonly CapabilityProvider[];
+    } = {},
   ): Promise<void> {
     if (this.quota === undefined) return;
     await this.quota.refreshFromProviders(undefined, options);
@@ -1893,10 +1909,7 @@ export class HiveDaemon {
 
   /** §07: vendor rate-limit failures route to the drain handler, never the
    * launch-failure quarantine. */
-  async onVendorDrainError(
-    agent: AgentRecord,
-    failure: string,
-  ): Promise<void> {
+  async onVendorDrainError(agent: AgentRecord, failure: string): Promise<void> {
     await this.drainHandler.onVendorError(agent, failure);
   }
 
@@ -2043,9 +2056,7 @@ export class HiveDaemon {
     try {
       const locator = requireSessiondAgentLocator(agent);
       const activeRun = this.terminalHost.reconcileProviderRun(locator);
-      const inspection = await this.terminalHost.inspect(
-        locator,
-      );
+      const inspection = await this.terminalHost.inspect(locator);
       if (sessiondAgentProviderRunIsDead(inspection, activeRun)) return "gone";
       const shellPid = inspection.shellRoot?.pid;
       if (shellPid === null || shellPid === undefined) return "unknown";
@@ -2559,9 +2570,7 @@ export class HiveDaemon {
           sessions.push({
             owner: ORCHESTRATOR_NAME,
             rootPids:
-              inspection.shellRoot === null
-                ? []
-                : [inspection.shellRoot.pid],
+              inspection.shellRoot === null ? [] : [inspection.shellRoot.pid],
           });
         } catch {
           // A vanished session has no processes left to watch.
@@ -2579,9 +2588,7 @@ export class HiveDaemon {
           sessions.push({
             owner: agent.name,
             rootPids:
-              inspection.shellRoot === null
-                ? []
-                : [inspection.shellRoot.pid],
+              inspection.shellRoot === null ? [] : [inspection.shellRoot.pid],
           });
         } catch {
           // A vanished session has no processes left to watch.
@@ -5476,26 +5483,26 @@ export class HiveDaemon {
                   ? "working"
                   : value.kind === "tool-start"
                     ? "working"
-                  : value.kind === "approval-request"
-                    ? "awaiting-approval"
-                    : value.kind === "notification"
-                      ? // The vendor's own dialog. Claude raises this hook when it is
-                        // BLOCKED asking for permission, and Hive used to hold the
-                        // agent's status here — so a session parked on a dialog went
-                        // on reporting "working" forever and told nobody. Any other
-                        // notification (notably idle_prompt, which an idle agent
-                        // emits while doing nothing) still changes nothing.
-                        isPermissionPrompt(value)
-                        ? "awaiting-approval"
-                        : agent.status
-                      : value.kind === "session-launch" ||
-                          value.kind === "session-end" ||
-                          value.kind === "compacted"
-                        ? // Only the orchestrator supervisor emits this today. If a
-                          // future worker reports either supervisor lifecycle event,
-                          // process teardown remains the authority for that worker.
-                          agent.status
-                        : "idle",
+                    : value.kind === "approval-request"
+                      ? "awaiting-approval"
+                      : value.kind === "notification"
+                        ? // The vendor's own dialog. Claude raises this hook when it is
+                          // BLOCKED asking for permission, and Hive used to hold the
+                          // agent's status here — so a session parked on a dialog went
+                          // on reporting "working" forever and told nobody. Any other
+                          // notification (notably idle_prompt, which an idle agent
+                          // emits while doing nothing) still changes nothing.
+                          isPermissionPrompt(value)
+                          ? "awaiting-approval"
+                          : agent.status
+                        : value.kind === "session-launch" ||
+                            value.kind === "session-end" ||
+                            value.kind === "compacted"
+                          ? // Only the orchestrator supervisor emits this today. If a
+                            // future worker reports either supervisor lifecycle event,
+                            // process teardown remains the authority for that worker.
+                            agent.status
+                          : "idle",
           contextPct:
             value.kind === "turn-end" && value.contextPct !== undefined
               ? value.contextPct
@@ -5540,11 +5547,11 @@ export class HiveDaemon {
         ? "working"
         : value.kind === "tool-start"
           ? "working"
-        : value.kind === "turn-end" || value.kind === "session-start"
-          ? "idle"
-          : value.kind === "approval-request" || isPermissionPrompt(value)
-            ? "awaiting_approval"
-            : null;
+          : value.kind === "turn-end" || value.kind === "session-start"
+            ? "idle"
+            : value.kind === "approval-request" || isPermissionPrompt(value)
+              ? "awaiting_approval"
+              : null;
     if (statusAgent !== null && turnState !== null) {
       const observedAt = new Date(value.timestamp).toISOString();
       this.status.appendSourceEvent({
@@ -5572,7 +5579,8 @@ export class HiveDaemon {
     if (
       agent !== null &&
       (value.kind === "session-start" || value.kind === "turn-start")
-    ) this.drainHandler.noteProviderAlive(agent.tool);
+    )
+      this.drainHandler.noteProviderAlive(agent.tool);
     const eventReservationId =
       agent?.controlQuotaReservationId ?? agent?.quotaReservationId;
     if (eventReservationId !== undefined) {
@@ -5784,8 +5792,7 @@ export class HiveDaemon {
                 : await this.observeTerminalOutput(
                     locator,
                     inspection.geometry,
-                  )
-                    .catch(() => null);
+                  ).catch(() => null);
             const run =
               this.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
             const providerEvents =
@@ -6424,9 +6431,7 @@ export class HiveDaemon {
         }
         if (
           stored.bundle.originalTaskRef.digest !==
-          createHash("sha256")
-            .update(replacement.taskDescription)
-            .digest("hex")
+          createHash("sha256").update(replacement.taskDescription).digest("hex")
         ) {
           throw new Error(
             `Handoff ${handoffId} does not carry ${agent}'s exact task`,
@@ -6438,7 +6443,9 @@ export class HiveDaemon {
           new Date().toISOString(),
         );
         if (pickup === null) {
-          throw new Error(`Handoff ${handoffId} was picked up by another agent`);
+          throw new Error(
+            `Handoff ${handoffId} was picked up by another agent`,
+          );
         }
         return toolResult({ handoff: stored.bundle, pickup }, "handoff");
       },
@@ -6461,8 +6468,7 @@ export class HiveDaemon {
           false,
         );
         const message =
-          capability.role === "operator" ||
-          capability.role === "orchestrator"
+          capability.role === "operator" || capability.role === "orchestrator"
             ? this.delivery.readOrchestratorMessage(id)
             : this.db.getMessage(id);
         if (
