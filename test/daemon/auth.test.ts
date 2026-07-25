@@ -9,6 +9,7 @@
 // Nothing in this file touches live work: an in-memory database, a stub
 // spawner that launches nothing, and a stub landBranch that runs no git.
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
   writeCredential,
 } from "../../src/daemon/credentials";
 import { HiveDatabase } from "../../src/daemon/db";
+import { buildNormalMessageBatchProjection } from "../../src/daemon/context-projection";
 import type { LandReadiness } from "../../src/daemon/landing";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
@@ -140,7 +142,7 @@ async function callTool(
   token: string | null,
   name: string,
   args: Record<string, unknown> = {},
-): Promise<{ ok: boolean; error: string }> {
+): Promise<{ ok: boolean; error: string; content: unknown }> {
   const client = new Client({ name: "test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
     new URL("http://hive/mcp"),
@@ -153,9 +155,14 @@ async function callTool(
     return {
       ok: result.isError !== true,
       error: result.isError === true ? text : "",
+      content: result.content,
     };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "?" };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "?",
+      content: null,
+    };
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -334,6 +341,46 @@ describe("a foreign agent cannot act on another tenant", () => {
         (await callTool(daemon, token, "hive_read_message", { id: root.id })).ok,
       ).toBe(false);
     }
+    await daemon.stop();
+  });
+
+  test("an omitted multibyte preview retrieves the byte-identical durable body", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord());
+    const full = `begin-${"é".repeat(12_000)}-end`;
+    const message = await daemon.delivery.send("queen", "maya", full);
+    const projection = buildNormalMessageBatchProjection(
+      [message],
+      "018f1e90-7b5a-7cc0-8000-000000000701",
+    );
+    const projectedBody = projection.body.split(
+      `message ${message.id} from queen:\n`,
+    )[1]!;
+    const marker =
+      /\n…\[(\d+) bytes omitted; sha256=([0-9a-f]{64});[^\]]+\]…\n/.exec(
+        projectedBody,
+      );
+    expect(marker).not.toBeNull();
+    expect(
+      Buffer.byteLength(projectedBody.replace(marker![0], ""), "utf8") +
+        Number(marker![1]),
+    ).toBe(Buffer.byteLength(full, "utf8"));
+    expect(marker![2]).toBe(projection.sourceDigests[0]);
+
+    const token = daemon.capabilities.mint("maya", "writer").token;
+    const retrieved = await callTool(
+      daemon,
+      token,
+      "hive_read_message",
+      projection.sourceRefs[0]!.retrieval.arguments,
+    );
+    expect(retrieved.ok).toBe(true);
+    const first = (retrieved.content as Array<{ text?: string }>)[0];
+    const body = JSON.parse(first?.text ?? "{}").body;
+    expect(Buffer.from(body, "utf8")).toEqual(Buffer.from(full, "utf8"));
+    expect(createHash("sha256").update(body, "utf8").digest("hex")).toBe(
+      projection.sourceDigests[0],
+    );
     await daemon.stop();
   });
 
