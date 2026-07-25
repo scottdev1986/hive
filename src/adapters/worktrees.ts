@@ -4,6 +4,9 @@ import {
   hiveInstanceSuffix,
   isDefaultHiveHome,
 } from "../daemon/instance-identity";
+import { CAPABILITY_PROVIDERS } from "../schemas";
+import { shippedSkillsFor } from "../skills/shipped";
+import { nativeSkillDirectory } from "./skills";
 
 interface GitResult {
   stdout: string;
@@ -458,7 +461,7 @@ async function branchExists(
  * deletion; any other file under `.grok/` or `.kimi-code/` must remain visible
  * as agent work.
  */
-const HIVE_WORKTREE_WIRING: readonly string[] = [
+const HIVE_WORKTREE_CONFIG: readonly string[] = [
   ".claude/settings.local.json",
   ".claude/hive-graphify-hook.sh",
   ".mcp.json",
@@ -470,6 +473,29 @@ const HIVE_WORKTREE_WIRING: readonly string[] = [
   ".kimi-code/mcp.json",
   ".kimi-code/AGENTS.md",
   "opencode.json",
+];
+
+/**
+ * The shipped `SKILL.md` files `provisionSkills` lays down at every spawn, one
+ * exact path per skill per vendor — derived from the same two functions that
+ * choose the write destinations, so the two cannot drift apart.
+ *
+ * Not derivable, and deliberately absent: the *user's* own skills, symlinked in
+ * from `~/.hive/skills` and `<repo>/.hive/skills` under the same parents. Their
+ * names are whatever the user wrote, and a directory entry to cover them would
+ * hide agent work under `.claude/skills/` from the check that authorizes
+ * worktree deletion. A user with their own skills still sees those links
+ * reported as stranded work.
+ */
+const HIVE_WORKTREE_SKILLS: readonly string[] = CAPABILITY_PROVIDERS.flatMap(
+  (provider) =>
+    shippedSkillsFor(provider).map((skill) =>
+      join(nativeSkillDirectory(provider), skill.name, "SKILL.md"),
+    ),
+);
+
+const HIVE_WORKTREE_WIRING: readonly string[] = [
+  ...new Set([...HIVE_WORKTREE_CONFIG, ...HIVE_WORKTREE_SKILLS]),
 ];
 
 export async function assessStrandedWork(

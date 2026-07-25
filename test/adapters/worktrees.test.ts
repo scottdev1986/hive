@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { provisionSkills } from "../../src/adapters/skills";
 import { writeGrokAgentConfig } from "../../src/adapters/tools/grok";
 import {
   assessStrandedWork,
@@ -14,6 +15,7 @@ import {
   slugify,
 } from "../../src/adapters/worktrees";
 import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 let tempRoot = "";
@@ -460,5 +462,39 @@ describe("hive wiring", () => {
       created.branch,
     );
     expect(stranded.dirtyFiles).toEqual([".kimi-code/notes.md"]);
+  });
+
+  // The fixture repository has no .gitignore, which is the arbitrary project
+  // Hive has to work on: every shipped skill is untracked there.
+  test("includes the skills every spawn provisions, for every vendor", async () => {
+    for (const tool of CAPABILITY_PROVIDERS) {
+      const created = await createWorktree(repoRoot, tool, "hive wiring");
+      await provisionSkills(created.path, tool, join(tempRoot, "no-skills"));
+
+      const stranded = await assessStrandedWork(
+        repoRoot,
+        created.path,
+        created.branch,
+      );
+      expect(stranded.dirtyFiles).toEqual([]);
+    }
+  });
+
+  test("does not hide agent work beside a provisioned skill", async () => {
+    const created = await createWorktree(repoRoot, "skillwork", "hive wiring");
+    await provisionSkills(created.path, "claude", join(tempRoot, "no-skills"));
+    await writeFile(
+      join(created.path, ".claude", "skills", "hive-claude", "notes.md"),
+      "work\n",
+    );
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.dirtyFiles).toEqual([
+      ".claude/skills/hive-claude/notes.md",
+    ]);
   });
 });
