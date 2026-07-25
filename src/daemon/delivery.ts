@@ -462,8 +462,17 @@ export class MessageDelivery {
           return await this.deliverNative(current, currentRecipient);
         } catch {
           // A native connection can disappear after liveness was checked. An
-          // idle TUI remains a safe compatibility target; a busy headless
-          // session keeps the durable message queued for recovery.
+          // idle TUI remains a safe compatibility target for ordinary traffic;
+          // a busy headless session keeps the durable message queued for
+          // recovery.
+          //
+          // URGENT NEVER TAKES THE PASTE PATH. Its whole contract is cancelling
+          // the in-flight turn, the paste path cannot cancel anything, and
+          // returning its "injected" state here would report a cancellation
+          // that did not happen — the exact false promise the guard on entry to
+          // send() refuses when no native surface exists at all. So it stays
+          // queued: honestly undelivered, and visible to the caller as such.
+          if (priority === "urgent") return current;
           if (currentRecipient.status !== "idle") return current;
           return this.deliver(current, currentRecipient);
         }
