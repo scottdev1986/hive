@@ -163,6 +163,14 @@ export interface BuildHandoffBundleInput {
 export async function buildHandoffBundle(
   input: BuildHandoffBundleInput,
 ): Promise<HandoffBundle> {
+  if (
+    input.run.agentId !== input.agent.id ||
+    input.run.provider !== input.agent.tool ||
+    input.run.model === null ||
+    input.run.model !== input.agent.model
+  ) {
+    throw new Error("provider run does not match the handoff source agent");
+  }
   const report = latestStatusReport(input.statusEvents);
   let summary: HandoffSummary;
   try {
@@ -193,7 +201,7 @@ export async function buildHandoffBundle(
       decisionId: input.run.launchGrantId,
       providerRunId: input.run.runId,
       provider: input.run.provider,
-      model: input.run.model ?? input.agent.model,
+      model: input.run.model,
       taskCategory: input.agent.category,
       outcome: {
         "quota-drain": "quota-drained",

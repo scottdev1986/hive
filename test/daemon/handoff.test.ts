@@ -282,6 +282,24 @@ describe("handoff bundle", () => {
     expect(bundle.runOutcome.outcome).toBe("crashed");
   });
 
+  test("refuses to misattribute an outcome to a different launch identity", async () => {
+    await expect(
+      buildHandoffBundle({
+        handoffId: "018f1e90-7b5a-7cc0-8000-000000000218",
+        reason: "quota-drain",
+        agent,
+        run: { ...run, model: "different-model" },
+        measurement: null,
+        messages: [],
+        providerEvents: [],
+        statusEvents: [],
+        output: null,
+        memory: [],
+        createdAt: "2026-07-25T01:11:00.000Z",
+      }),
+    ).rejects.toThrow("provider run does not match");
+  });
+
   test("a dead source without a final status still produces a usable handoff", async () => {
     const requirement = AgentMessageSchema.parse({
       id: "dead-source-requirement",
