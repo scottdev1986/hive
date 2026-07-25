@@ -22,7 +22,6 @@ import {
   reapOrphanCodexHosts,
 } from "../adapters/tools/codex-app-server";
 import { readLiveGrokModel } from "../adapters/tools/grok";
-import { readKimiProviderEvents } from "../adapters/tools/kimi-observation";
 import {
   assessStrandedWork,
   listUnmergedHiveBranches,
@@ -5544,14 +5543,8 @@ export class HiveDaemon {
                     .catch(() => null);
             const run =
               this.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
-            let providerEvents =
+            const providerEvents =
               run === null ? [] : [...this.db.listProviderEvents(run.runId)];
-            let providerEventThrough: string | null = null;
-            let transcriptCompleteness:
-              | "complete"
-              | "gap"
-              | "unknown"
-              | undefined;
             if (
               run !== null &&
               run.state === "running" &&
@@ -5561,16 +5554,6 @@ export class HiveDaemon {
               getAgentAdapter(agent.tool).communication.eventSource ===
                 "transcript"
             ) {
-              if (agent.tool === "kimi") {
-                const observed = await readKimiProviderEvents(
-                  run,
-                  agent.worktreePath,
-                  join(homedir(), ".kimi-code"),
-                );
-                providerEvents = [...providerEvents, ...observed.events];
-                providerEventThrough = observed.through;
-                transcriptCompleteness = observed.completeness;
-              }
               // TODO(C2): normalize Grok project-hook events after live hook
               // firing can be verified; until then its transcript descriptor
               // deliberately reaches the universal fallback below.
@@ -5584,8 +5567,6 @@ export class HiveDaemon {
                 capture,
                 gitPaths: files,
                 events: providerEvents,
-                providerEventThrough,
-                transcriptCompleteness,
                 status: fuseAgentStatus(
                   this.status.listEventsForAgent(agent.id),
                   {

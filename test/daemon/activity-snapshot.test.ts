@@ -165,4 +165,32 @@ describe("ActivitySnapshot", () => {
       completeness: "unknown",
     });
   });
+
+  test("Kimi shared transcript entries never claim an executor turn", () => {
+    const sharedWireEntry = {
+      type: "turn.prompt",
+      origin: { kind: "user" },
+    };
+    expect(sharedWireEntry.origin.kind).toBe("user");
+    expect(getAgentAdapter("kimi").communication).toMatchObject({
+      eventSource: "none",
+      toolBoundaryEvents: false,
+      turnBoundaryEvents: false,
+      transcriptReader: false,
+    });
+
+    const value = agent("kimi");
+    expect(
+      buildActivitySnapshot({
+        agent: value,
+        run: run(value),
+        inspection: null,
+        capture: null,
+        gitPaths: [],
+        events: [],
+        status: null,
+        observedAt,
+      }).turnState,
+    ).toBe("unknown");
+  });
 });
