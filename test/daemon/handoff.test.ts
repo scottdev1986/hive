@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   AgentRecord,
   MemoryFact,
@@ -9,8 +12,12 @@ import type {
 } from "../../src/schemas";
 import { AgentMessageSchema } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { buildHandoffBundle } from "../../src/daemon/handoff";
+import {
+  buildHandoffBundle,
+  measureHandoffWorktree,
+} from "../../src/daemon/handoff";
 import { HiveDaemon } from "../../src/daemon/server";
+import { buildAgentPrompt } from "../../src/daemon/spawner-impl";
 import { StatusStore } from "../../src/daemon/status-store";
 import { actingAs } from "../../src/daemon/testing";
 
@@ -83,6 +90,65 @@ const memory: MemoryFact = {
 };
 
 describe("handoff bundle", () => {
+  test("measures exact branch work without touching the worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-handoff-git-"));
+    const worktree = join(root, "source-worktree");
+    const runGit = async (cwd: string, args: string[]) => {
+      const child = Bun.spawn(["git", "-C", cwd, ...args], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stderr = await new Response(child.stderr).text();
+      expect(await child.exited, stderr).toBe(0);
+    };
+    try {
+      await runGit(root, ["init", "-b", "main"]);
+      await runGit(root, ["config", "user.email", "hive@example.invalid"]);
+      await runGit(root, ["config", "user.name", "Hive Test"]);
+      await writeFile(join(root, "tracked.txt"), "base\n");
+      await runGit(root, ["add", "tracked.txt"]);
+      await runGit(root, ["commit", "-m", "base"]);
+      await runGit(root, ["branch", "hive/source"]);
+      await runGit(root, ["worktree", "add", worktree, "hive/source"]);
+      await writeFile(join(worktree, "committed.txt"), "committed\n");
+      await runGit(worktree, ["add", "committed.txt"]);
+      await runGit(worktree, ["commit", "-m", "source commit"]);
+      await writeFile(join(worktree, "committed.txt"), "dirty\n");
+      await writeFile(join(worktree, "untracked.txt"), "untracked\n");
+
+      const measured = await measureHandoffWorktree(
+        root,
+        worktree,
+        "hive/source",
+      );
+      expect(measured.name).toBe("hive/source");
+      expect(measured.head).not.toBe(measured.base);
+      expect(measured.commits.map((commit) => commit.subject)).toEqual([
+        "source commit",
+      ]);
+      expect(measured.dirtyPaths).toEqual(["committed.txt"]);
+      expect(measured.untrackedPaths).toEqual(["untracked.txt"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("replacement bootstrap carries the exact pickup boundary", () => {
+    const prompt = buildAgentPrompt(
+      "replacement",
+      "Preserve exact work",
+      { path: "/repo/.hive/worktrees/replacement", branch: "hive/replacement" },
+      "",
+      {
+        category: "simple_coding",
+        handoffId: "018f1e90-7b5a-7cc0-8000-000000000216",
+      },
+    );
+    expect(prompt).toContain("hive_pickup_handoff");
+    expect(prompt).toContain("018f1e90-7b5a-7cc0-8000-000000000216");
+    expect(prompt).toContain("does not mark it complete");
+  });
+
   test("preserves a dead source through a terminal gap and summarizer failure", async () => {
     const db = new HiveDatabase(":memory:");
     const status = new StatusStore(db, "instance-handoff");
