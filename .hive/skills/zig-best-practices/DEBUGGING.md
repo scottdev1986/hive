@@ -1,6 +1,6 @@
 # Debugging Memory in Zig
 
-Use GeneralPurposeAllocator (GPA) to detect memory leaks with stack traces showing allocation origins.
+Use DebugAllocator to detect memory leaks with stack traces showing allocation origins.
 
 ## When to Use
 
@@ -8,15 +8,15 @@ Use GeneralPurposeAllocator (GPA) to detect memory leaks with stack traces showi
 - Validating cleanup logic in complex systems
 - Investigating use-after-free or double-free bugs
 
-## GeneralPurposeAllocator Pattern
+## DebugAllocator Pattern
 
 ```zig
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    defer std.debug.assert(debug_allocator.deinit() == .ok);
+    const allocator = debug_allocator.allocator();
 
     // Use allocator for all allocations
     const data = try allocator.alloc(u8, 1024);
@@ -29,16 +29,16 @@ pub fn main() !void {
 ## Configuration Options
 
 ```zig
-var gpa = std.heap.GeneralPurposeAllocator(.{
-    .stack_trace_depth = 10,  // Stack frames to capture (default: 8)
+var debug_allocator: std.heap.DebugAllocator(.{
+    .stack_trace_frames = 10,
     .enable_memory_limit = true,
-    .requested_memory_limit = 1024 * 1024,  // 1MB limit
-}){};
+}) = .init;
+debug_allocator.requested_memory_limit = 1024 * 1024; // 1MB limit
 ```
 
 ## Leak Report Output
 
-When leaks occur, GPA prints:
+When leaks occur, DebugAllocator prints:
 
 ```
 error: memory leak detected
@@ -50,7 +50,7 @@ Leak at 0x7f... (1024 bytes)
 
 ## Testing with Leak Detection
 
-`std.testing.allocator` wraps GPA and fails tests on leaks:
+`std.testing.allocator` wraps DebugAllocator and fails tests on leaks:
 
 ```zig
 test "no memory leaks" {
@@ -65,6 +65,6 @@ test "no memory leaks" {
 
 ## Production vs Debug
 
-- Use GPA in debug builds for safety
+- Use DebugAllocator in debug builds for safety
 - Switch to `std.heap.page_allocator` or arena in release for performance
 - `std.heap.c_allocator` when interfacing heavily with C code

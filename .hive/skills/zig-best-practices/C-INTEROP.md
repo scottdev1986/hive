@@ -55,7 +55,7 @@ extern "user32" fn MessageBoxA(
 
 ## C Callbacks
 
-Pass Zig functions to C libraries using `callconv(.C)`:
+Pass Zig functions to C libraries using `callconv(.c)`:
 
 ```zig
 fn writeCallback(
@@ -63,7 +63,7 @@ fn writeCallback(
     size: c_uint,
     nmemb: c_uint,
     user_data: *anyopaque,
-) callconv(.C) c_uint {
+) callconv(.c) c_uint {
     const buffer: *std.ArrayList(u8) = @alignCast(@ptrCast(user_data));
     const typed_data: [*]u8 = @ptrCast(data);
     buffer.appendSlice(typed_data[0 .. nmemb * size]) catch return 0;
@@ -72,7 +72,7 @@ fn writeCallback(
 ```
 
 Key points:
-- `callconv(.C)` makes the function callable from C
+- `callconv(.c)` makes the function callable from C
 - `*anyopaque` is Zig's equivalent of `void*`
 - Use `@alignCast` and `@ptrCast` to recover typed pointers
 - Return 0 on error (C convention) since Zig errors can't cross FFI boundary
