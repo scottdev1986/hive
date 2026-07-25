@@ -25,6 +25,26 @@ import type {
 import type { ProviderRun } from "../../../src/schemas";
 import { required } from "../../required";
 
+async function processGroupStates(
+  processGroupId: number,
+): Promise<Array<{ pid: number; state: string }>> {
+  const child = Bun.spawn(["ps", "-axo", "pid=,pgid=,stat="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const output = await new Response(child.stdout).text();
+  await child.exited;
+  return output
+    .trim()
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter((fields) => Number(fields[1]) === processGroupId)
+    .map((fields) => ({
+      pid: Number(fields[0]),
+      state: fields[2] ?? "",
+    }));
+}
+
 const session: SessionRef = {
   key: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
   incarnation: "incarnation-1",
@@ -941,7 +961,7 @@ describe("HiveTerminalHostAdapter", () => {
   });
 
   test("the production signal path suspends and resumes a real process group", async () => {
-    const child = spawn("/bin/zsh", ["-c", "while true; do sleep 1; done"], {
+    const child = spawn("/bin/zsh", ["-c", "sleep 3600 & wait"], {
       detached: true,
       stdio: "ignore",
     });
@@ -1022,10 +1042,31 @@ describe("HiveTerminalHostAdapter", () => {
         },
       );
 
+      for (
+        let attempt = 0;
+        attempt < 20 &&
+        (await processGroupStates(pid)).every((member) => member.pid === pid);
+        attempt += 1
+      ) {
+        await Bun.sleep(10);
+      }
+      expect(
+        (await processGroupStates(pid)).some((member) => member.pid !== pid),
+      ).toBe(true);
       expect(await adapter.pauseProvider(locator, run)).toBe(true);
       expect(macProcessIdentity(pid)).toEqual(identity);
+      expect(
+        (await processGroupStates(pid))
+          .filter((member) => member.pid !== pid)
+          .every((member) => member.state.startsWith("T")),
+      ).toBe(true);
       expect(await adapter.resumeProvider(locator, run)).toBe(true);
       expect(macProcessIdentity(pid)).toEqual(identity);
+      expect(
+        (await processGroupStates(pid))
+          .filter((member) => member.pid !== pid)
+          .every((member) => !member.state.startsWith("T")),
+      ).toBe(true);
     } finally {
       try {
         process.kill(-pid, "SIGKILL");
