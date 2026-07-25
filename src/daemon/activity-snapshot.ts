@@ -59,6 +59,7 @@ function turnState(
   events: readonly ProviderEvent[],
 ): ActivitySnapshot["turnState"] {
   const latest = [...events]
+    .filter((event) => event.kind !== "run-started")
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
     .at(-1);
   switch (latest?.kind) {
@@ -92,6 +93,7 @@ function phase(status: FusedAgentStatus | null): ActivitySnapshot["phase"] {
     case "blocked":
       return "blocked";
     case "complete":
+      return "complete";
     case undefined:
       return "unknown";
   }

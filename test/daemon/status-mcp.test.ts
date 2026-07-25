@@ -212,6 +212,30 @@ describe("WP7 MCP status tools", () => {
     );
   });
 
+  test("session lifecycle cannot overwrite measured turn state", async () => {
+    const { daemon, db } = harness();
+    await daemon.processEvent({
+      kind: "turn-start",
+      agentName: "maya",
+      timestamp: AT,
+      toolSessionId: "tool-fixture",
+    });
+    await daemon.processEvent({
+      kind: "session-start",
+      agentName: "maya",
+      timestamp: "2026-07-16T12:00:01.000Z",
+      toolSessionId: "tool-fixture",
+    });
+
+    expect(db.getAgentByName("maya")?.status).toBe("working");
+    expect(
+      daemon.status
+        .listEvents()
+        .filter((event) => event.kind === "status.turn")
+        .map((event) => event.data.value),
+    ).toEqual(["working"]);
+  });
+
   test("a stale run-bound Grok hook cannot mutate lifecycle status", async () => {
     const { daemon, db } = harness();
     db.upsertAgent({ ...agent(), tool: "grok", model: "grok-4" });

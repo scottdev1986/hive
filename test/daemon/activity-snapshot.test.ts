@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { getAgentAdapter } from "../../src/adapters/tools/agents/agent-factory";
 import { buildActivitySnapshot } from "../../src/daemon/activity-snapshot";
+import type { FusedAgentStatus } from "../../src/daemon/status-fusion";
 import type {
   AgentRecord,
   CapabilityProvider,
+  ProviderEvent,
   ProviderRun,
 } from "../../src/schemas";
 import { CAPABILITY_PROVIDERS } from "../../src/schemas/capability";
@@ -57,6 +59,20 @@ function run(value: AgentRecord): ProviderRun {
     endedAt: null,
     state: "running",
     exitReason: null,
+  };
+}
+
+function event(kind: ProviderEvent["kind"], occurredAt: string): ProviderEvent {
+  return {
+    eventId: `event-${kind}-${occurredAt}`,
+    providerRunId: "018f1e90-7b5a-7cc0-8000-000000000210",
+    provider: "codex",
+    capabilityEpoch: 0,
+    conversationId: null,
+    kind,
+    occurredAt,
+    toolName: null,
+    inputDigest: null,
   };
 }
 
@@ -158,6 +174,73 @@ describe("ActivitySnapshot", () => {
       turnState: "unknown",
       summary: null,
       completeness: "unknown",
+    });
+  });
+
+  test("session lifecycle cannot erase measured turn state", () => {
+    const value = agent("codex");
+    expect(
+      buildActivitySnapshot({
+        agent: value,
+        run: null,
+        inspection: null,
+        output: null,
+        gitPaths: [],
+        events: [
+          event("tool-finished", "2026-07-24T19:59:59.000Z"),
+          event("run-started", observedAt),
+        ],
+        status: null,
+        observedAt,
+      }).turnState,
+    ).toBe("working");
+  });
+
+  test("a complete report stays complete instead of collapsing to unknown", () => {
+    const value = agent("codex");
+    const status: FusedAgentStatus = {
+      agentId: value.id,
+      incarnationGeneration: 1,
+      revision: "1",
+      sessionState: null,
+      turnState: null,
+      workflowState: { kind: "reserved" },
+      inputState: null,
+      healthState: null,
+      attention: null,
+      report: {
+        phase: "complete",
+        progress: 100,
+        summary: "Mutation failed before the fix and passed after restore.",
+        blocker: null,
+        evidenceRefs: ["test/daemon/activity-snapshot.test.ts"],
+        nextCheckpoint: null,
+        assignmentId: "assignment-fixture",
+        assignmentGeneration: "1",
+        freshUntil: "2026-07-24T21:00:00.000Z",
+        source: { kind: "agent-report", id: "report-fixture" },
+        observedAt,
+        freshness: "fresh",
+        confidence: "authoritative",
+      },
+      sources: [],
+      conflicts: [],
+    };
+
+    expect(
+      buildActivitySnapshot({
+        agent: value,
+        run: null,
+        inspection: null,
+        output: null,
+        gitPaths: [],
+        events: [],
+        status,
+        observedAt,
+      }),
+    ).toMatchObject({
+      phase: "complete",
+      summary: "Mutation failed before the fix and passed after restore.",
     });
   });
 

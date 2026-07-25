@@ -5502,14 +5502,16 @@ export class HiveDaemon {
                           isPermissionPrompt(value)
                           ? "awaiting-approval"
                           : agent.status
-                        : value.kind === "session-launch" ||
-                            value.kind === "session-end" ||
-                            value.kind === "compacted"
-                          ? // Only the orchestrator supervisor emits this today. If a
-                            // future worker reports either supervisor lifecycle event,
-                            // process teardown remains the authority for that worker.
-                            agent.status
-                          : "idle",
+                        : value.kind === "session-start"
+                          ? agent.status
+                          : value.kind === "session-launch" ||
+                              value.kind === "session-end" ||
+                              value.kind === "compacted"
+                            ? // Only the orchestrator supervisor emits this today. If a
+                              // future worker reports either supervisor lifecycle event,
+                              // process teardown remains the authority for that worker.
+                              agent.status
+                            : "idle",
           contextPct:
             value.kind === "turn-end" && value.contextPct !== undefined
               ? value.contextPct
@@ -5554,7 +5556,7 @@ export class HiveDaemon {
         ? "working"
         : value.kind === "tool-start"
           ? "working"
-          : value.kind === "turn-end" || value.kind === "session-start"
+          : value.kind === "turn-end"
             ? "idle"
             : value.kind === "approval-request" || isPermissionPrompt(value)
               ? "awaiting_approval"
