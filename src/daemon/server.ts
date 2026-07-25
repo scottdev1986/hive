@@ -1011,7 +1011,52 @@ export class HiveDaemon {
       this.db,
       sessionSender,
       {
-        interruptAndRestart: async (agent, message) => {
+        apply: async (agent, message) => {
+          if (message.intent === "pause" || message.intent === "stop") {
+            const locator = requireSessiondAgentLocator(agent);
+            const run = this.db.getActiveProviderRunByTerminal(locator);
+            if (run === null) {
+              throw new Error(
+                `${agent.name} has no active provider run to ${message.intent}`,
+              );
+            }
+            const applied =
+              message.intent === "pause"
+                ? await this.terminalHost.pauseProvider(locator, run)
+                : await this.terminalHost.stopProvider(locator, run);
+            if (!applied) {
+              throw new Error(
+                `${agent.name}'s foreground provider identity changed before ${message.intent}`,
+              );
+            }
+            return;
+          }
+          if (message.intent === "cancel") {
+            if (!getAgentAdapter(agent.tool).communication.nativeCancel) {
+              throw new Error(
+                `${agent.tool} exposes no provider-specific native cancel evidence`,
+              );
+            }
+            if (this.codexControl?.hasAgent(agent.name) !== true) {
+              throw new Error(
+                `${agent.name}'s ${agent.tool} executor has no live native cancel surface`,
+              );
+            }
+            await this.codexControl.interrupt(agent);
+            for (
+              let attempt = 0;
+              attempt < 50 && this.codexControl.isTurnActive(agent.name);
+              attempt += 1
+            ) {
+              await Bun.sleep(100);
+            }
+            if (this.codexControl.isTurnActive(agent.name)) {
+              throw new Error(
+                `${agent.name}'s ${agent.tool} turn did not report cancellation`,
+              );
+            }
+            return;
+          }
           const sameControlAttempt =
             agent.status === "control-paused" &&
             agent.controlMessageId === message.id &&

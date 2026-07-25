@@ -20,6 +20,7 @@ import type {
   SessionRef,
   TerminationResult,
 } from "../../../src/daemon/session-host/terminal-host-contract";
+import type { ProviderRun } from "../../../src/schemas";
 import { required } from "../../required";
 
 const session: SessionRef = {
@@ -707,6 +708,234 @@ describe("HiveTerminalHostAdapter", () => {
         },
       ],
     });
+  });
+
+  test("pauses, resumes, and stops only the freshly verified provider group while zsh survives", async () => {
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedShellRoot: createResult.inspection.shellRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000201",
+      agentId: "agent-fixture",
+      terminal: locator,
+      provider: "codex",
+      model: "gpt-fixture",
+      effort: null,
+      conversationId: null,
+      pid: 4_100,
+      startToken: "4100:123400",
+      foregroundProcessGroupId: 4_100,
+      capabilityEpoch: 0,
+      launchGrantId: "launch-grant-fixture",
+      startedAt: "2026-07-18T01:00:00.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    let active: ProviderRun | null = run;
+    let state: "running" | "stopped" | "gone" = "running";
+    let foregroundProcessGroupId = run.foregroundProcessGroupId;
+    const signals: Array<[number, string]> = [];
+    const host = {
+      issueAttach: async () => {
+        throw new Error("issueAttach not under test");
+      },
+      renewVisibility,
+      create: async () => createResult,
+      claimInput: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      submitInput: async () => ({
+        transactionId: "transaction-fixture",
+        stage: "unknown" as const,
+        byteRange: null,
+        orderedAt: null,
+        availableCreditBytes: 0,
+        consumedByProcess: "not-claimed" as const,
+        completeness: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      resize: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      list: async () => [
+        {
+          ...inspection,
+          jobControl: {
+            ...required(inspection.jobControl),
+            foregroundProcessGroupId,
+          },
+        },
+      ],
+      inspect: async () => ({
+        ...inspection,
+        jobControl: {
+          ...required(inspection.jobControl),
+          foregroundProcessGroupId,
+        },
+      }),
+      terminate: async () => termination,
+    };
+    const adapter = new HiveTerminalHostAdapter(
+      host,
+      bindings,
+      locator.instanceId,
+      {
+        now: () => new Date("2026-07-18T01:00:01.000Z"),
+        processIdentity: (pid) => ({
+          startToken:
+            pid === run.pid ? run.startToken : required(inspection.child).startToken,
+        }),
+        processState: async () => state,
+        signalProcessGroup: (processGroupId, signal) => {
+          signals.push([processGroupId, signal]);
+          if (signal === "SIGSTOP") state = "stopped";
+          if (signal === "SIGCONT") state = "running";
+          if (signal === "SIGTERM") {
+            state = "gone";
+            foregroundProcessGroupId = required(inspection.jobControl)
+              .childProcessGroupId;
+          }
+        },
+        sleep: async () => undefined,
+        providerRuns: {
+          getActiveProviderRunByTerminal: () => active,
+          endProviderRun: (runId, endedAt, exitReason) => {
+            if (active?.runId !== runId) return active;
+            active = {
+              ...active,
+              state: "exited",
+              endedAt,
+              exitReason,
+            };
+            return active;
+          },
+        },
+      },
+    );
+
+    expect(await adapter.pauseProvider(locator, run)).toBe(true);
+    expect(await adapter.resumeProvider(locator, run)).toBe(true);
+    expect(await adapter.stopProvider(locator, run)).toBe(true);
+    expect(signals).toEqual([
+      [4_100, "SIGSTOP"],
+      [4_100, "SIGCONT"],
+      [4_100, "SIGTERM"],
+    ]);
+    expect(active).toMatchObject({
+      state: "exited",
+      exitReason: "provider-stopped",
+    });
+    const after = await adapter.inspect(locator);
+    expect(after.presence).toBe("present");
+    expect(after.shellRoot).toEqual(createResult.inspection.shellRoot);
+    expect(after.foreground).toEqual({ state: "shell-idle", runId: null });
+  });
+
+  test("does not signal a recycled provider group after the immediate token re-read drifts", async () => {
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedShellRoot: createResult.inspection.shellRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000202",
+      agentId: "agent-fixture",
+      terminal: locator,
+      provider: "codex",
+      model: "gpt-fixture",
+      effort: null,
+      conversationId: null,
+      pid: 4_100,
+      startToken: "4100:123400",
+      foregroundProcessGroupId: 4_100,
+      capabilityEpoch: 0,
+      launchGrantId: "launch-grant-fixture",
+      startedAt: "2026-07-18T01:00:00.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    let providerReads = 0;
+    const signals: string[] = [];
+    const adapter = new HiveTerminalHostAdapter(
+      {
+        issueAttach: async () => {
+          throw new Error("issueAttach not under test");
+        },
+        renewVisibility,
+        create: async () => createResult,
+        claimInput: async () => ({
+          state: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        submitInput: async () => ({
+          transactionId: "transaction-fixture",
+          stage: "unknown" as const,
+          byteRange: null,
+          orderedAt: null,
+          availableCreditBytes: 0,
+          consumedByProcess: "not-claimed" as const,
+          completeness: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        resize: async () => ({
+          state: "unknown" as const,
+          diagnostic: "fixture",
+        }),
+        list: async () => [
+          {
+            ...inspection,
+            jobControl: {
+              ...required(inspection.jobControl),
+              foregroundProcessGroupId: run.foregroundProcessGroupId,
+            },
+          },
+        ],
+        inspect: async () => ({
+          ...inspection,
+          jobControl: {
+            ...required(inspection.jobControl),
+            foregroundProcessGroupId: run.foregroundProcessGroupId,
+          },
+        }),
+        terminate: async () => termination,
+      },
+      bindings,
+      locator.instanceId,
+      {
+        processIdentity: (pid) => {
+          if (pid !== run.pid) return { startToken: "4000:123400" };
+          providerReads += 1;
+          return {
+            startToken:
+              providerReads === 1 ? run.startToken : "4100:recycled",
+          };
+        },
+        processState: async () => "running",
+        signalProcessGroup: (_processGroupId, signal) => signals.push(signal),
+        sleep: async () => undefined,
+        providerRuns: {
+          getActiveProviderRunByTerminal: () => run,
+          endProviderRun: () => null,
+        },
+      },
+    );
+
+    expect(await adapter.pauseProvider(locator, run)).toBe(false);
+    expect(signals).toEqual([]);
   });
 
   test("fails closed for missing, foreign, or mismatched bindings", async () => {

@@ -115,6 +115,14 @@ export type HiveTerminalPolicy = Pick<
 export interface HiveTerminalHostAdapterOptions {
   now?: () => Date;
   processIdentity?: (pid: number) => { startToken: string };
+  processState?: (
+    pid: number,
+  ) => Promise<"running" | "stopped" | "gone" | "unknown">;
+  signalProcessGroup?: (
+    processGroupId: number,
+    signal: "SIGSTOP" | "SIGCONT" | "SIGTERM" | "SIGKILL",
+  ) => void;
+  sleep?: (ms: number) => Promise<void>;
   providerRuns: ProviderRunStore;
 }
 
@@ -154,6 +162,8 @@ const TERMINATION_DEADLINE_MS = 10_000;
 const VIEWER_COUNT_DIAGNOSTIC = "SESSIOND_VIEWER_COUNT_UNAVAILABLE";
 const RESOURCES_DIAGNOSTIC = "SESSIOND_RESOURCES_UNAVAILABLE";
 const INPUT_STATE_DIAGNOSTIC = "SESSIOND_INPUT_STATE_UNAVAILABLE";
+const CONTROL_READBACK_ATTEMPTS = 40;
+const CONTROL_READBACK_INTERVAL_MS = 25;
 
 function sameSession(left: SessionRef, right: SessionRef): boolean {
   return left.key === right.key && left.incarnation === right.incarnation;
@@ -199,12 +209,158 @@ export class HiveTerminalHostAdapter {
   ) {
     this.now = options.now ?? (() => new Date());
     this.processIdentity = options.processIdentity ?? macProcessIdentity;
+    this.processState =
+      options.processState ??
+      (async (pid) => {
+        const child = Bun.spawn(["ps", "-o", "stat=", "-p", String(pid)], {
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        const stat = (await new Response(child.stdout).text()).trim();
+        await child.exited;
+        if (stat === "" || stat.startsWith("Z")) return "gone";
+        return stat.startsWith("T") ? "stopped" : "running";
+      });
+    this.signalProcessGroup =
+      options.signalProcessGroup ??
+      ((processGroupId, signal) => process.kill(-processGroupId, signal));
+    this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
     this.providerRuns = options.providerRuns;
   }
 
   private readonly now: () => Date;
   private readonly processIdentity: (pid: number) => { startToken: string };
+  private readonly processState: NonNullable<
+    HiveTerminalHostAdapterOptions["processState"]
+  >;
+  private readonly signalProcessGroup: NonNullable<
+    HiveTerminalHostAdapterOptions["signalProcessGroup"]
+  >;
+  private readonly sleep: NonNullable<HiveTerminalHostAdapterOptions["sleep"]>;
   private readonly providerRuns: ProviderRunStore;
+
+  async pauseProvider(
+    locator: SessionLocator,
+    expected: ProviderRun,
+  ): Promise<boolean> {
+    if (!(await this.signalVerifiedGroup(locator, expected, "SIGSTOP")))
+      return false;
+    return this.waitForProviderState(locator, expected, "stopped");
+  }
+
+  async resumeProvider(
+    locator: SessionLocator,
+    expected: ProviderRun,
+  ): Promise<boolean> {
+    if (!(await this.signalVerifiedGroup(locator, expected, "SIGCONT")))
+      return false;
+    return this.waitForProviderState(locator, expected, "running");
+  }
+
+  async stopProvider(
+    locator: SessionLocator,
+    expected: ProviderRun,
+  ): Promise<boolean> {
+    if (!(await this.signalVerifiedGroup(locator, expected, "SIGTERM"))) {
+      return this.waitForProviderStopped(locator, expected);
+    }
+    if (await this.waitForProviderStopped(locator, expected)) return true;
+    if (!(await this.signalVerifiedGroup(locator, expected, "SIGKILL"))) {
+      return this.waitForProviderStopped(locator, expected);
+    }
+    return this.waitForProviderStopped(locator, expected);
+  }
+
+  private async signalVerifiedGroup(
+    locator: SessionLocator,
+    expected: ProviderRun,
+    signal: "SIGSTOP" | "SIGCONT" | "SIGTERM" | "SIGKILL",
+  ): Promise<boolean> {
+    if (!(await this.providerForegroundMatches(locator, expected))) return false;
+    try {
+      // Unlike C1 input, this read and signal cannot be one sessiond commit.
+      // Re-check the exact leader token immediately before the group signal.
+      // ESRCH is honest provider exit; token drift defeats pgid recycling.
+      if (
+        this.processIdentity(expected.pid).startToken !== expected.startToken
+      )
+        return false;
+      this.signalProcessGroup(expected.foregroundProcessGroupId, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async providerForegroundMatches(
+    locator: SessionLocator,
+    expected: ProviderRun,
+  ): Promise<boolean> {
+    if (
+      expected.state !== "running" ||
+      !sameSessionLocator(expected.terminal, locator)
+    ) {
+      return false;
+    }
+    const inspection = await this.inspect(locator);
+    return (
+      inspection.presence === "present" &&
+      inspection.shellRoot !== null &&
+      inspection.foreground.state === "managed" &&
+      inspection.foreground.runId === expected.runId &&
+      inspection.foreground.pid === expected.pid &&
+      inspection.foreground.startToken === expected.startToken &&
+      inspection.foreground.foregroundProcessGroupId ===
+        expected.foregroundProcessGroupId
+    );
+  }
+
+  private async waitForProviderState(
+    locator: SessionLocator,
+    expected: ProviderRun,
+    wanted: "running" | "stopped",
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < CONTROL_READBACK_ATTEMPTS; attempt += 1) {
+      if (!(await this.providerForegroundMatches(locator, expected)))
+        return false;
+      if ((await this.processState(expected.pid)) === wanted) return true;
+      await this.sleep(CONTROL_READBACK_INTERVAL_MS);
+    }
+    return false;
+  }
+
+  private async providerStopped(
+    locator: SessionLocator,
+    expected: ProviderRun,
+  ): Promise<boolean> {
+    const state = await this.processState(expected.pid);
+    if (state !== "gone") return false;
+    const inspection = await this.inspect(locator);
+    if (
+      inspection.presence !== "present" ||
+      inspection.shellRoot === null ||
+      inspection.foreground.state !== "shell-idle"
+    ) {
+      return false;
+    }
+    this.providerRuns.endProviderRun(
+      expected.runId,
+      this.now().toISOString(),
+      "provider-stopped",
+    );
+    return true;
+  }
+
+  private async waitForProviderStopped(
+    locator: SessionLocator,
+    expected: ProviderRun,
+  ): Promise<boolean> {
+    for (let attempt = 0; attempt < CONTROL_READBACK_ATTEMPTS; attempt += 1) {
+      if (await this.providerStopped(locator, expected)) return true;
+      await this.sleep(CONTROL_READBACK_INTERVAL_MS);
+    }
+    return false;
+  }
 
   /** Lifecycle reconciliation is explicit and measured. Inspection stays
    * read-only, while callers that own lifecycle policy may close a run only

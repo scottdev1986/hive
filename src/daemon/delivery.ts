@@ -166,7 +166,7 @@ export function queuedDeliveryNote(
 }
 
 export interface CriticalControlRuntime {
-  interruptAndRestart(agent: AgentRecord, message: AgentMessage): Promise<void>;
+  apply(agent: AgentRecord, message: AgentMessage): Promise<void>;
 }
 
 export interface NativeAgentControl {
@@ -429,7 +429,6 @@ export class MessageDelivery {
       return this.withSessionLock(
         agentSessionLockKey(currentRecipient),
         async () => {
-          if (this.composerActive(to)) return this.getStoredMessage(message.id);
           return this.deliverCritical(
             this.getStoredMessage(message.id),
             this.requireLiveRecipient(to),
@@ -976,20 +975,20 @@ export class MessageDelivery {
     message: AgentMessage,
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
-    if (this.composerActive(message.to) || this.controls === undefined) {
+    if (this.controls === undefined) {
       return this.getStoredMessage(message.id);
     }
     try {
-      await this.controls.interruptAndRestart(recipient, message);
+      await this.controls.apply(recipient, message);
     } catch (error) {
       const alertedAt = new Date().toISOString();
       this.db.markMessageAlerted(message.id, alertedAt);
       await this.send(
         "hive-control",
         ORCHESTRATOR_NAME,
-        `Critical control ${message.id} revoked ${message.to}'s capability epoch but process restart failed: ${
+        `Critical control ${message.id} revoked ${message.to}'s capability epoch but the control action failed: ${
           error instanceof Error ? error.message : "unknown error"
-        }. The agent was stopped in a terminal failed state, its quota hold was released, and automatic recovery will not retry this control. Worktree was preserved; operator attention is required.`,
+        }. The message remains queued and automatic recovery will not retry this control. The terminal and worktree were preserved; operator attention is required.`,
         { idempotencyKey: `control-restart-failed:${message.id}` },
       ).catch(() => undefined);
       return this.getStoredMessage(message.id);
@@ -1903,7 +1902,7 @@ export class MessageDelivery {
             if (current === null || current.state !== "queued") return false;
             const latest = this.db.getAgentByName(message.to);
             if (latest === null) return false;
-            await controls.interruptAndRestart(latest, current);
+            await controls.apply(latest, current);
             this.markInjected(current);
             return true;
           },
