@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { SpawnRequestSchema } from "../../src/daemon/spawner";
+import {
+  SpawnBatchRequestSchema,
+  SpawnRequestSchema,
+} from "../../src/daemon/spawner";
 
 describe("hive_spawn schema after the router cutover", () => {
   test("accepts category routing with the long-context requirement modifier", () => {
@@ -33,6 +36,20 @@ describe("hive_spawn schema after the router cutover", () => {
         task: "Read a large document",
         category: "long_context",
       }).success,
+    ).toBeFalse();
+  });
+
+  test("batch spawn accepts bounded independent requests", () => {
+    expect(
+      SpawnBatchRequestSchema.parse({
+        requests: [
+          { task: "Build A", category: "simple_coding" },
+          { task: "Build B", category: "debugging" },
+        ],
+      }).requests,
+    ).toHaveLength(2);
+    expect(
+      SpawnBatchRequestSchema.safeParse({ requests: [] }).success,
     ).toBeFalse();
   });
 });

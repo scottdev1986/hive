@@ -707,7 +707,6 @@ export const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
-  | "discardFailedSpawn"
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
@@ -1234,6 +1233,10 @@ export class HiveSpawner implements Spawner {
     toolSessionId: string,
   ) => Promise<string | null>;
   private readonly repoUnavailableNames: typeof unavailableAgentNames;
+  private readonly billingCache = new Map<
+    CapabilityProvider,
+    { at: number; value: Promise<AccountBilling | null> }
+  >();
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
@@ -1483,7 +1486,7 @@ export class HiveSpawner implements Spawner {
    */
   private readonly capabilityCache = new Map<
     string,
-    { at: number; result: CapabilityDiscoveryResult }
+    { at: number; value: Promise<CapabilityDiscoveryResult> }
   >();
 
   private async discoverOnce(
@@ -1493,9 +1496,22 @@ export class HiveSpawner implements Spawner {
     if (discover === undefined) return undefined;
     const cached = this.capabilityCache.get(provider);
     const now = Date.now();
-    if (cached !== undefined && now - cached.at < 60_000) return cached.result;
-    const result = await discover(provider);
-    this.capabilityCache.set(provider, { at: now, result });
+    const value =
+      cached !== undefined && now - cached.at < 60_000
+        ? cached.value
+        : discover(provider);
+    if (value !== cached?.value) {
+      this.capabilityCache.set(provider, { at: now, value });
+    }
+    let result: CapabilityDiscoveryResult;
+    try {
+      result = await value;
+    } catch (error) {
+      if (this.capabilityCache.get(provider)?.value === value) {
+        this.capabilityCache.delete(provider);
+      }
+      throw error;
+    }
     if (result.status === "ok") {
       this.dependencies.quota?.replaceCapabilityCatalog?.(
         provider,
@@ -1509,9 +1525,31 @@ export class HiveSpawner implements Spawner {
     tool: CapabilityProvider,
     model: string,
   ): Promise<string | null> {
+    // Quota routing already combines the daemon's refreshed provider readings
+    // with live reservations. Starting a second throwaway vendor CLI here, and
+    // again during final revalidation, made spawn latency proportional to CLI
+    // startup without adding a newer decision than routeAndReserve makes.
+    if (this.dependencies.quota?.config.enabled === true) return null;
     const readBilling = this.dependencies.readBilling;
     if (readBilling === undefined) return null;
-    const billing = await readBilling(tool);
+    const now = Date.now();
+    const cached = this.billingCache.get(tool);
+    const value =
+      cached !== undefined && now - cached.at < 30_000
+        ? cached.value
+        : readBilling(tool);
+    if (value !== cached?.value) {
+      this.billingCache.set(tool, { at: now, value });
+    }
+    let billing: AccountBilling | null;
+    try {
+      billing = await value;
+    } catch (error) {
+      if (this.billingCache.get(tool)?.value === value) {
+        this.billingCache.delete(tool);
+      }
+      throw error;
+    }
     if (billing === null) return null;
     const discovery = await this.discoverOnce(tool);
     const base = splitVariant(model).base;
@@ -2752,195 +2790,202 @@ export class HiveSpawner implements Spawner {
       writeRevoked: false,
     });
 
-    try {
-      const assignment = this.dependencies.assignments?.open(
-        record.id,
-        record.createdAt,
-      );
-      const prompt = buildAgentPrompt(
-        name,
-        request.task,
-        worktree,
-        memoryIndex,
-        {
-          tool,
-          readOnly,
-          category: request.category,
-          brief,
-          ...(graphBrief === null ? {} : { graphBrief }),
-          ...(graphifyUrl === null ? {} : { graphifyTools: true }),
-          ...(assignment === undefined ? {} : { assignment }),
-          ...(request.handoffId === undefined
-            ? {}
-            : { handoffId: request.handoffId }),
-        },
-      );
-      const instructionPath = await writeLaunchPrompt(
-        this.requireAgentLocator(record).sessionId,
-        prompt,
-      );
-      const adapter = getAgentAdapter(tool);
-      await adapter.writeInstructionCopy?.(
-        this.requireAgentLocator(record).sessionId,
-        prompt,
-      );
-      const dangerous = this.dependencies.config.autonomy === "dangerous";
-      // Servers the human attached to their own Codex sessions. This agent did
-      // not ask for them and pays for them on every message it sends, so the
-      // spawn detaches them for its process only.
-      const excludeMcpServers =
-        tool === "codex"
-          ? await this.inheritedCodexMcpServers()
-          : // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
-            [];
-      // A reader carries no landing or memory-write right. A writer gets exactly
-      // one landing right for its own branch.
-      const capabilityToken = this.dependencies.issueCredential?.(
-        name,
-        readOnly ? "reader" : "writer",
-        record.capabilityEpoch,
-      );
-      await provisionSkills(this.dependencies.repoRoot, worktree.path, tool);
-      // Before the config, because an untrusted workspace makes the CLI
-      // discard the hooks and permissions the config write is about to lay
-      // down (claude's folder-trust seed; the other vendors have none).
-      await adapter.prepareWorktree?.(worktree.path);
-      const providerRunId = crypto.randomUUID();
-      const preparedLaunch = await adapter.prepareSpawn({
-        daemonPort: this.daemonPort(),
-        model,
-        ...(effort === undefined ? {} : { effort }),
-        name,
-        readOnly,
-        dangerous,
-        worktreePath: worktree.path,
-        executable: this.executableFor(tool),
-        hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-        ...(capabilityToken === undefined ? {} : { withCapability: true }),
-        ...(graphifyUrl === null ? {} : { graphifyUrl }),
-        instructionPath,
-        sessionId: this.requireAgentLocator(record).sessionId,
-        providerRunId,
-        ...(grokSessionId === undefined
-          ? {}
-          : { newVendorSessionId: grokSessionId }),
-        excludeMcpServers,
-        kickoff: "Begin the assigned task.",
-      });
-      const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
-        const revalidated = await requireGate({
-          tool: authorized.tool,
-          model: authorized.model,
-          ...(authorized.effort === undefined
-            ? {}
-            : { effort: authorized.effort }),
-        });
-        if (
-          revalidated.tool !== authorized.tool ||
-          revalidated.model !== authorized.model ||
-          revalidated.effort !== authorized.effort
-        ) {
-          throw new Error(
-            `Cannot spawn ${name}: launch identity changed during final revalidation`,
-          );
-        }
-        authorized = revalidated;
-        return requireAuthorizedLaunch(authorized);
-      };
-      const launchSession = async (
-        candidate: AuthorizedLaunch,
-        command: string,
-        expectedExecutable: string,
-      ): Promise<void> => {
-        requireAuthorizedLaunch(candidate);
-        await this.createSession(
-          record,
-          command,
-          expectedExecutable,
-          record.quotaReservationId ?? record.id,
-          providerRunId,
+    const launch = async (): Promise<void> => {
+      try {
+        const assignment = this.dependencies.assignments?.open(
+          record.id,
+          record.createdAt,
         );
-      };
-
-      const launchedCommand = launchedCommandName(preparedLaunch.argv);
-      // #57: anything a dead predecessor with this name reported predates
-      // this line and must never count as this incarnation's proof.
-      const launchBaseline = new Date().toISOString();
-      await launchSession(
-        await revalidateAtAdapter(),
-        preparedLaunch.command,
-        launchedCommand,
-      );
-      const failureReason = await this.monitorReadiness(
-        record,
-        launchedCommand,
-      );
-      if (failureReason !== null) {
-        // The command ran, so this is the model's answer — unless the pane shows
-        // the binary never executed at all.
-        return await this.failSpawnIfStillSpawning(
-          record,
-          worktree,
-          failureReason,
-          readinessFailureLayer(failureReason),
-        );
-      }
-      // #57: alive is not reporting. The readiness watch measures acting — a
-      // redrawing pane, a held process — and a hive-MCP-less agent produces
-      // both while being permanently unable to hive_send or hive_land. Refuse
-      // the spawn unless the agent's own credential has authenticated against
-      // the daemon's MCP surface since the launch. A spawn without a minted
-      // credential can never produce that request, so it refuses here too —
-      // hive's own MCP is required; every inherited server stays optional.
-      if (this.dependencies.mcpClientSeen !== undefined) {
-        const reportingFailure = await waitForMcpReporting(
+        const prompt = buildAgentPrompt(
           name,
-          launchBaseline,
-          this.dependencies.mcpClientSeen,
-          (ms) => this.wait(ms),
-          this.dependencies.mcpReportingTimeoutMs,
+          request.task,
+          worktree,
+          memoryIndex,
+          {
+            tool,
+            readOnly,
+            category: request.category,
+            brief,
+            ...(graphBrief === null ? {} : { graphBrief }),
+            ...(graphifyUrl === null ? {} : { graphifyTools: true }),
+            ...(assignment === undefined ? {} : { assignment }),
+            ...(request.handoffId === undefined
+              ? {}
+              : { handoffId: request.handoffId }),
+          },
         );
-        if (reportingFailure !== null) {
-          return await this.failSpawnIfStillSpawning(
+        const instructionPath = await writeLaunchPrompt(
+          this.requireAgentLocator(record).sessionId,
+          prompt,
+        );
+        const adapter = getAgentAdapter(tool);
+        await adapter.writeInstructionCopy?.(
+          this.requireAgentLocator(record).sessionId,
+          prompt,
+        );
+        const dangerous = this.dependencies.config.autonomy === "dangerous";
+        // Servers the human attached to their own Codex sessions. This agent did
+        // not ask for them and pays for them on every message it sends, so the
+        // spawn detaches them for its process only.
+        const excludeMcpServers =
+          tool === "codex"
+            ? await this.inheritedCodexMcpServers()
+            : // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
+              [];
+        // A reader carries no landing or memory-write right. A writer gets exactly
+        // one landing right for its own branch.
+        const capabilityToken = this.dependencies.issueCredential?.(
+          name,
+          readOnly ? "reader" : "writer",
+          record.capabilityEpoch,
+        );
+        await provisionSkills(this.dependencies.repoRoot, worktree.path, tool);
+        // Before the config, because an untrusted workspace makes the CLI
+        // discard the hooks and permissions the config write is about to lay
+        // down (claude's folder-trust seed; the other vendors have none).
+        await adapter.prepareWorktree?.(worktree.path);
+        const providerRunId = crypto.randomUUID();
+        const preparedLaunch = await adapter.prepareSpawn({
+          daemonPort: this.daemonPort(),
+          model,
+          ...(effort === undefined ? {} : { effort }),
+          name,
+          readOnly,
+          dangerous,
+          worktreePath: worktree.path,
+          executable: this.executableFor(tool),
+          hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+          ...(capabilityToken === undefined ? {} : { withCapability: true }),
+          ...(graphifyUrl === null ? {} : { graphifyUrl }),
+          instructionPath,
+          sessionId: this.requireAgentLocator(record).sessionId,
+          providerRunId,
+          ...(grokSessionId === undefined
+            ? {}
+            : { newVendorSessionId: grokSessionId }),
+          excludeMcpServers,
+          kickoff: "Begin the assigned task.",
+        });
+        const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
+          const revalidated = await requireGate({
+            tool: authorized.tool,
+            model: authorized.model,
+            ...(authorized.effort === undefined
+              ? {}
+              : { effort: authorized.effort }),
+          });
+          if (
+            revalidated.tool !== authorized.tool ||
+            revalidated.model !== authorized.model ||
+            revalidated.effort !== authorized.effort
+          ) {
+            throw new Error(
+              `Cannot spawn ${name}: launch identity changed during final revalidation`,
+            );
+          }
+          authorized = revalidated;
+          return requireAuthorizedLaunch(authorized);
+        };
+        const launchSession = async (
+          candidate: AuthorizedLaunch,
+          command: string,
+          expectedExecutable: string,
+        ): Promise<void> => {
+          requireAuthorizedLaunch(candidate);
+          await this.createSession(
+            record,
+            command,
+            expectedExecutable,
+            record.quotaReservationId ?? record.id,
+            providerRunId,
+          );
+        };
+
+        const launchedCommand = launchedCommandName(preparedLaunch.argv);
+        // #57: anything a dead predecessor with this name reported predates
+        // this line and must never count as this incarnation's proof.
+        const launchBaseline = new Date().toISOString();
+        await launchSession(
+          await revalidateAtAdapter(),
+          preparedLaunch.command,
+          launchedCommand,
+        );
+        const failureReason = await this.monitorReadiness(
+          record,
+          launchedCommand,
+        );
+        if (failureReason !== null) {
+          // The command ran, so this is the model's answer — unless the pane shows
+          // the binary never executed at all.
+          await this.failSpawnIfStillSpawning(
             record,
             worktree,
-            reportingFailure,
-            "transport",
+            failureReason,
+            readinessFailureLayer(failureReason),
           );
+          return;
         }
+        // #57: alive is not reporting. The readiness watch measures acting — a
+        // redrawing pane, a held process — and a hive-MCP-less agent produces
+        // both while being permanently unable to hive_send or hive_land. Refuse
+        // the spawn unless the agent's own credential has authenticated against
+        // the daemon's MCP surface since the launch. A spawn without a minted
+        // credential can never produce that request, so it refuses here too —
+        // hive's own MCP is required; every inherited server stays optional.
+        if (this.dependencies.mcpClientSeen !== undefined) {
+          const reportingFailure = await waitForMcpReporting(
+            name,
+            launchBaseline,
+            this.dependencies.mcpClientSeen,
+            (ms) => this.wait(ms),
+            this.dependencies.mcpReportingTimeoutMs,
+          );
+          if (reportingFailure !== null) {
+            await this.failSpawnIfStillSpawning(
+              record,
+              worktree,
+              reportingFailure,
+              "transport",
+            );
+            return;
+          }
+        }
+        // Hook traffic normally performs this transition first. A live provider
+        // can still prove itself through its process-backed screen heartbeat,
+        // though, and leaving that positive result as `spawning` makes the UI
+        // claim launch is still in flight forever. Promote only if no stronger
+        // lifecycle event has already moved the row elsewhere.
+        const ready = this.dependencies.db.getAgentById(record.id);
+        if (ready?.status === "spawning") {
+          this.dependencies.db.insertAgent({ ...ready, status: "working" });
+        }
+        if (quotaReservationId !== undefined) {
+          this.dependencies.quota?.markStarted(quotaReservationId);
+        }
+      } catch (error) {
+        // Nothing thrown here has been past the transport. Building the argv,
+        // writing the config, and handing the command to the terminal host all
+        // happen on this machine, before the model is contacted — so a throw is
+        // never evidence about the route, and must never be recorded against it.
+        const reason =
+          error instanceof Error ? error.message : "Agent launch failed";
+        await this.failSpawnIfStillSpawning(
+          record,
+          worktree,
+          reason,
+          "transport",
+          error instanceof SessiondWireError &&
+            error.code === "CAPACITY_EXCEEDED",
+        );
       }
-      // Hook traffic normally performs this transition first. A live provider
-      // can still prove itself through its process-backed screen heartbeat,
-      // though, and leaving that positive result as `spawning` makes the UI
-      // claim launch is still in flight forever. Promote only if no stronger
-      // lifecycle event has already moved the row elsewhere.
-      const ready = this.dependencies.db.getAgentById(record.id);
-      if (ready?.status === "spawning") {
-        this.dependencies.db.insertAgent({ ...ready, status: "working" });
-      }
-      if (quotaReservationId !== undefined) {
-        this.dependencies.quota?.markStarted(quotaReservationId);
-      }
-    } catch (error) {
-      if (error instanceof SpawnFailedError) throw error;
-      // Nothing thrown here has been past the transport. Building the argv,
-      // writing the config, and handing the command to the terminal host all
-      // happen on this
-      // machine, before the model is contacted — so a throw is never evidence
-      // about the route, and must never be recorded against it.
+    };
+    void launch().catch((error: unknown) => {
       const reason =
-        error instanceof Error ? error.message : "Agent launch failed";
-      return await this.failSpawnIfStillSpawning(
-        record,
-        worktree,
-        reason,
-        "transport",
-        error instanceof SessiondWireError &&
-          error.code === "CAPACITY_EXCEEDED",
-      );
-    }
-
-    return this.dependencies.db.getAgentById(record.id) ?? record;
+        error instanceof Error ? error.message : "unknown background failure";
+      this.preserveStuck(record, `Background launch failed: ${reason}`);
+      console.error(`Hive background launch failed for ${name}: ${reason}`);
+    });
+    return record;
   }
 
   private async monitorReadiness(
@@ -3130,6 +3175,7 @@ export class HiveSpawner implements Spawner {
     }
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;
+    let worktreeRemoved = false;
 
     // Never delete work to tidy up after ourselves.
     //
@@ -3177,12 +3223,21 @@ export class HiveSpawner implements Spawner {
             worktree.path,
             { deleteBranch: true },
           );
+          worktreeRemoved = true;
         } catch (error) {
           cleanupErrors.push(
             error instanceof Error ? error.message : "worktree cleanup failed",
           );
         }
       }
+    }
+
+    if (worktreeRemoved) {
+      failed = this.dependencies.db.insertAgent({
+        ...failed,
+        worktreePath: null,
+        branch: null,
+      });
     }
 
     const notes = [
@@ -3196,16 +3251,6 @@ export class HiveSpawner implements Spawner {
         ...failed,
         failureReason: `${failureReason}\n${notes.join("\n")}`,
       });
-    } else if (
-      !this.dependencies.db.discardFailedSpawn(
-        record.id,
-        neverCreated ? "never-created" : "verified-stopped",
-      )
-    ) {
-      return this.preserveStuck(
-        failed,
-        `${failureReason}\nAtomic failed-spawn cleanup could not erase the durable generation.`,
-      );
     }
     return failed;
   }

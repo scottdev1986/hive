@@ -15,13 +15,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { buildNormalMessageBatchProjection } from "../../src/daemon/context-projection";
 import {
   credentialPath,
   readCredential,
   writeCredential,
 } from "../../src/daemon/credentials";
 import { HiveDatabase } from "../../src/daemon/db";
-import { buildNormalMessageBatchProjection } from "../../src/daemon/context-projection";
 import type { LandReadiness } from "../../src/daemon/landing";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
@@ -199,6 +199,7 @@ describe("an unauthenticated process cannot mutate anything", () => {
     // The MCP transport refuses before a tool can even be enumerated.
     for (const tool of [
       "hive_spawn",
+      "hive_spawn_many",
       "hive_kill",
       "hive_approve",
       "hive_land",
@@ -294,6 +295,10 @@ describe("a foreign agent cannot act on another tenant", () => {
 
     for (const [tool, args] of [
       ["hive_spawn", { task: "probe", category: "simple_coding" }],
+      [
+        "hive_spawn_many",
+        { requests: [{ task: "probe", category: "simple_coding" }] },
+      ],
       ["hive_approve", { id: "any", decision: "approve" }],
       ["hive_approvals", {}],
       ["hive_recover", {}],
@@ -321,11 +326,7 @@ describe("a foreign agent cannot act on another tenant", () => {
       }),
     );
     const own = await daemon.delivery.send("queen", "maya", "exact body");
-    const foreign = await daemon.delivery.send(
-      "queen",
-      "zara",
-      "foreign body",
-    );
+    const foreign = await daemon.delivery.send("queen", "zara", "foreign body");
     const root = await daemon.delivery.send("maya", "queen", "agent report");
 
     for (const role of ["writer", "reader"] as const) {
@@ -338,7 +339,8 @@ describe("a foreign agent cannot act on another tenant", () => {
           .ok,
       ).toBe(false);
       expect(
-        (await callTool(daemon, token, "hive_read_message", { id: root.id })).ok,
+        (await callTool(daemon, token, "hive_read_message", { id: root.id }))
+          .ok,
       ).toBe(false);
     }
     await daemon.stop();
@@ -920,6 +922,26 @@ describe("legitimate workflows keep working", () => {
       ).ok,
     ).toBe(true);
     expect(spawner.requests).toHaveLength(1);
+
+    expect(
+      (
+        await callTool(daemon, token, "hive_spawn_many", {
+          requests: [
+            {
+              name: "alex",
+              task: "do the first thing",
+              category: "simple_coding",
+            },
+            {
+              name: "nina",
+              task: "do the second thing",
+              category: "debugging",
+            },
+          ],
+        })
+      ).ok,
+    ).toBe(true);
+    expect(spawner.requests).toHaveLength(3);
 
     const approvalId = await daemon.queueCodexApproval("maya", "run a command");
     expect((await callTool(daemon, token, "hive_approvals")).ok).toBe(true);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeMemoryFact } from "../../src/adapters/memory";
@@ -14,6 +14,7 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
   await mkdir(worktree, { recursive: true });
   const previousHome = process.env.HIVE_HOME;
   const previousCodexHome = process.env.CODEX_HOME;
+  let billingReads = 0;
   process.env.HIVE_HOME = home;
   process.env.CODEX_HOME = join(home, "codex");
   const db = new HiveDatabase(":memory:");
@@ -47,11 +48,13 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
     providers: {},
     models: [],
     chains: {
-      simple_coding: [{
-        provider: "codex",
-        model: "gpt-test",
-        effort: { mode: "provider-controlled" },
-      }],
+      simple_coding: [
+        {
+          provider: "codex",
+          model: "gpt-test",
+          effort: { mode: "provider-controlled" },
+        },
+      ],
     },
     selection: { global: "choice", categories: {} },
   };
@@ -79,6 +82,10 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
     config: {},
     readRoutingPolicy: () => policy,
     isModelEnabled: async () => true,
+    readBilling: async () => {
+      billingReads += 1;
+      return null;
+    },
     createWorktree: async () => ({
       path: worktree,
       branch: "hive/maya-memory",
@@ -111,21 +118,41 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
   });
 
   try {
-    await expect(
-      spawner.spawn({
-        name: "maya",
-        task: "Fix the flaky test",
-        category: "simple_coding",
-      }),
-    ).rejects.toThrow("terminal creation stopped after prompt assembly");
+    const admitted = await spawner.spawn({
+      name: "maya",
+      task: "Fix the flaky test",
+      category: "simple_coding",
+    });
+    expect(admitted.status).toBe("spawning");
     const promptDirectory = join(home, "runtime", "prompts");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (
+        (await readdir(promptDirectory).catch(() => [])).some((name) =>
+          name.endsWith(".txt"),
+        )
+      ) {
+        break;
+      }
+      await Bun.sleep(5);
+    }
     const promptName = (await readdir(promptDirectory)).find((name) =>
-      name.endsWith(".txt")
+      name.endsWith(".txt"),
     );
     expect(promptName).toBeDefined();
-    const prompt = await readFile(join(promptDirectory, promptName!), "utf8");
+    if (promptName === undefined)
+      throw new Error("launch prompt was not written");
+    const prompt = await readFile(join(promptDirectory, promptName), "utf8");
     expect(prompt).toContain("fresh-primary-article");
     expect(prompt).not.toContain("stale-worktree-copy");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (db.getAgentById(admitted.id)?.status === "failed") break;
+      await Bun.sleep(5);
+    }
+    const failed = db.getAgentById(admitted.id);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.worktreePath).toBeNull();
+    expect(failed?.branch).toBeNull();
+    expect(billingReads).toBe(1);
   } finally {
     db.close();
     if (previousHome === undefined) delete process.env.HIVE_HOME;

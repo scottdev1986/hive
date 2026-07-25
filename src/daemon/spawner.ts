@@ -43,9 +43,15 @@ export const SpawnRequestSchema = z.strictObject({
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
+export const SpawnBatchRequestSchema = z.strictObject({
+  requests: z.array(SpawnRequestSchema).min(1).max(16),
+});
+
+export type SpawnBatchRequest = z.infer<typeof SpawnBatchRequestSchema>;
+
 export interface Spawner {
-  /** Resolves with an admitted or cleanup-stuck generation. A failed admission
-   * is atomic and throws; it never returns a persisted `failed` row. */
+  /** Resolves once the generation is durably admitted. Provider launch and
+   * readiness verification continue while the returned row is `spawning`. */
   spawn(req: SpawnRequest): Promise<AgentRecord>;
   authorizeLaunch?(identity: ExecutionIdentity): Promise<AuthorizedLaunch>;
   createRecoverySession?(

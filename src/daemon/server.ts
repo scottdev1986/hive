@@ -230,7 +230,13 @@ import {
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
 import type { SessiondBrokerSupervisor } from "./sessiond-broker";
-import { type Spawner, type SpawnRequest, SpawnRequestSchema } from "./spawner";
+import {
+  type SpawnBatchRequest,
+  SpawnBatchRequestSchema,
+  type Spawner,
+  type SpawnRequest,
+  SpawnRequestSchema,
+} from "./spawner";
 import { fuseAgentStatus } from "./status-fusion";
 import {
   type StatusIncarnationGenerationSource,
@@ -6487,6 +6493,37 @@ export class HiveDaemon {
       },
     );
 
+    const spawnAgent = async (request: SpawnRequest): Promise<AgentRecord> => {
+      if (this.memoryPressure) {
+        throw new Error(
+          "Hive is refusing to spawn new agents while the system is under " +
+            "memory pressure; retry once the resource watchdog reports the " +
+            "pressure has cleared.",
+        );
+      }
+      const operation = await this.machineMutations?.beginOperation("spawn");
+      try {
+        const agent = await this.spawner.spawn(request);
+        const current = this.db.getAgentById(agent.id);
+        const persisted =
+          current !== null && current.lastEventAt >= agent.lastEventAt
+            ? current
+            : this.db.upsertAgent(agent);
+        if (persisted.status === "stuck") {
+          throw new Error(
+            `Hive agent ${persisted.name} could not verify cleanup after spawn: ${
+              persisted.failureReason ?? "unknown launch failure"
+            }`,
+          );
+        }
+        this.status.openAssignment(persisted.id, persisted.createdAt);
+        await this.delivery.flushQueued(persisted.name);
+        return persisted;
+      } finally {
+        operation?.release();
+      }
+    };
+
     server.registerTool(
       "hive_spawn",
       {
@@ -6502,6 +6539,9 @@ export class HiveDaemon {
           "clears the launch gate runs. Optional: tool/model pin an explicit " +
           "user choice (never substituted); minContextTokens filters links for " +
           "long-context work (any category); effort overrides the link's. " +
+          "The admitted agent returns immediately with status=spawning while " +
+          "provider startup is verified in the background. For two or more " +
+          "independent tasks, use hive_spawn_many. " +
           "Returns identity and state, not the task brief you just wrote — " +
           "taskDescription comes back truncated (taskDescriptionLength carries " +
           "the full count); read it in full via hive_status if ever needed.",
@@ -6509,34 +6549,44 @@ export class HiveDaemon {
       },
       async (request: SpawnRequest) => {
         this.authorizeTool(capability, "hive_spawn", "agent:spawn");
-        if (this.memoryPressure) {
-          throw new Error(
-            "Hive is refusing to spawn new agents while the system is under " +
-              "memory pressure; retry once the resource watchdog reports the " +
-              "pressure has cleared.",
-          );
-        }
-        const operation = await this.machineMutations?.beginOperation("spawn");
-        try {
-          const agent = await this.spawner.spawn(request);
-          const current = this.db.getAgentById(agent.id);
-          const persisted =
-            current !== null && current.lastEventAt >= agent.lastEventAt
-              ? current
-              : this.db.upsertAgent(agent);
-          if (persisted.status === "stuck") {
-            throw new Error(
-              `Hive agent ${persisted.name} could not verify cleanup after spawn: ${
-                persisted.failureReason ?? "unknown launch failure"
-              }`,
-            );
-          }
-          this.status.openAssignment(persisted.id, persisted.createdAt);
-          await this.delivery.flushQueued(persisted.name);
-          return toolResult(compactSpawnResult(persisted), "agent");
-        } finally {
-          operation?.release();
-        }
+        return toolResult(
+          compactSpawnResult(await spawnAgent(request)),
+          "agent",
+        );
+      },
+    );
+
+    server.registerTool(
+      "hive_spawn_many",
+      {
+        title: "Spawn multiple Hive agents",
+        description:
+          "Admit 1–16 independent Hive agents concurrently. Each returns " +
+          "immediately with status=spawning while provider startup and readiness " +
+          "verification continue in the background. Results are independent, so " +
+          "one refused request does not hide agents already admitted. Use one " +
+          "request per non-overlapping delegated task.",
+        inputSchema: SpawnBatchRequestSchema,
+      },
+      async ({ requests }: SpawnBatchRequest) => {
+        this.authorizeTool(capability, "hive_spawn_many", "agent:spawn");
+        const results = await Promise.all(
+          requests.map(async (request) => {
+            try {
+              return {
+                ok: true as const,
+                agent: compactSpawnResult(await spawnAgent(request)),
+              };
+            } catch (error) {
+              return {
+                ok: false as const,
+                error:
+                  error instanceof Error ? error.message : "Agent spawn failed",
+              };
+            }
+          }),
+        );
+        return toolResult(results, "results");
       },
     );
 
