@@ -4444,6 +4444,38 @@ fn a3BytesPayload(
     }, .{});
 }
 
+fn c1AutomatedBytesPayload(
+    allocator: std.mem.Allocator,
+    registration: HostRegistration,
+    claim_token: []const u8,
+    transaction_id: []const u8,
+    body: []const u8,
+    pid: i32,
+    start_token: []const u8,
+    process_group_id: i32,
+) ![]u8 {
+    const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(body.len));
+    defer allocator.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, body);
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .claimToken = claim_token,
+        .transactionId = transaction_id,
+        .idempotencyKey = transaction_id,
+        .expectedForeground = .{
+            .providerRunId = "018f1e90-7b5a-7cc0-8000-000000000194",
+            .pid = pid,
+            .startToken = start_token,
+            .processGroupId = process_group_id,
+        },
+        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = encoded },
+    }, .{});
+}
+
 test "A3 live drill: automation never writes inside a human composition" {
     const human_bytes = [_][]const u8{ "H1", "H2", "H3", "H4" };
     const composition = "H1H2H3H4";
@@ -4611,13 +4643,36 @@ test "A3 live drill: automation never writes inside a human composition" {
     const auto_granted = try core.claimInput(auto_claim, "hive-daemon", 5_000);
     defer std.testing.allocator.free(auto_granted);
     try std.testing.expect(std.mem.indexOf(u8, auto_granted, "\"state\":\"granted\"") != null);
-    const auto_submit = try a3BytesPayload(
+    const foreground_process_group_id = try pty.foregroundProcessGroupId();
+    const foreground = process_inspector.observeProcessPresent(foreground_process_group_id) orelse
+        return error.TestUnexpectedResult;
+    var foreground_token_storage: [64]u8 = undefined;
+    const foreground_token = try foreground.start_token.format(&foreground_token_storage);
+    const raced_submit = try c1AutomatedBytesPayload(
+        std.testing.allocator,
+        registration,
+        core.active_claim.?.token,
+        "c1-raced-submit",
+        automation,
+        foreground.pid,
+        "0:0",
+        foreground_process_group_id,
+    );
+    defer std.testing.allocator.free(raced_submit);
+    const raced = try core.submitInput(raced_submit, "hive-daemon", 5_000);
+    defer std.testing.allocator.free(raced);
+    try std.testing.expect(std.mem.indexOf(u8, raced, "\"stage\":\"rejected\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raced, "foreground-changed") != null);
+
+    const auto_submit = try c1AutomatedBytesPayload(
         std.testing.allocator,
         registration,
         core.active_claim.?.token,
         "a3-auto-submit",
-        "a3-auto-submit",
         automation,
+        foreground.pid,
+        foreground_token,
+        foreground_process_group_id,
     );
     defer std.testing.allocator.free(auto_submit);
     const auto_applied = try core.submitInput(auto_submit, "hive-daemon", 5_000);

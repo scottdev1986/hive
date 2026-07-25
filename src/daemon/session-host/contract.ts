@@ -57,10 +57,7 @@ export interface SessionHost {
     locator: SessionLocator,
     geometry: TerminalGeometry,
   ): Promise<ResizeResult>;
-  writeAutomated(
-    locator: SessionLocator,
-    input: AutomatedInput,
-  ): Promise<InputReceipt>;
+  writeAutomated(input: AutomatedInput): Promise<InputReceipt>;
   terminate(
     locator: SessionLocator,
     request: TerminationRequest,
@@ -189,22 +186,19 @@ export type ResizeResult = Readonly<{
   revision: string;
 }>;
 export type AutomatedInput = Readonly<{
-  transactionId: string;
-  idempotencyKey: string;
-  messageId: string;
-  recipientGeneration: number;
-  capabilityEpoch: number;
+  terminal: SessionLocator;
+  expectedForeground: Readonly<{
+    providerRunId: string;
+    pid: number;
+    startToken: string;
+    processGroupId: number;
+  }>;
   bytes: Uint8Array;
-  sha256: string;
-  providerStrategy: string;
-  submit: "none" | "return" | "control-enter";
+  idempotencyKey: string;
 }>;
 export type InputReceipt = Readonly<{
-  transactionId: string;
-  messageId: string;
-  state: "queued" | "buffered" | "committed" | "written" | "in-doubt";
+  state: "submitted" | "foreground-changed" | "input-busy" | "unknown";
   byteRange: { start: string; endExclusive: string } | null;
-  providerObservation: "unavailable" | "pending" | "observed";
   evidenceAt: string;
   diagnosticId: string | null;
 }>;

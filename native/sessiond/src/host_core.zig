@@ -115,12 +115,20 @@ const WireInputOperation = struct {
     bytes: ?[]const u8 = null,
 };
 
+const WireExpectedForeground = struct {
+    providerRunId: []const u8,
+    pid: i32,
+    startToken: []const u8,
+    processGroupId: i32,
+};
+
 const WireInputSubmit = struct {
     schemaVersion: u8,
     session: WireTerminalSessionRef,
     claimToken: []const u8,
     transactionId: []const u8,
     idempotencyKey: []const u8,
+    expectedForeground: ?WireExpectedForeground = null,
     operation: WireInputOperation,
 };
 
@@ -899,6 +907,12 @@ pub const HostCore = struct {
         digest_hasher.update(@tagName(kind));
         digest_hasher.update(&[_]u8{0});
         if (decoded) |bytes| digest_hasher.update(bytes);
+        if (request.expectedForeground) |expected| {
+            digest_hasher.update(expected.providerRunId);
+            digest_hasher.update(std.mem.asBytes(&expected.pid));
+            digest_hasher.update(expected.startToken);
+            digest_hasher.update(std.mem.asBytes(&expected.processGroupId));
+        }
         const operation_digest = digest_hasher.finalResult();
 
         for (self.input_replays.items) |*replay| {
@@ -1007,6 +1021,35 @@ pub const HostCore = struct {
         };
         var input_digest: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(input_bytes, &input_digest, .{});
+        if (request.expectedForeground) |expected| {
+            const foreground_group = binding.pty.foregroundProcessGroupId() catch {
+                replay.receipt = rejectedInputReceipt(
+                    replay.transaction_id,
+                    "foreground-changed",
+                );
+                return self.encodeInputApplied(replay.receipt.?);
+            };
+            const expected_token = process_inspector.StartToken.parse(expected.startToken) catch {
+                replay.receipt = rejectedInputReceipt(
+                    replay.transaction_id,
+                    "foreground-changed",
+                );
+                return self.encodeInputApplied(replay.receipt.?);
+            };
+            const foreground_matches = foreground_group == expected.processGroupId and
+                (switch (process_inspector.observeProcess(expected.pid)) {
+                    .present => |identity| identity.start_token.eql(expected_token) and
+                        identity.pgid == expected.processGroupId,
+                    .absent, .unobservable => false,
+                });
+            if (!foreground_matches) {
+                replay.receipt = rejectedInputReceipt(
+                    replay.transaction_id,
+                    "foreground-changed",
+                );
+                return self.encodeInputApplied(replay.receipt.?);
+            }
+        }
         const accepted = arbiter.humanInput(
             viewer_id,
             claim.token,

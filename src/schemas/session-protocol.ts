@@ -371,11 +371,10 @@ export const INPUT_EVIDENCE_CONTRACTS = {
 } as const satisfies Record<(typeof INPUT_EVIDENCE_LEVELS)[number], unknown>;
 
 export const INPUT_RECEIPT_STATES = [
-  "queued",
-  "buffered",
-  "committed",
-  "written",
-  "in-doubt",
+  "submitted",
+  "foreground-changed",
+  "input-busy",
+  "unknown",
 ] as const;
 
 export const GHOSTTY_BRIDGE_EVENTS = {
@@ -1518,6 +1517,15 @@ export const ClaimResultPayloadSchema = z
   })
   .readonly();
 
+export const ExpectedForegroundSchema = z
+  .strictObject({
+    providerRunId: z.string().uuid(),
+    pid: z.number().int().positive(),
+    startToken: z.string().min(1),
+    processGroupId: z.number().int().positive(),
+  })
+  .readonly();
+
 /** INPUT_SUBMIT is JSON control; raw HUMAN_INPUT remains keystroke streaming. */
 export const InputSubmitPayloadSchema = z
   .strictObject({
@@ -1526,6 +1534,7 @@ export const InputSubmitPayloadSchema = z
     claimToken: z.string().min(1),
     transactionId: z.string().min(1),
     idempotencyKey: z.string().min(1),
+    expectedForeground: ExpectedForegroundSchema.optional(),
     operation: z.discriminatedUnion("kind", [
       z
         .strictObject({
@@ -1578,15 +1587,10 @@ export const AppliedPayloadSchema = z.discriminatedUnion("resultKind", [
     .readonly(),
 ]);
 const AutomatedInputObjectSchema = z.strictObject({
-  transactionId: domainUuidV7Schema("txn"),
-  idempotencyKey: z.string().min(1),
-  messageId: domainUuidV7Schema("msg"),
-  recipientGeneration: PositiveGenerationSchema,
-  capabilityEpoch: SafeUintSchema,
+  terminal: SessionLocatorSchema,
+  expectedForeground: ExpectedForegroundSchema,
   bytes: z.custom<Uint8Array>((value) => value instanceof Uint8Array),
-  sha256: Sha256HexSchema,
-  providerStrategy: z.string().min(1),
-  submit: z.enum(["none", "return", "control-enter"]),
+  idempotencyKey: z.string().min(1),
 });
 export const AutomatedInputSchema = AutomatedInputObjectSchema.readonly();
 export const AutomatedInputMetadataSchema = AutomatedInputObjectSchema.omit({
@@ -1594,8 +1598,6 @@ export const AutomatedInputMetadataSchema = AutomatedInputObjectSchema.omit({
 }).readonly();
 export const InputReceiptSchema = z
   .strictObject({
-    transactionId: domainUuidV7Schema("txn"),
-    messageId: domainUuidV7Schema("msg"),
     state: z.enum(INPUT_RECEIPT_STATES),
     byteRange: z
       .strictObject({
@@ -1603,7 +1605,6 @@ export const InputReceiptSchema = z
         endExclusive: DecimalUint64Schema,
       })
       .nullable(),
-    providerObservation: z.enum(["unavailable", "pending", "observed"]),
     evidenceAt: Rfc3339UtcMillisecondsSchema,
     diagnosticId: z.string().min(1).nullable(),
   })

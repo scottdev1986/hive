@@ -92,7 +92,7 @@ function harness(
     spawner,
     repoRoot: "/tmp/hive-auth-noop",
     sessiondInput: {
-      async injectIdle() {
+      async writeAutomated() {
         return { outcome: "declined" as const, reason: "not used" };
       },
       async injectKeys(_agent, _keys, input) {

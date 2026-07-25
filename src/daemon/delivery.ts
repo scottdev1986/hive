@@ -344,6 +344,10 @@ export class MessageDelivery {
     if (recipient !== null) {
       this.requireLiveRecipient(to);
     }
+    const activeRun =
+      recipient?.sessionLocator?.hostKind === "sessiond"
+        ? this.db.getActiveProviderRunByTerminal(recipient.sessionLocator)
+        : null;
     let priority = options.priority ?? "normal";
     const intent = options.intent ?? "instruction";
     if (["pause", "stop", "cancel", "restrict-writes"].includes(intent)) {
@@ -447,7 +451,10 @@ export class MessageDelivery {
       });
     }
 
-    if (recipient.status !== "idle") {
+    const openingTurn =
+      activeRun !== null &&
+      !this.db.hasMessageAttemptForProviderRun(activeRun.runId);
+    if (recipient.status !== "idle" && !openingTurn) {
       return message;
     }
 
@@ -464,9 +471,18 @@ export class MessageDelivery {
         return current;
       }
       const currentRecipient = this.db.getAgentByName(to);
+      const currentRun =
+        currentRecipient?.sessionLocator?.hostKind === "sessiond"
+          ? this.db.getActiveProviderRunByTerminal(
+              currentRecipient.sessionLocator,
+            )
+          : null;
+      const canOpenTurn =
+        currentRun !== null &&
+        !this.db.hasMessageAttemptForProviderRun(currentRun.runId);
       if (
         !this.isDeliverable(currentRecipient) ||
-        currentRecipient.status !== "idle"
+        (currentRecipient.status !== "idle" && !canOpenTurn)
       ) {
         return current;
       }
@@ -512,10 +528,20 @@ export class MessageDelivery {
       const hasCritical = queuedMessages.some(
         (message) => message.priority === "critical",
       );
+      const openingRun =
+        currentRecipient.sessionLocator?.hostKind === "sessiond"
+          ? this.db.getActiveProviderRunByTerminal(
+              currentRecipient.sessionLocator,
+            )
+          : null;
+      const canOpenTurn =
+        openingRun !== null &&
+        !this.db.hasMessageAttemptForProviderRun(openingRun.runId);
       if (
         !hasCritical &&
         currentRecipient.status !== "idle" &&
-        !this.nativeControl?.hasAgent(currentRecipient.name)
+        !this.nativeControl?.hasAgent(currentRecipient.name) &&
+        !canOpenTurn
       ) {
         return [];
       }
@@ -537,7 +563,8 @@ export class MessageDelivery {
           }
           if (
             latestRecipient.status !== "idle" &&
-            !this.nativeControl?.hasAgent(latestRecipient.name)
+            !this.nativeControl?.hasAgent(latestRecipient.name) &&
+            !canOpenTurn
           ) {
             continue;
           }
@@ -548,6 +575,7 @@ export class MessageDelivery {
             // only a message whose delivery actually landed counts.
             const result = await this.deliver(message, latestRecipient);
             if (result.deliveredAt !== null) delivered.push(result);
+            if (canOpenTurn) break;
           }
         } catch (error) {
           // A failed pane must not prevent later queued messages from
@@ -995,7 +1023,16 @@ export class MessageDelivery {
     // Production input uses the terminal host's viewer wire. A declined claim
     // leaves the durable message queued and records the exact reason.
     if (this.sessiondInput !== undefined) {
-      requireSessiondAgentLocator(recipient);
+      const terminal = requireSessiondAgentLocator(recipient);
+      const activeRun = this.db.getActiveProviderRunByTerminal(terminal);
+      if (activeRun === null) {
+        this.db.recordMessageDeliveryDiagnostic(
+          message.id,
+          "sessiond inject declined: no active provider run",
+          new Date().toISOString(),
+        );
+        return this.getStoredMessage(message.id);
+      }
       if (this.processState !== undefined) {
         const state = await this.processState(recipient).catch(
           () => "unknown" as const,
@@ -1013,13 +1050,37 @@ export class MessageDelivery {
       // The #68 live proof failed with the only diagnostic on a /dev/null
       // stderr: ~24 silent retries, three indistinguishable causes. A row
       // that stays queued must carry its own explanation.
+      const attempt = this.db.beginMessageAttempt({
+        attemptId: crypto.randomUUID(),
+        messageId: message.id,
+        expectedProviderRunId: activeRun.runId,
+        terminalGeneration: terminal.generation,
+        expectedForeground: {
+          pid: activeRun.pid,
+          startToken: activeRun.startToken,
+          processGroupId: activeRun.foregroundProcessGroupId,
+        },
+        attemptedAt: new Date().toISOString(),
+      });
       let result: SessiondInjectResult;
       try {
-        result = await this.sessiondInput.injectIdle(recipient, text, {
-          messageId: message.id,
+        result = await this.sessiondInput.writeAutomated({
+          terminal,
+          expectedForeground: {
+            providerRunId: activeRun.runId,
+            pid: activeRun.pid,
+            startToken: activeRun.startToken,
+            processGroupId: activeRun.foregroundProcessGroupId,
+          },
+          bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
+          idempotencyKey: attempt.attemptId,
         });
       } catch (error) {
         const detail = error instanceof Error ? error.message : "unknown error";
+        this.db.finishMessageAttempt(attempt.attemptId, {
+          outcome: detail.includes("timed out") ? "timeout" : "unknown",
+          terminalReceipt: null,
+        });
         console.error(
           `Hive could not inject message ${message.id} into ${message.to}'s terminal ` +
             `(${detail}); leaving it queued.`,
@@ -1032,6 +1093,14 @@ export class MessageDelivery {
         return this.getStoredMessage(message.id);
       }
       if (result.outcome === "declined") {
+        this.db.finishMessageAttempt(attempt.attemptId, {
+          outcome: result.reason.includes("foreground-changed")
+            ? "foreground-changed"
+            : result.reason.startsWith("claim ")
+              ? "input-busy"
+              : "unknown",
+          terminalReceipt: result.receipt ?? null,
+        });
         this.db.recordMessageDeliveryDiagnostic(
           message.id,
           `sessiond inject declined: ${result.reason}`,
@@ -1039,6 +1108,10 @@ export class MessageDelivery {
         );
         return this.getStoredMessage(message.id);
       }
+      this.db.finishMessageAttempt(attempt.attemptId, {
+        outcome: "written",
+        terminalReceipt: result.receipt,
+      });
       const injected = this.markInjected(message);
       this.advanceWakeDelta(recipient, delta);
       // A recovery destroyed somebody's unsubmitted draft to get this message

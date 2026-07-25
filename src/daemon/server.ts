@@ -187,7 +187,6 @@ import {
   requireSessiondAgentLocator,
   requireSessiondRootLocator,
   sessiondAgentProviderRunIsDead,
-  sessiondForegroundJobIsDead,
   sessiondTerminalIsDead,
 } from "./session-host/hive-terminal-host";
 import {
@@ -1067,17 +1066,18 @@ export class HiveDaemon {
       // the composer lease so a report cannot overwrite human input.
       options.rootProtocol ??
         new SessiondOrchestratorRootDelivery({
+          db: this.db,
           current: () => this.orchestratorSessiond?.snapshot() ?? null,
           ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
           canInject: () => this.rootProviderAcceptsInput(),
           input: {
-            injectRoot: async (locator, text, message) =>
-              this.sessiondInput.injectRoot === undefined
+            writeAutomated: async (input) =>
+              this.sessiondInput.writeAutomated === undefined
                 ? {
                     outcome: "declined" as const,
                     reason: "root input is not wired on this host",
                   }
-                : await this.sessiondInput.injectRoot(locator, text, message),
+                : await this.sessiondInput.writeAutomated(input),
           },
         }),
       {},
@@ -6150,6 +6150,7 @@ export class HiveDaemon {
             );
           }
           this.status.openAssignment(persisted.id, persisted.createdAt);
+          await this.delivery.flushQueued(persisted.name);
           return toolResult(compactSpawnResult(persisted), "agent");
         } finally {
           operation?.release();

@@ -146,6 +146,13 @@ export type InputOperation =
   | Readonly<{ kind: "canonical-end-of-file" }>
   | Readonly<{ kind: "hangup" }>;
 
+export type ExpectedForeground = Readonly<{
+  providerRunId: string;
+  pid: number;
+  startToken: string;
+  processGroupId: number;
+}>;
+
 export type InputReceipt = Readonly<{
   transactionId: string;
   stage: "accepted" | "queued" | "written-to-terminal" | "rejected" | "unknown";
@@ -356,6 +363,7 @@ export interface TerminalHost {
       claimToken: string;
       transactionId: string;
       idempotencyKey: string;
+      expectedForeground?: ExpectedForeground;
       operation: InputOperation;
     }>,
   ): Promise<InputReceipt>;

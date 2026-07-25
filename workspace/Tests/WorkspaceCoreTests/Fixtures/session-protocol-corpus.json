@@ -370,28 +370,36 @@
       "name": "automated input metadata",
       "schema": "automatedInputMetadata",
       "value": {
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
-        "idempotencyKey": "fixture-key",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
-        "recipientGeneration": 3,
-        "capabilityEpoch": 9,
-        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "providerStrategy": "codex-hooks-v1",
-        "submit": "return"
+        "terminal": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "expectedForeground": {
+          "providerRunId": "018f1e90-7b5a-7cc0-8000-000000000194",
+          "pid": 4200,
+          "startToken": "4200:1",
+          "processGroupId": 4200
+        },
+        "idempotencyKey": "fixture-key"
       }
     },
     {
       "name": "input receipt",
       "schema": "inputReceipt",
       "value": {
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
-        "state": "written",
+        "state": "submitted",
         "byteRange": {
           "start": "5000",
           "endExclusive": "5012"
         },
-        "providerObservation": "pending",
         "evidenceAt": "2026-07-16T12:00:00.000Z",
         "diagnosticId": null
       }
@@ -2957,13 +2965,25 @@
       "name": "automation rejects unknown submit",
       "schema": "automatedInputMetadata",
       "value": {
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
+        "terminal": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "expectedForeground": {
+          "providerRunId": "018f1e90-7b5a-7cc0-8000-000000000194",
+          "pid": 4200,
+          "startToken": "4200:1",
+          "processGroupId": 4200
+        },
         "idempotencyKey": "fixture-key",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
-        "recipientGeneration": 3,
-        "capabilityEpoch": 9,
-        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "providerStrategy": "codex-hooks-v1",
         "submit": "enter"
       }
     },
@@ -2971,14 +2991,11 @@
       "name": "receipt rejects false read evidence",
       "schema": "inputReceipt",
       "value": {
-        "transactionId": "txn_018f1e90-7b5a-7cc0-8000-000000000002",
-        "messageId": "msg_018f1e90-7b5a-7cc0-8000-000000000003",
         "state": "read",
         "byteRange": {
           "start": "5000",
           "endExclusive": "5012"
         },
-        "providerObservation": "pending",
         "evidenceAt": "2026-07-16T12:00:00.000Z",
         "diagnosticId": null
       }

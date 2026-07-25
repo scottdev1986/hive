@@ -10,7 +10,6 @@ import type {
   SessionInspection,
 } from "../../../src/daemon/session-host/terminal-host-contract";
 import type { AgentRecord } from "../../../src/schemas";
-import type { SessionLocator } from "../../../src/schemas/session-protocol";
 import { required } from "../../required";
 
 /**
@@ -18,10 +17,8 @@ import { required } from "../../required";
  *
  * A human typed into an agent's pane and the viewer transport was then lost.
  * The arbiter orphaned the human claim to protect the unsubmitted draft (#40
- * never-steal), and from that moment every daemon inject was denied
- * HumanOrphaned — with no automated exit and no visible failure. These tests
- * pin the exit: the host immediately resolves an orphan. An actively held
- * human claim wins and automation remains queued instead of preempting it.
+ * never-steal). Automated delivery must leave that draft untouched and queued
+ * for a human decision. An actively held human claim has the same exclusion.
  */
 
 const timestamp = "2026-07-21T12:00:00.000Z";
@@ -67,15 +64,19 @@ const receipt: InputReceipt = {
   diagnostic: null,
 };
 
-const rootLocator: SessionLocator = {
-  schemaVersion: 1,
-  instanceId: "hive-fixture",
-  subject: { kind: "root" },
-  generation: 1,
-  sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000401",
-  hostKind: "sessiond",
-  engineBuildId: "engine-fixture",
-};
+function automatedInput(text: string) {
+  return {
+    terminal: required(agent().sessionLocator),
+    expectedForeground: {
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000402",
+      pid: 4_200,
+      startToken: "4200:1",
+      processGroupId: 4_200,
+    },
+    bytes: new TextEncoder().encode(text),
+    idempotencyKey: "message-1",
+  };
+}
 
 /** A running session whose inspection reports the orphan as owner of record. */
 function inspection(): SessionInspection {
@@ -189,34 +190,24 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     const result = await injector(wire, async () => {
       discards += 1;
       throw new Error("must not be called");
-    }).injectIdle(agent(), "hello", { messageId: "message-1" });
+    }).writeAutomated(automatedInput("hello"));
 
     expect(result.outcome).toBe("injected");
     expect(discards).toBe(0);
     expect(wire.attempts).toEqual(["message-1"]);
   });
 
-  test("an orphan is discarded on the next delivery attempt and the host age is surfaced", async () => {
+  test("an orphaned human draft blocks automated delivery without discard", async () => {
     const wire = new HumanClaimArbiterWire();
     const modes: OrphanDiscardMode[] = [];
-    const recovered = await injector(wire, async (mode) => {
+    const result = await injector(wire, async (mode) => {
       modes.push(mode);
-      wire.discarded = true;
-      return {
-        state: "discarded",
-        priorOwnerViewerId: "workspace-pane",
-        priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
-        orphanAgeMilliseconds: "120000",
-        diagnostic: "orphaned human claim discarded",
-      };
-    }).injectIdle(agent(), "hi", { messageId: "message-1" });
+      throw new Error(`unexpected discard mode ${mode}`);
+    }).writeAutomated(automatedInput("hi"));
 
-    expect(recovered.outcome).toBe("injected");
-    expect(modes).toEqual(["orphaned"]);
-    expect(recovered.outcome === "injected" && recovered.recovery).toContain(
-      "orphaned draft (owner workspace-pane) discarded after 120000ms; retrying",
-    );
-    expect(wire.attempts).toEqual(["message-1", "message-1"]);
+    expect(result.outcome).toBe("declined");
+    expect(modes).toEqual([]);
+    expect(wire.attempts).toEqual(["message-1"]);
   });
 
   test("a held human claim is never preempted by automation", async () => {
@@ -225,41 +216,11 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     const result = await injector(wire, async (mode) => {
       modes.push(mode);
       throw new Error(`unexpected discard mode ${mode}`);
-    }).injectIdle(agent(), "hi", { messageId: "message-1" });
+    }).writeAutomated(automatedInput("hi"));
 
     expect(result.outcome).toBe("declined");
     expect(modes).toEqual([]);
     expect(wire.attempts).toEqual(["message-1"]);
-  });
-
-  test("the root wake remains queued while the operator owns Queen input", async () => {
-    const wire = new HumanClaimArbiterWire("HumanOwned");
-    const modes: OrphanDiscardMode[] = [];
-    const result = await injector(wire, async (mode) => {
-      modes.push(mode);
-      throw new Error(`unexpected discard mode ${mode}`);
-    }).injectRoot(rootLocator, "wake queen", { messageId: "message-1" });
-
-    expect(result.outcome).toBe("declined");
-    expect(modes).toEqual([]);
-    expect(wire.attempts).toEqual(["message-1"]);
-  });
-
-  test("a host refusal is recorded, not retried", async () => {
-    const wire = new HumanClaimArbiterWire();
-    const refused = await injector(wire, async () => ({
-      state: "refused",
-      priorOwnerViewerId: null,
-      priorClaimId: null,
-      orphanAgeMilliseconds: null,
-      diagnostic: "human_owned",
-    })).injectIdle(agent(), "hi", { messageId: "message-1" });
-
-    expect(refused.outcome).toBe("declined");
-    expect(refused.outcome === "declined" && refused.reason).toContain(
-      "input-claim resolution refused: human_owned",
-    );
-    expect(wire.attempts).toHaveLength(1);
   });
 
   test("an injector with no discard wire keeps the pre-fix decline-and-queue behaviour", async () => {
@@ -295,12 +256,10 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
       async () => wire.client(),
       undefined,
     );
-    const result = await input.injectIdle(agent(), "hi", {
-      messageId: "message-1",
-    });
+    const result = await input.writeAutomated(automatedInput("hi"));
     expect(result.outcome).toBe("declined");
     expect(result.outcome === "declined" && result.reason).toContain(
-      "input-claim resolution is not wired on this host",
+      "HumanOrphaned",
     );
   });
 });

@@ -26,7 +26,11 @@ import {
   SessiondProtocolError,
   SessiondWireError,
 } from "./sessiond-host";
-import type { InputReceipt, SessionRef } from "./terminal-host-contract";
+import type {
+  ExpectedForeground,
+  InputReceipt,
+  SessionRef,
+} from "./terminal-host-contract";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -268,6 +272,7 @@ export class SessiondViewerAttachClient {
       idempotencyKey: string;
       bytes: Uint8Array;
       leaseMilliseconds: number;
+      expectedForeground?: ExpectedForeground;
       isPromptPending?: () => boolean;
     }>,
   ): Promise<
@@ -321,6 +326,9 @@ export class SessiondViewerAttachClient {
       claimToken: claimResult.claim.token,
       transactionId: request.transactionId,
       idempotencyKey: request.idempotencyKey,
+      ...(request.expectedForeground === undefined
+        ? {}
+        : { expectedForeground: request.expectedForeground }),
       operation: {
         kind: "bytes",
         encoding: "base64",

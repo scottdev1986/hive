@@ -90,7 +90,7 @@ function recordingInput(): SessiondAgentInput & {
   const keys: Array<{ name: string; keys: string }> = [];
   return {
     keys,
-    async injectIdle(): Promise<SessiondInjectResult> {
+    async writeAutomated(): Promise<SessiondInjectResult> {
       return { outcome: "declined", reason: "not used in this test" };
     },
     async injectKeys(agent, sent, options): Promise<SessiondInjectResult> {
@@ -164,7 +164,7 @@ async function expectFailedInjectionPreserved(
   injectKeys: NonNullable<SessiondAgentInput["injectKeys"]>,
 ): Promise<void> {
   const input: SessiondAgentInput = {
-    async injectIdle(): Promise<SessiondInjectResult> {
+    async writeAutomated(): Promise<SessiondInjectResult> {
       return { outcome: "declined", reason: "not used in this test" };
     },
     injectKeys,
@@ -312,7 +312,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
     const release = deferred();
     const keys: string[] = [];
     const input: SessiondAgentInput = {
-      async injectIdle(): Promise<SessiondInjectResult> {
+      async writeAutomated(): Promise<SessiondInjectResult> {
         return { outcome: "declined", reason: "not used in this test" };
       },
       async injectKeys(_agent, sent, options): Promise<SessiondInjectResult> {
@@ -364,7 +364,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
     const release = deferred();
     const keys: string[] = [];
     const input: SessiondAgentInput = {
-      async injectIdle(): Promise<SessiondInjectResult> {
+      async writeAutomated(): Promise<SessiondInjectResult> {
         return { outcome: "declined", reason: "not used in this test" };
       },
       async injectKeys(_agent, sent, options): Promise<SessiondInjectResult> {
@@ -488,7 +488,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
 
   test("keeps the approval pending when the host has no key channel", async () => {
     const withoutKeys: SessiondAgentInput = {
-      async injectIdle(): Promise<SessiondInjectResult> {
+      async writeAutomated(): Promise<SessiondInjectResult> {
         return { outcome: "declined", reason: "not used in this test" };
       },
     };

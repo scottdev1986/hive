@@ -17,11 +17,16 @@ import {
   ORCHESTRATOR_ENVELOPE_MAX_BYTES,
 } from "../../src/daemon/orchestrator-lifecycle";
 import { HiveDaemon } from "../../src/daemon/server";
+import type {
+  SessiondAgentInput,
+  SessiondInjectResult,
+} from "../../src/daemon/session-host/sessiond-agent-input";
 import type { Spawner } from "../../src/daemon/spawner";
 import {
   AgentMessageSchema,
   type AgentRecord,
   ORCHESTRATOR_NAME,
+  type ProviderRun,
 } from "../../src/schemas";
 
 const home = mkdtempSync(join(tmpdir(), "hive-orchestrator-lifecycle-"));
@@ -120,6 +125,160 @@ function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
 }
 
 describe("event-driven orchestrator lifecycle", () => {
+  test("a working provider receives its first queued message as its opening turn", async () => {
+    const db = new HiveDatabase(":memory:");
+    const terminal = {
+      schemaVersion: 1 as const,
+      instanceId: "opening-turn",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000501",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-opening-turn",
+    };
+    db.insertAgent(agent({ sessionLocator: terminal }));
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000502",
+      agentId: "agent-maya",
+      terminal,
+      provider: "codex",
+      model: "default",
+      effort: null,
+      conversationId: null,
+      pid: 4_200,
+      startToken: "4200:1",
+      foregroundProcessGroupId: 4_200,
+      capabilityEpoch: 0,
+      launchGrantId: "launch-opening-turn",
+      startedAt: timestamp,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    db.insertProviderRun(run);
+    const writes: Parameters<SessiondAgentInput["writeAutomated"]>[0][] = [];
+    const input: SessiondAgentInput = {
+      writeAutomated: async (value) => {
+        writes.push(value);
+        return {
+          outcome: "injected",
+          receipt: {
+            transactionId: value.idempotencyKey,
+            stage: "written-to-terminal",
+            byteRange: { start: "0", endExclusive: "5" },
+            orderedAt: "5",
+            availableCreditBytes: 4_096,
+            consumedByProcess: "not-claimed",
+            completeness: "complete",
+            diagnostic: null,
+          },
+        };
+      },
+    };
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingSender(),
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      () => false,
+      input,
+    );
+
+    const message = await delivery.send("queen", "maya", "Begin now.");
+
+    expect(message.state).toBe("injected");
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.expectedForeground).toEqual({
+      providerRunId: run.runId,
+      pid: run.pid,
+      startToken: run.startToken,
+      processGroupId: run.foregroundProcessGroupId,
+    });
+    expect(db.listMessageAttempts(message.id)).toHaveLength(1);
+    expect(db.listMessageAttempts(message.id)[0]?.outcome).toBe("written");
+    db.close();
+  });
+
+  test("a foreground change leaves the opening message queued with its terminal receipt", async () => {
+    const db = new HiveDatabase(":memory:");
+    const terminal = {
+      schemaVersion: 1 as const,
+      instanceId: "foreground-race",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000503",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-foreground-race",
+    };
+    db.insertAgent(agent({ sessionLocator: terminal }));
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000504",
+      agentId: "agent-maya",
+      terminal,
+      provider: "codex",
+      model: "default",
+      effort: null,
+      conversationId: null,
+      pid: 4_300,
+      startToken: "4300:1",
+      foregroundProcessGroupId: 4_300,
+      capabilityEpoch: 0,
+      launchGrantId: "launch-foreground-race",
+      startedAt: timestamp,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    db.insertProviderRun(run);
+    const input: SessiondAgentInput = {
+      writeAutomated: async (value): Promise<SessiondInjectResult> => ({
+        outcome: "declined",
+        reason: "input receipt stage rejected: foreground-changed",
+        receipt: {
+          transactionId: value.idempotencyKey,
+          stage: "rejected",
+          byteRange: null,
+          orderedAt: null,
+          availableCreditBytes: 4_096,
+          consumedByProcess: "not-claimed",
+          completeness: "complete",
+          diagnostic: "foreground-changed",
+        },
+      }),
+    };
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingSender(),
+      undefined,
+      undefined,
+      undefined,
+      {},
+      undefined,
+      () => false,
+      input,
+    );
+
+    const message = await delivery.send("queen", "maya", "Begin now.");
+    const stored = db.getMessage(message.id);
+    const [attempt] = db.listMessageAttempts(message.id);
+
+    expect(stored).toMatchObject({ state: "queued", deliveredAt: null });
+    expect(attempt).toMatchObject({
+      expectedProviderRunId: run.runId,
+      terminalGeneration: 1,
+      outcome: "foreground-changed",
+      terminalReceipt: {
+        stage: "rejected",
+        byteRange: null,
+        diagnostic: "foreground-changed",
+      },
+    });
+    db.close();
+  });
+
   test("stays idle and does not wake for ordinary agent state changes", async () => {
     const db = new HiveDatabase(join(home, "idle.db"));
     const sender = new RecordingSender();

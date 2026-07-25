@@ -548,6 +548,24 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             host,
             `hive-daemon:${handshake.instanceId}`,
           );
+          const providerRun =
+            db.getActiveProviderRunByTerminal(sessiondLocator);
+          if (providerRun === null) {
+            throw new Error("sessiond spawner omitted ProviderRun identity");
+          }
+          const automatedInput = (text: string, idempotencyKey: string) => ({
+            terminal: sessiondLocator,
+            expectedForeground: {
+              providerRunId: providerRun.runId,
+              pid: providerRun.pid,
+              startToken: providerRun.startToken,
+              processGroupId: providerRun.foregroundProcessGroupId,
+            },
+            bytes: new TextEncoder().encode(
+              `\x1b[200~${text}\x1b[201~\r`,
+            ),
+            idempotencyKey,
+          });
 
           // #85 real-engine orphan discard: acquire a human claim on an
           // attached viewer, then drop the viewer without CLAIM_RELEASE. The
@@ -590,10 +608,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           let orphanDecline = "";
           const orphanDeadline = Date.now() + 5_000;
           while (Date.now() < orphanDeadline) {
-            const declined = await injector.injectIdle(
-              sessiondAgent,
-              "LIVE-PROOF #85: orphan blocks automation",
-              { messageId: "msg-85-orphan-blocked" },
+            const declined = await injector.writeAutomated(
+              automatedInput(
+                "LIVE-PROOF #85: orphan blocks automation",
+                "msg-85-orphan-blocked",
+              ),
             );
             if (declined.outcome === "declined")
               orphanDecline = declined.reason;
@@ -616,10 +635,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           });
           expect(discarded.priorClaimId).not.toBeNull();
 
-          const injected = await injector.injectIdle(
-            sessiondAgent,
-            "LIVE-PROOF #68: real-engine inject",
-            { messageId: "msg-68-live-proof" },
+          const injected = await injector.writeAutomated(
+            automatedInput(
+              "LIVE-PROOF #68: real-engine inject",
+              "msg-68-live-proof",
+            ),
           );
           if (injected.outcome !== "injected") {
             throw new Error(`real-engine inject declined: ${injected.reason}`);

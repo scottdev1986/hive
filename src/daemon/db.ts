@@ -15,6 +15,8 @@ import {
   type Hv1CapabilityRecord,
   Hv1CapabilityRecordSchema,
   isTerminalAgentStatus,
+  type MessageAttempt,
+  MessageAttemptSchema,
   type ProviderRun,
   ProviderRunBindingSchema,
   ProviderRunSchema,
@@ -176,6 +178,16 @@ const StoredTerminalHostBindingRowSchema = z.object({
 const StoredProviderRunRowSchema = z.object({
   recordJson: z.string().min(1),
 });
+
+const StoredMessageAttemptRowSchema = z.object({
+  recordJson: z.string().min(1),
+});
+
+function parseMessageAttemptRow(row: unknown): MessageAttempt {
+  return MessageAttemptSchema.parse(
+    JSON.parse(StoredMessageAttemptRowSchema.parse(row).recordJson),
+  );
+}
 
 function parseProviderRunRow(row: unknown): ProviderRun {
   return ProviderRunSchema.parse(
@@ -494,6 +506,14 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
+      CREATE TABLE IF NOT EXISTS message_attempts (
+        attemptId TEXT PRIMARY KEY,
+        messageId TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        outcome TEXT NOT NULL,
+        recordJson TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS message_attempts_message
+        ON message_attempts(messageId);
       CREATE TABLE IF NOT EXISTS agent_name_reservations (
         name TEXT PRIMARY KEY,
         createdAt TEXT NOT NULL
@@ -1730,6 +1750,74 @@ export class HiveDatabase {
     if (stored === null)
       throw new Error(`Message disappeared after insert: ${value.id}`);
     return stored;
+  }
+
+  beginMessageAttempt(
+    attempt: Omit<MessageAttempt, "outcome" | "terminalReceipt">,
+  ): MessageAttempt {
+    const value = MessageAttemptSchema.parse({
+      ...attempt,
+      outcome: "pending",
+      terminalReceipt: null,
+    });
+    this.database
+      .query(`
+      INSERT INTO message_attempts (attemptId, messageId, outcome, recordJson)
+      VALUES (?, ?, ?, ?)
+    `)
+      .run(
+        value.attemptId,
+        value.messageId,
+        value.outcome,
+        JSON.stringify(value),
+      );
+    return value;
+  }
+
+  getMessageAttempt(attemptId: string): MessageAttempt | null {
+    const row = this.database
+      .query("SELECT recordJson FROM message_attempts WHERE attemptId = ?")
+      .get(z.string().uuid().parse(attemptId));
+    return row === null ? null : parseMessageAttemptRow(row);
+  }
+
+  finishMessageAttempt(
+    attemptId: string,
+    result: Pick<MessageAttempt, "outcome" | "terminalReceipt">,
+  ): MessageAttempt {
+    const current = this.getMessageAttempt(attemptId);
+    if (current === null)
+      throw new Error(`Message attempt not found: ${attemptId}`);
+    if (current.outcome !== "pending") return current;
+    const finished = MessageAttemptSchema.parse({ ...current, ...result });
+    this.database
+      .query(`
+      UPDATE message_attempts SET outcome = ?, recordJson = ?
+      WHERE attemptId = ? AND outcome = 'pending'
+    `)
+      .run(finished.outcome, JSON.stringify(finished), finished.attemptId);
+    return this.getMessageAttempt(finished.attemptId) ?? finished;
+  }
+
+  listMessageAttempts(messageId: string): MessageAttempt[] {
+    return this.database
+      .query(`
+      SELECT recordJson FROM message_attempts
+      WHERE messageId = ?
+      ORDER BY rowid
+    `)
+      .all(z.string().min(1).parse(messageId))
+      .map(parseMessageAttemptRow);
+  }
+
+  hasMessageAttemptForProviderRun(providerRunId: string): boolean {
+    const row = this.database
+      .query(`
+      SELECT COUNT(*) AS count FROM message_attempts
+      WHERE json_extract(recordJson, '$.expectedProviderRunId') = ?
+    `)
+      .get(z.string().uuid().parse(providerRunId)) as { count: number };
+    return row.count > 0;
   }
 
   getMessage(id: string): AgentMessage | null {

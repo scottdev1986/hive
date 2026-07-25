@@ -19,12 +19,8 @@ import {
   deleteMessageRow,
   listAgentsNamed,
 } from "../../src/daemon/testing";
-import type {
-  AgentMessage,
-  AgentRecord,
-  HookEvent,
-  ProviderRun,
-} from "../../src/schemas";
+import type { AgentRecord, HookEvent, ProviderRun } from "../../src/schemas";
+import { type AgentMessage, AgentMessageSchema } from "../../src/schemas";
 import { required } from "../required";
 
 const home = mkdtempSync(join(tmpdir(), "hive-db-test-"));
@@ -123,10 +119,61 @@ describe("HiveDatabase", () => {
         conversationId: run.conversationId,
       };
       expect(db.insertProviderRun(next).runId).not.toBe(run.runId);
-      expect(db.listProviderRunsForAgent(run.agentId!)).toHaveLength(2);
+      expect(db.listProviderRunsForAgent(required(run.agentId))).toHaveLength(
+        2,
+      );
     } finally {
       db.close();
     }
+  });
+
+  test("preserves a timed-out message attempt even if a late success arrives", () => {
+    const db = new HiveDatabase(":memory:");
+    const message = AgentMessageSchema.parse({
+      id: "message-attempt-fixture",
+      from: "queen",
+      to: "maya",
+      body: "begin",
+      createdAt: timestamp,
+      deliveredAt: null,
+    });
+    db.insertMessage(message);
+    const attempt = db.beginMessageAttempt({
+      attemptId: "018f1e90-7b5a-7cc0-8000-000000000193",
+      messageId: message.id,
+      expectedProviderRunId: "018f1e90-7b5a-7cc0-8000-000000000191",
+      terminalGeneration: 1,
+      expectedForeground: {
+        pid: 4_200,
+        startToken: "4200:1",
+        processGroupId: 4_200,
+      },
+      attemptedAt: "2026-07-24T17:01:00.000Z",
+    });
+    expect(attempt.outcome).toBe("pending");
+
+    const timedOut = db.finishMessageAttempt(attempt.attemptId, {
+      outcome: "timeout",
+      terminalReceipt: null,
+    });
+    expect(timedOut.outcome).toBe("timeout");
+    expect(
+      db.finishMessageAttempt(attempt.attemptId, {
+        outcome: "written",
+        terminalReceipt: {
+          transactionId: message.id,
+          stage: "written-to-terminal",
+          byteRange: { start: "0", endExclusive: "5" },
+          orderedAt: "5",
+          availableCreditBytes: 1_024,
+          consumedByProcess: "not-claimed",
+          completeness: "complete",
+          diagnostic: null,
+        },
+      }),
+    ).toEqual(timedOut);
+    expect(db.listMessageAttempts(message.id)).toEqual([timedOut]);
+    db.close();
   });
 
   test("persists terminal policy binding by the exact Hive locator", () => {

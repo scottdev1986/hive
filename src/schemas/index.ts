@@ -5,6 +5,7 @@ export * from "./event";
 export * from "./handoff";
 export * from "./memory";
 export * from "./message";
+export * from "./message-attempt";
 export * from "./message-envelope";
 export * from "./provider-run";
 export * from "./quota";

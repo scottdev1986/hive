@@ -1,30 +1,18 @@
 import type { AgentRecord } from "../../schemas";
-import type {
-  SessionLocator,
-  TerminalGeometry,
-} from "../../schemas/session-protocol";
-import type { SessionHost } from "./contract";
-import {
-  requireSessiondAgentLocator,
-  requireSessiondRootLocator,
-} from "./hive-terminal-host";
+import type { AutomatedInput, SessionHost, TerminalGeometry } from "./contract";
+import { requireSessiondAgentLocator } from "./hive-terminal-host";
 import type { OrphanDiscardMode, OrphanDiscardResult } from "./sessiond-host";
 import {
   SessiondViewerAttachClient,
   type ViewerAttachDependencies,
 } from "./sessiond-viewer-attach";
 import type {
+  ExpectedForeground,
   InputReceipt,
   SessionInspection,
   TerminalHost,
   WindowSize,
 } from "./terminal-host-contract";
-
-/** Bracketed paste so embedded newlines are captured as one paste, then a
- * carriage return outside the paste submits it. */
-const BRACKETED_PASTE_START = "\x1b[200~";
-const BRACKETED_PASTE_END = "\x1b[201~";
-const SUBMIT = "\r";
 
 const CLAIM_LEASE_MS = 60_000;
 
@@ -45,14 +33,14 @@ const HUMAN_ORPHANED = "HumanOrphaned";
  */
 export type SessiondInjectResult =
   | Readonly<{ outcome: "injected"; receipt: InputReceipt; recovery?: string }>
-  | Readonly<{ outcome: "declined"; reason: string }>;
+  | Readonly<{
+      outcome: "declined";
+      reason: string;
+      receipt?: InputReceipt;
+    }>;
 
 export interface SessiondAgentInput {
-  injectIdle(
-    agent: AgentRecord,
-    text: string,
-    options: Readonly<{ messageId: string }>,
-  ): Promise<SessiondInjectResult>;
+  writeAutomated(input: AutomatedInput): Promise<SessiondInjectResult>;
   /**
    * Send raw keys to a session parked on a vendor prompt. Not a message: no
    * bracketed paste and no submit, because the bytes ARE the keystroke the
@@ -70,11 +58,7 @@ export interface SessiondAgentInput {
 }
 
 export interface SessiondRootInput {
-  injectRoot(
-    locator: SessionLocator,
-    text: string,
-    options: Readonly<{ messageId: string }>,
-  ): Promise<SessiondInjectResult>;
+  writeAutomated(input: AutomatedInput): Promise<SessiondInjectResult>;
 }
 
 /** The broker RPCs this injector needs. */
@@ -84,7 +68,7 @@ type BrokerFacade = Pick<SessionHost, "issueAttach"> &
 /** §22 orphan discard, absent on hosts that predate it — an injector built
  * without it keeps the pre-fix behaviour: decline and stay queued. */
 type OrphanDiscarder = (
-  locator: ReturnType<typeof requireSessiondRootLocator>,
+  locator: AutomatedInput["terminal"],
   mode: OrphanDiscardMode,
 ) => Promise<OrphanDiscardResult>;
 
@@ -106,31 +90,13 @@ export class SessiondViewerAgentInput
     }),
   ) {}
 
-  async injectIdle(
-    agent: AgentRecord,
-    text: string,
-    options: Readonly<{ messageId: string }>,
-  ): Promise<SessiondInjectResult> {
+  async writeAutomated(input: AutomatedInput): Promise<SessiondInjectResult> {
     return this.submit(
-      requireSessiondAgentLocator(agent),
-      new TextEncoder().encode(
-        BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
-      ),
-      options.messageId,
-    );
-  }
-
-  async injectRoot(
-    locator: SessionLocator,
-    text: string,
-    options: Readonly<{ messageId: string }>,
-  ): Promise<SessiondInjectResult> {
-    return this.submit(
-      requireSessiondRootLocator(locator),
-      new TextEncoder().encode(
-        BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
-      ),
-      options.messageId,
+      input.terminal,
+      input.bytes,
+      input.idempotencyKey,
+      undefined,
+      input.expectedForeground,
     );
   }
 
@@ -151,10 +117,11 @@ export class SessiondViewerAgentInput
   }
 
   private async submit(
-    locator: ReturnType<typeof requireSessiondRootLocator>,
+    locator: AutomatedInput["terminal"],
     bytes: Uint8Array,
     transactionId: string,
     isPromptPending?: () => boolean,
+    expectedForeground?: ExpectedForeground,
   ): Promise<SessiondInjectResult> {
     // TWO SessionRef incarnation semantics meet here, and confusing them is
     // exactly how the #68 live proof failed silently on every tick:
@@ -196,8 +163,10 @@ export class SessiondViewerAgentInput
       bytes,
       transactionId,
       isPromptPending,
+      expectedForeground,
     );
     if (first.outcome !== "declined") return first;
+    if (expectedForeground !== undefined) return first;
     if (!first.reason.includes(HUMAN_ORPHANED)) return first;
     return this.resolveOrphanedHumanClaim(
       locator,
@@ -206,6 +175,7 @@ export class SessiondViewerAgentInput
       transactionId,
       first.reason,
       isPromptPending,
+      expectedForeground,
     );
   }
 
@@ -221,6 +191,7 @@ export class SessiondViewerAgentInput
     transactionId: string,
     declineReason: string,
     isPromptPending?: () => boolean,
+    expectedForeground?: ExpectedForeground,
   ): Promise<SessiondInjectResult> {
     let discard: OrphanDiscardResult;
     try {
@@ -251,6 +222,7 @@ export class SessiondViewerAgentInput
       bytes,
       transactionId,
       isPromptPending,
+      expectedForeground,
     );
     if (retried.outcome === "declined") {
       return {
@@ -263,11 +235,12 @@ export class SessiondViewerAgentInput
 
   /** One attach → claim → submit → close cycle. */
   private async submitOnce(
-    locator: ReturnType<typeof requireSessiondAgentLocator>,
+    locator: AutomatedInput["terminal"],
     inspection: SessionInspection,
     bytes: Uint8Array,
     transactionId: string,
     isPromptPending?: () => boolean,
+    expectedForeground?: ExpectedForeground,
   ): Promise<SessiondInjectResult> {
     const session = {
       key: locator.sessionId,
@@ -295,6 +268,7 @@ export class SessiondViewerAgentInput
         idempotencyKey: transactionId,
         bytes,
         leaseMilliseconds: CLAIM_LEASE_MS,
+        ...(expectedForeground === undefined ? {} : { expectedForeground }),
         isPromptPending,
       });
       if (result.kind === "stale") {
@@ -310,6 +284,7 @@ export class SessiondViewerAgentInput
           reason:
             `input receipt stage ${receipt.stage}` +
             (receipt.diagnostic === null ? "" : `: ${receipt.diagnostic}`),
+          receipt,
         };
       }
       return { outcome: "injected", receipt };
