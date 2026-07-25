@@ -17,6 +17,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { writeMemory } from "../src/cli/mcp";
 import {
   memoryLiveSelfTestCli,
   runMemoryLiveSelfTest,
@@ -160,6 +161,44 @@ describe("hive memory self-test --live (defect D3)", () => {
     const semantic = lineFor(report.lines, "semantic-recall");
     expect(semantic).toContain("FAIL");
     expect(semantic).toContain("degraded:embedding-runtime-missing");
+  }, 30_000);
+
+  test("a bundle truncated at the recall token ceiling is not reported as a " +
+    "stalled projection", async () => {
+    const { port } = await makeLiveDaemon();
+    // Saturate the recall token ceiling with pitfall rows. memory_recall keeps
+    // pitfalls first and cuts the rest, so the probe's non-pitfall canary is
+    // omitted from a bundle it was ranked into — the semantic leg is healthy
+    // and the projection settles, but the canary never appears.
+    for (let index = 0; index < 7; index += 1) {
+      await writeMemory(port, {
+        scope: "repo",
+        id: `aaa-recall-budget-filler-${index}`,
+        topic: "pitfalls",
+        title:
+          `Filler pitfall ${index} with a deliberately long title so this row ` +
+          "costs a realistic share of the recall token ceiling",
+        body:
+          `Filler pitfall ${index}. ` +
+          "This body is long enough that the recall row carries a full-length " +
+          "snippet, which is what makes the row expensive enough to starve the " +
+          "articles partition of the bundle exactly as a real pitfall corpus does.",
+        source: "agent",
+        evidence: "Planted by the recall-budget regression test",
+        status: "unverified",
+        kind: "pitfall",
+        supersedes: [],
+      });
+    }
+
+    const report = await runMemoryLiveSelfTest({ settleBudgetMs: 2_000 });
+    const semantic = lineFor(report.lines, "semantic-recall");
+    expect(semantic).toContain("FAIL");
+    expect(semantic).toContain("truncated at the token ceiling");
+    expect(semantic).toContain("row(s) omitted");
+    // The load-bearing half: the probe must NOT invent a projection stall it
+    // never measured.
+    expect(semantic).not.toContain("the queued projection never settled");
   }, 30_000);
 
   test("no daemon: an honest nonzero failure, never a green run", async () => {

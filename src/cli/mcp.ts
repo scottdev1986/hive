@@ -247,6 +247,11 @@ const MemoryRecallEnvelopeSchema = z.object({
   /** "hybrid" | "disabled" | "degraded:<state>" (defect D2). */
   semantic: z.string(),
   warning: z.string().optional(),
+  /** Rows the server's recall token ceiling cut from the ranked bundle. A
+   * caller that looks for a specific row must read these: an absent row can
+   * mean "cut by the budget", not "never ranked". */
+  truncated: z.boolean().optional(),
+  omitted: z.number().optional(),
   pitfalls: z.array(MemoryRecallRowSchema),
   articles: z.array(MemoryRecallRowSchema),
 });

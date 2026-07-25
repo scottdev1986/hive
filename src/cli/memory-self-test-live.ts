@@ -273,6 +273,7 @@ export async function runMemoryLiveSelfTest(
           const deadline = Date.now() + settleBudgetMs;
           let delay = initialPollMs;
           let lastRowCount = 0;
+          let lastOmitted = 0;
           for (;;) {
             const envelope = await recallMemory(port, PARAPHRASE_QUERY);
             if (envelope.semantic.startsWith("degraded:")) {
@@ -289,16 +290,28 @@ export async function runMemoryLiveSelfTest(
             }
             const rows = [...envelope.pitfalls, ...envelope.articles];
             lastRowCount = rows.length;
+            lastOmitted = envelope.omitted ?? 0;
             if (
               rows.some((row) => row.scope === "repo" && row.id === articleId)
             ) {
               return `paraphrase recall ranks ${articleId} with semantic: hybrid`;
             }
             if (Date.now() >= deadline) {
+              // Only claim a stalled projection when the bundle was whole. A
+              // truncated bundle cut rows at the recall token ceiling, so an
+              // absent canary is evidence of budget pressure, not of the
+              // semantic leg failing to settle — naming the wrong cause here
+              // sends the reader at the embedding runtime for nothing.
               throw new Error(
                 `paraphrase recall did not surface ${articleId} within ` +
                   `${Math.round(settleBudgetMs / 1000)}s (last bundle had ` +
-                  `${lastRowCount} row(s)) — the queued projection never settled`,
+                  `${lastRowCount} row(s)) — ` +
+                  (lastOmitted > 0
+                    ? `the recall bundle was truncated at the token ceiling ` +
+                      `(${lastOmitted} row(s) omitted, pitfalls kept first), so ` +
+                      `the canary was cut from the bundle rather than missing ` +
+                      `from the index — this is not evidence about the projection`
+                    : "the queued projection never settled"),
               );
             }
             await Bun.sleep(delay);
