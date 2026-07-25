@@ -222,7 +222,7 @@ describe("composeMemoryDelta", () => {
     expect(second?.block).not.toContain("Alpha article");
   });
 
-  test("a task-matching pitfall appears even when older than the mark; non-matching articles do not", async () => {
+  test("unchanged task-matching pitfalls are not re-injected; a new warning is", async () => {
     const repo = await makeRepo();
     await writeMemoryFact(
       repo,
@@ -245,29 +245,63 @@ describe("composeMemoryDelta", () => {
     const index = new MemoryIndex(new Database(":memory:"));
     await index.rebuild(repo);
 
-    const delta = await composeMemoryDelta({
+    const unchanged = await composeMemoryDelta({
       repoRoot: repo,
       brief: "sqlite deadlock",
       highWater: mark,
       budgetTokens: 300,
       memory: index,
     });
-    expect(delta).not.toBeNull();
-    expect(delta?.block).toContain("— 0 changes");
-    expect(delta?.block).toContain("Pitfalls matching your current task:");
-    expect(delta?.block).toContain("sqlite-pitfall");
-    expect(delta?.block).toContain("[verified]");
-    expect(delta?.block).not.toContain("garden");
+    expect(unchanged).toBeNull();
+
+    await writeMemoryFact(
+      repo,
+      input({
+        id: "new-sqlite-pitfall",
+        topic: "memory",
+        title: "sqlite deadlock during projection writes",
+        kind: "pitfall",
+      }),
+    );
+    await index.rebuild(repo);
+    const changed = await composeMemoryDelta({
+      repoRoot: repo,
+      brief: "sqlite deadlock",
+      highWater: mark,
+      budgetTokens: 300,
+      memory: index,
+    });
+    expect(changed?.block).toContain("— 1 change");
+    expect(changed?.block).toContain("Pitfalls matching your current task:");
+    expect(changed?.block).toContain("new-sqlite-pitfall");
+    expect(changed?.block).toContain("[verified]");
+    expect(changed?.block).not.toContain("garden");
 
     // A brief that matches no pitfall and no changes composes to nothing.
     const empty = await composeMemoryDelta({
       repoRoot: repo,
       brief: "zzzz qqqq",
-      highWater: mark,
+      highWater: required(changed?.advanceTo),
       budgetTokens: 300,
       memory: index,
     });
     expect(empty).toBeNull();
+  });
+
+  test("reports one newest change per article", async () => {
+    const repo = await makeRepo();
+    await writeMemoryFact(repo, input({ id: "alpha", title: "Alpha article" }));
+    await demoteMemoryFact(repo, "repo", "alpha", { date: "2026-07-22" });
+
+    const delta = await composeMemoryDelta({
+      repoRoot: repo,
+      highWater: { repo: 0, global: 0 },
+      budgetTokens: 300,
+      memory: null,
+    });
+    expect(delta?.block).toContain("— 1 change ");
+    expect(delta?.block.match(/Alpha article/g)).toHaveLength(1);
+    expect(delta?.block).toContain("demoted to stale: Alpha article");
   });
 
   test("a flood of changes truncates at the budget with a loud marker; pitfalls survive", async () => {

@@ -139,9 +139,15 @@ export async function composeMemoryDelta(
   options: ComposeMemoryDeltaOptions,
 ): Promise<ComposedMemoryDelta | null> {
   const { entries, totals } = await readWikiLog(options.repoRoot);
-  const changes = entries.filter(
-    (entry) => entry.ordinal > options.highWater[entry.scope],
-  );
+  const changedByArticle = new Map<string, WikiLogEntry>();
+  for (const entry of entries) {
+    if (entry.ordinal <= options.highWater[entry.scope]) continue;
+    changedByArticle.set(
+      `${entry.scope}:${normalizeTitle(entry.title)}`,
+      entry,
+    );
+  }
+  const changes = [...changedByArticle.values()];
 
   // Facts are read once and serve both sections: the pitfall kind lookup and
   // the hint-not-authority status labels on change lines. Title is unique
@@ -158,9 +164,10 @@ export async function composeMemoryDelta(
     ),
   );
 
-  // (a) Pitfalls matching the current brief — the pitfall-check/FTS path,
-  // deliberately NOT filtered by the high-water mark: a task-matching
-  // pitfall matters however old it is.
+  // (a) Newly changed pitfalls matching the current brief. The spawn prompt
+  // already carries task-matching memory, so unchanged hits are never
+  // re-injected on later wakes. A warning added or changed after the agent's
+  // high-water mark remains an explicit system delta.
   const pitfallLines: string[] = [];
   const brief = options.brief?.trim() ?? "";
   if (brief.length > 0 && options.memory !== null) {
@@ -172,6 +179,8 @@ export async function composeMemoryDelta(
     if (pitfalls.size > 0) {
       for (const hit of options.memory.search(brief, { limit: 8 })) {
         if (!pitfalls.has(`${hit.scope}:${hit.id}`)) continue;
+        if (!changedByArticle.has(`${hit.scope}:${normalizeTitle(hit.title)}`))
+          continue;
         pitfallLines.push(
           `- [${hit.scope}/${hit.topic}] ${hit.id} (${hit.date}) ` +
             `[${hit.status}]: ${hit.title} — ${oneLine(hit.snippet)}`,
