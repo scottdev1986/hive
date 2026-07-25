@@ -402,6 +402,103 @@ describe("Claude adapter", () => {
     });
   });
 
+  // Every hook event name Claude Code 2.1.220 actually dispatches, read out of
+  // the shipped binary itself:
+  //   strings -a ~/.local/share/claude/versions/2.1.220 \
+  //     | grep -o 'hook_event_name:"[A-Za-z]*"' | sort -u
+  // This list is a checked-in literal ON PURPOSE. Deriving it from the settings
+  // Hive writes, or from a vendor list read at test time, would make the test
+  // agree with whatever it was handed and prove nothing. A name Claude does not
+  // dispatch is a hook that silently never fires and reports no error — the
+  // failure mode that put Grok's non-existent TaskCreated/TaskCompleted into a
+  // widely-cited event list.
+  const CLAUDE_HOOK_EVENTS = new Set([
+    "ConfigChange",
+    "CwdChanged",
+    "DirectoryAdded",
+    "Elicitation",
+    "ElicitationResult",
+    "FileChanged",
+    "InstructionsLoaded",
+    "MessageDisplay",
+    "Notification",
+    "PermissionDenied",
+    "PermissionRequest",
+    "PostCompact",
+    "PostToolBatch",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PreCompact",
+    "PreToolUse",
+    "SessionEnd",
+    "SessionStart",
+    "Setup",
+    "Stop",
+    "StopFailure",
+    "SubagentStart",
+    "SubagentStop",
+    "TaskCompleted",
+    "TaskCreated",
+    "TeammateIdle",
+    "UserPromptExpansion",
+    "UserPromptSubmit",
+    "WorktreeCreate",
+    "WorktreeRemove",
+  ]);
+
+  test("every registered hook event is one Claude Code actually dispatches", async () => {
+    // Both branches: graphifyUrl is what adds PreToolUse, so a run without it
+    // would never inspect that key.
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "conformance",
+      daemonPort: 4317,
+      readOnly: false,
+      graphifyUrl: "http://127.0.0.1:7777/mcp",
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as { hooks: Record<string, unknown> };
+
+    const registered = Object.keys(settings.hooks);
+    // Positive control: an all-empty read is a bad key, not an empty world.
+    expect(registered).toContain("PreToolUse");
+    expect(registered.length).toBeGreaterThan(1);
+    expect(
+      registered.filter((event) => !CLAUDE_HOOK_EVENTS.has(event)),
+    ).toEqual([]);
+  });
+
+  test("hook events carry the exact ProviderRun they speak for", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "bound",
+      daemonPort: 4317,
+      readOnly: false,
+      providerRunId: "3f2b1a90-0000-4000-8000-000000000001",
+    });
+
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as {
+      hooks: Record<string, { hooks: { command: string }[] }[]>;
+    };
+
+    // A session id is not a run id. Without this flag a hook from a superseded
+    // run arrives with a current timestamp and is attributed to whichever run
+    // is active now; the daemon rejects it only when it can compare run ids.
+    for (const event of ["SessionStart", "UserPromptSubmit", "Stop"]) {
+      expect(settings.hooks[event]?.[0]?.hooks[0]?.command).toContain(
+        "--provider-run-id 3f2b1a90-0000-4000-8000-000000000001",
+      );
+    }
+  });
+
   test("a dangerous writer bypasses permissions via settings, not the CLI flag", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "maya",

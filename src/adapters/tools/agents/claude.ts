@@ -33,6 +33,9 @@ export const claudeAgentAdapter: AgentAdapter = {
       name: context.name,
       readOnly: context.readOnly,
       dangerous: context.dangerous,
+      ...(context.providerRunId === undefined
+        ? {}
+        : { providerRunId: context.providerRunId }),
       ...(context.boardTools === undefined
         ? {}
         : { boardTools: context.boardTools }),

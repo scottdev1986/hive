@@ -115,6 +115,19 @@ describe("provider event normalization", () => {
             toolSessionId: "wrong-conversation",
           }),
         ).toBeNull();
+        // A hook left behind by a superseded run fires with a CURRENT
+        // timestamp, so the run's startedAt guard cannot catch it. The run id
+        // the settings file carries is what rejects it — and the session id
+        // matches, which is exactly why a session id alone cannot do this.
+        expect(
+          recordProviderHookEvent(db, value, {
+            kind: "turn-end",
+            agentName: value.name,
+            providerRunId: "018f1e90-7b5a-7cc0-8000-000000000299",
+            timestamp: at,
+            toolSessionId: `${tool}-conversation`,
+          }),
+        ).toBeNull();
         expect(db.listProviderEvents(active.runId)).toHaveLength(1);
       }
     } finally {

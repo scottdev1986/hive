@@ -86,7 +86,15 @@ export type ClaudeAgentConfigOptions = Pick<
   | "dangerous"
   | "graphifyUrl"
   | "hiveCommand"
->;
+> & {
+  /** The exact ProviderRun this settings file speaks for. Claude's hook payload
+   * carries a session id but no run id, and a session is not a run: a hook from
+   * a superseded run reaches the daemon with a current timestamp and would
+   * otherwise be attributed to whichever run is active now. Hive owns this file,
+   * so the run id rides the hook's own argv. Absent for the orchestrator, which
+   * has no ProviderRun. */
+  providerRunId?: string;
+};
 
 export type CommandRunner = (argv: string[]) => Promise<{
   stdout: string;
@@ -544,6 +552,9 @@ export async function writeClaudeAgentConfig(
       String(options.daemonPort),
       "--instance-id",
       hiveInstanceSuffix(),
+      ...(options.providerRunId === undefined
+        ? []
+        : ["--provider-run-id", shellToken(options.providerRunId)]),
     ].join(" ");
 
   // Denied tools are removed from the session and its subagents, including in
