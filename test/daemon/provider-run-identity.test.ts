@@ -183,6 +183,7 @@ describe("C0 provider-run identity", () => {
     ).toThrow("mismatched sessiond SessionLocator");
     expect(sessiondForegroundJobIsDead(unmanaged)).toBe(false);
     expect(sessiondAgentProviderRunIsDead(shellIdle, activeRun)).toBe(false);
+    expect(sessiondAgentProviderRunIsDead(unmanaged, activeRun)).toBe(false);
     expect(sessiondAgentProviderRunIsDead(unmanaged, null)).toBe(true);
   });
 
