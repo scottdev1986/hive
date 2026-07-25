@@ -6163,9 +6163,9 @@ export class HiveDaemon {
     server.registerTool(
       "hive_read_message",
       {
-        title: "Read full orchestrator message",
+        title: "Read exact durable message",
         description:
-          "Read one full agent report by the id referenced in a bounded orchestrator envelope.",
+          "Read one byte-complete message by the id referenced in a bounded projection or orchestrator envelope. Agents may read only messages addressed to themselves.",
         inputSchema: ReadMessageRequestSchema,
       },
       async ({ id }) => {
@@ -6173,12 +6173,24 @@ export class HiveDaemon {
           capability,
           "hive_read_message",
           "message:read",
-          undefined,
+          capability.subject,
           false,
         );
-        const message = this.delivery.readOrchestratorMessage(id);
+        const message =
+          capability.role === "operator" ||
+          capability.role === "orchestrator"
+            ? this.delivery.readOrchestratorMessage(id)
+            : this.db.getMessage(id);
+        if (
+          message !== null &&
+          capability.role !== "operator" &&
+          capability.role !== "orchestrator" &&
+          message.to !== capability.subject
+        ) {
+          throw new Error(`Message not found for ${capability.subject}: ${id}`);
+        }
         if (message === null) {
-          throw new Error(`Orchestrator message not found: ${id}`);
+          throw new Error(`Message not found for ${capability.subject}: ${id}`);
         }
         return toolResult(message, "message");
       },

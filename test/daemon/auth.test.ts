@@ -290,7 +290,6 @@ describe("a foreign agent cannot act on another tenant", () => {
       ["hive_approve", { id: "any", decision: "approve" }],
       ["hive_approvals", {}],
       ["hive_recover", {}],
-      ["hive_read_message", { id: "any" }],
       ["hive_quota_reconcile", {}],
     ] as const) {
       expect([tool, (await callTool(daemon, token, tool, args)).ok]).toEqual([
@@ -300,6 +299,41 @@ describe("a foreign agent cannot act on another tenant", () => {
     }
     expect(spawner.requests).toHaveLength(0);
     expect(denials(daemon)).toContain("capability.forbidden-action");
+    await daemon.stop();
+  });
+
+  test("a worker retrieves only an exact message addressed to itself", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord());
+    db.upsertAgent(
+      agentRecord({
+        id: "agent-zara",
+        name: "zara",
+        worktreePath: "/tmp/hive-zara",
+        branch: "hive/zara-work",
+      }),
+    );
+    const own = await daemon.delivery.send("queen", "maya", "exact body");
+    const foreign = await daemon.delivery.send(
+      "queen",
+      "zara",
+      "foreign body",
+    );
+    const root = await daemon.delivery.send("maya", "queen", "agent report");
+
+    for (const role of ["writer", "reader"] as const) {
+      const token = daemon.capabilities.mint("maya", role).token;
+      expect(
+        (await callTool(daemon, token, "hive_read_message", { id: own.id })).ok,
+      ).toBe(true);
+      expect(
+        (await callTool(daemon, token, "hive_read_message", { id: foreign.id }))
+          .ok,
+      ).toBe(false);
+      expect(
+        (await callTool(daemon, token, "hive_read_message", { id: root.id })).ok,
+      ).toBe(false);
+    }
     await daemon.stop();
   });
 

@@ -25,9 +25,9 @@ Four roles exist (`src/daemon/capabilities.ts:97-136`), and the interesting prop
 
 **Orchestrator** — the root agent, named queen. Prefer queen when addressing or referring to it; the role name orchestrator remains correct, and old/`orchestrator` addressing is still understood. Spawns, approves, kills, recovers, reads the global inbox, and reads autonomy. It holds **no landing right and no autonomy/routing write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge. Naming does not change this matrix.
 
-**Writer** — a spawned agent with a worktree and a branch. It talks, reads its own inbox, acks its own controls, reports its own events, writes memory, and — exactly once, at the current epoch, for its own branch — lands.
+**Writer** — a spawned agent with a worktree and a branch. It talks, reads its own inbox and exact messages addressed to itself, acks its own controls, reports its own events, writes memory, and — exactly once, at the current epoch, for its own branch — lands.
 
-**Reader** — read-only: talks and reports on itself. No `branch:land`, no `memory:write`.
+**Reader** — read-only: talks, reads exact messages addressed to itself, and reports on itself. No `branch:land`, no `memory:write`.
 
 The asymmetry is the design. **No role is a superset of another that both decides and merges** — orchestrator and writer are disjoint. A captured credential of any kind buys a strict subset of the control plane (`src/daemon/capabilities.ts:97-100`).
 
@@ -50,7 +50,7 @@ Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrat
 | `approval:decide` | O R | any-subject for R |
 | `message:send` | O R W r | |
 | `message:ack` | O R W r | **epoch-checked** |
-| `message:read` | O R | queen (orchestrator) inbox only |
+| `message:read` | O R W r | roots read queen-bound messages; workers read only messages addressed to their own capability subject |
 | `inbox:read` | O R W r | |
 | `branch:land` | **O W** | **epoch-checked; one-shot for W** |
 | `memory:read` | O R W r | |
