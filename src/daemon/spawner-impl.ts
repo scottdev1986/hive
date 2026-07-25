@@ -844,7 +844,7 @@ export interface HiveSpawnerDependencies {
   mcpClientSeen?: (subject: string, since: string) => boolean;
   /** §03: resolves once the boot's all-provider quota refresh has settled. */
   quotaReady?: () => Promise<unknown>;
-  /** §06: a model-layer failure the vendor says is a rate limit goes to the
+  /** §07: a model-layer failure the vendor says is a rate limit goes to the
    * drain handler, never the launch-failure quarantine. */
   drainError?: (agent: AgentRecord, failure: string) => Promise<void>;
   /** Test seam to collapse the reachability wait's deadline. */
@@ -3087,7 +3087,7 @@ export class HiveSpawner implements Spawner {
         return this.dependencies.db.getAgentById(record.id) ?? stopping;
       }
     }
-    // §06: a vendor rate-limit error is a drain, not a route failure — the
+    // §07: a vendor rate-limit error is a drain, not a route failure — the
     // quarantine would punish a healthy route for an empty meter.
     const vendorDrain =
       layer === "model" && classifyVendorDrainError(record.tool, failureReason);

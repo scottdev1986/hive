@@ -364,7 +364,7 @@ export async function runDaemon(): Promise<void> {
     mcpClientSeen: (subject, since) => daemon.mcpClientSeen(subject, since),
     // §03: the first quota-aware spawn waits for the boot refresh to settle.
     quotaReady: () => daemon.quotaReady(),
-    // §06: a spawn that dies of a vendor rate limit is a drain, not a crash.
+    // §07: a spawn that dies of a vendor rate limit is a drain, not a crash.
     drainError: (agent, failure) => daemon.onVendorDrainError(agent, failure),
     assignments: {
       open: (agentId, openedAt) =>

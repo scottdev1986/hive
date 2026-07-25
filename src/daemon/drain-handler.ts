@@ -103,7 +103,7 @@ export class DrainHandler {
     this.drainErrors.delete(provider);
   }
 
-  /** A spawn or turn failed with a vendor rate-limit error (§06). Routes
+  /** A spawn or turn failed with a vendor rate-limit error (§07). Routes
    * here INSTEAD of the launch-failure quarantine: the route is not broken,
    * the meter is empty. The agent is already terminal at this point — a hold
    * is meaningless for a corpse, so C4 reports the replacement seam without

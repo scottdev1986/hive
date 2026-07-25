@@ -667,7 +667,7 @@ export class QuotaService {
   /** Whether this provider has a usage surface at all (a probe). opencode
    * does not: its drain is only knowable through vendor errors. A metered
    * provider whose pool has not been read yet is UNKNOWN, not unmetered —
-   * and unknown stays a spawnable wildcard (§05), never a drain. */
+   * and unknown stays a spawnable wildcard (§10), never a drain. */
   isMetered(provider: CapabilityProvider): boolean {
     return this.probes.some((probe) => probe.provider === provider);
   }

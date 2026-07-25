@@ -128,7 +128,7 @@ export interface CrashRecoveryDependencies {
   mcpClientSeen?: (subject: string, since: string) => boolean;
   /** Test seam to collapse the reachability wait's deadline. */
   mcpReportingTimeoutMs?: number;
-  /** §06: a resume that died of a vendor rate limit goes to the drain
+  /** §07: a resume that died of a vendor rate limit goes to the drain
    * handler instead of being left dead on a healthy route. */
   drainError?: (agent: AgentRecord, failure: string) => Promise<void>;
   claudeExecutable?: string;
@@ -774,7 +774,7 @@ export class CrashRecovery {
       );
     }
     const outcome = await this.markDead(agent, reason);
-    // §06: a resume that died of the vendor's rate limit is a drain, not a
+    // §07: a resume that died of the vendor's rate limit is a drain, not a
     // crash — the drain handler respawns the work elsewhere rather than
     // leaving a healthy route blamed.
     if (classifyVendorDrainError(agent.tool, failure)) {

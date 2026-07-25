@@ -1288,7 +1288,7 @@ export class HiveDaemon {
       port: () => this.listeningPort ?? this.port,
       // #57: a resume whose hive MCP never answers is refused, not recorded.
       mcpClientSeen: (subject, since) => this.mcpClientSeen(subject, since),
-      // §06: a resume that dies of a vendor rate limit is a drain, not a crash.
+      // §07: a resume that dies of a vendor rate limit is a drain, not a crash.
       drainError: (agent, failure) =>
         this.drainHandler.onVendorError(agent, failure),
       revokeCapabilities: (agentName) => {
@@ -1891,7 +1891,7 @@ export class HiveDaemon {
     await this.quotaBootRefresh;
   }
 
-  /** §06: vendor rate-limit failures route to the drain handler, never the
+  /** §07: vendor rate-limit failures route to the drain handler, never the
    * launch-failure quarantine. */
   async onVendorDrainError(
     agent: AgentRecord,
