@@ -121,34 +121,6 @@ test("crash recovery refuses to resolve an unknown vendor's session with the cod
   db.close();
 });
 
-test("crash recovery refuses to resume an unknown vendor with codex's config and flags", async () => {
-  const db = new HiveDatabase(join(home, "resume.db"));
-  const sessions = new RecordingRecoverySessions();
-  let codexConfigs = 0;
-  const recovery = new CrashRecovery({
-    authorizeLaunch: async (identity) =>
-      required((await authorizeForQuotaTest([identity]))[0]),
-    ...deps(db, sessions),
-    writeCodexConfig: async () => {
-      codexConfigs += 1;
-    },
-  });
-
-  // A known session id skips the resolver, so the resume dispatch itself is
-  // what this exercises.
-  const outcomes = await unknownVendorSweep(db, recovery, {
-    toolSessionId: "session-1",
-  });
-
-  expect(outcomes[0]?.action).toBe("skipped");
-  expect(outcomes[0]?.reason).toMatch(/unknown vendor "future-vendor"/);
-  // A silent fallthrough would have written a Codex agent config and launched
-  // `codex resume` in the worktree.
-  expect(codexConfigs).toBe(0);
-  expect(sessions.created).toEqual([]);
-  db.close();
-});
-
 test("every vendor Hive knows is read, so a new one cannot be silently skipped", async () => {
   const asked: CapabilityProvider[] = [];
   const read = await forEachProvider(async (provider) => {
@@ -432,9 +404,6 @@ function deps(db: HiveDatabase, sessions: RecordingRecoverySessions) {
     flushQueued: () => {},
     worktreeExists: () => true,
     sleep: async () => {},
-    seedClaudeTrust: async () => {},
-    writeClaudeConfig: async () => {},
-    writeCodexConfig: async () => {},
   } as unknown as ConstructorParameters<typeof CrashRecovery>[0];
 }
 

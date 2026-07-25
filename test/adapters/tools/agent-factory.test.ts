@@ -126,7 +126,7 @@ describe("agent adapter factory", () => {
       daemonPort: 41000,
       readOnly: false,
       dangerous: false,
-      capabilityToken: "secret-token",
+      withCapability: true,
       instructionPath: "/tmp/prompt.txt",
       sessionId: "session-1",
       kickoff: "Begin the assigned task.",

@@ -13,7 +13,7 @@ export interface AgentSpawnContext {
   dangerous: boolean;
   executable?: string;
   hiveCommand?: readonly string[];
-  capabilityToken?: string;
+  withCapability?: boolean;
   graphifyUrl?: string;
   instructionPath?: string;
   sessionId?: string;

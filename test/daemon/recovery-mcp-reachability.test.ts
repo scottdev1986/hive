@@ -96,9 +96,6 @@ function deps(
     flushQueued: async () => {},
     worktreeExists: () => true,
     sleep: async () => {},
-    seedClaudeTrust: async () => {},
-    writeClaudeConfig: async () => {},
-    writeCodexConfig: async () => {},
     ...over,
   } as unknown as ConstructorParameters<typeof CrashRecovery>[0];
 }

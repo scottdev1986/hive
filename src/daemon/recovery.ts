@@ -1,36 +1,13 @@
 import { existsSync } from "node:fs";
-import { wrapSpawnWithCapabilityEnv } from "../adapters/tools/capability-env";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import {
-  buildClaudeResumeCommand,
   discoverClaudeRecoverySessionId,
   resolveWorkingClaudeExecutable,
-  seedClaudeWorktreeTrust,
-  writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
-import {
-  buildCodexResumeCommand,
-  discoverCodexRecoverySessionId,
-  writeCodexAgentConfig,
-} from "../adapters/tools/codex";
-import {
-  buildGrokResumeCommand,
-  discoverGrokRecoverySessionId,
-  wrapGrokSpawnWithCompatibilityEnv,
-  writeGrokAgentConfig,
-} from "../adapters/tools/grok";
-import {
-  buildKimiResumeCommand,
-  discoverKimiRecoverySessionId,
-  wrapKimiSpawnWithEffort,
-  wrapKimiWithInstructionFile,
-  writeKimiAgentConfig,
-} from "../adapters/tools/kimi";
-import {
-  buildOpencodeResumeCommand,
-  discoverOpencodeRecoverySessionId,
-  OPENCODE_HIVE_AGENT,
-  writeOpencodeAgentConfig,
-} from "../adapters/tools/opencode";
+import { discoverCodexRecoverySessionId } from "../adapters/tools/codex";
+import { discoverGrokRecoverySessionId } from "../adapters/tools/grok";
+import { discoverKimiRecoverySessionId } from "../adapters/tools/kimi";
+import { discoverOpencodeRecoverySessionId } from "../adapters/tools/opencode";
 import {
   type AgentRecord,
   CapabilityProviderSchema,
@@ -45,12 +22,7 @@ import {
   requireAuthorizedLaunch,
 } from "./authorized-launch";
 import type { HiveDatabase } from "./db";
-import {
-  codexInstructionProfileName,
-  launchPromptPath,
-  wrapCodexWithInstructionProfile,
-  wrapGrokWithRulesFile,
-} from "./launch-prompt";
+import { launchPromptPath } from "./launch-prompt";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import {
   LAUNCH_FAILURE_PATTERNS,
@@ -65,7 +37,6 @@ import {
   sessiondAgentProviderRunIsDead,
 } from "./session-host/hive-terminal-host";
 import { nextAgentSessionLocator } from "./session-host/locators";
-import { shellJoin } from "./session-host/shell-session";
 import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
@@ -164,16 +135,6 @@ export interface CrashRecoveryDependencies {
   grokExecutable?: string;
   kimiExecutable?: string;
   opencodeExecutable?: string;
-  /** Config-writer seams so tests can resume into synthetic worktrees; the
-   * defaults write the real per-worktree agent configs. A failed write fails
-   * the resume — the spawn-time config may name a daemon port this restarted
-   * daemon no longer holds. */
-  seedClaudeTrust?: (worktreePath: string) => Promise<void>;
-  writeClaudeConfig?: typeof writeClaudeAgentConfig;
-  writeCodexConfig?: typeof writeCodexAgentConfig;
-  writeGrokConfig?: typeof writeGrokAgentConfig;
-  writeKimiConfig?: typeof writeKimiAgentConfig;
-  writeOpencodeConfig?: typeof writeOpencodeAgentConfig;
   /** The current writer autonomy, read at resume time so a recovered agent
    * matches the setting the user can see in the Workspace menu — a thunk
    * because the user may flip the dial mid-session. Absent fails safe to the
@@ -220,12 +181,6 @@ export class CrashRecovery {
   private readonly grokExecutable: string;
   private readonly kimiExecutable: string;
   private readonly opencodeExecutable: string;
-  private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
-  private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
-  private readonly writeCodexConfig: typeof writeCodexAgentConfig;
-  private readonly writeGrokConfig: typeof writeGrokAgentConfig;
-  private readonly writeKimiConfig: typeof writeKimiAgentConfig;
-  private readonly writeOpencodeConfig: typeof writeOpencodeAgentConfig;
   private readonly readCodexActivity: (
     worktreePath: string,
     toolSessionId: string | undefined,
@@ -279,13 +234,6 @@ export class CrashRecovery {
     this.grokExecutable = deps.grokExecutable ?? "grok";
     this.kimiExecutable = deps.kimiExecutable ?? "kimi";
     this.opencodeExecutable = deps.opencodeExecutable ?? "opencode";
-    this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
-    this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
-    this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
-    this.writeGrokConfig = deps.writeGrokConfig ?? writeGrokAgentConfig;
-    this.writeKimiConfig = deps.writeKimiConfig ?? writeKimiAgentConfig;
-    this.writeOpencodeConfig =
-      deps.writeOpencodeConfig ?? writeOpencodeAgentConfig;
     this.readCodexActivity =
       deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
@@ -658,185 +606,41 @@ export class CrashRecovery {
         );
       }
       requireAuthorizedLaunch(authorized);
-      // One switch decides both the config the resume writes and the argv it
-      // launches: a vendor with no arm gets neither, and the throw lands in
-      // the launch-failure catch below naming it. Splitting the two would let
-      // a future vendor write one harness's config and launch the other's CLI.
-      let argv: string[];
       const sessionKey = requireSessiondAgentLocator(record).sessionId;
       const instructionPath = launchPromptPath(sessionKey);
       const hasInstructions = existsSync(instructionPath);
-      switch (record.tool) {
-        case "claude": {
-          // Re-seed rather than assume: the operator's ~/.claude.json may have
-          // been reset between the crash and the resume, and an unattended
-          // resume that meets the trust dialog stalls exactly like a spawn.
-          // Best-effort because the existing file usually already records
-          // trust — but never silently: a failed seed is the prime suspect
-          // when a resume stalls.
-          await this.seedClaudeTrust(worktreePath).catch((error: unknown) => {
+      const adapter = getAgentAdapter(record.tool);
+      await adapter
+        .prepareWorktree?.(worktreePath)
+        .catch((error: unknown) => {
             console.error(
-              `Hive could not re-seed worktree trust for ${record.name}: ${
+              `Hive could not re-prepare ${record.name}'s worktree: ${
                 error instanceof Error ? error.message : "unknown error"
               }`,
             );
           });
-          // The config write must succeed or the resume must fail: the
-          // spawn-time config carries a daemon port this restarted daemon may
-          // no longer hold, and an agent whose hooks post to a dead port can
-          // never prove life. A throw here lands in the launch-failure catch
-          // below.
-          await this.writeClaudeConfig(worktreePath, {
-            daemonPort: this.daemonPort(),
-            name: record.name,
-            readOnly: record.readOnly,
-            dangerous,
-          });
-          argv = buildClaudeResumeCommand(
-            {
-              daemonPort: this.daemonPort(),
-              model,
-              ...(identity?.tool === "claude" && identity.effort !== undefined
-                ? { effort: identity.effort }
-                : {}),
-              name: record.name,
-              readOnly: record.readOnly,
-              dangerous,
-              worktreePath,
-              executable: this.claudeExecutable,
-              ...(hasInstructions
-                ? { appendSystemPromptFile: instructionPath }
-                : {}),
-            },
-            sessionId,
-          );
-          break;
-        }
-        case "codex": {
-          await this.writeCodexConfig(worktreePath, {
-            daemonPort: this.daemonPort(),
-            name: record.name,
-            readOnly: record.readOnly,
-            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-          });
-          argv = buildCodexResumeCommand(
-            {
-              daemonPort: this.daemonPort(),
-              effort: identity?.tool === "codex" ? identity.effort : "medium",
-              model,
-              name: record.name,
-              readOnly: record.readOnly,
-              dangerous,
-              worktreePath,
-              executable: this.codexExecutable,
-              // Codex names its bearer env var on the command line, not in the
-              // config file. Without this the resume exports the variable and
-              // then never references it, and the agent comes back
-              // unauthenticated.
-              withCapabilityToken: true,
-              ...(hasInstructions
-                ? {
-                    profile: codexInstructionProfileName(sessionKey),
-                  }
-                : {}),
-            },
-            sessionId,
-          );
-          break;
-        }
-        case "grok": {
-          await this.writeGrokConfig(worktreePath, {
-            daemonPort: this.daemonPort(),
-          });
-          argv = buildGrokResumeCommand(
-            {
-              model,
-              ...(identity?.tool === "grok" && identity.effort !== undefined
-                ? { effort: identity.effort }
-                : {}),
-              worktreePath,
-              readOnly: record.readOnly,
-              executable: this.grokExecutable,
-            },
-            sessionId,
-          );
-          break;
-        }
-        case "kimi": {
-          await this.writeKimiConfig(worktreePath, {
-            daemonPort: this.daemonPort(),
-          });
-          argv = buildKimiResumeCommand(
-            {
-              model,
-              readOnly: record.readOnly,
-              dangerous,
-              executable: this.kimiExecutable,
-            },
-            sessionId,
-          );
-          break;
-        }
-        case "opencode": {
-          await this.writeOpencodeConfig(worktreePath, {
-            daemonPort: this.daemonPort(),
-            readOnly: record.readOnly,
-            ...(hasInstructions ? { instructionPath } : {}),
-          });
-          argv = buildOpencodeResumeCommand(
-            {
-              model,
-              readOnly: record.readOnly,
-              dangerous,
-              executable: this.opencodeExecutable,
-              ...(hasInstructions ? { agent: OPENCODE_HIVE_AGENT } : {}),
-            },
-            sessionId,
-          );
-          break;
-        }
-        default:
-          unknownVendor(record.tool, "crash recovery resume");
-      }
-      const command = (() => {
-        const joined = shellJoin(argv);
-        // Every provider but claude — which runs a headers helper — reads its
-        // capability from the environment, so a resumed session needs the same
-        // prefix a spawn gets or it comes back unauthorized. The prefix must sit
-        // directly in front of the provider command: `exec` and the instruction
-        // wrapper's leading `mkdir`/`install` would consume the assignment.
-        const withCapability = (command: string): string =>
-          record.tool === "claude"
-            ? command
-            : wrapSpawnWithCapabilityEnv(command, record.name);
-        if (record.tool === "grok") {
-          return withCapability(
-            wrapGrokSpawnWithCompatibilityEnv(
-              hasInstructions
-                ? wrapGrokWithRulesFile(joined, instructionPath)
-                : joined,
-            ),
-          );
-        }
-        if (record.tool === "kimi") {
-          // Effort rides the environment (kimi has no flag for it) and the
-          // recovered brief is reinstalled as .kimi-code/AGENTS.md.
-          const withEffort =
-            identity?.tool === "kimi" && identity.effort !== undefined
-              ? wrapKimiSpawnWithEffort(withCapability(joined), identity.effort)
-              : withCapability(joined);
-          return hasInstructions
-            ? wrapKimiWithInstructionFile(withEffort, instructionPath)
-            : withEffort;
-        }
-        if (record.tool === "codex" && hasInstructions) {
-          return wrapCodexWithInstructionProfile(
-            withCapability(joined),
-            sessionKey,
-          );
-        }
-        return withCapability(joined);
-      })();
+      const prepared = await adapter.prepareSpawn({
+        daemonPort: this.daemonPort(),
+        model,
+        ...(identity.effort === undefined ? {} : { effort: identity.effort }),
+        name: record.name,
+        readOnly: record.readOnly,
+        dangerous,
+        worktreePath,
+        executable: {
+          claude: this.claudeExecutable,
+          codex: this.codexExecutable,
+          grok: this.grokExecutable,
+          kimi: this.kimiExecutable,
+          opencode: this.opencodeExecutable,
+        }[record.tool],
+        hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+        ...(hasInstructions ? { instructionPath } : {}),
+        sessionId: sessionKey,
+        resumeSessionId: sessionId,
+        withCapability: true,
+      });
+      const { argv, command } = prepared;
       const revalidated =
         (await this.deps.authorizeLaunch?.(identity, record.category)) ?? null;
       if (

@@ -62,9 +62,9 @@ export const opencodeAgentAdapter: AgentAdapter = {
     return {
       argv,
       command:
-        context.capabilityToken === undefined
-          ? command
-          : wrapSpawnWithCapabilityEnv(command, context.name),
+        context.withCapability === true
+          ? wrapSpawnWithCapabilityEnv(command, context.name)
+          : command,
     };
   },
   discover: (

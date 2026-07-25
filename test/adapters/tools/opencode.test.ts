@@ -187,7 +187,7 @@ describe("opencode adapter", () => {
       daemonPort: 41000,
       readOnly: false,
       dangerous: false,
-      capabilityToken: "secret-token",
+      withCapability: true,
       instructionPath: "/tmp/prompt.txt",
       kickoff: "Begin the assigned task.",
     });

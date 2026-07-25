@@ -60,7 +60,7 @@ export const codexAgentAdapter: AgentAdapter = {
         ? {}
         : { executable: context.executable }),
       excludeMcpServers: context.excludeMcpServers ?? [],
-      withCapabilityToken: context.capabilityToken !== undefined,
+      withCapabilityToken: context.withCapability === true,
       ...(withInstructions
         ? { profile: codexInstructionProfileName(sessionId) }
         : {}),
@@ -75,7 +75,7 @@ export const codexAgentAdapter: AgentAdapter = {
     let command = shellJoin(
       context.kickoff === undefined ? argv : [...argv, context.kickoff],
     );
-    if (context.capabilityToken !== undefined) {
+    if (context.withCapability === true) {
       command = wrapSpawnWithCapabilityEnv(command, context.name);
     }
     if (withInstructions) {

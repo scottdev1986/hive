@@ -1743,7 +1743,7 @@ export class HiveSpawner implements Spawner {
         worktreePath: agent.worktreePath,
         executable: this.executableFor(identity.tool),
         hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-        ...(capabilityToken === undefined ? {} : { capabilityToken }),
+        ...(capabilityToken === undefined ? {} : { withCapability: true }),
         instructionPath,
         sessionId: this.requireAgentLocator(agent).sessionId,
         ...(identity.tool === "grok" && agent.toolSessionId !== undefined
@@ -2800,7 +2800,7 @@ export class HiveSpawner implements Spawner {
         worktreePath: worktree.path,
         executable: this.executableFor(tool),
         hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-        ...(capabilityToken === undefined ? {} : { capabilityToken }),
+        ...(capabilityToken === undefined ? {} : { withCapability: true }),
         ...(graphifyUrl === null ? {} : { graphifyUrl }),
         instructionPath,
         sessionId: this.requireAgentLocator(record).sessionId,

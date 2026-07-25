@@ -63,7 +63,7 @@ export const grokAgentAdapter: AgentAdapter = {
       );
     }
     command = wrapGrokSpawnWithCompatibilityEnv(command);
-    if (context.capabilityToken !== undefined) {
+    if (context.withCapability === true) {
       command = wrapSpawnWithCapabilityEnv(command, context.name);
     }
     return { argv, command };

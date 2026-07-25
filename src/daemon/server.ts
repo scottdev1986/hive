@@ -604,10 +604,6 @@ export interface HiveDaemonOptions {
     claudeExecutable?: string;
     codexExecutable?: string;
     grokExecutable?: string;
-    seedClaudeTrust?: CrashRecoveryDependencies["seedClaudeTrust"];
-    writeClaudeConfig?: CrashRecoveryDependencies["writeClaudeConfig"];
-    writeCodexConfig?: CrashRecoveryDependencies["writeCodexConfig"];
-    writeGrokConfig?: CrashRecoveryDependencies["writeGrokConfig"];
     readCodexActivity?: CrashRecoveryDependencies["readCodexActivity"];
   };
   /** The live autonomy dial: read by `/autonomy` and by crash recovery (so a
@@ -1348,18 +1344,6 @@ export class HiveDaemon {
       ...(options.recovery?.grokExecutable === undefined
         ? {}
         : { grokExecutable: options.recovery.grokExecutable }),
-      ...(options.recovery?.seedClaudeTrust === undefined
-        ? {}
-        : { seedClaudeTrust: options.recovery.seedClaudeTrust }),
-      ...(options.recovery?.writeClaudeConfig === undefined
-        ? {}
-        : { writeClaudeConfig: options.recovery.writeClaudeConfig }),
-      ...(options.recovery?.writeCodexConfig === undefined
-        ? {}
-        : { writeCodexConfig: options.recovery.writeCodexConfig }),
-      ...(options.recovery?.writeGrokConfig === undefined
-        ? {}
-        : { writeGrokConfig: options.recovery.writeGrokConfig }),
       ...(options.recovery?.readCodexActivity === undefined
         ? {}
         : { readCodexActivity: options.recovery.readCodexActivity }),

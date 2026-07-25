@@ -50,7 +50,7 @@ export const kimiAgentAdapter: AgentAdapter = {
     if (context.effort !== undefined) {
       command = wrapKimiSpawnWithEffort(command, context.effort);
     }
-    if (context.capabilityToken !== undefined) {
+    if (context.withCapability === true) {
       command = wrapSpawnWithCapabilityEnv(command, context.name);
     }
     // After the env prefixes, never before: the instruction wrapper leads with
