@@ -178,6 +178,22 @@ describe("opencode adapter", () => {
     expect(respawned.agent.hive).toEqual(written.agent.hive);
   });
 
+  test("a writer's agent carries no permission set, so bash stays reachable", async () => {
+    const root = await worktree();
+    await writeOpencodeAgentConfig(root, {
+      daemonPort: 4317,
+      instructionPath: "/tmp/prompt.txt",
+      readOnly: false,
+    });
+    const written = JSON.parse(
+      await readFile(join(root, "opencode.json"), "utf8"),
+    ) as { agent: Record<string, Record<string, unknown>> };
+    // Measured against opencode 1.18.5: a blanket `bash: "deny"` removes the
+    // tool from the model's tool list rather than refusing calls, so a writer
+    // that inherits the barrier has no shell at all and cannot run `git log`.
+    expect(written.agent.hive).not.toHaveProperty("permission");
+  });
+
   test("prepareSpawn keeps the token out of argv and passes the kickoff as --prompt", async () => {
     const root = await worktree();
     const prepared = await getAgentAdapter("opencode").prepareSpawn({
