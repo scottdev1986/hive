@@ -1,5 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readlink,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { provisionSkills } from "../../src/adapters/skills";
@@ -528,6 +536,97 @@ describe("hive wiring", () => {
         ...(await assessStrandedWork(repoRoot, created.path, created.branch)),
       }).toEqual({ tool, dirtyFiles: [], unmergedCommits: 0 });
     }
+  });
+
+  // Codex, Grok and Kimi all read `.agents/skills`. A link the agent made
+  // itself, pointing at a skill only Grok can see, is the agent's work — and
+  // calling it Hive's wiring is what lets reconciliation delete the worktree.
+  // The expectation is written out, not re-derived from the live skill roots:
+  // a baseline read from the same source as the code under test agrees with a
+  // broken implementation.
+  test("does not adopt a foreign vendor's skill link as its own wiring", async () => {
+    for (const name of ["grok/grok-only", "every-vendor"]) {
+      await mkdir(join(repoRoot, ".hive", "skills", name), { recursive: true });
+      await writeFile(
+        join(repoRoot, ".hive", "skills", name, "SKILL.md"),
+        `# ${name}\n`,
+      );
+    }
+
+    const created = await createWorktree(
+      repoRoot,
+      "foreignlink",
+      "hive wiring",
+    );
+    await provisionSkills(repoRoot, created.path, "codex");
+    // Made after the spawn, at a path Codex provisioning never wrote.
+    await symlink(
+      join(repoRoot, ".hive", "skills", "grok", "grok-only"),
+      join(created.path, ".agents", "skills", "grok-only"),
+      "dir",
+    );
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.dirtyFiles).toEqual([".agents/skills/grok-only"]);
+  });
+
+  // A name belongs to the vendor bucket that owns it. Codex and Kimi share
+  // `.agents/skills`, so one name has two sources, and Codex's correctly staged
+  // link must not be read against Kimi's.
+  test("keeps a link clean when another vendor owns the same skill name", async () => {
+    for (const vendor of ["codex", "kimi"]) {
+      await mkdir(join(repoRoot, ".hive", "skills", vendor, "review"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(repoRoot, ".hive", "skills", vendor, "review", "SKILL.md"),
+        `# ${vendor} review\n`,
+      );
+    }
+
+    const created = await createWorktree(repoRoot, "namecollide", "hive");
+    await provisionSkills(repoRoot, created.path, "codex");
+
+    expect(
+      await readlink(join(created.path, ".agents", "skills", "review")),
+    ).toBe(join(repoRoot, ".hive", "skills", "codex", "review"));
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.dirtyFiles).toEqual([]);
+  });
+
+  // Cleanup must know what provisioning did, not what it would do now. Deleting
+  // a source leaves behind a link Hive really did create, and a worktree that
+  // reads dirty forever is never reaped.
+  test("keeps a provisioned link clean after its source is deleted", async () => {
+    await mkdir(join(repoRoot, ".hive", "skills", "vanishing"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(repoRoot, ".hive", "skills", "vanishing", "SKILL.md"),
+      "# vanishing\n",
+    );
+
+    const created = await createWorktree(repoRoot, "vanishing", "hive");
+    await provisionSkills(repoRoot, created.path, "claude");
+    await rm(join(repoRoot, ".hive", "skills", "vanishing"), {
+      recursive: true,
+      force: true,
+    });
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded.dirtyFiles).toEqual([]);
   });
 
   // A path Hive would have staged is not Hive's unless the thing there is that

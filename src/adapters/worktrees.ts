@@ -17,7 +17,11 @@ import {
   isLiveAgent,
 } from "../schemas";
 import { shippedSkillsFor } from "../skills/shipped";
-import { nativeSkillDirectory, stagedSkillLinks } from "./skills";
+import {
+  nativeSkillDirectory,
+  provisionedSkillLinks,
+  SKILL_LINK_MANIFEST,
+} from "./skills";
 import { grokHookFilename, ownsGrokHook } from "./tools/grok";
 
 interface GitResult {
@@ -85,7 +89,10 @@ export async function observedWorktreeFiles(
     }
   }
   const observed: string[] = [];
-  const skillLinks = await stagedSkillLinks(repoRoot);
+  const skillLinks =
+    worktreePath === null
+      ? new Map<string, string>()
+      : await provisionedSkillLinks(worktreePath);
   for (const path of paths) {
     if (!(await isHiveWorktreeWiring(path, worktreePath, skillLinks))) {
       observed.push(path);
@@ -567,6 +574,7 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
   ".kimi-code/mcp.json",
   ".kimi-code/AGENTS.md",
   "opencode.json",
+  SKILL_LINK_MANIFEST,
 ];
 
 /**
@@ -578,8 +586,8 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
  * `<repo>/.hive/skills` under the same parents, are covered too — but by
  * `isStagedSkillLink` below rather than this constant, because their names are
  * whatever the user wrote. They were once described as permanently unsweepable
- * for that reason; they are not. Hive knows which links it created, so the
- * exact paths are derivable from the same sources the staging reads.
+ * for that reason; they are not. Hive knows which links it created, because
+ * each worktree records them at spawn.
  */
 const HIVE_WORKTREE_SKILLS: readonly string[] = CAPABILITY_PROVIDERS.flatMap(
   (provider) =>
@@ -593,10 +601,10 @@ const HIVE_WORKTREE_WIRING: readonly string[] = [
 ];
 
 /**
- * One of the symlinks `provisionSkills` staged, still pointing where Hive
- * pointed it. Both halves are required: a path Hive would have staged is not
- * Hive's unless the thing at that path is that link, so an agent's own
- * directory or file of the same name stays visible as work.
+ * One of the symlinks `provisionSkills` staged *in this worktree*, still
+ * pointing where Hive pointed it. Both halves are required: a path Hive
+ * recorded is not Hive's unless the thing at that path is that link, so an
+ * agent's own directory or file of the same name stays visible as work.
  */
 const isStagedSkillLink = async (
   path: string,
@@ -666,8 +674,8 @@ export async function assessStrandedWork(
   mainBranch = "main",
 ): Promise<StrandedWork> {
   const dirtyFiles: string[] = [];
-  const skillLinks = await stagedSkillLinks(repoRoot);
   if (worktreePath !== null) {
+    const skillLinks = await provisionedSkillLinks(worktreePath);
     const statusResult = await runGit(worktreePath, [
       "status",
       "--porcelain",

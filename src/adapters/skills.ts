@@ -148,29 +148,54 @@ async function userSkillsFor(
 }
 
 /**
- * The exact worktree-relative path of every symlink `provisionSkills` lays
- * down for the user's own skills, mapped to the source it must point at.
+ * Where a worktree records the skill symlinks Hive actually created in it.
  *
- * Derived from the same discovery and the same destination function the
- * staging itself uses, so the two cannot drift apart. Names are whatever the
- * user wrote, which is why this is a runtime lookup rather than a constant —
- * but it is still an exact path per skill per vendor, never a directory rule.
+ * Provenance is remembered, not re-derived. Re-listing the sources later
+ * answers "what would provisioning produce right now", which is a different
+ * question from "what did Hive put here", and the two disagree exactly where it
+ * costs the most: a source deleted after the spawn drops out of the live
+ * listing, while vendors sharing one native directory put another vendor's
+ * skills — and another vendor's *name* for a skill — into the live listing for
+ * a worktree that was never provisioned for them.
  */
-export async function stagedSkillLinks(
-  repoRoot: string,
-  globalSkillsPath = join(hiveHome(), "skills"),
+export const SKILL_LINK_MANIFEST = ".hive/skill-links.json";
+
+/**
+ * The symlinks `provisionSkills` created in one worktree, as worktree-relative
+ * paths mapped to the source each was pointed at. No manifest means Hive
+ * created none; an unreadable one throws, because a caller that deletes on
+ * "nothing here" must never be told that by a failed read.
+ */
+export async function provisionedSkillLinks(
+  worktreePath: string,
 ): Promise<Map<string, string>> {
-  const links = new Map<string, string>();
-  for (const tool of CAPABILITY_PROVIDERS) {
-    for (const [name, source] of await userSkillsFor(
-      repoRoot,
-      tool,
-      globalSkillsPath,
-    )) {
-      links.set(join(nativeSkillDirectory(tool), name), source);
-    }
+  const raw = await readFile(
+    join(worktreePath, SKILL_LINK_MANIFEST),
+    "utf8",
+  ).catch((error: unknown) => {
+    if (isMissingFileError(error)) return null;
+    throw error;
+  });
+  if (raw === null) return new Map();
+  return new Map(Object.entries(JSON.parse(raw) as Record<string, string>));
+}
+
+/** Merged, never replaced: a link Hive created stays Hive's while it is still
+ * on disk, even once a later spawn no longer produces it. */
+async function recordProvisionedLinks(
+  worktreePath: string,
+  links: Map<string, string>,
+): Promise<void> {
+  const recorded = await provisionedSkillLinks(worktreePath);
+  for (const [path, source] of links) {
+    recorded.set(path, source);
   }
-  return links;
+  const manifest = join(worktreePath, SKILL_LINK_MANIFEST);
+  await mkdir(dirname(manifest), { recursive: true });
+  await writeFile(
+    manifest,
+    `${JSON.stringify(Object.fromEntries(recorded), null, 2)}\n`,
+  );
 }
 
 async function linkSkill(source: string, destination: string): Promise<void> {
@@ -337,15 +362,23 @@ export async function provisionSkills(
   // Before any disk work: an unknown vendor must not get the user's own skills
   // symlinked into a directory chosen for a different CLI, and must not get a
   // half-provisioned worktree that a later read would call provisioned.
-  const nativeRoot = join(worktreePath, nativeSkillDirectory(tool));
+  const nativeDirectory = nativeSkillDirectory(tool);
   const skills = await userSkillsFor(repoRoot, tool, globalSkillsPath);
   if (skills.size > 0) {
-    await mkdir(nativeRoot, { recursive: true });
-    await Promise.all(
-      [...skills.entries()].map(([name, source]) =>
-        linkSkill(source, join(nativeRoot, name)),
+    await mkdir(join(worktreePath, nativeDirectory), { recursive: true });
+    const links = new Map(
+      [...skills.entries()].map(
+        ([name, source]) => [join(nativeDirectory, name), source] as const,
       ),
     );
+    await Promise.all(
+      [...links.entries()].map(([path, source]) =>
+        linkSkill(source, join(worktreePath, path)),
+      ),
+    );
+    // After the links exist, so a failed staging never leaves a path recorded
+    // as Hive's that Hive did not create.
+    await recordProvisionedLinks(worktreePath, links);
   }
 
   await installShippedSkills(worktreePath, tool);
