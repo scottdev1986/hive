@@ -1723,6 +1723,93 @@ test "pre-admission CREATE rejection leaves Registry empty and tears down" {
     );
 }
 
+test "CREATE rejects a host whose registered geometry differs from the spec" {
+    const now_ns = 1 * std.time.ns_per_s;
+    const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);
+    defer std.testing.allocator.free(spec);
+    const created = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.created_payload);
+    defer std.testing.allocator.free(created);
+    const commit =
+        \\{"schemaVersion":1,"totalLength":5,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
+    ;
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hr-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+
+    var record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
+    // The record stays internally consistent with its own json, so recordJsonMatches
+    // cannot catch this; only a spec-vs-record comparison can.
+    record.geometry.columns += 1;
+    var expiry_storage: [24]u8 = undefined;
+    const expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        broker.generated.limits.visibility_expiry_ms,
+    );
+    const record_json = try recordJsonForTest(std.testing.allocator, record, expires_at);
+    defer std.testing.allocator.free(record_json);
+    var host = fixtureHost(record);
+    var registry: broker.Registry = .{};
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = record_json,
+        .created_payload = created,
+        .host = host.control(),
+        .runtime = &runtime,
+        .registry = &registry,
+        .expected_initial_input = "hello",
+    };
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        &control_plane,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_begin,
+        20,
+        0,
+        spec,
+        now_ns,
+    ) == .no_response);
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_input,
+        20,
+        0,
+        "hello",
+        now_ns,
+    ) == .no_response);
+    const rejected = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_commit,
+        20,
+        0,
+        commit,
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.verification_unknown, rejected.failure.code);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.verification_unknown,
+        launcher.rejected.?,
+    );
+    try std.testing.expect(launcher.rejected_teardown);
+    try std.testing.expect(!launcher.pending_live);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.not_found,
+        registry.lookup(record.locator).?.failure.code,
+    );
+}
+
 test "post-admission finalize failure suppresses CREATED and quarantines unknown exit" {
     const now_ns = 1 * std.time.ns_per_s;
     const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);

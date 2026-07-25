@@ -1126,6 +1126,7 @@ pub fn launchHost(
         locator: DiskLocator,
         visibility: VisibilityBinding,
         expectedExecutable: []const u8,
+        geometry: DiskGeometry,
     };
     var spec = std.json.parseFromSlice(SpecProjection, allocator, spec_json, .{
         .ignore_unknown_fields = true,
@@ -1195,6 +1196,12 @@ pub fn launchHost(
             readback.record.expected_executable,
             spec.value.expectedExecutable,
         ) or
+        readback.record.geometry.columns != spec.value.geometry.columns or
+        readback.record.geometry.rows != spec.value.geometry.rows or
+        readback.record.geometry.width_px != spec.value.geometry.widthPx or
+        readback.record.geometry.height_px != spec.value.geometry.heightPx or
+        readback.record.geometry.cell_width_px != spec.value.geometry.cellWidthPx or
+        readback.record.geometry.cell_height_px != spec.value.geometry.cellHeightPx or
         !std.mem.eql(
             u8,
             readback.record.visibility.workspace_session_id,
