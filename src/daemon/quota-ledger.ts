@@ -1231,9 +1231,8 @@ export class QuotaLedger {
    * enter this comparison, so unlike windows are never compared and a
    * not-metered provider needs no fabricated headroom score.
    *
-   * The 2026-07-24 ruling removed the headroom veto this used to apply to the
-   * chosen candidate: dispatch picks, booking never refuses (§R3 — usage
-   * never blocks a spawn).
+   * There is no headroom veto on the chosen candidate: dispatch picks,
+   * booking never refuses (§05 — usage never blocks a spawn).
    */
   reserveFairGroups(
     candidates: Array<{

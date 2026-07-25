@@ -12,16 +12,16 @@ const isTerminal = (agent: AgentRecord): boolean =>
   agent.status === "held" || isTerminalAgentStatus(agent.status);
 
 /**
- * The drain handler (§R4–R7, docs/design/quota-lifecycle-redesign.html) —
+ * The drain handler (§07–§09, docs/design/quota-lifecycle-redesign.html) —
  * the one muscle the quota redesign adds. A mid-work agent whose provider's
  * usage is spent is handled by exactly one of three arms:
  *
- * - HOLD (§R4): the drained window resets within the hour. The agent is
+ * - HOLD (§08): the drained window resets within the hour. The agent is
  *   marked `held`; the daemon's existing 30-second maintenance sweep pokes
  *   it with a continue message once the reset has passed. No new timers.
- * - REPLACEMENT (§R5): C4 freezes and retains the source run, then reports the
+ * - REPLACEMENT (§09): C4 freezes and retains the source run, then reports the
  *   replacement seam. C5 owns the handoff and replacement itself.
- * - ALL-DRAINED (§R6): no provider has usage — every metered pool is spent
+ * - ALL-DRAINED (§07): no provider has usage — every metered pool is spent
  *   AND every unmetered route has errored. Wait for the nearest 5-hour
  *   reset, or the 7-day reset if it lands within 5 hours; otherwise the
  *   branch is preserved and a memory written so work resumes when
@@ -168,7 +168,7 @@ export class DrainHandler {
         drained.resetsAt !== null &&
         new Date(drained.resetsAt).getTime() - now.getTime() <= HOLD_WINDOW_MS
       ) {
-        // §R4: a reset within the hour is a hold, never a handoff.
+        // §08: a reset within the hour is a hold, never a handoff.
         if (!(await this.hold(agent, reason, drained.resetsAt))) {
           await this.deps.requestReplacement(agent, {
             ...drain,
@@ -195,7 +195,7 @@ export class DrainHandler {
     await this.deferReplacement(agent, drain);
   }
 
-  /** Every metered provider drained AND every unmetered route errored (§R6). */
+  /** Every metered provider drained AND every unmetered route errored (§07). */
   private allDrained(): boolean {
     const quota = this.deps.quota;
     if (quota === undefined) return false;
@@ -210,7 +210,7 @@ export class DrainHandler {
     return this.deps.quota?.isMetered(provider) ?? false;
   }
 
-  /** §R6: wait for the nearest reset, or preserve and remember. */
+  /** §07: wait for the nearest reset, or preserve and remember. */
   private async allDrainedArm(
     agent: AgentRecord,
     drain: ReplacementDrain,

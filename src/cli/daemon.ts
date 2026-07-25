@@ -362,7 +362,7 @@ export async function runDaemon(): Promise<void> {
       daemon.issueCredential(name, role, epoch),
     // #57: a spawn whose hive MCP never answers is refused, not recorded.
     mcpClientSeen: (subject, since) => daemon.mcpClientSeen(subject, since),
-    // §R1: the first quota-aware spawn waits for the boot refresh to settle.
+    // §03: the first quota-aware spawn waits for the boot refresh to settle.
     quotaReady: () => daemon.quotaReady(),
     // §06: a spawn that dies of a vendor rate limit is a drain, not a crash.
     drainError: (agent, failure) => daemon.onVendorDrainError(agent, failure),

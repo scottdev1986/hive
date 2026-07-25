@@ -842,7 +842,7 @@ export interface HiveSpawnerDependencies {
    * daemon's /mcp at or after a launch baseline. Wired in production; when
    * the seam is absent the reachability check does not run. */
   mcpClientSeen?: (subject: string, since: string) => boolean;
-  /** §R1: resolves once the boot's all-provider quota refresh has settled. */
+  /** §03: resolves once the boot's all-provider quota refresh has settled. */
   quotaReady?: () => Promise<unknown>;
   /** §06: a model-layer failure the vendor says is a rate limit goes to the
    * drain handler, never the launch-failure quarantine. */

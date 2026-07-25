@@ -116,7 +116,7 @@ const AgentRecordShape = {
     "idle",
     "awaiting-approval",
     "control-paused",
-    /** Held by the quota drain handler (§R4/R6): its provider's window is
+    /** Held by the quota drain handler (§08): its provider's window is
      * spent and resets soon; the 30s sweep pokes it past the reset. */
     "held",
     "stuck",

@@ -1884,7 +1884,7 @@ export class HiveDaemon {
   }
 
   /**
-   * §R1: the boot refresh is a gate, not a background task. The first spawn
+   * §03: the boot refresh is a gate, not a background task. The first spawn
    * awaits this before it routes — one settled promise, no retry framework.
    */
   async quotaReady(): Promise<void> {
@@ -2133,7 +2133,7 @@ export class HiveDaemon {
         });
       }
       await this.recoverQuotaReservations();
-      // §R4–R6: poke held agents past their reset, then handle newly drained
+      // §07: poke held agents past their reset, then handle newly drained
       // running agents. Runs on the existing sweep — no new timers.
       await this.drainHandler.sweep().catch((error) => {
         console.error(
@@ -2907,7 +2907,7 @@ export class HiveDaemon {
     this.recovery.clearDeliberateKill(agent.id);
     const closedAssignment = this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
-    // §R2: an agent's last spend lands on the provider's counter only when it
+    // §03: an agent's last spend lands on the provider's counter only when it
     // closes, so a close is a refresh trigger for that provider.
     void this.refreshQuota({ force: true, providers: [agent.tool] }).catch(
       (error) => {

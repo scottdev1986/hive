@@ -658,7 +658,7 @@ export class QuotaService {
     );
   }
 
-  /** §R4–R6: is any pool metering this model spent, and when does the
+  /** §07: is any pool metering this model spent, and when does the
    * drained window reset? The drain handler's one per-agent read. */
   drainFor(candidate: QuotaCandidateIdentity, now = this.clock()): DrainedWindow | null {
     return drainedWindowFor(this.poolsGoverning(candidate, now));
@@ -667,12 +667,12 @@ export class QuotaService {
   /** Whether this provider has a usage surface at all (a probe). opencode
    * does not: its drain is only knowable through vendor errors. A metered
    * provider whose pool has not been read yet is UNKNOWN, not unmetered —
-   * and unknown stays a spawnable wildcard (§R3), never a drain. */
+   * and unknown stays a spawnable wildcard (§05), never a drain. */
   isMetered(provider: CapabilityProvider): boolean {
     return this.probes.some((probe) => probe.provider === provider);
   }
 
-  /** §R6: every metered provider's general pool is spent. Unmetered routes
+  /** §07: every metered provider's general pool is spent. Unmetered routes
    * are not knowable here — the drain handler joins its own error record. */
   allMeteredDrained(now = this.clock()): boolean {
     const providers = [
@@ -688,7 +688,7 @@ export class QuotaService {
     });
   }
 
-  /** §R6: the nearest reset across every drained general-pool window, split
+  /** §07: the nearest reset across every drained general-pool window, split
    * by window kind — the all-drained arm's wait decision. */
   nearestDrainResets(now = this.clock()): {
     fiveHour: string | null;
@@ -1497,8 +1497,8 @@ export class QuotaService {
   }
 
   /**
-   * Route and book — but never refuse for usage (the 2026-07-24 quota
-   * ruling, docs/design/quota-lifecycle-redesign.html §R3). Selection is
+   * Route and book — but never refuse for usage
+   * (docs/design/quota-lifecycle-redesign.html §05). Selection is
    * unchanged in kind: `spread` fairly shares work across providers by
    * Hive-observed dispatch deficit, `strict` walks rank order. What is gone
    * is the veto: pool exhaustion is a mid-work condition, handled by the
@@ -1727,7 +1727,7 @@ export class QuotaService {
       // the idempotency key; stamping every row violates its unique index.
       ...(index === 0 ? {} : { controlMessageId: undefined }),
     }));
-    // §R3: a critical acknowledgement is never refused on usage either. It
+    // §05: a critical acknowledgement is never refused on usage either. It
     // books unchecked, on its own model, always.
     const reservations = this.ledger.reserveGroupUnchecked(inputs);
     const reservation = reservations[0];
@@ -2069,7 +2069,7 @@ export class QuotaService {
 }
 
 // ---------------------------------------------------------------------------
-// Drain detection (§R4–R7, docs/design/quota-lifecycle-redesign.html).
+// Drain detection (§07, docs/design/quota-lifecycle-redesign.html).
 // ---------------------------------------------------------------------------
 
 /** One drained metering window: which pool, which window, when it resets
@@ -2085,7 +2085,7 @@ export interface DrainedWindow {
  * window reset? One drained window is a drain: a model-scoped cap at zero
  * empties the model even while the general pool has room.
  *
- * §R7 — the user-ruled estimate exception lives HERE and nowhere else: when
+ * §04 — the user-ruled estimate exception lives HERE and nowhere else: when
  * the provider's API is down this reads the last-known windows
  * (statusForLimit already carries them, provenance-stamped "stale") and
  * treats them as the estimate the user accepted for the drain decision only.
