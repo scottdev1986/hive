@@ -453,4 +453,111 @@ describe("idle-agent reap sweep", () => {
   });
 });
 
+describe("stranded-work check measures against the primary checkout's actual branch, not a hardcoded main", () => {
+  async function primaryCheckoutAheadOfMain(root: string): Promise<string> {
+    const repoRoot = join(root, "repo");
+    await mkdir(repoRoot, { recursive: true });
+    await git(repoRoot, "init", "-b", "main");
+    await git(repoRoot, "config", "user.name", "Hive Test");
+    await git(repoRoot, "config", "user.email", "hive@example.test");
+    await writeFile(join(repoRoot, "README.md"), "# idle reap\n");
+    await git(repoRoot, "add", "README.md");
+    await git(repoRoot, "commit", "-m", "initial");
+    // The primary checkout lands onto a branch other than main, and that
+    // branch is already ahead of main -- the terminal-io-off-main situation.
+    // Leaving HEAD checked out here is what `resolveLandingTargetBranch` reads.
+    await git(repoRoot, "checkout", "-b", "terminal-io-off-main");
+    await writeFile(join(repoRoot, "base.txt"), "base\n");
+    await git(repoRoot, "add", "base.txt");
+    await git(repoRoot, "commit", "-m", "base work ahead of main");
+    return repoRoot;
+  }
+
+  test("a branch fully landed on the primary checkout's branch reports zero stranded commits", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-idle-reap-target-"));
+    const repoRoot = await primaryCheckoutAheadOfMain(root);
+    // maya's branch holds exactly the commits terminal-io-off-main already
+    // has -- her work landed cleanly, same as maya/suite/nina really did.
+    await git(repoRoot, "branch", "hive/maya-server", "terminal-io-off-main");
+
+    const db = new HiveDatabase(":memory:");
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      sessionSender: new SilentSessionSender(db),
+      rootProtocol: offlineRootProtocol,
+      repoRoot,
+      lifecycle: { idleReap: true, idleReapMinutes: 10 },
+    });
+    db.insertAgent(
+      agent({
+        worktreePath: null,
+        branch: "hive/maya-server",
+        lastEventAt: OLD_ENOUGH,
+      }),
+    );
+    try {
+      await daemon.reapIdleAgents();
+
+      // No false "stranded work" alert to the orchestrator...
+      expect(await daemon.delivery.orchestratorInbox()).toEqual([]);
+      // ...the clean-idle path ran instead: maya got the persist warning.
+      const warning = db
+        .listMessages()
+        .find((message) => message.to === "maya");
+      expect(warning?.body).toContain("Persist any findings");
+    } finally {
+      await daemon.stop();
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a branch with genuinely unlanded commits is still reported, counted against the actual target", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-idle-reap-target-"));
+    const repoRoot = await primaryCheckoutAheadOfMain(root);
+    // nina's branch has the base commit plus one commit that never landed.
+    await git(repoRoot, "checkout", "-b", "hive/nina-server");
+    await writeFile(join(repoRoot, "nina.txt"), "wip\n");
+    await git(repoRoot, "add", "nina.txt");
+    await git(repoRoot, "commit", "-m", "nina's unlanded work");
+    await git(repoRoot, "checkout", "terminal-io-off-main");
+
+    const db = new HiveDatabase(":memory:");
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      sessionSender: new SilentSessionSender(db),
+      rootProtocol: offlineRootProtocol,
+      repoRoot,
+      lifecycle: { idleReap: true, idleReapMinutes: 10 },
+    });
+    db.insertAgent(
+      agent({
+        id: "agent-nina",
+        name: "nina",
+        worktreePath: null,
+        branch: "hive/nina-server",
+        lastEventAt: OLD_ENOUGH,
+      }),
+    );
+    try {
+      await daemon.reapIdleAgents();
+
+      const notice = (await daemon.delivery.orchestratorInbox())[0];
+      expect(notice?.body).toContain("nina");
+      expect(notice?.body).toContain("NOT reaped");
+      // Exactly nina's own commit -- not that plus the base commits
+      // terminal-io-off-main already carries ahead of main.
+      expect(notice?.body).toContain("1 unmerged commit(s)");
+    } finally {
+      await daemon.stop();
+      db.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 import { required } from "../required";

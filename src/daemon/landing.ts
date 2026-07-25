@@ -357,6 +357,19 @@ const blocked = (reason: string, fix?: string): LandBlocker =>
   fix === undefined ? { reason } : { reason, fix };
 
 /**
+ * The primary checkout's current branch — the actual fast-forward target
+ * `hive_land` merges onto. A detached HEAD (mid-rebase, say) has no branch
+ * name, so callers get the literal "HEAD", which is itself a valid git
+ * revision for the comparisons that use it.
+ */
+export async function resolveLandingTargetBranch(
+  repoRoot: string,
+): Promise<string> {
+  const target = await runGit(repoRoot, ["symbolic-ref", "--short", "HEAD"]);
+  return target.exitCode === 0 ? trimmed(target) : "HEAD";
+}
+
+/**
  * Everything that can stop a fast-forward, checked before we attempt one, with
  * cheap read-only git. The merge itself would also refuse — quickly and with a
  * good message — but git's message is about *git*, and the caller is an agent
@@ -377,8 +390,7 @@ export async function diagnoseLand(
     );
   }
 
-  const target = await runGit(repoRoot, ["symbolic-ref", "--short", "HEAD"]);
-  const targetBranch = target.exitCode === 0 ? trimmed(target) : "HEAD";
+  const targetBranch = await resolveLandingTargetBranch(repoRoot);
 
   const exists = await runGit(repoRoot, [
     "rev-parse",

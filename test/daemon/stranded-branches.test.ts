@@ -90,7 +90,7 @@ describe("stranded-branch reconciliation", () => {
       const notice = (await daemon.delivery.orchestratorInbox())[0];
       expect(notice?.from).toEqual("hive-lifecycle");
       expect(notice?.body).toContain("hive/david-widgets");
-      expect(notice?.body).toContain("1 commit(s) not on main");
+      expect(notice?.body).toContain("1 commit(s) not on HEAD");
       expect(notice?.body).toContain("no agent row owns it");
       // The reconciler reports; it never destroys.
       expect(notice?.body).toContain("Nothing was deleted");
@@ -176,7 +176,7 @@ describe("stranded-branch reconciliation", () => {
 
       const inbox = await daemon.delivery.orchestratorInbox();
       expect(inbox.length).toEqual(2);
-      expect(inbox[1]?.body).toContain("2 commit(s) not on main");
+      expect(inbox[1]?.body).toContain("2 commit(s) not on HEAD");
     } finally {
       await daemon.stop();
       db.close();

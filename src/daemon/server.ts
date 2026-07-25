@@ -125,6 +125,7 @@ import {
   landBranch,
   type ReadLandReadiness,
   readLandReadiness,
+  resolveLandingTargetBranch,
 } from "./landing";
 import {
   cleanupLifecycleFiles,
@@ -639,8 +640,12 @@ export interface HiveDaemonOptions {
     repoRoot: string,
     worktreePath: string | null,
     branch: string | null,
+    mainBranch?: string,
   ) => Promise<StrandedWork>;
-  listUnmergedHiveBranches?: (repoRoot: string) => Promise<UnmergedBranch[]>;
+  listUnmergedHiveBranches?: (
+    repoRoot: string,
+    mainBranch?: string,
+  ) => Promise<UnmergedBranch[]>;
   reconcileOrphanedWorktrees?: typeof reconcileWorktrees;
   liveInstanceIds?: () => Promise<ReadonlySet<string>>;
   landBranch?: LandBranch;
@@ -2950,12 +2955,15 @@ export class HiveDaemon {
       note: string;
     } | null = null;
     let preserved: { branch: string; ref: string } | null = null;
+    let targetBranch = "main";
     if (agent.worktreePath !== null || agent.branch !== null) {
       try {
+        targetBranch = await resolveLandingTargetBranch(this.repoRoot);
         const work = await this.assessStranded(
           this.repoRoot,
           agent.worktreePath,
           agent.branch,
+          targetBranch,
         );
         if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
           stranded = {
@@ -2963,7 +2971,7 @@ export class HiveDaemon {
             worktreePath: agent.worktreePath,
             dirtyFiles: work.dirtyFiles,
             unmergedCommits: work.unmergedCommits,
-            note: `${agent.name} left work that is not on main; merge it via an integrator agent or pass discardWork to delete it.`,
+            note: `${agent.name} left work that is not on ${targetBranch}; merge it via an integrator agent or pass discardWork to delete it.`,
           };
           // The kill is immediate, so nobody was asked whether this work
           // mattered. Preserve it as a ref before anything else can decide it
@@ -3023,7 +3031,7 @@ export class HiveDaemon {
         stranded = {
           ...stranded,
           note:
-            `${agent.name} left work that is not on main; it was DELETED ` +
+            `${agent.name} left work that is not on ${targetBranch}; it was DELETED ` +
             "as requested (discardWork)" +
             (agent.branch !== null
               ? `: branch ${agent.branch} and its preservation ref are gone.`
@@ -3042,7 +3050,7 @@ export class HiveDaemon {
     // Reported last, so it reports what happened: a discard deletes the branch
     // and its ref, and telling the orchestrator "Nothing was deleted" over the
     // top of that is how a kill that obeyed reads as a kill that refused.
-    await this.reportKill(agent, reaped, preserved, stranded);
+    await this.reportKill(agent, reaped, preserved, stranded, targetBranch);
 
     // A session end is a digest activity boundary (HiveMemory HM-2 WP4;
     // S3.7 DoD 1-2): re-synthesize the agent's session digest from the typed
@@ -3090,13 +3098,14 @@ export class HiveDaemon {
     reaped: ReapOutcome,
     preserved: { branch: string; ref: string } | null,
     stranded: { unmergedCommits: number; dirtyFiles: string[] } | null,
+    targetBranch: string,
   ): Promise<void> {
     if (preserved !== null && stranded !== null) {
       await this.delivery
         .send(
           "hive-lifecycle",
           ORCHESTRATOR_NAME,
-          `${agent.name} was killed with work that is not on main. ` +
+          `${agent.name} was killed with work that is not on ${targetBranch}. ` +
             `Its branch ${preserved.branch} is PRESERVED at ${preserved.ref} ` +
             `(${stranded.unmergedCommits} unmerged commit(s), ` +
             `${stranded.dirtyFiles.length} uncommitted file(s)). ` +
@@ -3454,6 +3463,7 @@ export class HiveDaemon {
     if (lifecycle === null || !lifecycle.idleReap) return;
     const thresholdMs = lifecycle.idleReapMinutes * 60_000;
     const now = Date.now();
+    const targetBranch = await resolveLandingTargetBranch(this.repoRoot);
     for (const record of this.db.listAgents()) {
       if (record.name === ORCHESTRATOR_NAME) continue;
       if (record.status !== "idle") continue;
@@ -3467,6 +3477,7 @@ export class HiveDaemon {
           this.repoRoot,
           record.worktreePath,
           record.branch,
+          targetBranch,
         );
       } catch (error) {
         // Cannot prove the worktree is clean, so it is not reaped this tick.
@@ -3544,10 +3555,11 @@ export class HiveDaemon {
 
   async reconcileOrphanedWorktrees(): Promise<WorktreeReconciliationReport> {
     const agents = this.db.listAgents();
+    const targetBranch = await resolveLandingTargetBranch(this.repoRoot);
     const report = await this.reconcileWorktrees(
       this.repoRoot,
       agents,
-      "main",
+      targetBranch,
       {
         assess: this.assessStranded,
         remove: this.cleanupWorktree,
@@ -3637,7 +3649,11 @@ export class HiveDaemon {
    * decides.
    */
   async reconcileStrandedBranches(): Promise<void> {
-    const branches = await this.listUnmergedBranches(this.repoRoot);
+    const targetBranch = await resolveLandingTargetBranch(this.repoRoot);
+    const branches = await this.listUnmergedBranches(
+      this.repoRoot,
+      targetBranch,
+    );
     if (branches.length === 0) return;
     const agents = this.db.listAgents();
     const liveInstances = await this.liveInstanceIds().catch(
@@ -3685,7 +3701,7 @@ export class HiveDaemon {
         .send(
           "hive-lifecycle",
           ORCHESTRATOR_NAME,
-          `Stranded work: ${branch} holds ${unmergedCommits} commit(s) not on main and ${detail}. Nothing was deleted. Assess it with an integrator agent and land or discard it explicitly.`,
+          `Stranded work: ${branch} holds ${unmergedCommits} commit(s) not on ${targetBranch} and ${detail}. Nothing was deleted. Assess it with an integrator agent and land or discard it explicitly.`,
           { idempotencyKey: `stranded-branch:${alertKey}:${this.bootId}` },
         )
         .catch(logAlertDeliveryFailure);
@@ -5137,6 +5153,7 @@ export class HiveDaemon {
       dirtyFiles: number;
       unmergedCommits: number;
     }> = [];
+    const stopTargetBranch = await resolveLandingTargetBranch(this.repoRoot);
     for (const agent of live) {
       if (agent.worktreePath === null && agent.branch === null) continue;
       try {
@@ -5144,6 +5161,7 @@ export class HiveDaemon {
           this.repoRoot,
           agent.worktreePath,
           agent.branch,
+          stopTargetBranch,
         );
         if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
           unlanded.push({
