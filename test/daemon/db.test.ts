@@ -61,6 +61,17 @@ describe("HiveDatabase", () => {
     const bundle: HandoffBundle = {
       handoffId: "018f1e90-7b5a-7cc0-8000-000000000180",
       sourceRunId: "018f1e90-7b5a-7cc0-8000-000000000181",
+      runOutcome: {
+        decisionId: "grant-fixture",
+        providerRunId: "018f1e90-7b5a-7cc0-8000-000000000181",
+        provider: "codex",
+        model: "gpt-5-codex",
+        taskCategory: "simple_coding",
+        outcome: "quota-drained",
+        handoffId: "018f1e90-7b5a-7cc0-8000-000000000180",
+        startedAt: "2026-07-09T11:00:00.000Z",
+        endedAt: timestamp,
+      },
       reason: "quota-drain",
       originalTaskRef: {
         kind: "agent-task",

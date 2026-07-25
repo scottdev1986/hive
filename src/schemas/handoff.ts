@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ExactContentRefSchema } from "./context-projection";
 import { MemoryScopeSchema } from "./memory";
+import { RunOutcomeSchema } from "./run-outcome";
 import { SessionLocatorSchema } from "./session-protocol";
 
 const Sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
@@ -24,6 +25,7 @@ export const HandoffBundleSchema = z
   .strictObject({
     handoffId: z.string().uuid(),
     sourceRunId: z.string().uuid(),
+    runOutcome: RunOutcomeSchema,
     reason: z.enum([
       "quota-drain",
       "capability-wall",

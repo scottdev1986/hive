@@ -187,6 +187,24 @@ export async function buildHandoffBundle(
   return HandoffBundleSchema.parse({
     handoffId: input.handoffId,
     sourceRunId: input.run.runId,
+    runOutcome: {
+      // Before the router exists, the authorized launch grant is the durable
+      // identifier for the exact decision that created this provider run.
+      decisionId: input.run.launchGrantId,
+      providerRunId: input.run.runId,
+      provider: input.run.provider,
+      model: input.run.model ?? input.agent.model,
+      taskCategory: input.agent.category,
+      outcome: {
+        "quota-drain": "quota-drained",
+        "capability-wall": "capability-escalated",
+        crash: "crashed",
+        operator: "stopped",
+      }[input.reason],
+      handoffId: input.handoffId,
+      startedAt: input.run.startedAt,
+      endedAt: input.createdAt,
+    },
     reason: input.reason,
     originalTaskRef: {
       kind: "agent-task",

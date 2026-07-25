@@ -226,6 +226,17 @@ describe("handoff bundle", () => {
     });
 
     expect(bundle.completeness).toBe("partial");
+    expect(bundle.runOutcome).toEqual({
+      decisionId: run.launchGrantId,
+      providerRunId: run.runId,
+      provider: run.provider,
+      model: agent.model,
+      taskCategory: agent.category,
+      outcome: "quota-drained",
+      handoffId: bundle.handoffId,
+      startedAt: run.startedAt,
+      endedAt: "2026-07-25T01:11:00.000Z",
+    });
     expect(bundle.originalTaskRef.content).toBe(agent.taskDescription);
     expect(bundle.requirementRefs.map((ref) => ref.id)).toEqual([
       requirement.id,
@@ -268,6 +279,7 @@ describe("handoff bundle", () => {
     });
     expect(bundle.memoryRefs).toEqual([]);
     expect(bundle.summary?.provenance).toBe("fallback");
+    expect(bundle.runOutcome.outcome).toBe("crashed");
   });
 
   test("a dead source without a final status still produces a usable handoff", async () => {
