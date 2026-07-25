@@ -15,12 +15,14 @@ import {
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
 import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/tools/codex";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import {
   type CodexAppServerManager,
   type ReapOrphanDependencies,
   reapOrphanCodexHosts,
 } from "../adapters/tools/codex-app-server";
 import { readLiveGrokModel } from "../adapters/tools/grok";
+import { readKimiProviderEvents } from "../adapters/tools/kimi-observation";
 import {
   assessStrandedWork,
   listUnmergedHiveBranches,
@@ -38,6 +40,7 @@ import type {
   ResourceLimits,
 } from "../schemas";
 import {
+  type ActivitySnapshot,
   type AgentRecord,
   ControlIntentSchema,
   canonicalOrchestratorName,
@@ -82,6 +85,7 @@ import {
   writeCredential,
 } from "./credentials";
 import { DaemonLog } from "./daemon-log";
+import { buildActivitySnapshot } from "./activity-snapshot";
 import { type Approval, HiveDatabase } from "./db";
 import {
   MessageDelivery,
@@ -213,6 +217,7 @@ import {
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
 import type { SessiondBrokerSupervisor } from "./sessiond-broker";
+import { fuseAgentStatus } from "./status-fusion";
 import { type Spawner, type SpawnRequest, SpawnRequestSchema } from "./spawner";
 import {
   type StatusIncarnationGenerationSource,
@@ -5461,13 +5466,7 @@ export class HiveDaemon {
         let sessions: Awaited<
           ReturnType<HiveTerminalHostAdapter["list"]>
         > | null = null;
-        if (
-          storedAgents.some(
-            (agent) =>
-              agent.status === "working" &&
-              this.hasCompletedSessiondBinding(agent),
-          )
-        ) {
+        if (storedAgents.length > 0) {
           sessions = await this.terminalHost
             .list(hiveInstanceSuffix())
             .catch(() => null);
@@ -5498,8 +5497,17 @@ export class HiveDaemon {
           string,
           { instructions: string[]; files: string[] }
         >();
+        const activity = new Map<string, ActivitySnapshot>();
+        const includeActivity =
+          isOrchestratorName(capability.subject) ||
+          capability.role === "operator";
         await Promise.all(
           agents.map(async (agent) => {
+            const files = await observedWorktreeFiles(
+              this.repoRoot,
+              agent.worktreePath,
+              agent.branch,
+            ).catch(() => []);
             evidence.set(agent.name, {
               instructions: messages
                 .filter(
@@ -5510,16 +5518,84 @@ export class HiveDaemon {
                     Date.parse(message.createdAt) > Date.parse(agent.createdAt),
                 )
                 .map((message) => message.body),
-              files: await observedWorktreeFiles(
-                this.repoRoot,
-                agent.worktreePath,
-                agent.branch,
-              ).catch(() => []),
+              files,
             });
+            if (!includeActivity) return;
+            const locator = requireSessiondAgentLocator(agent);
+            const inspection =
+              sessions?.find((session) =>
+                sameSessionLocator(session.locator, locator),
+              ) ?? null;
+            const capture =
+              this.sessionHost === null
+                ? null
+                : await this.sessionHost
+                    .capture(locator, {
+                      include: "visible-text",
+                      maxRows: 24,
+                    })
+                    .catch(() => null);
+            const run =
+              this.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
+            let providerEvents =
+              run === null ? [] : [...this.db.listProviderEvents(run.runId)];
+            let providerEventThrough: string | null = null;
+            let transcriptCompleteness:
+              | "complete"
+              | "gap"
+              | "unknown"
+              | undefined;
+            if (
+              run !== null &&
+              run.state === "running" &&
+              inspection?.foreground.state === "managed" &&
+              inspection.foreground.runId === run.runId &&
+              agent.worktreePath !== null &&
+              getAgentAdapter(agent.tool).communication.eventSource ===
+                "transcript"
+            ) {
+              if (agent.tool === "kimi") {
+                const observed = await readKimiProviderEvents(
+                  run,
+                  agent.worktreePath,
+                  join(homedir(), ".kimi-code"),
+                );
+                providerEvents = [...providerEvents, ...observed.events];
+                providerEventThrough = observed.through;
+                transcriptCompleteness = observed.completeness;
+              }
+              // TODO(C2): normalize Grok project-hook events after live hook
+              // firing can be verified; until then its transcript descriptor
+              // deliberately reaches the universal fallback below.
+            }
+            activity.set(
+              agent.id,
+              buildActivitySnapshot({
+                agent,
+                run,
+                inspection,
+                capture,
+                gitPaths: files,
+                events: providerEvents,
+                providerEventThrough,
+                transcriptCompleteness,
+                status: fuseAgentStatus(
+                  this.status.listEventsForAgent(agent.id),
+                  {
+                    agentId: agent.id,
+                    incarnationGeneration: locator.generation,
+                  },
+                  new Date(),
+                ),
+                observedAt: new Date().toISOString(),
+              }),
+            );
           }),
         );
         const result =
-          detail === "full" ? agents : compactActiveTeam(agents, evidence);
+          detail === "full"
+            ? agents
+            : compactActiveTeam(agents, evidence, activity);
         // Defect D2: the semantic leg's health is an operator-visible status
         // section, so embedding degradation is SEEN without reading code or
         // logs. It rides structuredContent (the text payload stays the agents

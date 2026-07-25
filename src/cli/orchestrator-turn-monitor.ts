@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { findLatestCodexRollout } from "../adapters/tools/codex";
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import {
   findLatestGrokSessionDirectory,
   findLatestGrokSessionId,
@@ -141,21 +142,20 @@ async function reportBoundary(
   }
 }
 
-/** Run one root generation with the native monitor when the provider has no
- * Claude-style hooks. Failure to establish the baseline fails closed to
- * unknown status while leaving the orchestrator itself usable. Kimi and
- * opencode run unmonitored: their hooks/plugins live only in the operator's
- * global config (which Hive never writes) and no session-artifact turn
- * reader exists for them yet. */
+/** Run one root generation with an implemented passive artifact monitor.
+ * Failure to establish the baseline fails closed to unknown status while
+ * leaving the orchestrator itself usable. */
 export async function withNativeOrchestratorTurnMonitor<T>(
   tool: CapabilityProvider,
   port: number,
   cwd: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  if (tool === "claude" || tool === "kimi" || tool === "opencode") {
+  const communication = getAgentAdapter(tool).communication;
+  if (communication.eventSource !== "native" && tool !== "grok") {
     return run();
   }
+  if (tool !== "codex" && tool !== "grok") return run();
   const nativeTool = tool;
   if (!(await publishOrchestratorSessionId(null))) {
     console.error("[hive] orchestrator session identity marker unavailable");

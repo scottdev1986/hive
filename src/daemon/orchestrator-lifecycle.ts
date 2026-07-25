@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentRecord } from "../schemas";
+import type { ActivitySnapshot, AgentMessage, AgentRecord } from "../schemas";
 import {
   type OrchestratorMessageEnvelope,
   OrchestratorMessageEnvelopeSchema,
@@ -46,6 +46,7 @@ export interface ActiveAgentSummary {
    * and everything else on this row will still look normal. */
   deliveryBlocked: AgentRecord["deliveryBlocked"] | null;
   lastEventAt: string;
+  activity?: ActivitySnapshot;
 }
 
 const codePoints = (value: string): string[] => Array.from(value);
@@ -157,6 +158,7 @@ export function compactActiveTeam(
     string,
     { instructions: string[]; files: string[] }
   > = new Map(),
+  activity: Map<string, ActivitySnapshot> = new Map(),
 ): ActiveAgentSummary[] {
   return agents
     .filter(
@@ -215,6 +217,7 @@ export function compactActiveTeam(
           : {}),
         deliveryBlocked: agent.deliveryBlocked ?? null,
         lastEventAt: agent.lastEventAt,
+        ...(activity.has(agent.id) ? { activity: activity.get(agent.id) } : {}),
       };
     });
 }

@@ -51,6 +51,31 @@ test("compact status keeps nullable delivery and graphify fields present", () =>
   expect(status).toHaveProperty("deliveryBlocked", null);
 });
 
+test("compact status carries the passive activity projection", () => {
+  const value = agent();
+  const activity = {
+    agentId: value.id,
+    providerRunId: null,
+    observedAt: timestamp,
+    terminalState: "unknown" as const,
+    providerState: "unknown" as const,
+    turnState: "unknown" as const,
+    phase: "unknown" as const,
+    summary: null,
+    evidence: [],
+    providerEventThrough: null,
+    outputThrough: "0",
+    completeness: "unknown" as const,
+  };
+  expect(
+    compactActiveTeam(
+      [value],
+      new Map(),
+      new Map([[value.id, activity]]),
+    )[0]?.activity,
+  ).toEqual(activity);
+});
+
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: "agent-maya",
