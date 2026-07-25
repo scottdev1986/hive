@@ -64,6 +64,8 @@ describe("orchestrator launch", () => {
     expect(ORCHESTRATOR_BRIEF).not.toContain(
       "never write code or modify files",
     );
+    expect(ORCHESTRATOR_BRIEF).not.toContain("claude-opus-4-8");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("Opus 4.8");
   });
 
   test("Codex uses the ordinary local TUI command", () => {

@@ -6031,7 +6031,7 @@ export class HiveDaemon {
       {
         title: "Mark Hive agent dead",
         description:
-          "Mark a confirmed-stopped Hive agent dead after cleaning its residual resources and viewer. Refuses while its terminal session is still live; use hive_kill to stop a live agent.",
+          "Mark an agent dead only after its exact provider run is confirmed stopped, then clean residual resources. A live shell without a provider does not block this; use hive_kill to stop a live provider and terminate its terminal.",
         inputSchema: MarkDeadRequestSchema,
       },
       async ({ agent: agentName }) => {
@@ -6068,7 +6068,7 @@ export class HiveDaemon {
           !sessiondAgentProviderRunIsDead(inspection, activeRun)
         ) {
           throw new Error(
-            `Cannot mark ${agentName} dead: its terminal session is still running. Use hive_kill to stop a live agent.`,
+            `Cannot mark ${agentName} dead: its exact provider run is still active. Use hive_kill to stop the provider and terminate its terminal.`,
           );
         }
         return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
