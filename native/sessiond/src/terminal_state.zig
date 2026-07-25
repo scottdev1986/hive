@@ -552,7 +552,7 @@ pub const TerminalState = struct {
     last_journal_persist_mono: u64 = 0,
     /// When true, reconnect must surface CHECKPOINT_UNAVAILABLE (no silent approx).
     reconnect_available: bool = true,
-    /// Exclusive journal offset a live attached viewer has already been sent
+    /// Lowest exclusive journal offset already sent across all live viewers
     /// (§20 sent_seq); `null` when no viewer is attached. See setViewerFloor.
     viewer_floor_seq: ?u64 = null,
     closed: bool = false,
@@ -616,7 +616,7 @@ pub const TerminalState = struct {
         return self.journal.start_seq;
     }
 
-    /// Publish the live attached viewer's delivered high-water, or `null` when
+    /// Publish the slowest live viewer's delivered high-water, or `null` when
     /// no viewer is attached. A checkpoint fires from inside feedOutput and
     /// evicts the journal it just covered; without this floor that eviction can
     /// pass bytes an attached viewer has not been sent, and its next push reads

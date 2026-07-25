@@ -537,8 +537,7 @@ fn handleViewerFrame(
     );
 }
 
-/// One live attached viewer stream owned by the host loop (§20/§26). A later
-/// successful attach for the same exact generation supersedes it.
+/// One live attached viewer stream owned by the host loop (§20/§26).
 const AttachedViewer = struct {
     stream: std.net.Stream,
     authorization: ViewerAuthorization,
@@ -577,13 +576,6 @@ fn pushRetainedOutput(
         offset += take;
     }
     seq.* += @as(u64, @intCast(slice.len));
-    // #91: the host loop feeds PTY output BEFORE it pumps, and a checkpoint
-    // fires from inside feedOutput and evicts the journal it just covered.
-    // Publishing the delivered high-water here — the one place a viewer's
-    // sent_seq advances, on both the attach replay and the pump — keeps that
-    // eviction behind the viewer instead of detaching a healthy pane every
-    // checkpoint interval.
-    state.setViewerFloor(seq.*);
 }
 
 /// §20 attach stream for an authorized viewer: when the requested cursor is
@@ -705,160 +697,184 @@ fn serveSessionConnection(
 /// cannot starve the PTY pump.
 const viewer_inbound_frames_per_iteration = 32;
 
-/// Drives the attached viewer inside the host loop: pushes newly journaled
-/// OUTPUT (paused while the unacknowledged window exceeds the negotiated
-/// viewer queue bound), then dispatches any ready inbound frames. Any wire
-/// error detaches the viewer; the logical pane representation is untouched.
+fn publishViewerFloor(
+    viewers: *const std.ArrayList(AttachedViewer),
+    state: *terminal_state.TerminalState,
+) void {
+    var floor: ?u64 = null;
+    for (viewers.items) |viewer| {
+        floor = if (floor) |current| @min(current, viewer.sent_seq) else viewer.sent_seq;
+    }
+    state.setViewerFloor(floor);
+}
+
 fn detachAttachedViewer(
     allocator: std.mem.Allocator,
     core: *HostCore,
-    viewer_slot: *?AttachedViewer,
+    viewers: *std.ArrayList(AttachedViewer),
+    viewer_index: usize,
     state: *terminal_state.TerminalState,
     now_ns: u64,
     cause: []const u8,
     detail: ?anyerror,
 ) void {
-    if (viewer_slot.*) |*viewer| {
-        std.log.warn(
-            "viewer detached cause={s} detail={s} viewer={s} sent={d} acked={d} output={d} retained_start={d}",
-            .{
-                cause,
-                if (detail) |err| @errorName(err) else "-",
-                viewer.authorization.viewer_id,
-                viewer.sent_seq,
-                viewer.acked_seq,
-                state.outputSeq(),
-                state.retainedOutputStart(),
-            },
-        );
-        // #40: unclean drop must orphan+clear host claim before free of viewer_id.
-        core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
-        viewer.close(allocator);
-        viewer_slot.* = null;
-        // #91: a viewer that is gone must never pin journal retention.
-        state.setViewerFloor(null);
-    }
+    var viewer = viewers.swapRemove(viewer_index);
+    std.log.warn(
+        "viewer detached cause={s} detail={s} viewer={s} sent={d} acked={d} output={d} retained_start={d}",
+        .{
+            cause,
+            if (detail) |err| @errorName(err) else "-",
+            viewer.authorization.viewer_id,
+            viewer.sent_seq,
+            viewer.acked_seq,
+            state.outputSeq(),
+            state.retainedOutputStart(),
+        },
+    );
+    // #40: an unclean drop affects only this viewer's claim.
+    core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
+    viewer.close(allocator);
+    publishViewerFloor(viewers, state);
 }
 
+fn installAttachedViewer(
+    allocator: std.mem.Allocator,
+    core: *HostCore,
+    viewers: *std.ArrayList(AttachedViewer),
+    state: *terminal_state.TerminalState,
+    now_ns: u64,
+    incoming: AttachedViewer,
+) !void {
+    var viewer = incoming;
+    errdefer viewer.close(allocator);
+    for (viewers.items, 0..) |attached, index| {
+        if (std.mem.eql(
+            u8,
+            attached.authorization.viewer_id,
+            viewer.authorization.viewer_id,
+        )) {
+            detachAttachedViewer(
+                allocator,
+                core,
+                viewers,
+                index,
+                state,
+                now_ns,
+                "superseded-by-same-viewer",
+                null,
+            );
+            break;
+        }
+    }
+    try viewers.append(allocator, viewer);
+    publishViewerFloor(viewers, state);
+}
+
+const ViewerDetach = struct {
+    cause: []const u8,
+    detail: ?anyerror,
+};
+
+/// Pushes output and dispatches inbound frames for one viewer. A failure is
+/// returned to the collection owner so only this connection is detached.
 fn pumpAttachedViewer(
     allocator: std.mem.Allocator,
-    viewer_slot: *?AttachedViewer,
+    viewer: *AttachedViewer,
+    core: *HostCore,
+    state: *terminal_state.TerminalState,
+    timer: *std.time.Timer,
+) ?ViewerDetach {
+    // One absolute budget per pump call: poll() proves only that SOME byte is
+    // readable, so a dribbling viewer cannot stall the host loop.
+    const deadline = ConnectionDeadline.init(timer, core.lease, timer.read()) catch return null;
+    // Journal pressure may evict past one lagging viewer. Detach only that
+    // viewer; unrelated renderers continue from their own cursors.
+    if (state.retainedOutputStart() > viewer.sent_seq) {
+        return .{ .cause = "retention-gap", .detail = null };
+    }
+    if (state.outputSeq() > viewer.sent_seq and
+        viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
+    {
+        pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch |err| {
+            return .{ .cause = "output-write", .detail = err };
+        };
+    }
+    var handled: u32 = 0;
+    while (handled < viewer_inbound_frames_per_iteration) : (handled += 1) {
+        var fds = [_]std.posix.pollfd{.{
+            .fd = viewer.stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = std.posix.poll(&fds, 0) catch 0;
+        if (ready == 0 or fds[0].revents == 0) return null;
+        var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch |err| {
+            return .{ .cause = "inbound-read", .detail = err };
+        };
+        defer {
+            if (frame.header.type_code == generated.frame_type.input_submit)
+                std.crypto.secureZero(u8, frame.payload);
+            frame.deinit(allocator);
+        }
+        if (frame.header.type_code == generated.frame_type.applied) {
+            if (viewerOutputAckThroughSeq(allocator, &frame)) |through_seq| {
+                // Duplicate/stale acks are harmless retransmits; an ack
+                // beyond what was sent is a protocol violation.
+                if (through_seq <= viewer.sent_seq) {
+                    if (through_seq > viewer.acked_seq) viewer.acked_seq = through_seq;
+                    continue;
+                }
+            }
+            // A malformed or impossible acknowledgement cannot erase or
+            // disconnect a healthy terminal.
+            continue;
+        }
+        handleViewerFrame(
+            allocator,
+            viewer.stream,
+            core,
+            state,
+            &viewer.authorization,
+            &frame,
+            timer.read(),
+        ) catch |err| {
+            return .{ .cause = "frame-handle", .detail = err };
+        };
+    }
+    return null;
+}
+
+fn pumpAttachedViewers(
+    allocator: std.mem.Allocator,
+    viewers: *std.ArrayList(AttachedViewer),
     core: *HostCore,
     state: *terminal_state.TerminalState,
     timer: *std.time.Timer,
 ) void {
-    if (viewer_slot.*) |*viewer| {
-        // One absolute budget per pump call: poll() proves only that SOME
-        // byte is readable, so a dribbling attached viewer would otherwise
-        // stall the single-threaded loop inside the blocking frame read.
-        // Budget exhaustion detaches the viewer (fail closed); an expired
-        // lease simply skips the pump — the loop top owns lease teardown.
-        const deadline = ConnectionDeadline.init(timer, core.lease, timer.read()) catch return;
-        // Retention loss is typed and observable, never a silent freeze. The
-        // journal-pressure path evicts past a viewer that has fallen a whole
-        // journal behind, and that viewer's unacknowledged window is exactly
-        // what is full — so the backpressure gate below would skip the cursor
-        // read forever, the CheckpointUnavailable would never be observed, and
-        // the pane would stall with its socket still open. The gap is therefore
-        // checked BEFORE the gate (contract §6: silent loss is forbidden; §7: a
-        // cursor outside retention owes a full checkpoint requirement).
-        // The loss cannot be typed ON this stream: only EVENT and OUTPUT may be
-        // unsolicited (protocol.zig unsolicitedType), and an ERROR frame is
-        // response-flagged, so request_id 0 is malformed by validateHeader.
-        // Detaching is therefore the observable signal — the viewer sees EOF and
-        // re-attaches, and beginViewerStream types the gap there, where a
-        // request_id exists to correlate it (CHECKPOINT_UNAVAILABLE, or a
-        // SNAPSHOT_BYTES replay when a checkpoint can bridge the cursor).
-        if (state.retainedOutputStart() > viewer.sent_seq) {
+    var index: usize = 0;
+    while (index < viewers.items.len) {
+        if (pumpAttachedViewer(
+            allocator,
+            &viewers.items[index],
+            core,
+            state,
+            timer,
+        )) |reason| {
             detachAttachedViewer(
                 allocator,
                 core,
-                viewer_slot,
+                viewers,
+                index,
                 state,
                 timer.read(),
-                "retention-gap",
-                null,
+                reason.cause,
+                reason.detail,
             );
-            return;
-        }
-        if (state.outputSeq() > viewer.sent_seq and
-            viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
-        {
-            pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch |err| {
-                detachAttachedViewer(
-                    allocator,
-                    core,
-                    viewer_slot,
-                    state,
-                    timer.read(),
-                    "output-write",
-                    err,
-                );
-                return;
-            };
-        }
-        var handled: u32 = 0;
-        while (handled < viewer_inbound_frames_per_iteration) : (handled += 1) {
-            var fds = [_]std.posix.pollfd{.{
-                .fd = viewer.stream.handle,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            }};
-            const ready = std.posix.poll(&fds, 0) catch 0;
-            if (ready == 0 or fds[0].revents == 0) return;
-            var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch |err| {
-                detachAttachedViewer(
-                    allocator,
-                    core,
-                    viewer_slot,
-                    state,
-                    timer.read(),
-                    "inbound-read",
-                    err,
-                );
-                return;
-            };
-            defer {
-                if (frame.header.type_code == generated.frame_type.input_submit)
-                    std.crypto.secureZero(u8, frame.payload);
-                frame.deinit(allocator);
-            }
-            if (frame.header.type_code == generated.frame_type.applied) {
-                if (viewerOutputAckThroughSeq(allocator, &frame)) |through_seq| {
-                    // Duplicate/stale acks are harmless retransmits; an ack
-                    // beyond what was sent is a protocol violation.
-                    if (through_seq <= viewer.sent_seq) {
-                        if (through_seq > viewer.acked_seq) viewer.acked_seq = through_seq;
-                        continue;
-                    }
-                }
-                // A malformed or impossible acknowledgement cannot erase or
-                // disconnect a healthy terminal. Ignore it; valid later acks
-                // still advance the same monotonically fenced cursor.
-                continue;
-            }
-            handleViewerFrame(
-                allocator,
-                viewer.stream,
-                core,
-                state,
-                &viewer.authorization,
-                &frame,
-                timer.read(),
-            ) catch |err| {
-                detachAttachedViewer(
-                    allocator,
-                    core,
-                    viewer_slot,
-                    state,
-                    timer.read(),
-                    "frame-handle",
-                    err,
-                );
-                return;
-            };
+        } else {
+            index += 1;
         }
     }
+    publishViewerFloor(viewers, state);
 }
 
 /// Parses a viewer→host APPLIED output acknowledgement; null on any shape
@@ -1320,12 +1336,16 @@ fn runHostLoop(
     state: *terminal_state.TerminalState,
     persistence: *PersistenceCursor,
 ) !void {
-    var attached: ?AttachedViewer = null;
-    defer if (attached) |*viewer| {
-        core.onViewerDetached(viewer.authorization.viewer_id, timer.read());
-        viewer.close(core.allocator);
-        attached = null;
-    };
+    var attached: std.ArrayList(AttachedViewer) = .{};
+    defer {
+        while (attached.items.len > 0) {
+            var viewer = attached.pop().?;
+            core.onViewerDetached(viewer.authorization.viewer_id, timer.read());
+            viewer.close(core.allocator);
+        }
+        attached.deinit(core.allocator);
+        state.setViewerFloor(null);
+    }
     while (!core.terminated) {
         refreshRegistration(core, state);
         const now_ns = timer.read();
@@ -1366,20 +1386,16 @@ fn runHostLoop(
                 break :blk null;
             };
             if (accepted) |viewer| {
-                // §26 retarget: a later successful attach for this exact
-                // generation supersedes the previous viewer connection.
-                if (attached != null) {
-                    detachAttachedViewer(
-                        core.allocator,
-                        core,
-                        &attached,
-                        state,
-                        timer.read(),
-                        "superseded-by-attach",
-                        null,
-                    );
-                }
-                attached = viewer;
+                // §26 retarget is scoped to one viewer identity. Renderer,
+                // observer, and automation viewers coexist on the same host.
+                try installAttachedViewer(
+                    core.allocator,
+                    core,
+                    &attached,
+                    state,
+                    timer.read(),
+                    viewer,
+                );
             } else {
                 stream.close();
             }
@@ -1421,8 +1437,8 @@ fn runHostLoop(
                 try persistTerminalState(state, runtime.directory, persistence, .forced);
                 refreshRegistration(core, state);
                 // Best-effort tail push: every journaled byte reaches the
-                // attached viewer before the endpoint closes (§20 drain).
-                pumpAttachedViewer(core.allocator, &attached, core, state, timer);
+                // attached viewers before the endpoint closes (§20 drain).
+                pumpAttachedViewers(core.allocator, &attached, core, state, timer);
                 const response = try core.terminateBound(.immediate, null);
                 core.allocator.free(response);
                 break;
@@ -1436,7 +1452,7 @@ fn runHostLoop(
             try persistTerminalState(state, runtime.directory, persistence, .batched);
             refreshRegistration(core, state);
         }
-        pumpAttachedViewer(core.allocator, &attached, core, state, timer);
+        pumpAttachedViewers(core.allocator, &attached, core, state, timer);
         std.Thread.sleep(std.time.ns_per_ms);
     }
 }
@@ -2257,7 +2273,12 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     const sockets = try socketPair();
     var peer_open = true;
     defer if (peer_open) sockets[1].close();
-    var attached: ?AttachedViewer = .{
+    var attached: std.ArrayList(AttachedViewer) = .{};
+    defer {
+        for (attached.items) |*viewer| viewer.close(std.testing.allocator);
+        attached.deinit(std.testing.allocator);
+    }
+    try attached.append(std.testing.allocator, .{
         .stream = sockets[0],
         .authorization = .{
             .viewer_id = try std.testing.allocator.dupe(u8, "viewer-a"),
@@ -2267,19 +2288,18 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
         },
         .sent_seq = 0,
         .acked_seq = 0,
-    };
-    defer if (attached) |*viewer| viewer.close(std.testing.allocator);
+    });
+    publishViewerFloor(&attached, &state);
 
     var received: std.ArrayList(u8) = .{};
     defer received.deinit(std.testing.allocator);
 
-    // Loop iteration one: feed, then pump. The pump's push publishes the
-    // delivered high-water as the retention floor (production does the same on
-    // the attach replay, from beginViewerStream).
+    // Loop iteration one: feed, then pump. The collection publishes its
+    // slowest delivered high-water as the retention floor.
     try state.feedOutput("first");
-    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
-    try std.testing.expect(attached != null);
-    try std.testing.expectEqual(@as(u64, 5), attached.?.sent_seq);
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expectEqual(@as(usize, 1), attached.items.len);
+    try std.testing.expectEqual(@as(u64, 5), attached.items[0].sent_seq);
     try drainReadable(sockets[1], &received);
     try std.testing.expect(std.mem.indexOf(u8, received.items, "first") != null);
 
@@ -2289,9 +2309,9 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     try state.feedOutput("second");
     try std.testing.expect(state.checkpointSeq() > 0);
 
-    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
-    try std.testing.expect(attached != null);
-    try std.testing.expectEqual(@as(u64, 11), attached.?.sent_seq);
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expectEqual(@as(usize, 1), attached.items.len);
+    try std.testing.expectEqual(@as(u64, 11), attached.items[0].sent_seq);
     try std.testing.expect(state.retainedOutputStart() <= 5);
     try drainReadable(sockets[1], &received);
     try std.testing.expect(std.mem.indexOf(u8, received.items, "second") != null);
@@ -2300,9 +2320,127 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     // the journal bound behind a pane nobody is watching.
     peer_open = false;
     sockets[1].close();
-    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
-    try std.testing.expect(attached == null);
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expectEqual(@as(usize, 0), attached.items.len);
     try std.testing.expect(state.viewer_floor_seq == null);
+}
+
+test "daemon viewer coexists with renderer and detaches independently" {
+    const StoppedClock = struct {
+        fn now(_: *anyopaque) u64 {
+            return 1;
+        }
+    };
+    var clock_context: u8 = 0;
+
+    const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var state = terminal_state.TerminalState.init(
+        std.testing.allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &clock_context, .nowFn = StoppedClock.now },
+        &engine_build_id,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .cell_width_px_16_16 = 10 << 16,
+            .cell_height_px_16_16 = 20 << 16,
+        },
+        temporary.dir,
+    );
+    defer state.deinit();
+
+    const secret: [32]u8 = @splat(0x4d);
+    var core = try HostCore.init(
+        std.testing.allocator,
+        fixtureRegistration(),
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        0,
+    );
+    defer core.deinit();
+    var timer = try std.time.Timer.start();
+
+    const renderer_sockets = try socketPair();
+    defer renderer_sockets[1].close();
+    const daemon_sockets = try socketPair();
+    var daemon_peer_open = true;
+    defer if (daemon_peer_open) daemon_sockets[1].close();
+
+    var attached: std.ArrayList(AttachedViewer) = .{};
+    defer {
+        for (attached.items) |*viewer| viewer.close(std.testing.allocator);
+        attached.deinit(std.testing.allocator);
+    }
+    try installAttachedViewer(
+        std.testing.allocator,
+        &core,
+        &attached,
+        &state,
+        timer.read(),
+        .{
+            .stream = renderer_sockets[0],
+            .authorization = .{
+                .viewer_id = try std.testing.allocator.dupe(u8, "workspace-pane-queen"),
+                .operations = .{ .view = true },
+                .geometry = fixtureRegistration().record.geometry,
+                .after_seq = 0,
+            },
+            .sent_seq = 0,
+            .acked_seq = 0,
+        },
+    );
+    try installAttachedViewer(
+        std.testing.allocator,
+        &core,
+        &attached,
+        &state,
+        timer.read(),
+        .{
+            .stream = daemon_sockets[0],
+            .authorization = .{
+                .viewer_id = try std.testing.allocator.dupe(u8, "hive-daemon:fixture"),
+                .operations = .{ .view = true, .human_input = true },
+                .geometry = fixtureRegistration().record.geometry,
+                .after_seq = 0,
+            },
+            .sent_seq = 0,
+            .acked_seq = 0,
+        },
+    );
+    try std.testing.expectEqual(@as(usize, 2), attached.items.len);
+
+    try state.feedOutput("wake");
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expectEqual(@as(usize, 2), attached.items.len);
+    var renderer_received: std.ArrayList(u8) = .{};
+    defer renderer_received.deinit(std.testing.allocator);
+    var daemon_received: std.ArrayList(u8) = .{};
+    defer daemon_received.deinit(std.testing.allocator);
+    try drainReadable(renderer_sockets[1], &renderer_received);
+    try drainReadable(daemon_sockets[1], &daemon_received);
+    try std.testing.expect(std.mem.indexOf(u8, renderer_received.items, "wake") != null);
+    try std.testing.expect(std.mem.indexOf(u8, daemon_received.items, "wake") != null);
+
+    daemon_peer_open = false;
+    daemon_sockets[1].close();
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expectEqual(@as(usize, 1), attached.items.len);
+    try std.testing.expectEqualStrings(
+        "workspace-pane-queen",
+        attached.items[0].authorization.viewer_id,
+    );
+
+    try state.feedOutput("-still-live");
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try drainReadable(renderer_sockets[1], &renderer_received);
+    try std.testing.expect(
+        std.mem.indexOf(u8, renderer_received.items, "still-live") != null,
+    );
 }
 
 // The journal-pressure path deliberately evicts past the viewer floor, and the
@@ -2355,7 +2493,12 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
     const window = generated.limits.viewer_queue_bytes;
     state.journal.start_seq = window + 1;
     state.output_seq = window + 1;
-    var attached: ?AttachedViewer = .{
+    var attached: std.ArrayList(AttachedViewer) = .{};
+    defer {
+        for (attached.items) |*viewer| viewer.close(std.testing.allocator);
+        attached.deinit(std.testing.allocator);
+    }
+    try attached.append(std.testing.allocator, .{
         .stream = sockets[0],
         .authorization = .{
             .viewer_id = try std.testing.allocator.dupe(u8, "viewer-b"),
@@ -2365,16 +2508,17 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
         },
         .sent_seq = window,
         .acked_seq = 0,
-    };
-    defer if (attached) |*viewer| viewer.close(std.testing.allocator);
-    state.setViewerFloor(attached.?.sent_seq);
+    });
+    publishViewerFloor(&attached, &state);
     // Precondition: the backpressure gate really is shut, so this test cannot
     // pass through the ordinary push-then-fail route.
-    try std.testing.expect(attached.?.sent_seq - attached.?.acked_seq >= window);
-    try std.testing.expect(state.retainedOutputStart() > attached.?.sent_seq);
+    try std.testing.expect(
+        attached.items[0].sent_seq - attached.items[0].acked_seq >= window,
+    );
+    try std.testing.expect(state.retainedOutputStart() > attached.items[0].sent_seq);
 
-    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
-    try std.testing.expect(attached == null);
+    pumpAttachedViewers(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expectEqual(@as(usize, 0), attached.items.len);
     try std.testing.expect(state.viewer_floor_seq == null);
 
     // Peer-observable: EOF, not an open socket that never speaks again. The

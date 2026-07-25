@@ -244,7 +244,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     const attach_request_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
         .locator = wire_locator,
-        .viewerId = "golden-viewer-b",
+        .viewerId = "golden-viewer",
         .geometry = .{
             .columns = @as(u16, 80),
             .rows = @as(u16, 24),
@@ -1466,16 +1466,16 @@ fn driveViewerWire(
     gamma_applied.deinit(allocator);
     try reader.collectOutputUntilContains("OUT:gamma-line");
 
-    // Second long-phase boundary: the replay-supersede below detaches this
-    // viewer, and the control-plane tail (LIST/INSPECT/TERMINATE) follows.
+    // Second long-phase boundary: the same-viewer replay-retarget below
+    // detaches this connection, and the control-plane tail follows.
     // The renewal extends both the visibility lease and the active claim, so
     // the supersede orphans the claim (inputOwner stays reported) instead of
     // dropping an expired one.
     try renewVisibility(allocator, backend, wire_locator, 79);
 
-    // §26 retarget + §20 replay determinism: a second grant re-attaches the
-    // same exact generation from afterSeq 0, replays the identical retained
-    // byte stream, and supersedes this connection (which then closes).
+    // §26 retarget + §20 replay determinism: a second grant for this viewer
+    // re-attaches from afterSeq 0, replays the identical retained byte stream,
+    // and supersedes only this viewer's prior connection.
     {
         const replay_stream = try std.net.connectUnixSocket(socket_path);
         defer replay_stream.close();
