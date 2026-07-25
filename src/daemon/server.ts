@@ -3581,12 +3581,19 @@ export class HiveDaemon {
       );
       return { outcome: "delivery-failed", reason };
     }
+    const activeRun = this.db.getActiveProviderRunForAgent(agent.id);
+    if (activeRun === null) return { outcome: "stale" };
     try {
       const result = await this.sessiondInput.injectKeys(agent, keys, {
         transactionId: `approval:${approval.id}`,
         isPromptPending: () =>
           this.db.getApproval(approval.id)?.status === "pending" &&
           this.db.getAgentByName(agent.name)?.status === "awaiting-approval",
+        expectedForeground: {
+          pid: activeRun.pid,
+          startToken: activeRun.startToken,
+          processGroupId: activeRun.foregroundProcessGroupId,
+        },
       });
       if (result.outcome === "declined") {
         if (

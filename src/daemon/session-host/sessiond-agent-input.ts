@@ -53,6 +53,7 @@ export interface SessiondAgentInput {
     options: Readonly<{
       transactionId: string;
       isPromptPending: () => boolean;
+      expectedForeground: ExpectedForeground;
     }>,
   ): Promise<SessiondInjectResult>;
 }
@@ -110,6 +111,7 @@ export class SessiondViewerAgentInput
     options: Readonly<{
       transactionId: string;
       isPromptPending: () => boolean;
+      expectedForeground: ExpectedForeground;
     }>,
   ): Promise<SessiondInjectResult> {
     return this.submit(
@@ -117,6 +119,7 @@ export class SessiondViewerAgentInput
       new TextEncoder().encode(keys),
       options.transactionId,
       options.isPromptPending,
+      options.expectedForeground,
     );
   }
 

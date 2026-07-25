@@ -13,7 +13,7 @@ import type {
 import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-contract";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
-import type { AgentRecord } from "../../src/schemas";
+import type { AgentRecord, ProviderRun } from "../../src/schemas";
 import { required } from "../required";
 
 /**
@@ -68,6 +68,30 @@ function blockedCodexAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     },
     ...overrides,
   };
+}
+
+function insertBlockedCodexAgent(db: HiveDatabase): AgentRecord {
+  const value = blockedCodexAgent();
+  db.insertAgent(value);
+  db.insertProviderRun({
+    runId: crypto.randomUUID(),
+    agentId: value.id,
+    terminal: required(value.sessionLocator),
+    provider: value.tool,
+    model: value.model,
+    effort: null,
+    conversationId: null,
+    pid: 4_200,
+    startToken: "4200:1",
+    foregroundProcessGroupId: 4_200,
+    capabilityEpoch: value.capabilityEpoch,
+    launchGrantId: "grant-vendor-prompt",
+    startedAt: timestamp,
+    endedAt: null,
+    state: "running",
+    exitReason: null,
+  } satisfies ProviderRun);
+  return value;
 }
 
 function receipt(transactionId: string): InputReceipt {
@@ -170,7 +194,7 @@ async function expectFailedInjectionPreserved(
     injectKeys,
   };
   await withDaemon(fixture, input, async ({ db, daemon, client }) => {
-    db.insertAgent(blockedCodexAgent());
+    insertBlockedCodexAgent(db);
     await daemon.processEvent({
       kind: "approval-request",
       agentName: "sam",
@@ -209,7 +233,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
   test("surfaces through hive_approvals, and approving it presses the key that advances the popup", async () => {
     const input = recordingInput();
     await withDaemon("approve", input, async ({ db, daemon, client }) => {
-      db.insertAgent(blockedCodexAgent());
+      insertBlockedCodexAgent(db);
 
       // What codex's PermissionRequest hook reports, carrying the command
       // being decided (measured payload, codex-cli 0.145.0).
@@ -249,7 +273,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
   test("denying presses escape, which codex's popup labels as its decline", async () => {
     const input = recordingInput();
     await withDaemon("deny", input, async ({ db, daemon, client }) => {
-      db.insertAgent(blockedCodexAgent());
+      insertBlockedCodexAgent(db);
       await daemon.processEvent({
         kind: "approval-request",
         agentName: "sam",
@@ -269,7 +293,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
   test("a manually answered prompt makes its approval STALE before a later popup can reuse it", async () => {
     const input = recordingInput();
     await withDaemon("stale-prompt", input, async ({ db, daemon, client }) => {
-      db.insertAgent(blockedCodexAgent());
+      insertBlockedCodexAgent(db);
       await daemon.processEvent({
         kind: "approval-request",
         agentName: "sam",
@@ -329,7 +353,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
       "injection-race",
       input,
       async ({ db, daemon, client }) => {
-        db.insertAgent(blockedCodexAgent());
+        insertBlockedCodexAgent(db);
         await daemon.processEvent({
           kind: "approval-request",
           agentName: "sam",
@@ -381,7 +405,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
       "fresh-after-denial",
       input,
       async ({ db, daemon, client }) => {
-        db.insertAgent(blockedCodexAgent());
+        insertBlockedCodexAgent(db);
         await daemon.processEvent({
           kind: "approval-request",
           agentName: "sam",
@@ -419,7 +443,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
     await withDaemon("gated", input, async ({ db, daemon, client }) => {
       // Positive control first: this agent's own tool prompt DOES get a key,
       // so a later empty `keys` is a gate that held, not a wire that is dead.
-      db.insertAgent(blockedCodexAgent());
+      insertBlockedCodexAgent(db);
       await daemon.processEvent({
         kind: "approval-request",
         agentName: "sam",

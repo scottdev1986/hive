@@ -809,6 +809,25 @@ describe("legitimate workflows keep working", () => {
   test("the orchestrator spawns, approves, kills, and reads the global inbox", async () => {
     const { daemon, db, spawner } = harness();
     db.upsertAgent(agentRecord());
+    const maya = required(db.getAgentByName("maya"));
+    db.insertProviderRun({
+      runId: crypto.randomUUID(),
+      agentId: maya.id,
+      terminal: required(maya.sessionLocator),
+      provider: maya.tool,
+      model: maya.model,
+      effort: null,
+      conversationId: null,
+      pid: 4_200,
+      startToken: "4200:1",
+      foregroundProcessGroupId: 4_200,
+      capabilityEpoch: maya.capabilityEpoch,
+      launchGrantId: "grant-auth-workflow",
+      startedAt: timestamp,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    });
     const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
 
     expect(

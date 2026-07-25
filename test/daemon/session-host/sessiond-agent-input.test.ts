@@ -6,6 +6,7 @@ import type {
 } from "../../../src/daemon/session-host/sessiond-host";
 import type { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
 import type {
+  ExpectedForeground,
   InputReceipt,
   SessionInspection,
 } from "../../../src/daemon/session-host/terminal-host-contract";
@@ -122,6 +123,7 @@ function inspection(): SessionInspection {
  */
 class HumanClaimArbiterWire {
   discarded = false;
+  rejectGuardedWrite = false;
   readonly attempts: string[] = [];
 
   constructor(
@@ -132,9 +134,27 @@ class HumanClaimArbiterWire {
 
   client(): SessiondViewerAttachClient {
     return {
-      injectAutomated: async (request: { transactionId: string }) => {
+      injectAutomated: async (request: {
+        transactionId: string;
+        expectedForeground?: ExpectedForeground;
+      }) => {
         this.attempts.push(request.transactionId);
-        if (this.discarded) return { kind: "receipt" as const, receipt };
+        if (this.discarded) {
+          return {
+            kind: "receipt" as const,
+            receipt:
+              this.rejectGuardedWrite &&
+              request.expectedForeground !== undefined
+                ? {
+                    ...receipt,
+                    stage: "rejected" as const,
+                    byteRange: null,
+                    orderedAt: null,
+                    diagnostic: "foreground-changed",
+                  }
+                : receipt,
+          };
+        }
         return {
           kind: "claim-declined" as const,
           detail: `claim denied: ${this.claimState}`,
@@ -221,6 +241,35 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     expect(result.outcome).toBe("declined");
     expect(modes).toEqual([]);
     expect(wire.attempts).toEqual(["message-1"]);
+  });
+
+  test("approval keys carry the foreground guard to the atomic write", async () => {
+    const wire = new HumanClaimArbiterWire();
+    wire.discarded = true;
+    wire.rejectGuardedWrite = true;
+    const result = await injector(wire, async () => {
+      throw new Error("must not discard");
+    }).injectKeys(agent(), "y", {
+      transactionId: "approval-1",
+      isPromptPending: () => true,
+      expectedForeground: {
+        pid: 4_200,
+        startToken: "4200:1",
+        processGroupId: 4_200,
+      },
+    });
+
+    expect(result).toEqual({
+      outcome: "declined",
+      reason: "input receipt stage rejected: foreground-changed",
+      receipt: {
+        ...receipt,
+        stage: "rejected",
+        byteRange: null,
+        orderedAt: null,
+        diagnostic: "foreground-changed",
+      },
+    });
   });
 
   test("an injector with no discard wire keeps the pre-fix decline-and-queue behaviour", async () => {
