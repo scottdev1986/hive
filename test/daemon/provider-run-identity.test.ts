@@ -152,6 +152,10 @@ describe("C0 provider-run identity", () => {
         foregroundProcessGroupId: 5_000,
       },
     };
+    const shellIdle = {
+      ...unmanaged,
+      foreground: { state: "shell-idle" as const, runId: null },
+    };
     const activeRun: ProviderRun = {
       runId: crypto.randomUUID(),
       agentId: "agent-fixture",
@@ -178,7 +182,7 @@ describe("C0 provider-run identity", () => {
       }),
     ).toThrow("mismatched sessiond SessionLocator");
     expect(sessiondForegroundJobIsDead(unmanaged)).toBe(false);
-    expect(sessiondAgentProviderRunIsDead(unmanaged, activeRun)).toBe(false);
+    expect(sessiondAgentProviderRunIsDead(shellIdle, activeRun)).toBe(false);
     expect(sessiondAgentProviderRunIsDead(unmanaged, null)).toBe(true);
   });
 
