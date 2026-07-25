@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,12 +143,6 @@ describe("Kimi file observation", () => {
     }
   });
 
-  test.todo(
-    "normalizes Grok hooks after live hook firing can be verified",
-    () => {},
-  );
-  test.todo(
-    "normalizes the OpenCode plugin after OpenCode can be launched",
-    () => {},
-  );
+  test.todo("normalizes Grok hooks after live hook firing can be verified", () => {});
+  test.todo("normalizes the OpenCode plugin after OpenCode can be launched", () => {});
 });

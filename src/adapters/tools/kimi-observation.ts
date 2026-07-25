@@ -169,7 +169,7 @@ export async function readKimiProviderEvents(
     return { events: [], through: null, completeness: "unknown" };
   }
   const path = join(session.sessionDir, "agents", "main", "wire.jsonl");
-  let file;
+  let file: Awaited<ReturnType<typeof open>> | undefined;
   try {
     file = await open(path, "r");
     const size = (await file.stat()).size;

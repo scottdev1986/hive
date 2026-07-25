@@ -8,7 +8,12 @@ import { ActivitySnapshotSchema } from "../schemas";
 import type { CaptureResult, SessionInspection } from "./session-host/contract";
 import type { FusedAgentStatus } from "./status-fusion";
 
-const ANSI = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g;
+const ESC = String.fromCharCode(27);
+const BEL = String.fromCharCode(7);
+const ANSI = new RegExp(
+  `${ESC}(?:\\[[0-?]*[ -/]*[@-~]|\\][^${BEL}]*(?:${BEL}|${ESC}\\\\))`,
+  "g",
+);
 const SECRET =
   /\b(?:Bearer\s+[A-Za-z0-9._~+/=-]+|sk-[A-Za-z0-9_-]{12,}|ghp_[A-Za-z0-9]{12,}|HIVE_CAPABILITY_TOKEN=\S+)/gi;
 
@@ -48,9 +53,9 @@ function providerState(
 function turnState(
   events: readonly ProviderEvent[],
 ): ActivitySnapshot["turnState"] {
-  const latest = [...events].sort((left, right) =>
-    left.occurredAt.localeCompare(right.occurredAt),
-  ).at(-1);
+  const latest = [...events]
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+    .at(-1);
   switch (latest?.kind) {
     case "turn-started":
     case "tool-started":
@@ -70,9 +75,7 @@ function turnState(
   }
 }
 
-function phase(
-  status: FusedAgentStatus | null,
-): ActivitySnapshot["phase"] {
+function phase(status: FusedAgentStatus | null): ActivitySnapshot["phase"] {
   switch (status?.report?.phase) {
     case "planning":
       return "planning";
@@ -104,9 +107,9 @@ export function buildActivitySnapshot(
   input: ActivitySnapshotInput,
 ): ActivitySnapshot {
   const report = input.status?.report;
-  const latestEvent = [...input.events].sort((left, right) =>
-    left.occurredAt.localeCompare(right.occurredAt),
-  ).at(-1);
+  const latestEvent = [...input.events]
+    .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt))
+    .at(-1);
   const evidence: ActivitySnapshot["evidence"] = [];
   if (input.run !== null) {
     evidence.push({
@@ -165,8 +168,7 @@ export function buildActivitySnapshot(
     completeness:
       input.inspection === null || input.capture === null
         ? "unknown"
-        : input.capture.truncated ||
-            input.transcriptCompleteness === "gap"
+        : input.capture.truncated || input.transcriptCompleteness === "gap"
           ? "gap"
           : "complete",
   });
