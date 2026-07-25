@@ -107,6 +107,7 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.resize,
         generated.frame_type.detach,
         generated.frame_type.event,
+        generated.frame_type.attach_ready,
         generated.frame_type.claim_acquire,
         generated.frame_type.claim_result,
         generated.frame_type.human_input,

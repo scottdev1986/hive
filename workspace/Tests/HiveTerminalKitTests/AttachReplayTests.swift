@@ -3,6 +3,35 @@ import XCTest
 
 /// First-correct-frame + checkpoint envelope + multi-chunk (FakeHost).
 final class AttachReplayTests: XCTestCase {
+    func testCaughtUpAttachBecomesLiveWithoutInventingOutput() throws {
+        let host = FakeHost(connectionId: "caught-up")
+        let locator = makeTestLocator()
+        let grant = host.makeGrant(locator: locator, outputSeq: 42)
+        let engine = FakeManualSurface()
+        let client = AttachReplayClient(viewerId: "caught-up-viewer", engine: engine)
+
+        try host.enqueueWelcome(
+            instanceId: locator.instanceId,
+            connectionId: host.hostTransport.connectionId
+        )
+        host.enqueueAttachReady()
+
+        let outcome = try client.attach(
+            grant: grant,
+            geometry: makeGeometry(),
+            afterSeq: 42,
+            transport: host.clientTransport
+        )
+
+        XCTAssertEqual(
+            outcome,
+            .firstCorrectFrame(highWater: 42, connectionId: host.clientTransport.connectionId)
+        )
+        XCTAssertEqual(client.state, .live)
+        XCTAssertTrue(engine.appliedRanges.isEmpty)
+        XCTAssertTrue(engine.restored.isEmpty)
+    }
+
     func testFirstCorrectFrameAfterAttach() throws {
         let host = FakeHost(connectionId: "attach-conn-1")
         let locator = makeTestLocator()
@@ -48,6 +77,7 @@ final class AttachReplayTests: XCTestCase {
         try host.enqueueWelcome(instanceId: locator.instanceId, connectionId: "h")
         let payload = Data(repeating: 0x42, count: 200)
         host.enqueueSnapshotEnvelope(throughSeq: 7, enginePayload: payload, chunkSize: 40)
+        host.enqueueAttachReady()
 
         let outcome = try client.attach(
             grant: grant,

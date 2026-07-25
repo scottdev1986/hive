@@ -179,6 +179,7 @@ export class SessiondViewerAttachClient {
   private failure: Error | null = null;
   private maxInputTransactionBytes = TERMINAL_LIMITS.inputTransactionBytes;
   private outputHighWater = 0n;
+  private attachRequestId: bigint | null = null;
   private outputTail = new Uint8Array();
   private outputComplete = true;
   private outputWaiter: Readonly<{
@@ -281,8 +282,9 @@ export class SessiondViewerAttachClient {
     this.maxInputTransactionBytes = welcome.limits.maxInputTransactionBytes;
     this.decoder.setControlFrameMaxBytes(welcome.limits.controlFrameMaxBytes);
 
-    // HOST_ATTACH is unsolicited — the host answers by streaming SNAPSHOT/OUTPUT,
-    // never a correlated frame — so it is sent fire-and-forget.
+    // HOST_ATTACH streams SNAPSHOT/OUTPUT and then answers with correlated
+    // ATTACH_READY. That explicit response distinguishes a caught-up viewer
+    // from a host that accepted nothing and went silent.
     const hostAttach = HostAttachPayloadSchema.parse({
       schemaVersion: 1,
       locator: this.deps.locator,
@@ -291,11 +293,14 @@ export class SessiondViewerAttachClient {
       afterSeq: this.afterSeq,
     });
     this.outputHighWater = BigInt(this.afterSeq);
+    const attachRequestId = this.nextRequestId++;
+    this.attachRequestId = attachRequestId;
     this.writeFrame(
       "HOST_ATTACH",
       0,
       0n,
       textEncoder.encode(JSON.stringify(hostAttach)),
+      attachRequestId,
     );
   }
 
@@ -533,6 +538,19 @@ export class SessiondViewerAttachClient {
         return;
       case "OUTPUT":
         this.acknowledgeOutput(frame);
+        return;
+      case "ATTACH_READY":
+        if (
+          frame.requestId !== this.attachRequestId ||
+          frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final) ||
+          frame.payload.byteLength !== 0
+        ) {
+          this.fail(
+            new SessiondProtocolError(
+              "sessiond returned an invalid ATTACH_READY frame",
+            ),
+          );
+        }
         return;
       case "SNAPSHOT_BEGIN":
       case "SNAPSHOT_BYTES":

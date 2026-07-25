@@ -51,6 +51,7 @@ public final class AttachReplayClient {
     private let engine: ManualSurfaceEngine
     private var transport: HostTransport?
     private var nextRequestId: UInt64 = 1
+    private var attachRequestId: UInt64?
     private var snapshotBuffer = Data()
     private var snapshotStarted = false
     private var activeClaimToken: String?
@@ -69,10 +70,6 @@ public final class AttachReplayClient {
 
     /// Handshake receive timeout (§09): fail closed rather than HOST_ATTACH blind.
     public var handshakeTimeout: TimeInterval = 5.0
-    /// After WELCOME, idle gap means end of pre-queued attach stream (L3 UDS
-    /// would keep reading; FakeHost finishes with idle).
-    public var streamIdleTimeout: TimeInterval = 0.15
-
     public static let resizeQuiescenceNanos: UInt64 = 100_000_000
     private static let claimRetryDelay: TimeInterval = 0.05
 
@@ -142,6 +139,7 @@ public final class AttachReplayClient {
             "geometry": geometry.jsonObject(),
             "afterSeq": String(afterSeq),
         ]
+        attachRequestId = nextRequestId
         try sendJSON(.hostAttach, object: hostAttach, requestId: nextRequestId)
         nextRequestId += 1
         state = .replaying
@@ -150,7 +148,7 @@ public final class AttachReplayClient {
         while true {
             let frame: WireFrame
             do {
-                guard let next = try transport.receive(timeout: streamIdleTimeout) else {
+                guard let next = try transport.receive(timeout: handshakeTimeout) else {
                     break // closed
                 }
                 frame = next
@@ -359,6 +357,13 @@ public final class AttachReplayClient {
         switch frame.type {
         case .welcome:
             return .continueReplay
+        case .attachReady:
+            guard frame.requestId == attachRequestId,
+                  frame.flags == [.response, .final],
+                  frame.payload.isEmpty else {
+                throw WireError.malformedFrame("invalid ATTACH_READY")
+            }
+            return presentFirstCorrectFrame(binding: binding)
         case .error:
             let object = try FrameCodec.parseJSONObject(frame.payload)
             let code = object["code"] as? String ?? "INTERNAL"

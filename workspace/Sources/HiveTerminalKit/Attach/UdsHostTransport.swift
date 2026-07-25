@@ -13,12 +13,19 @@ public final class UdsHostTransport: HostTransport {
 
     private var fd: Int32
     private var pendingBytes = Data()
+    private var failure: String?
     private let lock = NSLock()
     /// Serial background writer: keeps the blocking `write(2)` loop off the
     /// caller's (usually main) thread while preserving per-transport FIFO
     /// order. The fd is closed ONLY as a barrier on this queue (see `close`),
     /// so a queued write can never land on a recycled fd.
     private let writeQueue = DispatchQueue(label: "hive.uds-host-transport.write")
+
+    public var failureEvidence: String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return failure
+    }
 
     public static func connect(endpoint: String) throws -> UdsHostTransport {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -100,7 +107,10 @@ public final class UdsHostTransport: HostTransport {
             }
             return false
         }
-        if failed { close() }
+        if failed {
+            let code = errno
+            fail("write errno \(code)")
+        }
     }
 
     public func receive(timeout: TimeInterval?) throws -> WireFrame? {
@@ -119,10 +129,14 @@ public final class UdsHostTransport: HostTransport {
                 continue
             }
             if count < 0 && errno == EINTR { continue }
-            // 0 = orderly EOF; <0 = reset. Both end this connection.
-            close()
-            if pendingBytes.isEmpty { return nil }
-            throw WireError.malformedFrame("stream closed mid-frame")
+            if count == 0 {
+                close()
+                if pendingBytes.isEmpty { return nil }
+                throw WireError.malformedFrame("stream closed mid-frame")
+            }
+            let code = errno
+            fail("read errno \(code)")
+            throw WireError.malformedFrame("read errno \(code)")
         }
     }
 
@@ -139,6 +153,13 @@ public final class UdsHostTransport: HostTransport {
         lock.unlock()
         guard staleFd >= 0 else { return }
         writeQueue.async { Darwin.close(staleFd) }
+    }
+
+    private func fail(_ evidence: String) {
+        lock.lock()
+        if failure == nil { failure = evidence }
+        lock.unlock()
+        close()
     }
 
     /// Complete frame from the accumulation buffer, if one is fully buffered.
@@ -174,7 +195,8 @@ public final class UdsHostTransport: HostTransport {
             if ready > 0 { return true }
             if ready == 0 { return false }
             if errno == EINTR { continue }
-            close()
+            let code = errno
+            fail("poll errno \(code)")
             throw WireError.closed
         }
     }

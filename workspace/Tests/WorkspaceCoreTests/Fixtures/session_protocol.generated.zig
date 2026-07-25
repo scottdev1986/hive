@@ -47,6 +47,7 @@ pub const frame_type = struct {
     pub const resize: u16 = 0x0207;
     pub const detach: u16 = 0x0208;
     pub const event: u16 = 0x0209;
+    pub const attach_ready: u16 = 0x020a;
     pub const claim_acquire: u16 = 0x0300;
     pub const claim_result: u16 = 0x0301;
     pub const human_input: u16 = 0x0302;

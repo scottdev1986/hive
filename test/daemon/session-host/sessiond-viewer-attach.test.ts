@@ -211,6 +211,15 @@ function respond(
           }),
         );
       }
+      socket.write(
+        encodeSessiondFrame({
+          type: "ATTACH_READY",
+          flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+          requestId: frame.requestId,
+          streamSeq: 0n,
+          payload: new Uint8Array(),
+        }),
+      );
       return;
     case "CLAIM_ACQUIRE":
       respondFrame(

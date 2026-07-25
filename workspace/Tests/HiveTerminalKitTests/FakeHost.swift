@@ -97,6 +97,12 @@ final class FakeHost {
         )
     }
 
+    func enqueueAttachReady(requestId: UInt64 = 2) {
+        clientTransport.enqueueInbound(
+            WireFrame(type: .attachReady, flags: [.response, .final], requestId: requestId)
+        )
+    }
+
     func makeGrant(
         locator: SessionLocator,
         token: String = "grant-token-test",

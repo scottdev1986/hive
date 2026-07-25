@@ -134,6 +134,7 @@ export const FRAME_TYPES = {
   RESIZE: 0x0207,
   DETACH: 0x0208,
   EVENT: 0x0209,
+  ATTACH_READY: 0x020a,
   CLAIM_ACQUIRE: 0x0300,
   CLAIM_RESULT: 0x0301,
   HUMAN_INPUT: 0x0302,
@@ -194,9 +195,9 @@ export const FRAME_TYPE_GROUPS = [
     purpose: "operator-orphaned-claim-discard",
   },
   {
-    names: ["ATTACH_REQUEST", "ATTACH_GRANT", "HOST_ATTACH"],
+    names: ["ATTACH_REQUEST", "ATTACH_GRANT", "HOST_ATTACH", "ATTACH_READY"],
     direction: "workspace-broker-host-bidirectional",
-    purpose: "one-use-viewer-attach",
+    purpose: "one-use-viewer-attach-and-explicit-readiness",
   },
   {
     names: ["SNAPSHOT_BEGIN", "SNAPSHOT_BYTES"],

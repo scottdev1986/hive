@@ -44,6 +44,7 @@ enum SessionProtocolGenerated {
         "RESIZE": 0x0207,
         "DETACH": 0x0208,
         "EVENT": 0x0209,
+        "ATTACH_READY": 0x020a,
         "CLAIM_ACQUIRE": 0x0300,
         "CLAIM_RESULT": 0x0301,
         "HUMAN_INPUT": 0x0302,

@@ -642,6 +642,22 @@ fn beginViewerStream(
     return base;
 }
 
+/// Correlated proof that HOST_ATTACH completed, including the valid
+/// zero-replay case where the viewer is already at the host's high-water.
+fn writeAttachReady(
+    stream: std.net.Stream,
+    authorized: *const AuthorizedViewer,
+) !void {
+    try protocol.writeFrame(stream, .{
+        .minor = authorized.attach_minor,
+        .type_code = generated.frame_type.attach_ready,
+        .flags = generated.frame_flag.response | generated.frame_flag.final,
+        .payload_length = 0,
+        .request_id = authorized.attach_request_id,
+        .stream_seq = 0,
+    }, "");
+}
+
 /// Serves one accepted host.sock connection. A broker connection is one RPC.
 /// A viewer connection authorizes, streams the attach snapshot/replay, and is
 /// returned to the host loop as the live attached viewer; the caller closes
@@ -673,6 +689,7 @@ fn serveSessionConnection(
             );
             errdefer authorized.authorization.deinit(core.allocator);
             const sent_seq = try beginViewerStream(allocator, stream, state, &authorized);
+            try writeAttachReady(stream, &authorized);
             return .{
                 .stream = stream,
                 .authorization = authorized.authorization,
@@ -698,8 +715,22 @@ fn detachAttachedViewer(
     viewer_slot: *?AttachedViewer,
     state: *terminal_state.TerminalState,
     now_ns: u64,
+    cause: []const u8,
+    detail: ?anyerror,
 ) void {
     if (viewer_slot.*) |*viewer| {
+        std.log.warn(
+            "viewer detached cause={s} detail={s} viewer={s} sent={d} acked={d} output={d} retained_start={d}",
+            .{
+                cause,
+                if (detail) |err| @errorName(err) else "-",
+                viewer.authorization.viewer_id,
+                viewer.sent_seq,
+                viewer.acked_seq,
+                state.outputSeq(),
+                state.retainedOutputStart(),
+            },
+        );
         // #40: unclean drop must orphan+clear host claim before free of viewer_id.
         core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
         viewer.close(allocator);
@@ -739,14 +770,30 @@ fn pumpAttachedViewer(
         // request_id exists to correlate it (CHECKPOINT_UNAVAILABLE, or a
         // SNAPSHOT_BYTES replay when a checkpoint can bridge the cursor).
         if (state.retainedOutputStart() > viewer.sent_seq) {
-            detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
+            detachAttachedViewer(
+                allocator,
+                core,
+                viewer_slot,
+                state,
+                timer.read(),
+                "retention-gap",
+                null,
+            );
             return;
         }
         if (state.outputSeq() > viewer.sent_seq and
             viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
         {
-            pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch {
-                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
+            pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch |err| {
+                detachAttachedViewer(
+                    allocator,
+                    core,
+                    viewer_slot,
+                    state,
+                    timer.read(),
+                    "output-write",
+                    err,
+                );
                 return;
             };
         }
@@ -759,8 +806,16 @@ fn pumpAttachedViewer(
             }};
             const ready = std.posix.poll(&fds, 0) catch 0;
             if (ready == 0 or fds[0].revents == 0) return;
-            var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch {
-                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
+            var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch |err| {
+                detachAttachedViewer(
+                    allocator,
+                    core,
+                    viewer_slot,
+                    state,
+                    timer.read(),
+                    "inbound-read",
+                    err,
+                );
                 return;
             };
             defer {
@@ -790,8 +845,16 @@ fn pumpAttachedViewer(
                 &viewer.authorization,
                 &frame,
                 timer.read(),
-            ) catch {
-                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
+            ) catch |err| {
+                detachAttachedViewer(
+                    allocator,
+                    core,
+                    viewer_slot,
+                    state,
+                    timer.read(),
+                    "frame-handle",
+                    err,
+                );
                 return;
             };
         }
@@ -1305,10 +1368,16 @@ fn runHostLoop(
             if (accepted) |viewer| {
                 // §26 retarget: a later successful attach for this exact
                 // generation supersedes the previous viewer connection.
-                if (attached) |*old| {
-                    // #40: supersede is an unclean drop for the prior viewer.
-                    core.onViewerDetached(old.authorization.viewer_id, timer.read());
-                    old.close(core.allocator);
+                if (attached != null) {
+                    detachAttachedViewer(
+                        core.allocator,
+                        core,
+                        &attached,
+                        state,
+                        timer.read(),
+                        "superseded-by-attach",
+                        null,
+                    );
                 }
                 attached = viewer;
             } else {

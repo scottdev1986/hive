@@ -13376,6 +13376,7 @@
         "RESIZE": 519,
         "DETACH": 520,
         "EVENT": 521,
+        "ATTACH_READY": 522,
         "CLAIM_ACQUIRE": 768,
         "CLAIM_RESULT": 769,
         "HUMAN_INPUT": 770,
@@ -13463,10 +13464,11 @@
           "names": [
             "ATTACH_REQUEST",
             "ATTACH_GRANT",
-            "HOST_ATTACH"
+            "HOST_ATTACH",
+            "ATTACH_READY"
           ],
           "direction": "workspace-broker-host-bidirectional",
-          "purpose": "one-use-viewer-attach"
+          "purpose": "one-use-viewer-attach-and-explicit-readiness"
         },
         {
           "names": [

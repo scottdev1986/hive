@@ -212,10 +212,18 @@ final class SessiondPaneTerminal {
     /// SAME exact generation at the applied high-water.
     private func startPump(transport: UdsHostTransport, binding: SurfaceBinding) {
         let thread = Thread { [weak self] in
+            var disconnectEvidence = "host transport ended"
             while true {
-                guard let self, !self.detached, !transport.isClosed else { return }
+                guard let self, !self.detached else { return }
+                if transport.isClosed {
+                    disconnectEvidence =
+                        transport.failureEvidence ?? "host transport closed without EOF"
+                    break
+                }
                 do {
                     guard let first = try transport.receive(timeout: 1.0) else {
+                        disconnectEvidence =
+                            transport.failureEvidence ?? "host closed the viewer stream (EOF)"
                         break // orderly close
                     }
                     // Coalesce: drain everything already buffered behind
@@ -237,16 +245,24 @@ final class SessiondPaneTerminal {
                     if batch.hostClosed { break }
                 } catch let error as WireError {
                     if case .receiveTimeout = error { continue }
+                    disconnectEvidence =
+                        transport.failureEvidence ?? "viewer read failed: \(error)"
                     break
                 } catch {
+                    disconnectEvidence = "viewer read failed: \(error)"
                     break
                 }
             }
             guard let self else { return }
             transport.close()
+            let finalDisconnectEvidence = disconnectEvidence
             DispatchQueue.main.async {
                 guard !self.detached, self.transport === transport else { return }
-                self.recordRecoverableFailure("host transport lost")
+                let evidence =
+                    "\(finalDisconnectEvidence); connection=\(transport.connectionId); " +
+                    "highWater=\(self.view?.highWater ?? 0)"
+                NSLog("sessiond viewer transport for %@ lost: %@", self.agentName, evidence)
+                self.recordRecoverableFailure(evidence)
             }
         }
         thread.name = "sessiond-pump-\(agentName)"

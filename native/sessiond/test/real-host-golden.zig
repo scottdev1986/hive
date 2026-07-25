@@ -884,6 +884,17 @@ fn readViewerError(
         return error.InvalidViewerError;
 }
 
+fn readAttachReady(reader: *ViewerReader, request_id: u64) !void {
+    var frame = try reader.readControlFrame();
+    defer frame.deinit(reader.allocator);
+    if (frame.header.type_code != generated.frame_type.attach_ready or
+        frame.header.request_id != request_id or
+        frame.header.flags !=
+            (generated.frame_flag.response | generated.frame_flag.final) or
+        frame.payload.len != 0)
+        return error.InvalidAttachReady;
+}
+
 /// Issues the visibility renewal the production daemon sends on the
 /// Workspace's behalf every `limits.visibility_renewal_ms` (5 s), through the
 /// same broker backend the golden already uses for LIST/INSPECT/TERMINATE.
@@ -1048,6 +1059,7 @@ fn driveViewerWire(
     // §20 replay: the pre-attach provider banner must arrive as ordered OUTPUT
     // beginning exactly at afterSeq 0.
     try reader.collectOutputUntilContains("GOLDEN-BANNER");
+    try readAttachReady(&reader, 11);
 
     const wrong_generation_claim = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -1511,6 +1523,7 @@ fn driveViewerWire(
         defer allocator.free(replay_attach);
         try writeViewerRequest(replay_stream, generated.frame_type.host_attach, 81, 0, replay_attach);
         try replay_reader.collectOutputUntilLength(reader.output.items.len);
+        try readAttachReady(&replay_reader, 81);
         if (!std.mem.eql(u8, replay_reader.output.items, reader.output.items))
             return error.ReplayDiverged;
         try expectViewerClosed(&reader);
@@ -1631,6 +1644,7 @@ fn resumeFromCursor(
 
     const expected_tail = expected_stream[@intCast(cursor)..];
     try resume_reader.collectOutputUntilLength(expected_tail.len);
+    try readAttachReady(&resume_reader, request_id + 1);
     if (!std.mem.eql(u8, resume_reader.output.items, expected_tail)) {
         std.debug.print(
             "real-host-golden: resume from byte {d} diverged from the from-zero suffix\n",
@@ -2025,6 +2039,7 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
 
     // The viewer is live before a single burst byte exists.
     try reader.collectOutputUntilContains("BURST-READY");
+    try readAttachReady(&reader, 11);
 
     // The host is single-threaded and about to sit in the burst; renew first so
     // the drill carries no wall-clock assumption about the 15 s lease.
