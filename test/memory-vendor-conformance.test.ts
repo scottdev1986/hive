@@ -17,14 +17,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../src/adapters/tools/capability-env";
 import {
   buildClaudeSpawnCommand,
   writeClaudeAgentConfig,
 } from "../src/adapters/tools/claude";
 import {
   buildCodexSpawnCommand,
-  CODEX_CAPABILITY_TOKEN_ENV,
-  codexCapabilityTokenPath,
   writeCodexAgentConfig,
 } from "../src/adapters/tools/codex";
 import {
@@ -114,7 +113,6 @@ const VENDORS: readonly VendorRow[] = [
         name: AGENT,
         daemonPort: DAEMON_PORT,
         readOnly: false,
-        capabilityToken: TOKEN,
         hiveCommand: ["hive"],
       }),
     spawnArgv: (worktree) =>
@@ -135,26 +133,20 @@ const VENDORS: readonly VendorRow[] = [
       expect(toml).toContain("[mcp_servers.hive]");
       expect(toml).toContain(`url = "${HIVE_URL}"`);
       // Codex's channel: bearer_token_env_var names an env var the launch
-      // shell exports from the 0600 token file. Neither the project config
-      // nor any argv element may carry the token itself.
+      // shell exports from the credential file outside the worktree. Neither
+      // the project config nor any argv element may carry the token itself.
       expect(toml).not.toContain(TOKEN);
-      const tokenPath = codexCapabilityTokenPath(worktree);
-      expect(await readFile(tokenPath, "utf8")).toBe(TOKEN);
-      expect((await stat(tokenPath)).mode & 0o777).toBe(0o600);
       const overrides = argv.join("\n");
       expect(overrides).toContain(`mcp_servers.hive.url="${HIVE_URL}"`);
       expect(overrides).toContain(
-        `mcp_servers.hive.bearer_token_env_var="${CODEX_CAPABILITY_TOKEN_ENV}"`,
+        `mcp_servers.hive.bearer_token_env_var="${HIVE_CAPABILITY_TOKEN_ENV}"`,
       );
     },
   },
   {
     vendor: "grok",
     writeConfig: (worktree) =>
-      writeGrokAgentConfig(worktree, {
-        daemonPort: DAEMON_PORT,
-        capabilityToken: TOKEN,
-      }),
+      writeGrokAgentConfig(worktree, { daemonPort: DAEMON_PORT }),
     spawnArgv: (worktree) =>
       buildGrokSpawnCommand({
         model: "default",
@@ -168,10 +160,14 @@ const VENDORS: readonly VendorRow[] = [
       );
       expect(toml).toContain("[mcp_servers.hive]");
       expect(toml).toContain(`url = "${HIVE_URL}"`);
-      // Grok's channel is a static Authorization header in its config.toml —
-      // the only delivery shape the CLI supports.
+      // Grok's channel is an Authorization header in its config.toml whose
+      // value names an env var grok expands at load time, so the live token
+      // never reaches the project tree.
       expect(toml).toContain("[mcp_servers.hive.headers]");
-      expect(toml).toContain(`Authorization = "Bearer ${TOKEN}"`);
+      expect(toml).toContain(
+        `Authorization = "Bearer \${${HIVE_CAPABILITY_TOKEN_ENV}}"`,
+      );
+      expect(toml).not.toContain(TOKEN);
     },
     inspectPrompt: (prompt) => {
       // The Grok safety directive must land BEFORE the memory index block:

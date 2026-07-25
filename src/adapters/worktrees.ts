@@ -468,7 +468,6 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
   ".codex/config.toml",
   ".codex/hive-notify.sh",
   ".codex/hive-graphify-hook.sh",
-  ".codex/capability-token",
   ".grok/config.toml",
   ".kimi-code/mcp.json",
   ".kimi-code/AGENTS.md",

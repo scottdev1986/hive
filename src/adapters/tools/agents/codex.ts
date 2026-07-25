@@ -8,12 +8,12 @@ import {
   writeCodexInstructionProfile,
 } from "../../../daemon/launch-prompt";
 import { shellJoin } from "../../../daemon/session-host/shell-session";
+import { wrapSpawnWithCapabilityEnv } from "../capability-env";
 import {
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
   type CodexSpawnOptions,
   resolveWorkingCodexExecutable,
-  wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../codex";
 import type { AgentAdapter } from "./agent-adapter";
@@ -31,9 +31,6 @@ export const codexAgentAdapter: AgentAdapter = {
       ...(context.hiveCommand === undefined
         ? {}
         : { hiveCommand: context.hiveCommand }),
-      ...(context.capabilityToken === undefined
-        ? {}
-        : { capabilityToken: context.capabilityToken }),
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
@@ -69,7 +66,7 @@ export const codexAgentAdapter: AgentAdapter = {
       context.kickoff === undefined ? argv : [...argv, context.kickoff],
     );
     if (context.capabilityToken !== undefined) {
-      command = wrapCodexSpawnWithCapabilityEnv(command, context.worktreePath);
+      command = wrapSpawnWithCapabilityEnv(command, context.name);
     }
     if (withInstructions) {
       command = wrapCodexWithInstructionProfile(command, sessionId);

@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/tools/capability-env";
 import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
@@ -195,7 +196,6 @@ describe("Grok adapter", () => {
     );
     await writeGrokAgentConfig(root, {
       daemonPort: 4317,
-      capabilityToken: "secret-token",
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
     const content = await readFile(join(root, ".grok", "config.toml"), "utf8");
@@ -204,7 +204,11 @@ describe("Grok adapter", () => {
     expect(content).toContain('[mcp_servers.other]\ncommand = "other"');
     expect(content).not.toContain("http://stale");
     expect(content).toContain('url = "http://127.0.0.1:4317/mcp"');
-    expect(content).toContain('Authorization = "Bearer secret-token"');
+    // The bearer is named, never written: grok expands ${VAR} at load time, so
+    // no live token lands in a file the project can commit.
+    expect(content).toContain(
+      `Authorization = "Bearer \${${HIVE_CAPABILITY_TOKEN_ENV}}"`,
+    );
     expect(content).toContain('url = "http://127.0.0.1:7799/mcp"');
     expect(Bun.TOML.parse(content)).toBeDefined();
 

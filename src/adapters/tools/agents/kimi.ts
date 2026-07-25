@@ -3,6 +3,7 @@ import {
   KimiCliCapabilityTransport,
 } from "../../../daemon/capability-discovery";
 import { shellJoin } from "../../../daemon/session-host/shell-session";
+import { wrapSpawnWithCapabilityEnv } from "../capability-env";
 import {
   buildKimiResumeCommand,
   buildKimiSpawnCommand,
@@ -19,9 +20,6 @@ export const kimiAgentAdapter: AgentAdapter = {
   async prepareSpawn(context) {
     await writeKimiAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
-      ...(context.capabilityToken === undefined
-        ? {}
-        : { capabilityToken: context.capabilityToken }),
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
@@ -42,6 +40,12 @@ export const kimiAgentAdapter: AgentAdapter = {
     if (context.effort !== undefined) {
       command = wrapKimiSpawnWithEffort(command, context.effort);
     }
+    if (context.capabilityToken !== undefined) {
+      command = wrapSpawnWithCapabilityEnv(command, context.name);
+    }
+    // After the env prefixes, never before: the instruction wrapper leads with
+    // its own `mkdir && install`, and an assignment placed in front of that
+    // would reach those commands instead of kimi.
     if (context.instructionPath !== undefined) {
       command = wrapKimiWithInstructionFile(
         command,

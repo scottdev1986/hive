@@ -4,6 +4,7 @@ import {
 } from "../../../daemon/capability-discovery";
 import { wrapGrokWithRulesFile } from "../../../daemon/launch-prompt";
 import { shellJoin } from "../../../daemon/session-host/shell-session";
+import { wrapSpawnWithCapabilityEnv } from "../capability-env";
 import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
@@ -19,9 +20,6 @@ export const grokAgentAdapter: AgentAdapter = {
   async prepareSpawn(context) {
     await writeGrokAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
-      ...(context.capabilityToken === undefined
-        ? {}
-        : { capabilityToken: context.capabilityToken }),
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
@@ -52,7 +50,11 @@ export const grokAgentAdapter: AgentAdapter = {
         context.kickoff,
       );
     }
-    return { argv, command: wrapGrokSpawnWithCompatibilityEnv(command) };
+    command = wrapGrokSpawnWithCompatibilityEnv(command);
+    if (context.capabilityToken !== undefined) {
+      command = wrapSpawnWithCapabilityEnv(command, context.name);
+    }
+    return { argv, command };
   },
   discover: (executable = resolveWorkingGrokExecutable()?.path ?? "grok") =>
     new GrokCapabilityProbe(new GrokCliCapabilityTransport(executable)).read(),

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import {
   type GraphifyHookKind,
   graphifyHookPath,
@@ -59,9 +60,6 @@ export type CodexAgentConfigOptions = Pick<
    * absolute binary path so lifecycle hooks cannot attach to a different
    * Hive installation or fail when `hive` is absent from PATH. */
   hiveCommand?: readonly string[];
-  /** Stored only in Hive's 0600 token file and exported by the launch shell;
-   * never written to argv or project config. */
-  capabilityToken?: string;
 };
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
@@ -85,29 +83,6 @@ export const CODEX_TUI_APPROVAL_KEYS = {
   approve: "y",
   deny: "\u001b",
 } as const;
-
-/** The env var codex reads the agent's bearer from (bearer_token_env_var).
- * Populated only inside the agent's launch shell, never in any argv. */
-export const CODEX_CAPABILITY_TOKEN_ENV = "HIVE_CAPABILITY_TOKEN";
-
-export function codexCapabilityTokenPath(worktreePath: string): string {
-  return join(worktreePath, ".codex", "capability-token");
-}
-
-/** Prefixes a codex launch shell command so the capability token file's
- * contents reach the codex process environment without ever appearing in an
- * argv: `ps` shows the `$(cat ...)` text, not the secret. Codex 0.144.1 does
- * pass its environment to exec-tool children (shell_environment_policy
- * exclude/include_only were both ignored when tested), so the agent's own
- * commands can read the var — the same exposure as the 0600 token file
- * itself, which any same-user process can already read. */
-export function wrapCodexSpawnWithCapabilityEnv(
-  command: string,
-  worktreePath: string,
-): string {
-  const tokenPath = shellToken(codexCapabilityTokenPath(worktreePath));
-  return `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat ${tokenPath})" ${command}`;
-}
 
 const shellToken = (value: string): string => {
   if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) {
@@ -242,7 +217,7 @@ function buildCodexConfigArgs(
     ...((options.withCapabilityToken ?? false)
       ? [
           "-c",
-          `mcp_servers.hive.bearer_token_env_var=${tomlString(CODEX_CAPABILITY_TOKEN_ENV)}`,
+          `mcp_servers.hive.bearer_token_env_var=${tomlString(HIVE_CAPABILITY_TOKEN_ENV)}`,
         ]
       : []),
     ...(options.graphifyUrl === undefined
@@ -530,9 +505,8 @@ export async function writeCodexAgentConfig(
   // No hook tables and no Authorization header here: this project-local file
   // only loads for directories whose trust is persisted in the user's config,
   // which Hive never edits. The lifecycle hooks ride the spawn command's `-c`
-  // overrides, and the capability token travels through a 0600 file whose
-  // contents the launch shell exports for bearer_token_env_var — never
-  // through config codex will not read.
+  // overrides, and the capability reaches codex through bearer_token_env_var —
+  // never through config codex will not read.
   const config = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
@@ -540,20 +514,14 @@ export async function writeCodexAgentConfig(
   ].join("\n");
 
   const configPath = join(codexDirectory, "config.toml");
-  const tokenPath = codexCapabilityTokenPath(worktreePath);
   await Promise.all([
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
     writeGraphifyHook(graphifyPath, options.graphifyUrl),
-    options.capabilityToken === undefined
-      ? // A leftover token from an earlier process must not outlive the spawn
-        // that owned it.
-        rm(tokenPath, { force: true })
-      : writeFile(tokenPath, options.capabilityToken, { mode: 0o600 }),
+    // Hive used to keep the agent's bearer here. A worktree created by an older
+    // Hive still holds that live token in the project tree; this is where it
+    // goes away.
+    rm(join(codexDirectory, "capability-token"), { force: true }),
   ]);
-  await Promise.all([
-    chmod(configPath, 0o600),
-    chmod(notifyPath, 0o755),
-    ...(options.capabilityToken === undefined ? [] : [chmod(tokenPath, 0o600)]),
-  ]);
+  await Promise.all([chmod(configPath, 0o600), chmod(notifyPath, 0o755)]);
 }

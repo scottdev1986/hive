@@ -12,20 +12,22 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  HIVE_CAPABILITY_TOKEN_ENV,
+  wrapSpawnWithCapabilityEnv,
+} from "../../../src/adapters/tools/capability-env";
+import {
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
-  CODEX_CAPABILITY_TOKEN_ENV,
   CODEX_NOTIFY_SCRIPT,
-  codexCapabilityTokenPath,
   codexSessionsDirectory,
   discoverCodexRecoverySessionId,
   findLatestCodexSessionId,
-  wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../../../src/adapters/tools/codex";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/tools/graphify-hook";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+import { credentialPath } from "../../../src/daemon/credentials";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -624,46 +626,26 @@ describe("Codex adapter", () => {
     });
     expect(readFile(hookPath, "utf8")).rejects.toThrow();
   });
-  test("carries the agent capability in a dedicated 0600 token file", async () => {
-    // Codex has no connect-time headers helper and does not read the
-    // project config.toml under Hive's launch, so the secret sits in its own
-    // 0600 file; the launch shell exports it for bearer_token_env_var. It
-    // must never land in the config file or any argv.
-    await writeCodexAgentConfig(worktreePath, {
-      daemonPort: 4317,
-      name: "maya",
-      readOnly: false,
-      capabilityToken: "hv1.abc.secret-token",
-    });
-    const configPath = join(worktreePath, ".codex", "config.toml");
-    const tokenPath = codexCapabilityTokenPath(worktreePath);
-    const config = await readFile(configPath, "utf8");
-    expect(config).not.toContain("secret-token");
-    expect(config).not.toContain("Authorization");
-    expect(await readFile(tokenPath, "utf8")).toEqual("hv1.abc.secret-token");
-    expect((await stat(tokenPath)).mode & 0o777).toEqual(0o600);
-    expect((await stat(configPath)).mode & 0o777).toEqual(0o600);
-  });
+  test("puts no capability in the worktree, and clears a legacy token file", async () => {
+    // Hive used to keep the bearer in .codex/capability-token, inside the
+    // project tree an ordinary `git add -A` stages. It now travels only in the
+    // launch environment, and the config never carried it.
+    const tokenPath = join(worktreePath, ".codex", "capability-token");
+    await mkdir(join(worktreePath, ".codex"), { recursive: true });
+    await writeFile(tokenPath, "hv1.abc.secret-token");
 
-  test("removes a stale token file when no capability was issued", async () => {
-    await writeCodexAgentConfig(worktreePath, {
-      daemonPort: 4317,
-      name: "maya",
-      readOnly: false,
-      capabilityToken: "hv1.abc.stale-token",
-    });
     await writeCodexAgentConfig(worktreePath, {
       daemonPort: 4317,
       name: "maya",
       readOnly: false,
     });
-    const config = await readFile(
-      join(worktreePath, ".codex", "config.toml"),
-      "utf8",
-    );
-    expect(config).not.toContain("http_headers");
+
+    const configPath = join(worktreePath, ".codex", "config.toml");
+    const config = await readFile(configPath, "utf8");
     expect(config).not.toContain("Authorization");
-    expect(stat(codexCapabilityTokenPath(worktreePath))).rejects.toThrow();
+    expect(config).not.toContain("secret-token");
+    expect(stat(tokenPath)).rejects.toThrow();
+    expect((await stat(configPath)).mode & 0o777).toEqual(0o600);
   });
 
   test("a minted capability rides the launch env, never the argv", async () => {
@@ -680,7 +662,7 @@ describe("Codex adapter", () => {
       withCapabilityToken: true,
     });
     expect(withToken).toContain(
-      `mcp_servers.hive.bearer_token_env_var="${CODEX_CAPABILITY_TOKEN_ENV}"`,
+      `mcp_servers.hive.bearer_token_env_var="${HIVE_CAPABILITY_TOKEN_ENV}"`,
     );
     // Without a token the override must be absent entirely: codex 0.144.1
     // silently disables an MCP server whose bearer_token_env_var is unset.
@@ -688,15 +670,13 @@ describe("Codex adapter", () => {
       "bearer_token_env_var",
     );
 
-    // The launch wrapper reads the 0600 file inside the spawn shell, so `ps`
-    // shows the substitution text, never the secret.
-    expect(
-      wrapCodexSpawnWithCapabilityEnv("codex -c x=1", "/tmp/worktree"),
-    ).toEqual(
-      `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat /tmp/worktree/.codex/capability-token)" codex -c x=1`,
+    // The launch wrapper reads the credential file — outside every worktree —
+    // inside the spawn shell, so `ps` shows the substitution text, never the
+    // secret, and no project file ever holds it.
+    const wrapped = wrapSpawnWithCapabilityEnv("codex -c x=1", "maya");
+    expect(wrapped).toEqual(
+      `${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')" codex -c x=1`,
     );
-    expect(wrapCodexSpawnWithCapabilityEnv("codex", "/tmp/work tree")).toEqual(
-      `${CODEX_CAPABILITY_TOKEN_ENV}="$(cat '/tmp/work tree/.codex/capability-token')" codex`,
-    );
+    expect(wrapped).not.toContain("/worktree");
   });
 });

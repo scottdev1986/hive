@@ -3,6 +3,7 @@ import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { shellQuote } from "../../daemon/session-host/shell-session";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { resolveProviderExecutable } from "./provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
@@ -21,7 +22,6 @@ export interface KimiSpawnOptions {
 
 export interface KimiAgentConfigOptions {
   daemonPort: number;
-  capabilityToken?: string;
   graphifyUrl?: string;
 }
 
@@ -148,11 +148,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /**
  * Write the worktree's `.kimi-code/mcp.json` — Kimi's project-level MCP
  * surface, the analog of claude's `.mcp.json`. Unrelated servers are
- * preserved; the `hive` entry is replaced wholesale and carries the bearer
- * token in a 0600 file (never an argv), exactly like grok's config.toml. A
- * spawn without a fresh token keeps the authorization already on disk, and a
- * missing graphify URL removes a stale entry rather than leaving a dead
- * endpoint behind.
+ * preserved; the `hive` entry is replaced wholesale and names the environment
+ * variable holding the bearer rather than the bearer itself. A missing graphify
+ * URL removes a stale entry rather than leaving a dead endpoint behind.
  */
 export async function writeKimiAgentConfig(
   worktreePath: string,
@@ -182,21 +180,11 @@ export async function writeKimiAgentConfig(
     },
   );
   const servers = isRecord(existing.mcpServers) ? existing.mcpServers : {};
-  const existingHive = isRecord(servers.hive) ? servers.hive : {};
-  const existingHeaders = isRecord(existingHive.headers)
-    ? existingHive.headers
-    : {};
-  const authorization =
-    options.capabilityToken !== undefined
-      ? `Bearer ${options.capabilityToken}`
-      : typeof existingHeaders.Authorization === "string"
-        ? existingHeaders.Authorization
-        : undefined;
   servers.hive = {
     url: `http://127.0.0.1:${options.daemonPort}/mcp`,
-    ...(authorization === undefined
-      ? {}
-      : { headers: { Authorization: authorization } }),
+    // Kimi 0.29.1 reads the bearer from this variable at connect time, so the
+    // live token never enters the project tree.
+    bearerTokenEnvVar: HIVE_CAPABILITY_TOKEN_ENV,
   };
   if (options.graphifyUrl === undefined) delete servers.graphify;
   else servers.graphify = { url: options.graphifyUrl };
@@ -204,8 +192,9 @@ export async function writeKimiAgentConfig(
   await writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, {
     mode: 0o600,
   });
-  // writeFile's mode only applies at creation; the bearer token in this file
-  // must be 0600 even when a looser mcp.json was already on disk.
+  // writeFile's mode only applies at creation, and Hive rewrites whatever
+  // mcp.json the project already had — including any credentials the user's own
+  // servers keep in it.
   await chmod(path, 0o600);
 }
 

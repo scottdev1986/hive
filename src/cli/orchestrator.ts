@@ -3,16 +3,14 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/tools/capability-env";
 import {
   buildClaudeSpawnCommand,
   type ResolvedClaudeExecutable,
   resolveWorkingClaudeExecutable,
   writeClaudeAgentConfig,
 } from "../adapters/tools/claude";
-import {
-  CODEX_CAPABILITY_TOKEN_ENV,
-  resolveWorkingCodexExecutable,
-} from "../adapters/tools/codex";
+import { resolveWorkingCodexExecutable } from "../adapters/tools/codex";
 import {
   buildGrokSpawnCommand,
   GROK_COMPATIBILITY_ENV,
@@ -133,22 +131,15 @@ export async function prepareOrchestratorConfig(
       // `buildOrchestratorCommand` builds. An empty arm is a decision, not an
       // omission — which is exactly what the old `if (claude)` could not say.
       return;
-    case "grok": {
-      const authorization = operatorHeaders().Authorization;
+    case "grok":
       await writeGrokAgentConfig(orchestratorConfigRoot(), {
         daemonPort: port,
-        capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
       });
       return;
-    }
     case "kimi": {
       // Kimi has no home-override for project config: its `.kimi-code/` is
       // read from the process cwd, so the config lands where the root runs.
-      const authorization = operatorHeaders().Authorization;
-      await writeKimiAgentConfig(cwd, {
-        daemonPort: port,
-        capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
-      });
+      await writeKimiAgentConfig(cwd, { daemonPort: port });
       return;
     }
     case "opencode": {
@@ -156,12 +147,10 @@ export async function prepareOrchestratorConfig(
       // config lands where the root runs; the brief rides the hive agent's
       // {file:} prompt in it, and the queen's role (#12) rides the agent's
       // permission set.
-      const authorization = operatorHeaders().Authorization;
       await writeOpencodeAgentConfig(cwd, {
         daemonPort: port,
         orchestrator: true,
         instructionPath: launchPromptPath(orchestratorSessionKey()),
-        capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
       });
       return;
     }
@@ -261,7 +250,7 @@ export function buildOrchestratorCommand(
           ? []
           : [
               "-c",
-              `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(CODEX_CAPABILITY_TOKEN_ENV)}`,
+              `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(HIVE_CAPABILITY_TOKEN_ENV)}`,
             ]),
         // The queen's role (#12) needs writes for her memory and planning
         // docs. workspace-write is the finest sandbox codex offers — it
@@ -498,15 +487,25 @@ export async function launchOrchestrator(
     recoveryBrief,
     codexMcpExclusionArgs,
   );
+  // Every provider but claude reads its bearer from HIVE_CAPABILITY_TOKEN, so
+  // the operator token stays out of the config files kimi and opencode read
+  // from the user's own project directory.
   const environment =
-    tool === "grok"
-      ? {
-          GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
-          ...GROK_COMPATIBILITY_ENV,
-        }
+    tool === "claude"
+      ? {}
       : tool === "codex"
-        ? { [CODEX_CAPABILITY_TOKEN_ENV]: codexToken }
-        : {};
+        ? { [HIVE_CAPABILITY_TOKEN_ENV]: codexToken }
+        : {
+            [HIVE_CAPABILITY_TOKEN_ENV]: (
+              operatorHeaders().Authorization ?? ""
+            ).replace(/^Bearer\s+/, ""),
+            ...(tool === "grok"
+              ? {
+                  GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
+                  ...GROK_COMPATIBILITY_ENV,
+                }
+              : {}),
+          };
   const launch = OrchestratorSessiondLaunchSchema.parse({
     requestId: mintSessionRequestId(),
     provider: tool,

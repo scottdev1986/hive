@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { wrapSpawnWithCapabilityEnv } from "../adapters/tools/capability-env";
 import {
   buildClaudeResumeCommand,
   discoverClaudeRecoverySessionId,
@@ -791,11 +792,22 @@ export class CrashRecovery {
       }
       const command = (() => {
         const joined = shellJoin(argv);
+        // Every provider but claude — which runs a headers helper — reads its
+        // capability from the environment, so a resumed session needs the same
+        // prefix a spawn gets or it comes back unauthorized. The prefix must sit
+        // directly in front of the provider command: `exec` and the instruction
+        // wrapper's leading `mkdir`/`install` would consume the assignment.
+        const withCapability = (command: string): string =>
+          record.tool === "claude"
+            ? command
+            : wrapSpawnWithCapabilityEnv(command, record.name);
         if (record.tool === "grok") {
-          return wrapGrokSpawnWithCompatibilityEnv(
-            hasInstructions
-              ? wrapGrokWithRulesFile(joined, instructionPath)
-              : joined,
+          return withCapability(
+            wrapGrokSpawnWithCompatibilityEnv(
+              hasInstructions
+                ? wrapGrokWithRulesFile(joined, instructionPath)
+                : joined,
+            ),
           );
         }
         if (record.tool === "kimi") {
@@ -803,16 +815,19 @@ export class CrashRecovery {
           // recovered brief is reinstalled as .kimi-code/AGENTS.md.
           const withEffort =
             identity?.tool === "kimi" && identity.effort !== undefined
-              ? wrapKimiSpawnWithEffort(joined, identity.effort)
-              : joined;
+              ? wrapKimiSpawnWithEffort(withCapability(joined), identity.effort)
+              : withCapability(joined);
           return hasInstructions
             ? wrapKimiWithInstructionFile(withEffort, instructionPath)
             : withEffort;
         }
         if (record.tool === "codex" && hasInstructions) {
-          return wrapCodexWithInstructionProfile(joined, sessionKey);
+          return wrapCodexWithInstructionProfile(
+            withCapability(joined),
+            sessionKey,
+          );
         }
-        return joined;
+        return withCapability(joined);
       })();
       const revalidated =
         (await this.deps.authorizeLaunch?.(identity, record.category)) ?? null;

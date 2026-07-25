@@ -2,6 +2,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./orchestrator-role";
 import { resolveProviderExecutable } from "./provider-executable";
 import { selectRecoverySessionId } from "./recovery-session";
@@ -23,7 +24,6 @@ export interface OpencodeSpawnOptions {
 
 export interface OpencodeAgentConfigOptions {
   daemonPort: number;
-  capabilityToken?: string;
   graphifyUrl?: string;
   /** The 0600 launch-prompt file, referenced from the hive agent's prompt
    * as `{file:<path>}`. Absent (crash recovery with no prompt on disk)
@@ -113,11 +113,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * Write the worktree's `opencode.json` — opencode's project config, the
  * analog of claude's `.mcp.json` plus settings. Unrelated keys, servers, and
  * agents are preserved; the `hive` MCP entry and the `hive` agent are
- * Hive-owned and replaced wholesale. The bearer token lives only in this
- * 0600 file, never an argv, exactly like kimi's mcp.json; a spawn without a
- * fresh token keeps the authorization already on disk, and a missing
- * graphify URL removes a stale endpoint. `oauth: false` stops opencode's
- * OAuth auto-detection from intercepting the static bearer.
+ * Hive-owned and replaced wholesale. The Authorization header names the
+ * environment variable holding the bearer rather than the bearer itself, and a
+ * missing graphify URL removes a stale endpoint. `oauth: false` stops
+ * opencode's OAuth auto-detection from intercepting the static bearer.
  */
 export async function writeOpencodeAgentConfig(
   worktreePath: string,
@@ -146,24 +145,14 @@ export async function writeOpencodeAgentConfig(
     },
   );
   const mcp = isRecord(existing.mcp) ? existing.mcp : {};
-  const existingHive = isRecord(mcp.hive) ? mcp.hive : {};
-  const existingHeaders = isRecord(existingHive.headers)
-    ? existingHive.headers
-    : {};
-  const authorization =
-    options.capabilityToken !== undefined
-      ? `Bearer ${options.capabilityToken}`
-      : typeof existingHeaders.Authorization === "string"
-        ? existingHeaders.Authorization
-        : undefined;
   mcp.hive = {
     type: "remote",
     url: `http://127.0.0.1:${options.daemonPort}/mcp`,
     enabled: true,
     oauth: false,
-    ...(authorization === undefined
-      ? {}
-      : { headers: { Authorization: authorization } }),
+    // opencode 1.18.5 substitutes {env:VAR} in config strings at load, so the
+    // live token stays in the environment and out of this project file.
+    headers: { Authorization: `Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}` },
   };
   if (options.graphifyUrl === undefined) delete mcp.graphify;
   else {
@@ -194,8 +183,9 @@ export async function writeOpencodeAgentConfig(
   await writeFile(path, `${JSON.stringify(existing, null, 2)}\n`, {
     mode: 0o600,
   });
-  // writeFile's mode only applies at creation; the bearer token in this file
-  // must be 0600 even when a looser opencode.json was already on disk.
+  // writeFile's mode only applies at creation, and Hive rewrites whatever
+  // opencode.json the project already had — including any credentials the
+  // user's own servers keep in it.
   await chmod(path, 0o600);
 }
 

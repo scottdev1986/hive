@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { resolveProviderExecutable } from "./provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
@@ -33,7 +34,6 @@ export interface GrokSpawnOptions {
 
 export interface GrokAgentConfigOptions {
   daemonPort: number;
-  capabilityToken?: string;
   graphifyUrl?: string;
 }
 
@@ -204,18 +204,6 @@ function stripHiveMcpTables(source: string): string {
   return kept.join("\n").trimEnd();
 }
 
-function existingHiveAuthorization(source: string): string | undefined {
-  try {
-    const parsed = Bun.TOML.parse(source) as {
-      mcp_servers?: { hive?: { headers?: { Authorization?: unknown } } };
-    };
-    const value = parsed.mcp_servers?.hive?.headers?.Authorization;
-    return typeof value === "string" ? value : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 export async function writeGrokAgentConfig(
   worktreePath: string,
   options: GrokAgentConfigOptions,
@@ -234,21 +222,15 @@ export async function writeGrokAgentConfig(
     throw error;
   });
   const prefix = stripHiveMcpTables(existing);
-  const authorization =
-    options.capabilityToken === undefined
-      ? existingHiveAuthorization(existing)
-      : `Bearer ${options.capabilityToken}`;
   const owned = [
     "[mcp_servers.hive]",
     `url = ${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     "enabled = true",
-    ...(authorization === undefined
-      ? []
-      : [
-          "",
-          "[mcp_servers.hive.headers]",
-          `Authorization = ${tomlString(authorization)}`,
-        ]),
+    "",
+    "[mcp_servers.hive.headers]",
+    // Grok 0.2.112 expands ${VAR} in mcp_servers string fields at load time, so
+    // the live token stays in the environment and out of this project file.
+    `Authorization = ${tomlString(`Bearer \${${HIVE_CAPABILITY_TOKEN_ENV}}`)}`,
     ...(options.graphifyUrl === undefined
       ? []
       : [

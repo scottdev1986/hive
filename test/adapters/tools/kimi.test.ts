@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/tools/capability-env";
 import {
   buildKimiResumeCommand,
   buildKimiSpawnCommand,
@@ -20,6 +21,7 @@ import {
   writeKimiAgentConfig,
 } from "../../../src/adapters/tools/kimi";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+import { credentialPath } from "../../../src/daemon/credentials";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -127,7 +129,6 @@ describe("Kimi adapter", () => {
     );
     await writeKimiAgentConfig(root, {
       daemonPort: 4317,
-      capabilityToken: "secret-token",
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
     const path = join(root, ".kimi-code", "mcp.json");
@@ -135,24 +136,26 @@ describe("Kimi adapter", () => {
       mcpServers: Record<string, Record<string, unknown>>;
     };
     expect(written.mcpServers.other).toEqual({ command: "other" });
+    // The bearer is named, never written: kimi reads it from the environment at
+    // connect time, so no live token lands in a file the project can commit.
     expect(written.mcpServers.hive).toEqual({
       url: "http://127.0.0.1:4317/mcp",
-      headers: { Authorization: "Bearer secret-token" },
+      bearerTokenEnvVar: HIVE_CAPABILITY_TOKEN_ENV,
     });
     expect(written.mcpServers.graphify).toEqual({
       url: "http://127.0.0.1:7799/mcp",
     });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 
-    // A respawn without a fresh token keeps the authorization on disk, and a
-    // missing graphify URL removes the stale endpoint.
+    // A respawn moves the port and a missing graphify URL removes the stale
+    // endpoint.
     await writeKimiAgentConfig(root, { daemonPort: 4400 });
     const respawned = JSON.parse(await readFile(path, "utf8")) as {
       mcpServers: Record<string, Record<string, unknown>>;
     };
     expect(respawned.mcpServers.hive).toEqual({
       url: "http://127.0.0.1:4400/mcp",
-      headers: { Authorization: "Bearer secret-token" },
+      bearerTokenEnvVar: HIVE_CAPABILITY_TOKEN_ENV,
     });
     expect(respawned.mcpServers.graphify).toBeUndefined();
   });
@@ -177,8 +180,18 @@ describe("Kimi adapter", () => {
     );
     expect(prepared.command).toContain("KIMI_MODEL_THINKING_EFFORT='high'");
     expect(prepared.command).not.toContain("secret-token");
+    // Both env prefixes belong directly in front of kimi, after the brief
+    // install: an assignment placed ahead of `install` would reach that
+    // command instead, and kimi would connect unauthorized.
+    expect(prepared.command).toContain(
+      ` && ${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')" ` +
+        `KIMI_MODEL_THINKING_EFFORT='high' 'kimi'`,
+    );
     const mcp = await readFile(join(root, ".kimi-code", "mcp.json"), "utf8");
-    expect(mcp).toContain("Bearer secret-token");
+    expect(mcp).not.toContain("secret-token");
+    expect(mcp).toContain(
+      `"bearerTokenEnvVar": "${HIVE_CAPABILITY_TOKEN_ENV}"`,
+    );
     expect(mcp).toContain("http://127.0.0.1:41000/mcp");
   });
 

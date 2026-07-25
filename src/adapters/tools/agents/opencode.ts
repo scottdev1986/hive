@@ -3,6 +3,7 @@ import {
   OpencodeCliCapabilityTransport,
 } from "../../../daemon/capability-discovery";
 import { shellJoin } from "../../../daemon/session-host/shell-session";
+import { wrapSpawnWithCapabilityEnv } from "../capability-env";
 import {
   buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
@@ -19,9 +20,6 @@ export const opencodeAgentAdapter: AgentAdapter = {
     await writeOpencodeAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,
       readOnly: context.readOnly,
-      ...(context.capabilityToken === undefined
-        ? {}
-        : { capabilityToken: context.capabilityToken }),
       ...(context.graphifyUrl === undefined
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
@@ -44,13 +42,17 @@ export const opencodeAgentAdapter: AgentAdapter = {
       context.resumeSessionId === undefined
         ? buildOpencodeSpawnCommand(options)
         : buildOpencodeResumeCommand(options, context.resumeSessionId);
+    const command = shellJoin(
+      context.kickoff === undefined
+        ? argv
+        : [...argv, "--prompt", context.kickoff],
+    );
     return {
       argv,
-      command: shellJoin(
-        context.kickoff === undefined
-          ? argv
-          : [...argv, "--prompt", context.kickoff],
-      ),
+      command:
+        context.capabilityToken === undefined
+          ? command
+          : wrapSpawnWithCapabilityEnv(command, context.name),
     };
   },
   discover: (

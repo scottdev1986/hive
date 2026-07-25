@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/tools/capability-env";
 import {
   buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
@@ -20,6 +21,7 @@ import {
   writeOpencodeAgentConfig,
 } from "../../../src/adapters/tools/opencode";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+import { credentialPath } from "../../../src/daemon/credentials";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -113,7 +115,6 @@ describe("opencode adapter", () => {
     );
     await writeOpencodeAgentConfig(root, {
       daemonPort: 4317,
-      capabilityToken: "secret-token",
       graphifyUrl: "http://127.0.0.1:7799/mcp",
       instructionPath: "/tmp/prompt.txt",
       readOnly: true,
@@ -136,7 +137,11 @@ describe("opencode adapter", () => {
       url: "http://127.0.0.1:4317/mcp",
       enabled: true,
       oauth: false,
-      headers: { Authorization: "Bearer secret-token" },
+      // The bearer is named, never written: opencode substitutes {env:VAR} at
+      // load time, so no live token lands in a file the project can commit.
+      headers: {
+        Authorization: `Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`,
+      },
     });
     expect(written.mcp.graphify).toEqual({
       type: "remote",
@@ -163,7 +168,11 @@ describe("opencode adapter", () => {
       url: "http://127.0.0.1:4400/mcp",
       enabled: true,
       oauth: false,
-      headers: { Authorization: "Bearer secret-token" },
+      // The bearer is named, never written: opencode substitutes {env:VAR} at
+      // load time, so no live token lands in a file the project can commit.
+      headers: {
+        Authorization: `Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`,
+      },
     });
     expect(respawned.mcp.graphify).toBeUndefined();
     expect(respawned.agent.hive).toEqual(written.agent.hive);
@@ -190,11 +199,13 @@ describe("opencode adapter", () => {
       "hive",
     ]);
     expect(prepared.command).toBe(
-      `${prepared.argv.map((token) => `'${token}'`).join(" ")} '--prompt' 'Begin the assigned task.'`,
+      `${HIVE_CAPABILITY_TOKEN_ENV}="$(cat '${credentialPath("maya")}')" ` +
+        `${prepared.argv.map((token) => `'${token}'`).join(" ")} '--prompt' 'Begin the assigned task.'`,
     );
     expect(prepared.command).not.toContain("secret-token");
     const config = await readFile(join(root, "opencode.json"), "utf8");
-    expect(config).toContain("Bearer secret-token");
+    expect(config).not.toContain("secret-token");
+    expect(config).toContain(`Bearer {env:${HIVE_CAPABILITY_TOKEN_ENV}}`);
     expect(config).toContain("{file:/tmp/prompt.txt}");
   });
 
