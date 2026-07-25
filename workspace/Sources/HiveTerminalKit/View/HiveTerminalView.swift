@@ -173,6 +173,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private func handleBridgeEvent(_ event: BridgeEvent) {
         switch event.type {
         case .invalidate:
+            TerminalTelemetry.shared.noteInvalidate() // TELEMETRY — REMOVE
             scheduleDraw()
             accessibilitySemanticStateDidInvalidate()
         case .title:
@@ -208,7 +209,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             guard self.pendingDraw, self.canPresentGhosttyFrame else { return }
             self.pendingDraw = false
             self.drawScheduledCount += 1
+            let drawStart = ProcessInfo.processInfo.systemUptime // TELEMETRY — REMOVE
             self.engine.draw()
+            TerminalTelemetry.shared.noteDraw( // TELEMETRY — REMOVE
+                microseconds: Int((ProcessInfo.processInfo.systemUptime - drawStart) * 1_000_000)
+            )
             if !self.hasCompletedInitialDraw {
                 self.hasCompletedInitialDraw = true
                 self.synchronizeOcclusion()
@@ -334,8 +339,15 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// state copy.
     public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
         guard let client = attachClient else { return }
+        // TELEMETRY — REMOVE
+        TerminalTelemetry.shared.startIfNeeded()
+        if frame.type == .output { TerminalTelemetry.shared.noteOutputFrame(bytes: frame.payload.count) }
+        let feedStart = ProcessInfo.processInfo.systemUptime
         let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
             ?? .rejectedLateFrame
+        TerminalTelemetry.shared.noteFeed( // TELEMETRY — REMOVE
+            microseconds: Int((ProcessInfo.processInfo.systemUptime - feedStart) * 1_000_000)
+        )
         let snapshot = client.uiSnapshot()
         // Callers already on main (tests, attach replay) still see their state
         // update synchronously, so read-after-pump keeps meaning what it did.
