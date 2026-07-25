@@ -4467,7 +4467,6 @@ fn c1AutomatedBytesPayload(
         .transactionId = transaction_id,
         .idempotencyKey = transaction_id,
         .expectedForeground = .{
-            .providerRunId = "018f1e90-7b5a-7cc0-8000-000000000194",
             .pid = pid,
             .startToken = start_token,
             .processGroupId = process_group_id,

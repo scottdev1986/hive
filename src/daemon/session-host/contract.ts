@@ -187,12 +187,12 @@ export type ResizeResult = Readonly<{
 }>;
 export type AutomatedInput = Readonly<{
   terminal: SessionLocator;
-  expectedForeground: Readonly<{
+  expectedForeground: {
     providerRunId: string;
     pid: number;
     startToken: string;
     processGroupId: number;
-  }>;
+  };
   bytes: Uint8Array;
   idempotencyKey: string;
 }>;

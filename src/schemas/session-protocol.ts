@@ -1517,14 +1517,15 @@ export const ClaimResultPayloadSchema = z
   })
   .readonly();
 
-export const ExpectedForegroundSchema = z
-  .strictObject({
-    providerRunId: z.string().uuid(),
-    pid: z.number().int().positive(),
-    startToken: z.string().min(1),
-    processGroupId: z.number().int().positive(),
-  })
-  .readonly();
+const ForegroundProcessIdentitySchema = z.strictObject({
+  pid: z.number().int().positive(),
+  startToken: z.string().min(1),
+  processGroupId: z.number().int().positive(),
+});
+
+export const ExpectedForegroundSchema = ForegroundProcessIdentitySchema.extend({
+  providerRunId: z.string().uuid(),
+});
 
 /** INPUT_SUBMIT is JSON control; raw HUMAN_INPUT remains keystroke streaming. */
 export const InputSubmitPayloadSchema = z
@@ -1534,7 +1535,7 @@ export const InputSubmitPayloadSchema = z
     claimToken: z.string().min(1),
     transactionId: z.string().min(1),
     idempotencyKey: z.string().min(1),
-    expectedForeground: ExpectedForegroundSchema.optional(),
+    expectedForeground: ForegroundProcessIdentitySchema.readonly().optional(),
     operation: z.discriminatedUnion("kind", [
       z
         .strictObject({

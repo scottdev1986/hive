@@ -116,7 +116,6 @@ const WireInputOperation = struct {
 };
 
 const WireExpectedForeground = struct {
-    providerRunId: []const u8,
     pid: i32,
     startToken: []const u8,
     processGroupId: i32,
@@ -908,7 +907,6 @@ pub const HostCore = struct {
         digest_hasher.update(&[_]u8{0});
         if (decoded) |bytes| digest_hasher.update(bytes);
         if (request.expectedForeground) |expected| {
-            digest_hasher.update(expected.providerRunId);
             digest_hasher.update(std.mem.asBytes(&expected.pid));
             digest_hasher.update(expected.startToken);
             digest_hasher.update(std.mem.asBytes(&expected.processGroupId));

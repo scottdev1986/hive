@@ -96,7 +96,11 @@ export class SessiondViewerAgentInput
       input.bytes,
       input.idempotencyKey,
       undefined,
-      input.expectedForeground,
+      {
+        pid: input.expectedForeground.pid,
+        startToken: input.expectedForeground.startToken,
+        processGroupId: input.expectedForeground.processGroupId,
+      },
     );
   }
 

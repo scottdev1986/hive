@@ -147,7 +147,6 @@ export type InputOperation =
   | Readonly<{ kind: "hangup" }>;
 
 export type ExpectedForeground = Readonly<{
-  providerRunId: string;
   pid: number;
   startToken: string;
   processGroupId: number;
