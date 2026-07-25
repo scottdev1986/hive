@@ -41,3 +41,16 @@ The sample contains 72 durable normal messages:
 The existing memory wake delta has a separate 300-token bound. An 8 KiB normal
 message-batch projection covers the measured common case while making the
 single observed larger message exercise exact-source overflow retrieval.
+
+## Result
+
+After the bootstrap diet, the representative code-review bootstrap used by the
+conformance test contains 5,871 Hive-added UTF-8 bytes. The repeated protocol
+block fell from 1,108 to 555 bytes, and the 1,954-byte landing procedure was
+replaced by one 218-byte capability-enforced contract. Coding guidance stayed
+unchanged because it requires agent judgment; search guidance stayed the same
+size while removing the repository-specific `src/` assumption.
+
+Normal-message submissions are capped at 8 KiB and eight ordered messages.
+Overflow preserves head and tail, exact omitted source bytes, a SHA-256 digest,
+and the authenticated `hive_read_message` retrieval path.
