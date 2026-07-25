@@ -250,6 +250,17 @@ interface CliBuild {
   readonly outfile: string;
 }
 
+/** Only a keyed release can trust a runtime digest compiled into its CLI.
+ * Unsigned local builds restage the runtime during `hive init`, and Bun embeds
+ * the staging path in the generated bundle, so those bytes cannot equal the
+ * release-build staging tree. */
+export function embeddingsDigestForBuild(
+  publicKey: string | null,
+  loadedDigest: string,
+): string | null {
+  return publicKey === null ? null : loadedDigest;
+}
+
 /**
  * Compile one CLI slice. When the build will be signed, compile with
  * `BUN_NO_CODESIGN_MACHO_BINARY=1`: Bun's own ad-hoc signature reserves too
@@ -589,7 +600,12 @@ export async function build(options: Options): Promise<ReleaseManifest> {
         sourceHash,
         buildHashFor(sourceHash, options, target.bunTarget),
         signing !== null,
-        embeddings?.loadedDigest ?? null,
+        embeddings === null
+          ? null
+          : embeddingsDigestForBuild(
+              options.publicKey,
+              embeddings.loadedDigest,
+            ),
       ),
     );
   }
