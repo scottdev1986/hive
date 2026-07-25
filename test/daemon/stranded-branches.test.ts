@@ -232,9 +232,46 @@ describe("stranded-branch reconciliation", () => {
     });
     try {
       await daemon.runMaintenance();
-      expect(reconciliations).toBe(1);
+      await daemon.runMaintenance();
+      expect(reconciliations).toBe(2);
       expect(db.getAgentByName("david")?.worktreePath).toBeNull();
       expect(db.getAgentByName("david")?.branch).toBeNull();
+      expect(await daemon.delivery.orchestratorInbox()).toHaveLength(1);
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("worktree reconciliation stays silent when only live agents remain", async () => {
+    const db = new HiveDatabase(":memory:");
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      sessionSender: new SilentSessionSender(db),
+      rootProtocol: offlineRootProtocol,
+      repoRoot: "/tmp/repo",
+      lifecycle: { idleReap: false, idleReapMinutes: 10 },
+      listUnmergedHiveBranches: async () => [],
+      reconcileOrphanedWorktrees: async () => ({
+        worktrees: [
+          {
+            path: "/tmp/repo/.hive/worktrees/henry",
+            branch: "hive/henry-active",
+            action: "kept",
+            rule: "live-agent",
+            dirtyFiles: [],
+            unmergedCommits: 0,
+          },
+        ],
+        preservedRefs: { removed: [], kept: [] },
+      }),
+    });
+    try {
+      await daemon.runMaintenance();
+      await daemon.runMaintenance();
+      expect(await daemon.delivery.orchestratorInbox()).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();

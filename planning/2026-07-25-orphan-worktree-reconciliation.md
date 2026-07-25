@@ -10,6 +10,8 @@ agent row remains, with its worktree and branch fields cleared.
 The preservation-ref inventory started at 68. Nineteen refs pointed only to
 commits already reachable from `main` and were removed. Forty-nine refs remain;
 they protect 154 commits not reachable from `main` and are listed below.
+This file is their temporary triage work list; delete it once those retained
+refs have been resolved.
 
 After cleanup, disk, Git, and the live store agree on four worktrees: `henry`,
 `isla`, `jack`, and `lucas`. All four have live agent rows.

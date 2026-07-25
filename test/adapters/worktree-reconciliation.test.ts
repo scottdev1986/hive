@@ -7,6 +7,7 @@ import {
   reconcileOrphanedWorktrees,
   unavailableAgentNames,
 } from "../../src/adapters/worktrees";
+import { selectAgentName } from "../../src/daemon/spawner-impl";
 import type { AgentRecord } from "../../src/schemas";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
@@ -101,7 +102,13 @@ describe("orphaned worktree reconciliation", () => {
     await writeFile(join(unmerged.path, "work.ts"), "export {};\n");
     await git(unmerged.path, "add", "work.ts");
     await git(unmerged.path, "commit", "-m", "unmerged work");
-    const unregistered = join(repoRoot, ".hive", "worktrees", "unregistered");
+    const diskOnlyName = selectAgentName([]);
+    const unregistered = join(
+      repoRoot,
+      ".hive",
+      "worktrees",
+      diskOnlyName,
+    );
     await mkdir(unregistered);
 
     for (const worktree of [clean, live, preserved, dirty, stale, unmerged]) {
@@ -111,10 +118,16 @@ describe("orphaned worktree reconciliation", () => {
     expect(
       await unavailableAgentNames(repoRoot, [
         "clean",
-        "unregistered",
+        diskOnlyName,
         "unused",
       ]),
-    ).toEqual(new Set(["clean", "unregistered"]));
+    ).toEqual(new Set(["clean", diskOnlyName]));
+    expect(
+      selectAgentName(
+        [],
+        await unavailableAgentNames(repoRoot, [diskOnlyName]),
+      ),
+    ).not.toBe(diskOnlyName);
 
     const report = await reconcileOrphanedWorktrees(repoRoot, [
       agent("live", "working", live.path, live.branch),
@@ -145,7 +158,7 @@ describe("orphaned worktree reconciliation", () => {
     ]);
     expect(byName.get("unmerged")?.rule).toBe("stranded-work");
     expect(byName.get("unmerged")?.unmergedCommits).toBe(1);
-    expect(byName.get("unregistered")?.rule).toBe("unregistered-path");
+    expect(byName.get(diskOnlyName)?.rule).toBe("unregistered-path");
 
     expect(
       report.preservedRefs.removed.map((ref) => ref.branch).sort(),
