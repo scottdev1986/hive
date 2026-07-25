@@ -151,6 +151,18 @@ describe("hive event", () => {
     expect(parseHookStdin(JSON.stringify(null))).toEqual({});
   });
 
+  test("captures the completed Claude tool name", () => {
+    expect(
+      parseHookStdin(
+        JSON.stringify({
+          session_id: "abc123",
+          hook_event_name: "PostToolUse",
+          tool_name: "Read",
+        }),
+      ),
+    ).toEqual({ toolSessionId: "abc123", toolName: "Read" });
+  });
+
   // Verbatim Notification payloads from claude 2.1.207 — captured from a real
   // CLI parked on a real WebFetch dialog, and from a real idle session. The
   // notification_type is the ONLY field separating an agent blocked on a vendor

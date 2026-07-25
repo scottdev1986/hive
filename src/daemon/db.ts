@@ -18,6 +18,8 @@ import {
   type MessageAttempt,
   MessageAttemptSchema,
   type ProviderRun,
+  type ProviderEvent,
+  ProviderEventSchema,
   ProviderRunBindingSchema,
   ProviderRunSchema,
 } from "../schemas";
@@ -183,6 +185,10 @@ const StoredMessageAttemptRowSchema = z.object({
   recordJson: z.string().min(1),
 });
 
+const StoredProviderEventRowSchema = z.object({
+  recordJson: z.string().min(1),
+});
+
 function parseMessageAttemptRow(row: unknown): MessageAttempt {
   return MessageAttemptSchema.parse(
     JSON.parse(StoredMessageAttemptRowSchema.parse(row).recordJson),
@@ -192,6 +198,12 @@ function parseMessageAttemptRow(row: unknown): MessageAttempt {
 function parseProviderRunRow(row: unknown): ProviderRun {
   return ProviderRunSchema.parse(
     JSON.parse(StoredProviderRunRowSchema.parse(row).recordJson),
+  );
+}
+
+function parseProviderEventRow(row: unknown): ProviderEvent {
+  return ProviderEventSchema.parse(
+    JSON.parse(StoredProviderEventRowSchema.parse(row).recordJson),
   );
 }
 
@@ -580,6 +592,14 @@ export class HiveDatabase {
         ) WHERE state = 'running';
       CREATE INDEX IF NOT EXISTS provider_runs_agent
         ON provider_runs (agentId);
+      CREATE TABLE IF NOT EXISTS provider_events (
+        eventId TEXT PRIMARY KEY,
+        providerRunId TEXT NOT NULL,
+        occurredAt TEXT NOT NULL,
+        recordJson TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS provider_events_run
+        ON provider_events (providerRunId, occurredAt);
       -- Only sha256(secret) is stored, so a database or WAL leak yields no
       -- usable credential. The id is a lookup key, not a secret.
       CREATE TABLE IF NOT EXISTS capabilities (
@@ -1429,6 +1449,75 @@ export class HiveDatabase {
     `)
       .all(z.string().min(1).parse(agentId))
       .map(parseProviderRunRow);
+  }
+
+  getActiveProviderRunForAgent(agentId: string): ProviderRun | null {
+    const row = this.database
+      .query(`
+      SELECT recordJson FROM provider_runs
+      WHERE agentId = ? AND state = 'running'
+      ORDER BY rowid DESC LIMIT 1
+    `)
+      .get(z.string().min(1).parse(agentId));
+    return row === null ? null : parseProviderRunRow(row);
+  }
+
+  bindProviderRunConversation(
+    runId: string,
+    conversationId: string,
+  ): ProviderRun | null {
+    return this.transaction(() => {
+      const current = this.getProviderRun(runId);
+      if (
+        current === null ||
+        current.state !== "running" ||
+        (current.conversationId !== null &&
+          current.conversationId !== conversationId)
+      ) {
+        return null;
+      }
+      if (current.conversationId === conversationId) return current;
+      const bound = ProviderRunSchema.parse({
+        ...current,
+        conversationId,
+      });
+      this.database
+        .query(`
+        UPDATE provider_runs SET recordJson = ?
+        WHERE runId = ? AND state = 'running'
+      `)
+        .run(JSON.stringify(bound), runId);
+      return bound;
+    });
+  }
+
+  insertProviderEvent(event: ProviderEvent): boolean {
+    const value = ProviderEventSchema.parse(event);
+    return (
+      this.database
+        .query(`
+        INSERT OR IGNORE INTO provider_events (
+          eventId, providerRunId, occurredAt, recordJson
+        ) VALUES (?, ?, ?, ?)
+      `)
+        .run(
+          value.eventId,
+          value.providerRunId,
+          value.occurredAt,
+          JSON.stringify(value),
+        ).changes === 1
+    );
+  }
+
+  listProviderEvents(providerRunId: string): readonly ProviderEvent[] {
+    return this.database
+      .query(`
+      SELECT recordJson FROM provider_events
+      WHERE providerRunId = ?
+      ORDER BY occurredAt, rowid
+    `)
+      .all(z.string().uuid().parse(providerRunId))
+      .map(parseProviderEventRow);
   }
 
   endProviderRun(

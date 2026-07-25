@@ -62,7 +62,10 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   // lands in the composer as a queued steer instead of interrupting anything.
   // It is a delivery tick, not a lifecycle fact — it never changes status and
   // is not persisted to the events table.
-  HookEventBaseSchema.extend({ kind: z.literal("tool-boundary") }),
+  HookEventBaseSchema.extend({
+    kind: z.literal("tool-boundary"),
+    toolName: z.string().min(1).optional(),
+  }),
   HookEventBaseSchema.extend({
     kind: z.literal("approval-request"),
     description: z.string().min(1),

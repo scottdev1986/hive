@@ -442,6 +442,7 @@ export class CodexAppServerManager {
         kind: "session-start",
         agentName: agent.name,
         timestamp: timestamp(),
+        toolSessionId: session.threadId,
       });
       await this.startTurn(agent, prompt, effort);
     } catch (error) {
@@ -617,6 +618,7 @@ export class CodexAppServerManager {
         kind: "turn-start",
         agentName,
         timestamp: timestamp(),
+        toolSessionId: session.threadId,
       });
       return;
     }
@@ -662,6 +664,7 @@ export class CodexAppServerManager {
         kind: "turn-end",
         agentName,
         timestamp: current?.observedAt ?? timestamp(),
+        toolSessionId: session.threadId,
         contextPct: session.contextPct,
         ...(usageUnits === undefined || usageUnits === 0
           ? {}

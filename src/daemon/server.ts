@@ -65,6 +65,7 @@ import {
 } from "../schemas";
 import type { WorkspaceEventV2 } from "../schemas/status-envelope";
 import { HIVE_VERSION } from "../version";
+import { recordProviderHookEvent } from "./provider-events";
 import {
   type Action,
   bearerToken,
@@ -5143,6 +5144,10 @@ export class HiveDaemon {
       ...parsed,
       agentName: canonicalOrchestratorName(parsed.agentName),
     };
+    const eventAgent = this.db.getAgentByName(value.agentName);
+    if (eventAgent !== null) {
+      recordProviderHookEvent(this.db, eventAgent, value);
+    }
     if (
       value.agentName === ORCHESTRATOR_NAME &&
       value.toolSessionId !== undefined

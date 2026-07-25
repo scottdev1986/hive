@@ -7,6 +7,7 @@ export interface HookEventOptions {
   usageUnits?: number;
   usageSource?: "provider" | "gateway" | "estimated";
   toolSessionId?: string;
+  toolName?: string;
   /** Claude's `notification_type`, read off the Notification hook's stdin.
    * Never a CLI flag: only the vendor can say why it raised the notification. */
   notificationType?: string;
@@ -55,6 +56,12 @@ export function buildHookEvent(
         : { notificationType: options.notificationType }),
     });
   }
+  if (kind === "tool-boundary") {
+    return HookEventSchema.parse({
+      ...base,
+      ...(options.toolName === undefined ? {} : { toolName: options.toolName }),
+    });
+  }
   return HookEventSchema.parse(base);
 }
 
@@ -82,7 +89,7 @@ export async function postHookEvent(
 // kept only the session id.
 export type CapturedHookStdin = Pick<
   HookEventOptions,
-  "toolSessionId" | "notificationType" | "description"
+  "toolSessionId" | "toolName" | "notificationType" | "description"
 >;
 
 /**
@@ -124,13 +131,26 @@ export function parseHookStdin(text: string): CapturedHookStdin {
       captured.toolSessionId = parsed.session_id;
     }
     if (
+      "hook_event_name" in parsed &&
+      parsed.hook_event_name === "PostToolUse" &&
+      "tool_name" in parsed &&
+      typeof parsed.tool_name === "string" &&
+      parsed.tool_name.length > 0
+    ) {
+      captured.toolName = parsed.tool_name;
+    }
+    if (
       "notification_type" in parsed &&
       typeof parsed.notification_type === "string" &&
       parsed.notification_type.length > 0
     ) {
       captured.notificationType = parsed.notification_type;
     }
-    const description = approvalDescription(parsed);
+    const description =
+      "hook_event_name" in parsed &&
+      parsed.hook_event_name === "PermissionRequest"
+        ? approvalDescription(parsed)
+        : undefined;
     if (description !== undefined) captured.description = description;
   } catch {
     // Anything that is not the documented hook JSON is simply not a capture.
