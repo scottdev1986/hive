@@ -1,11 +1,4 @@
-import {
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   hiveInstanceSuffix,
@@ -315,56 +308,6 @@ async function removeMissingWorktreeRegistration(
   return true;
 }
 
-/**
- * Exclude Hive's own wiring from the worktree it just created, without
- * touching a file the project tracks — Hive runs on arbitrary repos, so an
- * entry in the project's `.gitignore` would be Hive making every user carry
- * its litter, and every user discover the fix for themselves.
- *
- * The exclusion has to be per-worktree: git resolves `$GIT_DIR/info/exclude`
- * against the *common* directory, so that file is shared with the user's main
- * checkout and would there hide a `.claude/` or `.mcp.json` they may well
- * intend to commit. A worktree-scoped `core.excludesFile` is the only channel
- * that stops at the worktree boundary; it needs `extensions.worktreeConfig`,
- * which is repo-wide but inert for every worktree Hive does not configure.
- *
- * Best-effort: if any step fails the worktree is still usable, and the wiring
- * merely shows up untracked as it does today.
- */
-async function excludeHiveWiring(
-  repoRoot: string,
-  worktreePath: string,
-): Promise<void> {
-  try {
-    const gitDir = await runGit(worktreePath, [
-      "rev-parse",
-      "--absolute-git-dir",
-    ]);
-    if (gitDir.exitCode !== 0) return;
-    const excludePath = join(gitDir.stdout.trim(), "info", "hive-exclude");
-    await mkdir(dirname(excludePath), { recursive: true });
-    await writeFile(
-      excludePath,
-      `${HIVE_WORKTREE_WIRING.map((path) => `/${path}`).join("\n")}\n`,
-    );
-    const extension = await runGit(repoRoot, [
-      "config",
-      "extensions.worktreeConfig",
-      "true",
-    ]);
-    if (extension.exitCode !== 0) return;
-    await runGit(worktreePath, [
-      "config",
-      "--worktree",
-      "core.excludesFile",
-      excludePath,
-    ]);
-  } catch {
-    // See above: excluding is an improvement on the status quo, never a
-    // precondition for handing the agent a working tree.
-  }
-}
-
 export async function createWorktree(
   repoRoot: string,
   agentName: string,
@@ -410,8 +353,6 @@ export async function createWorktree(
       `git worktree add did not create the requested owned worktree: ${path}`,
     );
   }
-
-  await excludeHiveWiring(repoRoot, path);
 
   return { path, branch };
 }
@@ -509,10 +450,9 @@ async function branchExists(
 
 /**
  * Exact Hive-owned wiring paths: every file Hive's own `write*AgentConfig`
- * writers put into a worktree. They are excluded from stranded-work checks,
- * and from the agent's `git status` (see excludeHiveWiring) — Hive's wiring is
- * not the agent's work, and must never make an idle agent look like it holds
- * something worth preserving.
+ * writers put into a worktree. They are excluded from stranded-work checks —
+ * Hive's wiring is not the agent's work, and must never make an idle agent look
+ * like it holds something worth preserving.
  *
  * Directory patterns are forbidden because an exclusion can authorize worktree
  * deletion; any other file under `.grok/` or `.kimi-code/` must remain visible
