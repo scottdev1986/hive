@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { macProcessIdentity } from "../../../src/daemon/lifecycle";
 import type {
   CreateResult,
   SessionSpec,
@@ -936,6 +938,99 @@ describe("HiveTerminalHostAdapter", () => {
 
     expect(await adapter.pauseProvider(locator, run)).toBe(false);
     expect(signals).toEqual([]);
+  });
+
+  test("the production signal path suspends and resumes a real process group", async () => {
+    const child = spawn("/bin/zsh", ["-c", "while true; do sleep 1; done"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const pid = required(child.pid);
+    try {
+      process.kill(-pid, 0);
+      const identity = macProcessIdentity(pid);
+      const bindings = new MemoryBindings();
+      bindings.bindTerminalHostSession({ locator, visibility });
+      bindings.completeTerminalHostSession(locator, {
+        expectedExecutable: sessionSpec.expectedExecutable,
+        executableVerified: true,
+        verifiedShellRoot: createResult.inspection.shellRoot,
+        geometry,
+        visibility: createResult.inspection.visibility,
+      });
+      const run: ProviderRun = {
+        runId: "018f1e90-7b5a-7cc0-8000-000000000203",
+        agentId: "agent-fixture",
+        terminal: locator,
+        provider: "codex",
+        model: "gpt-fixture",
+        effort: null,
+        conversationId: null,
+        pid,
+        startToken: identity.startToken,
+        foregroundProcessGroupId: pid,
+        capabilityEpoch: 0,
+        launchGrantId: "launch-grant-fixture",
+        startedAt: "2026-07-18T01:00:00.000Z",
+        endedAt: null,
+        state: "running",
+        exitReason: null,
+      };
+      const observed = () => ({
+        ...inspection,
+        jobControl: {
+          ...required(inspection.jobControl),
+          foregroundProcessGroupId: pid,
+        },
+      });
+      const adapter = new HiveTerminalHostAdapter(
+        {
+          issueAttach: async () => {
+            throw new Error("issueAttach not under test");
+          },
+          renewVisibility,
+          create: async () => createResult,
+          claimInput: async () => ({
+            state: "unknown" as const,
+            diagnostic: "fixture",
+          }),
+          submitInput: async () => ({
+            transactionId: "transaction-fixture",
+            stage: "unknown" as const,
+            byteRange: null,
+            orderedAt: null,
+            availableCreditBytes: 0,
+            consumedByProcess: "not-claimed" as const,
+            completeness: "unknown" as const,
+            diagnostic: "fixture",
+          }),
+          resize: async () => ({
+            state: "unknown" as const,
+            diagnostic: "fixture",
+          }),
+          list: async () => [observed()],
+          inspect: async () => observed(),
+          terminate: async () => termination,
+        },
+        bindings,
+        locator.instanceId,
+        {
+          providerRuns: {
+            getActiveProviderRunByTerminal: () => run,
+            endProviderRun: () => null,
+          },
+        },
+      );
+
+      expect(await adapter.pauseProvider(locator, run)).toBe(true);
+      expect(macProcessIdentity(pid)).toEqual(identity);
+      expect(await adapter.resumeProvider(locator, run)).toBe(true);
+      expect(macProcessIdentity(pid)).toEqual(identity);
+    } finally {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {}
+    }
   });
 
   test("fails closed for missing, foreign, or mismatched bindings", async () => {
