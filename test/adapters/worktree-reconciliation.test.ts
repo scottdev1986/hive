@@ -103,12 +103,7 @@ describe("orphaned worktree reconciliation", () => {
     await git(unmerged.path, "add", "work.ts");
     await git(unmerged.path, "commit", "-m", "unmerged work");
     const diskOnlyName = selectAgentName([]);
-    const unregistered = join(
-      repoRoot,
-      ".hive",
-      "worktrees",
-      diskOnlyName,
-    );
+    const unregistered = join(repoRoot, ".hive", "worktrees", diskOnlyName);
     await mkdir(unregistered);
 
     for (const worktree of [clean, live, preserved, dirty, stale, unmerged]) {
@@ -116,11 +111,7 @@ describe("orphaned worktree reconciliation", () => {
     }
 
     expect(
-      await unavailableAgentNames(repoRoot, [
-        "clean",
-        diskOnlyName,
-        "unused",
-      ]),
+      await unavailableAgentNames(repoRoot, ["clean", diskOnlyName, "unused"]),
     ).toEqual(new Set(["clean", diskOnlyName]));
     expect(
       selectAgentName(
@@ -174,5 +165,57 @@ describe("orphaned worktree reconciliation", () => {
         unmergedCommits: 1,
       },
     ]);
+  });
+  // `git rebase` leaves a worktree on a DETACHED HEAD, and the landing protocol
+  // tells every agent to run `git rebase main`, so an agent interrupted
+  // mid-rebase holds commits on no branch at all. The sweep counted unmerged
+  // commits by branch name, so those worktrees reported 0 unconditionally, the
+  // unmerged guard could not fire, and the commits were deleted irrecoverably.
+  test("keeps a detached worktree holding commits, which is where a rebase leaves one", async () => {
+    const detachedRoot = await mkdtemp(
+      join(OUTSIDE_REPO_TMPDIR, "hive-worktree-detached-"),
+    );
+    try {
+      const repo = join(detachedRoot, "repo");
+      await mkdir(repo, { recursive: true });
+      await git(repo, "init", "-b", "main");
+      await git(repo, "config", "user.name", "Hive Test");
+      await git(repo, "config", "user.email", "hive@example.test");
+      await writeFile(join(repo, "README.md"), "# test\n");
+      await git(repo, "add", "README.md");
+      await git(repo, "commit", "-m", "initial");
+
+      const victim = join(repo, ".hive", "worktrees", "victim");
+      await mkdir(join(repo, ".hive", "worktrees"), { recursive: true });
+      await git(repo, "worktree", "add", "--detach", victim, "HEAD");
+      await git(victim, "config", "user.name", "Hive Test");
+      await git(victim, "config", "user.email", "hive@example.test");
+      await writeFile(join(victim, "precious.ts"), "export {};\n");
+      await git(victim, "add", "precious.ts");
+      await git(
+        victim,
+        "commit",
+        "-m",
+        "work an interrupted rebase left behind",
+      );
+      const tip = await git(victim, "rev-parse", "HEAD");
+
+      // No agent owns it: without the fix this is rule "clean-orphan" / removed.
+      const report = await reconcileOrphanedWorktrees(repo, []);
+      const outcome = report.worktrees.find((entry) =>
+        entry.path.endsWith("/victim"),
+      );
+      expect(outcome?.action).toBe("kept");
+      expect(outcome?.rule).toBe("stranded-work");
+      expect(outcome?.unmergedCommits).toBe(1);
+      expect(outcome?.branch).toBeNull();
+
+      // The commit itself must still be findable, which is the property that
+      // actually matters — an outcome label is not evidence the work survived.
+      const reachable = await git(repo, "rev-list", "--all", "--reflog");
+      expect(reachable).toContain(tip);
+    } finally {
+      await rm(detachedRoot, { recursive: true, force: true });
+    }
   });
 });

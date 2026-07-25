@@ -634,6 +634,31 @@ const isHiveWorktreeWiring = async (
   return source !== null && ownsGrokHook(source);
 };
 
+/** Commits reachable from `revision` but not from the main branch. Throws
+ * rather than returning 0 when git cannot answer, so a caller that deletes on
+ * zero cannot be told "nothing here" by a failed measurement. */
+async function countCommitsNotOnMain(
+  repoRoot: string,
+  mainBranch: string,
+  revision: string,
+): Promise<number> {
+  const result = await runGit(repoRoot, [
+    "rev-list",
+    "--count",
+    `${mainBranch}..${revision}`,
+  ]);
+  assertGitSuccess(result, "rev-list");
+  const count = result.stdout.trim();
+  if (!/^[0-9]+$/.test(count)) {
+    throw new Error(`git rev-list failed: invalid count "${count}"`);
+  }
+  const parsed = Number(count);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error("git rev-list failed: count exceeds safe integer range");
+  }
+  return parsed;
+}
+
 export async function assessStrandedWork(
   repoRoot: string,
   worktreePath: string | null,
@@ -667,22 +692,26 @@ export async function assessStrandedWork(
     // any commits it made still show up in the unmerged count below.
   }
 
+  // Commits are counted against a REVISION, not a branch name. A detached
+  // worktree has no branch, and `git rebase` is exactly what leaves a worktree
+  // detached — the landing protocol tells every agent to run `git rebase main`,
+  // so an agent interrupted mid-rebase is the ordinary case, not an exotic one.
+  // Keying this off `branch` alone left `unmergedCommits` at 0 unconditionally
+  // for those worktrees, so the sweep's unmerged guard could not fire and it
+  // deleted the commits. A revision that cannot be resolved or counted THROWS,
+  // which the reconciler already treats as keep-and-report ("assessment-failed")
+  // — undeterminable state must never read as "nothing here".
   let unmergedCommits = 0;
   if (branch !== null && (await branchExists(repoRoot, branch))) {
-    const revListResult = await runGit(repoRoot, [
-      "rev-list",
-      "--count",
-      `${mainBranch}..${branch}`,
-    ]);
-    assertGitSuccess(revListResult, "rev-list");
-    const count = revListResult.stdout.trim();
-    if (!/^[0-9]+$/.test(count)) {
-      throw new Error(`git rev-list failed: invalid count "${count}"`);
-    }
-    unmergedCommits = Number(count);
-    if (!Number.isSafeInteger(unmergedCommits)) {
-      throw new Error(`git rev-list failed: count exceeds safe integer range`);
-    }
+    unmergedCommits = await countCommitsNotOnMain(repoRoot, mainBranch, branch);
+  } else if (branch === null && worktreePath !== null) {
+    const headResult = await runGit(worktreePath, ["rev-parse", "HEAD"]);
+    assertGitSuccess(headResult, "rev-parse HEAD");
+    unmergedCommits = await countCommitsNotOnMain(
+      repoRoot,
+      mainBranch,
+      headResult.stdout.trim(),
+    );
   }
 
   return { dirtyFiles, unmergedCommits };
