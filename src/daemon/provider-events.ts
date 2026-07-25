@@ -43,7 +43,13 @@ export function recordProviderHookEvent(
   if (normalized === null) return null;
 
   const active = db.getActiveProviderRunForAgent(agent.id);
-  if (active === null) return null;
+  if (
+    active === null ||
+    active.capabilityEpoch !== agent.capabilityEpoch ||
+    Date.parse(event.timestamp) < Date.parse(active.startedAt)
+  ) {
+    return null;
+  }
   const conversationId = event.toolSessionId ?? active.conversationId;
   const run =
     conversationId === null

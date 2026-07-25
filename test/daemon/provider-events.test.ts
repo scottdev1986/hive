@@ -93,6 +93,19 @@ describe("provider event normalization", () => {
         expect(db.listProviderEvents(active.runId)).toHaveLength(1);
 
         expect(
+          recordProviderHookEvent(
+            db,
+            { ...value, capabilityEpoch: 5 },
+            {
+              kind: "turn-end",
+              agentName: value.name,
+              timestamp: at,
+              toolSessionId: `${tool}-conversation`,
+            },
+          ),
+        ).toBeNull();
+
+        expect(
           recordProviderHookEvent(db, value, {
             kind: "turn-end",
             agentName: value.name,
