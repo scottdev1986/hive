@@ -217,17 +217,29 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     expect(wire.attempts).toEqual(["message-1"]);
   });
 
-  test("an orphaned human draft blocks automated delivery without discard", async () => {
+  // An orphan is a human who is gone, so it must not hold delivery. This
+  // deadlock closed david having never received its instruction: run-bound
+  // writes returned the orphan decline instead of resolving it, and every real
+  // caller is run-bound.
+  test("an orphaned human draft does not block automated delivery", async () => {
     const wire = new HumanClaimArbiterWire();
     const modes: OrphanDiscardMode[] = [];
     const result = await injector(wire, async (mode) => {
       modes.push(mode);
-      throw new Error(`unexpected discard mode ${mode}`);
+      wire.discarded = true;
+      return {
+        state: "discarded" as const,
+        priorOwnerViewerId: "workspace-pane-david",
+        priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
+        orphanAgeMilliseconds: "540000",
+        diagnostic: "orphaned human claim discarded",
+      };
     }).writeAutomated(automatedInput("hi"));
 
-    expect(result.outcome).toBe("declined");
-    expect(modes).toEqual([]);
-    expect(wire.attempts).toEqual(["message-1"]);
+    expect(result.outcome).toBe("injected");
+    // Resolved as an abandoned draft, never as a preemption of a held claim.
+    expect(modes).toEqual(["orphaned"]);
+    expect(wire.attempts).toEqual(["message-1", "message-1"]);
   });
 
   test("a held human claim is never preempted by automation", async () => {

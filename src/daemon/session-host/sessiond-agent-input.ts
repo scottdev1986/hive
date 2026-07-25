@@ -173,7 +173,6 @@ export class SessiondViewerAgentInput
       expectedForeground,
     );
     if (first.outcome !== "declined") return first;
-    if (expectedForeground !== undefined) return first;
     if (!first.reason.includes(HUMAN_ORPHANED)) return first;
     return this.resolveOrphanedHumanClaim(
       locator,
@@ -190,6 +189,12 @@ export class SessiondViewerAgentInput
    * Discard an abandoned draft, then retry exactly once. A live human claim
    * never reaches this path: automation stays queued until the operator's turn
    * ends.
+   *
+   * Run-bound writes retry here too. They used to return the orphan decline
+   * untouched, which left every real caller — both of them pass an
+   * `expectedForeground` — permanently deadlocked behind a departed human's
+   * draft. Run-binding is not weakened by retrying: the host revalidates
+   * `expectedForeground` at INPUT_SUBMIT and rejects `foreground-changed`.
    */
   private async resolveOrphanedHumanClaim(
     locator: ReturnType<typeof requireSessiondAgentLocator>,

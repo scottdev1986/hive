@@ -4174,6 +4174,150 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 }
 
+fn claimAcquirePayload(
+    allocator: std.mem.Allocator,
+    registration: HostRegistration,
+    writer: []const u8,
+    kind: []const u8,
+    lease_ms: u64,
+    idempotency_key: []const u8,
+) ![]u8 {
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = writer,
+        .kind = kind,
+        .leaseMilliseconds = lease_ms,
+        .idempotencyKey = idempotency_key,
+    }, .{});
+}
+
+// The delivery gate must ask whether a human is still holding input, not
+// whether a claim was ever recorded. Live messages were refused nineteen
+// minutes past an expired lease, on behalf of operators who had left.
+test "an expired human input claim does not block delivery" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    // A human takes input with a one-second lease and then stops typing.
+    const human = try claimAcquirePayload(
+        std.testing.allocator,
+        registration,
+        "workspace-pane-nina",
+        "human",
+        1_000,
+        "claim-human",
+    );
+    defer std.testing.allocator.free(human);
+    const granted = try core.claimInput(human, "workspace-pane-nina", 2_000);
+    defer std.testing.allocator.free(granted);
+    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
+    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
+
+    // Two seconds later that lease is a second stale. Delivery proceeds.
+    const automation = try claimAcquirePayload(
+        std.testing.allocator,
+        registration,
+        "hive-daemon",
+        "automation",
+        60_000,
+        "claim-auto",
+    );
+    defer std.testing.allocator.free(automation);
+    const delivered = try core.claimInput(automation, "hive-daemon", 2_000_000_000);
+    defer std.testing.allocator.free(delivered);
+    try std.testing.expect(std.mem.indexOf(u8, delivered, "\"state\":\"granted\"") != null);
+    try std.testing.expect(core.active_claim != null);
+    try std.testing.expectEqualStrings("hive-daemon", core.active_claim.?.writer);
+}
+
+// The original requirement, and the one the expiry cut must not cost: nothing
+// is ever taken from a human who is actually holding input. Automation waits
+// for the turn boundary instead.
+test "a live human input claim still defers delivery" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    const human = try claimAcquirePayload(
+        std.testing.allocator,
+        registration,
+        "workspace-pane-nina",
+        "human",
+        10_000,
+        "claim-human",
+    );
+    defer std.testing.allocator.free(human);
+    const granted = try core.claimInput(human, "workspace-pane-nina", 2_000);
+    defer std.testing.allocator.free(granted);
+    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
+
+    // Five seconds in, five seconds of lease remain: the human is still there.
+    const automation = try claimAcquirePayload(
+        std.testing.allocator,
+        registration,
+        "hive-daemon",
+        "automation",
+        60_000,
+        "claim-auto",
+    );
+    defer std.testing.allocator.free(automation);
+    const denied = try core.claimInput(automation, "hive-daemon", 5_000_000_000);
+    defer std.testing.allocator.free(denied);
+    try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, denied, "input already claimed") != null);
+    // The human keeps input, and keeps it as the owner of record.
+    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
+    try std.testing.expect(core.active_claim != null);
+    try std.testing.expectEqualStrings("workspace-pane-nina", core.active_claim.?.writer);
+}
+
 test "human input ownership lasts until release or viewer detach" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
@@ -4207,8 +4351,10 @@ test "human input ownership lasts until release or viewer detach" {
     defer core.deinit();
     core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
 
-    // The frozen wire still carries a lease duration, but a connected viewer's
-    // keyboard ownership is connection-scoped: idle time cannot revoke it.
+    // A connected viewer's keyboard ownership is connection-scoped for as long
+    // as its lease is current: within the lease, idle time cannot revoke it.
+    // Past the lease the claim no longer holds input — see "an expired human
+    // input claim does not block delivery", which owns that half.
     const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
         .schemaVersion = @as(u8, 1),
         .session = .{
@@ -4221,14 +4367,18 @@ test "human input ownership lasts until release or viewer detach" {
         .idempotencyKey = "claim-connection-a",
     }, .{});
     defer std.testing.allocator.free(claim_payload);
-    const granted = try core.claimInput(claim_payload, "viewer-a", 2_000);
+    const granted = try core.claimInput(
+        claim_payload,
+        "viewer-a",
+        2_000 * std.time.ns_per_ms,
+    );
     defer std.testing.allocator.free(granted);
     try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
     const owner_token = try std.testing.allocator.dupe(u8, core.active_claim.?.token);
     defer std.testing.allocator.free(owner_token);
 
-    // Submit after the advertised two-second timestamp. The same connected
-    // viewer remains authoritative and its token is unchanged.
+    // Submit a second into the lease. The same connected viewer remains
+    // authoritative and its token is unchanged.
     const input = try a3BytesPayload(
         std.testing.allocator,
         registration,

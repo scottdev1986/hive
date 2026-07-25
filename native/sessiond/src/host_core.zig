@@ -354,6 +354,10 @@ const ActiveInputClaim = struct {
     idempotency_key: []u8,
     owner_viewer_id: []u8,
     lease_expires_at: []u8,
+    /// `lease_expires_at` is a wall-clock string for the wire; this is the same
+    /// deadline on the host's monotonic clock, so the gate can compare it to
+    /// `now_ns` without a wall-clock conversion.
+    expires_mono_ns: u64,
     next_sequence: u64,
 
     fn deinit(self: *ActiveInputClaim, allocator: std.mem.Allocator) void {
@@ -595,10 +599,19 @@ pub const HostCore = struct {
             {
                 return self.encodeClaimResult(.{ .granted = claim });
             }
-            return self.encodeClaimResult(.{ .denied = .{
-                .owner = claim,
-                .diagnostic = "input already claimed",
-            } });
+            // A recorded claim holds input only while its lease is current.
+            // Asking "is a claim recorded?" instead of "is a human still
+            // holding it?" is what blocked delivery for nineteen minutes past
+            // an expired lease: the denial printed the very expiry it refused
+            // to honour. Past expiry the claim is not held, so fall through to
+            // the ordinary acquire below. A live lease is still never taken.
+            if (now_ns < claim.expires_mono_ns) {
+                return self.encodeClaimResult(.{ .denied = .{
+                    .owner = claim,
+                    .diagnostic = "input already claimed",
+                } });
+            }
+            self.releaseExpiredClaim();
         }
         const binding = self.termination orelse
             return self.encodeClaimResult(.{ .unknown = "input binding unavailable" });
@@ -622,6 +635,7 @@ pub const HostCore = struct {
             .idempotency_key = undefined,
             .owner_viewer_id = undefined,
             .lease_expires_at = undefined,
+            .expires_mono_ns = now_ns + duration_ms * std.time.ns_per_ms,
             .next_sequence = 0,
         };
         var initialized_fields: usize = 1;
@@ -694,6 +708,21 @@ pub const HostCore = struct {
         self.active_claim = claim;
         initialized_fields = 0;
         return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
+    }
+
+    /// An expired human claim is not held, so hand the arbiter back to FREE
+    /// through its existing escape hatch and drop the host record. If the
+    /// arbiter refuses, the claim stays with it and the acquire above denies on
+    /// the arbiter's own answer — never a fabricated grant.
+    fn releaseExpiredClaim(self: *HostCore) void {
+        if (self.termination) |binding| {
+            if (binding.arbiter) |arbiter| {
+                if (arbiter.currentState() == .human_owned)
+                    _ = arbiter.operatorPreempt() catch {};
+            }
+        }
+        if (self.active_claim) |*claim| claim.deinit(self.allocator);
+        self.active_claim = null;
     }
 
     /// Unclean viewer drop: orphan the arbiter claim (lease current) and clear
