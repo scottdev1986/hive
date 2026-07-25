@@ -1252,10 +1252,26 @@ export class HiveDaemon {
     this.drainHandler = new DrainHandler({
       db: this.db,
       quota: this.quota,
-      send: (from, to, body) => this.delivery.send(from, to, body),
-      closeAgent: async (agent, reason) =>
-        await this.killAgentTeardown(agent, { failureReason: reason }),
-      spawn: (request) => this.spawner.spawn(request),
+      send: (from, to, body, sendOptions) =>
+        this.delivery.send(from, to, body, sendOptions),
+      pauseProvider: (agent, run) =>
+        this.terminalHost.pauseProvider(requireSessiondAgentLocator(agent), run),
+      resumeProvider: (agent, run) =>
+        this.terminalHost.resumeProvider(
+          requireSessiondAgentLocator(agent),
+          run,
+        ),
+      requestReplacement: async (agent, reason) => {
+        await this.delivery.send(
+          "hive-quota",
+          ORCHESTRATOR_NAME,
+          `${agent.name}'s ${agent.tool} provider run is quota-drained (${reason}). ` +
+            "The source terminal and worktree are retained. Replacement is deferred to the C5 handoff path.",
+          {
+            idempotencyKey: `quota-replacement-deferred:${agent.id}:${agent.capabilityEpoch}:${reason}`,
+          },
+        );
+      },
       ...(this.episodic === null
         ? {}
         : {
@@ -6025,7 +6041,7 @@ export class HiveDaemon {
       {
         title: "Send agent message",
         description:
-          'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok has no tool-hook or native steer surface, so it honestly degrades to the next turn. urgent CANCELS the in-flight turn, which is never resumed, and discards its reasoning; use it only when the current work must STOP. critical is unchanged: it also revokes write/landing authority and restarts the target read-only. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient queen wakes the root (preferred name; synonym "orchestrator" is still accepted). The returned body is a short head-and-tail preview; read the durable message for the full body.',
+          'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok has no tool-hook or native steer surface, so it honestly degrades to the next turn. urgent CANCELS the in-flight turn, which is never resumed, and discards its reasoning; use it only when the current work must STOP. critical first revokes write/landing authority, then applies its typed control intent to the verified provider run; unsupported cancel surfaces fail honestly. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient queen wakes the root (preferred name; synonym "orchestrator" remains accepted). The returned body is a short head-and-tail preview; read the durable message for the full body.',
         inputSchema: SendRequestSchema,
       },
       async ({ from, to, body, ...requested }) => {

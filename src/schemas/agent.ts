@@ -130,6 +130,8 @@ const AgentRecordShape = {
   holdReason: z.string().nullable().optional(),
   /** The window reset the hold waits for. Cleared with the hold. */
   holdResetAt: z.iso.datetime().nullable().optional(),
+  /** Exact provider run the quota hold may resume. */
+  holdProviderRunId: z.string().uuid().nullable().optional(),
   // When this holder closed. Stamped once, the first time the agent reaches a
   // terminal status, and cleared if crash recovery brings the same agent back.
   // Absent means the holder is live. This is what makes a name safe to reissue:

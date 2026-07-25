@@ -2,9 +2,9 @@ import {
   CAPABILITY_PROVIDERS,
   type AgentRecord,
   type CapabilityProvider,
+  type ProviderRun,
   isTerminalAgentStatus,
 } from "../schemas";
-import type { SpawnRequest } from "./spawner";
 import type { HiveDatabase } from "./db";
 import type { QuotaService } from "./quota";
 
@@ -19,10 +19,8 @@ const isTerminal = (agent: AgentRecord): boolean =>
  * - HOLD (§R4): the drained window resets within the hour. The agent is
  *   marked `held`; the daemon's existing 30-second maintenance sweep pokes
  *   it with a continue message once the reset has passed. No new timers.
- * - HANDOFF (§R5): the reset is further out, or unknowable. The agent is
- *   closed through the normal teardown (which preserves its branch as a
- *   ref), and a replacement spawns through the normal spawn path with the
- *   branch named in its brief.
+ * - REPLACEMENT (§R5): C4 freezes and retains the source run, then reports the
+ *   replacement seam. C5 owns the handoff and replacement itself.
  * - ALL-DRAINED (§R6): no provider has usage — every metered pool is spent
  *   AND every unmetered route has errored. Wait for the nearest 5-hour
  *   reset, or the 7-day reset if it lands within 5 hours; otherwise the
@@ -64,13 +62,15 @@ export function classifyVendorDrainError(
 export interface DrainHandlerDependencies {
   db: HiveDatabase;
   quota: QuotaService | undefined;
-  send: (from: string, to: string, body: string) => Promise<unknown>;
-  /** killAgentTeardown: closes the agent and preserves unlanded work. */
-  closeAgent: (
-    agent: AgentRecord,
-    reason: string,
-  ) => Promise<{ preserved: { branch: string; ref: string } | null }>;
-  spawn: (request: SpawnRequest) => Promise<AgentRecord>;
+  send: (
+    from: string,
+    to: string,
+    body: string,
+    options?: { idempotencyKey?: string },
+  ) => Promise<unknown>;
+  pauseProvider: (agent: AgentRecord, run: ProviderRun) => Promise<boolean>;
+  resumeProvider: (agent: AgentRecord, run: ProviderRun) => Promise<boolean>;
+  requestReplacement: (agent: AgentRecord, reason: string) => Promise<void>;
   /** EpisodicStore.appendEvent — the all-drained memory. */
   remember?: (event: { agent: string | null; type: string; summary: string }) => void;
   clock?: () => Date;
@@ -92,14 +92,14 @@ export class DrainHandler {
   /** A spawn or turn failed with a vendor rate-limit error (§06). Routes
    * here INSTEAD of the launch-failure quarantine: the route is not broken,
    * the meter is empty. The agent is already terminal at this point — a hold
-   * is meaningless for a corpse, so the decision is handoff or
-   * preserve+memory. */
+   * is meaningless for a corpse, so C4 reports the replacement seam without
+   * destroying its terminal or worktree. */
   async onVendorError(agent: AgentRecord, failure: string): Promise<void> {
     this.drainErrors.set(agent.tool, new Date(this.clock()).toISOString());
     if (this.allDrained()) {
       await this.allDrainedArm(agent, `a ${agent.tool} rate-limit error`);
     } else {
-      await this.handoff(agent, `a ${agent.tool} rate-limit error`);
+      await this.deferReplacement(agent, `a ${agent.tool} rate-limit error`);
     }
     // The error may have changed the all-drained verdict for every live
     // agent too — evaluate them through the normal sweep now, not 30s late.
@@ -118,19 +118,7 @@ export class DrainHandler {
           agent.holdResetAt !== undefined &&
           new Date(agent.holdResetAt) <= now
         ) {
-          // §R4: the window has reset — the agent will not continue on its
-          // own, so it is told, through the same envelope recovery uses.
-          this.deps.db.upsertAgent({
-            ...agent,
-            status: "idle",
-            holdReason: null,
-            holdResetAt: null,
-          });
-          await this.deps.send(
-            "hive-quota",
-            agent.name,
-            `Your provider's quota window has reset (${agent.holdReason ?? "usage restored"}). Continue your task.`,
-          ).catch(() => undefined);
+          await this.resumeHeld(agent, now);
         }
         continue;
       }
@@ -154,15 +142,15 @@ export class DrainHandler {
         new Date(drained.resetsAt).getTime() - now.getTime() <= HOLD_WINDOW_MS
       ) {
         // §R4: a reset within the hour is a hold, never a handoff.
-        this.deps.db.upsertAgent({
-          ...agent,
-          status: "held",
-          holdReason: reason,
-          holdResetAt: drained.resetsAt,
-        });
+        if (!(await this.hold(agent, reason, drained.resetsAt))) {
+          await this.deps.requestReplacement(
+            agent,
+            `${reason}; the source provider could not be held`,
+          );
+        }
         continue;
       }
-      await this.handle(agent, reason, drained.resetsAt);
+      await this.handle(agent, reason);
     }
   }
 
@@ -170,7 +158,6 @@ export class DrainHandler {
   private async handle(
     agent: AgentRecord,
     reason: string,
-    resetsAt: string | null = null,
   ): Promise<void> {
     const quota = this.deps.quota;
     if (quota === undefined || agent.status === "held") return;
@@ -178,7 +165,7 @@ export class DrainHandler {
       await this.allDrainedArm(agent, reason);
       return;
     }
-    await this.handoff(agent, reason);
+    await this.deferReplacement(agent, reason);
   }
 
   /** Every metered provider drained AND every unmetered route errored (§R6). */
@@ -208,72 +195,89 @@ export class DrainHandler {
         ? nearest.weekly
         : null);
     if (waitFor !== null && agent.status !== "held" && !isTerminal(agent)) {
-      this.deps.db.upsertAgent({
-        ...agent,
-        status: "held",
-        holdReason:
-          `every provider is out of usage (${reason}); nearest window resets ${waitFor}`,
-        holdResetAt: waitFor,
-      });
+      const held = await this.hold(
+        agent,
+        `every provider is out of usage (${reason}); nearest window resets ${waitFor}`,
+        waitFor,
+      );
+      if (!held) {
+        await this.deps.requestReplacement(
+          agent,
+          `${reason}; the source provider could not be held`,
+        );
+      }
       return;
     }
-    // Further than any honest wait (or the agent is already down): preserve
-    // the branch and write the memory that lets work resume when
-    // availability returns.
-    const preserved = isTerminal(agent)
-      ? null
-      : await this.deps.closeAgent(agent, `all providers drained: ${reason}`);
-    const branch = preserved?.preserved?.branch ?? agent.branch;
+    if (!isTerminal(agent)) {
+      await this.hold(agent, `all providers drained: ${reason}`, null);
+    }
     this.deps.remember?.({
       agent: agent.name,
       type: "quota-drain",
       summary:
-        `${agent.name} was closed because every provider ran out of usage (${reason}). ` +
-        `Work is preserved on branch ${branch ?? "(none)"} from task: ${agent.taskDescription}. ` +
+        `${agent.name} is retained because every provider ran out of usage (${reason}). ` +
+        `Work remains on branch ${agent.branch ?? "(none)"} from task: ${agent.taskDescription}. ` +
         "Resume it when any provider's usage returns.",
+    });
+    await this.deps.requestReplacement(agent, reason);
+  }
+
+  private async hold(
+    agent: AgentRecord,
+    reason: string,
+    resetsAt: string | null,
+  ): Promise<boolean> {
+    const run = this.deps.db.getActiveProviderRunForAgent(agent.id);
+    if (run === null || !(await this.deps.pauseProvider(agent, run)))
+      return false;
+    this.deps.db.upsertAgent({
+      ...agent,
+      status: "held",
+      holdReason: reason,
+      holdResetAt: resetsAt,
+      holdProviderRunId: run.runId,
+    });
+    return true;
+  }
+
+  private async resumeHeld(agent: AgentRecord, now: Date): Promise<void> {
+    const quota = this.deps.quota!;
+    await quota.refreshFromProviders(undefined, { providers: [agent.tool] });
+    const current = this.deps.db.getAgentById(agent.id);
+    if (current?.status !== "held") return;
+    const model = current.executionIdentity?.model ?? current.model;
+    if (quota.drainFor({ tool: current.tool, model }, now) !== null) return;
+    const run = this.deps.db.getActiveProviderRunForAgent(current.id);
+    if (
+      run === null ||
+      current.holdProviderRunId !== run.runId ||
+      current.capabilityEpoch !== run.capabilityEpoch ||
+      !(await this.deps.resumeProvider(current, run))
+    ) {
+      return;
+    }
+    await this.deps.send(
+      "hive-quota",
+      current.name,
+      `Your provider's quota window has reset (${current.holdReason ?? "usage restored"}). Continue your task.`,
+      {
+        idempotencyKey: `quota-resume:${current.id}:${run.runId}:${current.holdResetAt}`,
+      },
+    );
+    this.deps.db.upsertAgent({
+      ...current,
+      status: "idle",
+      holdReason: null,
+      holdResetAt: null,
+      holdProviderRunId: null,
     });
   }
 
-  /** §R5: close through the normal teardown and respawn the work elsewhere. */
-  private async handoff(agent: AgentRecord, reason: string): Promise<void> {
-    const quota = this.deps.quota!;
-    const now = this.clock();
-    const provider = this.pickHandoffProvider(agent.tool, now);
-    const preserved = isTerminal(agent)
-      ? null
-      : await this.deps.closeAgent(agent, `quota drain: ${reason}`);
-    const branch = preserved?.preserved?.branch ?? agent.branch;
-    const request: SpawnRequest = {
-      task:
-        `${agent.taskDescription}\n\n` +
-        `This continues ${agent.name}'s work after ${agent.tool} ran out of usage (${reason}). ` +
-        (branch === null || branch === undefined
-          ? "There is no preserved branch; start from the task text."
-          : `The work so far is preserved on branch ${branch} — continue it, do not start over.`),
-      category: agent.category,
-      ...(provider === undefined ? {} : { tool: provider }),
-      ...(agent.readOnly ? { readOnly: true } : {}),
-    };
-    await this.deps.spawn(request);
-  }
-
-  /** Any provider that can take the work: the first non-drained metered one,
-   * else an unmetered route that has not errored. */
-  private pickHandoffProvider(
-    drainedTool: CapabilityProvider,
-    now: Date,
-  ): CapabilityProvider | undefined {
-    const quota = this.deps.quota!;
-    for (const provider of CAPABILITY_PROVIDERS) {
-      if (provider === drainedTool || !quota.isMetered(provider)) continue;
-      if (quota.drainFor({ tool: provider, model: "*" }, now) === null) {
-        return provider;
-      }
-    }
-    for (const provider of CAPABILITY_PROVIDERS) {
-      if (provider === drainedTool || quota.isMetered(provider)) continue;
-      if (!this.drainErrors.has(provider)) return provider;
-    }
-    return undefined;
+  private async deferReplacement(
+    agent: AgentRecord,
+    reason: string,
+  ): Promise<void> {
+    if (!isTerminal(agent)) await this.hold(agent, reason, null);
+    await this.deps.requestReplacement(agent, reason);
   }
 }

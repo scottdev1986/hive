@@ -13,7 +13,6 @@ import {
   classifyVendorDrainError,
   DrainHandler,
 } from "../../src/daemon/drain-handler";
-import type { SpawnRequest } from "../../src/daemon/spawner";
 
 /**
  * The drain handler (§R4–R7): hold when a window resets within the hour,
@@ -50,6 +49,18 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
+    sessionLocator: {
+      schemaVersion: 1,
+      instanceId: "hive-drain-test",
+      subject: { kind: "agent", agentId: overrides.id ?? "agent-maya" },
+      generation: 1,
+      sessionId:
+        overrides.id === "agent-otto"
+          ? "ses_018f1e90-7b5a-7cc0-8000-000000000302"
+          : "ses_018f1e90-7b5a-7cc0-8000-000000000301",
+      hostKind: "sessiond",
+      engineBuildId: "engine-drain-test",
+    },
     ...overrides,
   };
 }
@@ -57,9 +68,15 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 interface Harness {
   db: HiveDatabase;
   quota: QuotaService;
-  sent: Array<{ from: string; to: string; body: string }>;
-  closed: Array<{ name: string; reason: string }>;
-  spawned: SpawnRequest[];
+  sent: Array<{
+    from: string;
+    to: string;
+    body: string;
+    idempotencyKey: string | undefined;
+  }>;
+  paused: string[];
+  resumed: string[];
+  replacements: Array<{ name: string; reason: string }>;
   memories: Array<{ agent: string | null; summary: string }>;
   drain: DrainHandler;
 }
@@ -114,27 +131,67 @@ async function harness(
     });
   }
   const sent: Harness["sent"] = [];
-  const closed: Harness["closed"] = [];
-  const spawned: SpawnRequest[] = [];
+  const paused: string[] = [];
+  const resumed: string[] = [];
+  const replacements: Harness["replacements"] = [];
   const memories: Harness["memories"] = [];
   const drain = new DrainHandler({
     db,
     quota,
-    send: async (from, to, body) => {
-      sent.push({ from, to, body });
+    send: async (from, to, body, options) => {
+      sent.push({ from, to, body, idempotencyKey: options?.idempotencyKey });
     },
-    closeAgent: async (record, reason) => {
-      closed.push({ name: record.name, reason });
-      return { preserved: { branch: record.branch ?? "", ref: "refs/hive/preserved/x" } };
+    pauseProvider: async (record) => {
+      paused.push(record.name);
+      return true;
     },
-    spawn: async (request) => {
-      spawned.push(request);
-      return agent();
+    resumeProvider: async (record) => {
+      resumed.push(record.name);
+      return true;
+    },
+    requestReplacement: async (record, reason) => {
+      replacements.push({ name: record.name, reason });
     },
     remember: (event) => memories.push(event),
     clock: () => now,
   });
-  return { db, quota, sent, closed, spawned, memories, drain };
+  return {
+    db,
+    quota,
+    sent,
+    paused,
+    resumed,
+    replacements,
+    memories,
+    drain,
+  };
+}
+
+function insertRunningAgent(h: Harness, record: AgentRecord): void {
+  h.db.insertAgent(record);
+  if (record.status === "failed") return;
+  const locator = record.sessionLocator!;
+  h.db.insertProviderRun({
+    runId:
+      record.name === "otto"
+        ? "018f1e90-7b5a-7cc0-8000-000000000312"
+        : "018f1e90-7b5a-7cc0-8000-000000000311",
+    agentId: record.id,
+    terminal: locator,
+    provider: record.tool,
+    model: record.model,
+    effort: null,
+    conversationId: null,
+    pid: record.name === "otto" ? 4_200 : 4_100,
+    startToken: record.name === "otto" ? "4200:1" : "4100:1",
+    foregroundProcessGroupId: record.name === "otto" ? 4_200 : 4_100,
+    capabilityEpoch: record.capabilityEpoch,
+    launchGrantId: `grant-${record.name}`,
+    startedAt: now.toISOString(),
+    endedAt: null,
+    state: "running",
+    exitReason: null,
+  });
 }
 
 describe("the drain handler", () => {
@@ -147,7 +204,7 @@ describe("the drain handler", () => {
         fiveHourResetAt: at(30),
       },
     ]);
-    h.db.insertAgent(agent());
+    insertRunningAgent(h, agent());
 
     await h.drain.sweep();
     const held = h.db.getAgentById("agent-maya")!;
@@ -155,27 +212,46 @@ describe("the drain handler", () => {
     expect(held.holdReason).toContain("subscription");
     expect(held.holdReason).toContain(at(30));
     expect(held.holdResetAt).toBe(at(30));
-    expect(h.closed).toHaveLength(0);
-    expect(h.spawned).toHaveLength(0);
+    expect(h.paused).toEqual(["maya"]);
+    expect(h.replacements).toHaveLength(0);
 
     // The same sweep before the reset does not poke.
     await h.drain.sweep();
     expect(h.sent).toHaveLength(0);
 
     // Past the reset, the existing sweep tells the agent to continue and
-    // clears the hold — no new timers.
+    // clears the hold — but only after exact run and epoch revalidation.
     now = new Date(now.getTime() + 31 * 60_000);
+    h.db.upsertAgent({
+      ...held,
+      holdProviderRunId: "018f1e90-7b5a-7cc0-8000-000000000399",
+    });
+    await h.drain.sweep();
+    expect(h.resumed).toHaveLength(0);
+    h.db.upsertAgent({
+      ...held,
+      capabilityEpoch: 1,
+    });
+    await h.drain.sweep();
+    expect(h.resumed).toHaveLength(0);
+    h.db.upsertAgent(held);
     await h.drain.sweep();
     const freed = h.db.getAgentById("agent-maya")!;
     expect(freed.status).toBe("idle");
     expect(freed.holdReason).toBeNull();
     expect(freed.holdResetAt).toBeNull();
+    expect(freed.holdProviderRunId).toBeNull();
+    expect(h.resumed).toEqual(["maya"]);
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]?.to).toBe("maya");
     expect(h.sent[0]?.body).toContain("reset");
+    expect(h.sent[0]?.idempotencyKey).toContain("quota-resume:");
+    await h.drain.sweep();
+    expect(h.resumed).toEqual(["maya"]);
+    expect(h.sent).toHaveLength(1);
   });
 
-  test("§R5: a drain resetting further out closes the drained agent and respawns the branch elsewhere", async () => {
+  test("§R5 seam: a distant reset freezes the source without destroying its terminal or worktree", async () => {
     const h = await harness([
       {
         provider: "claude",
@@ -190,19 +266,19 @@ describe("the drain handler", () => {
         fiveHourResetAt: at(200),
       },
     ]);
-    h.db.insertAgent(agent());
+    insertRunningAgent(h, agent());
 
     await h.drain.sweep();
-    expect(h.closed).toHaveLength(1);
-    expect(h.closed[0]?.name).toBe("maya");
-    expect(h.closed[0]?.reason).toContain("spent");
-    expect(h.spawned).toHaveLength(1);
-    const request = h.spawned[0]!;
-    expect(request.task).toContain("hive/maya-server");
-    expect(request.task).toContain("continues maya's work");
-    expect(request.tool).toBe("codex");
-    expect(request.category).toBe("simple_coding");
-    expect(h.db.getAgentById("agent-maya")!.status).not.toBe("held");
+    expect(h.paused).toEqual(["maya"]);
+    expect(h.replacements).toEqual([
+      { name: "maya", reason: expect.stringContaining("spent") },
+    ]);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "held",
+      holdResetAt: null,
+      worktreePath: "/tmp/worktree",
+      branch: "hive/maya-server",
+    });
   });
 
   test("§R6: when everything is drained, the agent waits for the nearest five-hour reset", async () => {
@@ -217,14 +293,13 @@ describe("the drain handler", () => {
       { provider: "grok", fiveHourUsed: 100, weeklyUsed: 100 },
       { provider: "kimi", fiveHourUsed: 100, weeklyUsed: 100 },
     ]);
-    h.db.insertAgent(agent());
+    insertRunningAgent(h, agent());
     // The only unmetered route has errored too.
     const opencodeAgent = agent({ id: "agent-otto", name: "otto", tool: "opencode", status: "failed", failedAt: now.toISOString() });
-    h.db.insertAgent(opencodeAgent);
+    insertRunningAgent(h, opencodeAgent);
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
 
-    expect(h.spawned).toHaveLength(0);
-    expect(h.closed).toHaveLength(0);
+    expect(h.paused).toEqual(["maya"]);
     const held = h.db.getAgentById("agent-maya")!;
     expect(held.status).toBe("held");
     expect(held.holdReason).toContain("every provider is out of usage");
@@ -244,18 +319,22 @@ describe("the drain handler", () => {
       { provider: "grok", fiveHourUsed: 100, weeklyUsed: 100 },
       { provider: "kimi", fiveHourUsed: 100, weeklyUsed: 100 },
     ]);
-    h.db.insertAgent(agent());
+    insertRunningAgent(h, agent());
     const opencodeAgent = agent({ id: "agent-otto", name: "otto", tool: "opencode", status: "failed", failedAt: now.toISOString() });
-    h.db.insertAgent(opencodeAgent);
+    insertRunningAgent(h, opencodeAgent);
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
 
-    expect(h.spawned).toHaveLength(0);
-    // Both the errored (already down) agent and the still-live one are
-    // preserved with a memory each.
+    // Both the errored (already down) agent and the still-live one are retained
+    // with a memory each; C5 owns replacement construction.
     expect(h.memories).toHaveLength(2);
     expect(h.memories[0]?.summary).toContain("hive/maya-server");
     expect(h.memories[0]?.summary).toContain("Resume it when any provider's usage returns");
-    expect(h.closed.map((entry) => entry.name)).toEqual(["maya"]);
+    expect(h.paused).toEqual(["maya"]);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "held",
+      worktreePath: "/tmp/worktree",
+      branch: "hive/maya-server",
+    });
   });
 
   test("an unmetered provider's drain is never held — a rate-limit error hands off directly", async () => {
@@ -268,20 +347,18 @@ describe("the drain handler", () => {
       },
     ]);
     const opencodeAgent = agent({ id: "agent-otto", name: "otto", tool: "opencode", status: "failed", failedAt: now.toISOString() });
-    h.db.insertAgent(opencodeAgent);
+    insertRunningAgent(h, opencodeAgent);
 
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
     expect(h.db.getAgentById("agent-otto")!.status).toBe("failed");
-    // The agent was already terminal: nothing closes it twice, and the
-    // replacement goes to a metered provider with room.
-    expect(h.closed).toHaveLength(0);
-    expect(h.spawned).toHaveLength(1);
-    expect(h.spawned[0]?.tool).toBe("codex");
+    // The agent was already terminal: C4 retains its work and reports the C5
+    // replacement seam without inventing a handoff.
+    expect(h.replacements).toHaveLength(1);
 
     // A live start on the provider clears its drain error record.
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
     h.drain.noteProviderAlive("opencode");
-    expect(h.spawned).toHaveLength(2);
+    expect(h.replacements).toHaveLength(2);
   });
 
   test("a metered-but-undrained provider is not touched", async () => {
@@ -293,11 +370,11 @@ describe("the drain handler", () => {
         fiveHourResetAt: at(30),
       },
     ]);
-    h.db.insertAgent(agent());
+    insertRunningAgent(h, agent());
     await h.drain.sweep();
     expect(h.db.getAgentById("agent-maya")!.status).toBe("working");
-    expect(h.closed).toHaveLength(0);
-    expect(h.spawned).toHaveLength(0);
+    expect(h.paused).toHaveLength(0);
+    expect(h.replacements).toHaveLength(0);
   });
 });
 
