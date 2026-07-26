@@ -101,14 +101,6 @@ export type FusedAgentStatus = Readonly<{
   conflicts: readonly string[];
 }>;
 
-export type VisibleStatus = Readonly<{
-  primaryLabel: string;
-  progress: number | null;
-  attention: Attention;
-  sourceStack: readonly StatusSourceDetail[];
-  conflicts: readonly string[];
-}>;
-
 type Candidate<T> = Readonly<{
   value: T;
   event: WorkspaceEventV2;
@@ -404,38 +396,5 @@ export function fuseAgentStatus(
       source: event.source,
     })),
     conflicts,
-  };
-}
-
-export function composeVisibleStatus(status: FusedAgentStatus): VisibleStatus {
-  if (status.report?.freshness === "fresh") {
-    return {
-      primaryLabel: `${status.report.phase}: ${status.report.summary}`,
-      progress: status.report.progress,
-      attention: status.attention?.value ?? "none",
-      sourceStack: status.sources,
-      conflicts: status.conflicts,
-    };
-  }
-  if (status.turnState?.value !== null && status.turnState !== null) {
-    const marker =
-      status.turnState.freshness === "fresh"
-        ? ""
-        : ` (${status.turnState.freshness})`;
-    return {
-      primaryLabel: `${status.turnState.value}${marker}`,
-      progress: null,
-      attention: status.attention?.value ?? "none",
-      sourceStack: status.sources,
-      conflicts: status.conflicts,
-    };
-  }
-  const health = status.healthState?.value ?? "unknown";
-  return {
-    primaryLabel: health,
-    progress: null,
-    attention: status.attention?.value ?? "none",
-    sourceStack: status.sources,
-    conflicts: status.conflicts,
   };
 }

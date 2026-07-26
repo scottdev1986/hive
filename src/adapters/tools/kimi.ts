@@ -58,6 +58,44 @@ export function probeKimiDefaultModel(
 }
 
 /**
+ * Why a Hive read-only Kimi agent may not actually be read-only.
+ *
+ * Kimi has no per-launch deny channel and no flag that forces `manual` back on;
+ * its only permission surface is `[[permission.rules]]` and
+ * `default_permission_mode` in the operator's global config.toml, which Hive
+ * does not write (that gate belongs to the user). So when the operator has
+ * pinned `yolo` or `auto`, a Hive "read-only" Kimi agent launches with write
+ * authority and Hive cannot stop it — it can only refuse to pretend otherwise.
+ *
+ * Null means containment is not contradicted: either the file names no default
+ * (Kimi's own default is `manual`) or it cannot be read, and an unreadable file
+ * is reported as unknown by the caller rather than assumed safe.
+ */
+export function kimiReadOnlyContainmentGap(
+  home: string = kimiHome(),
+): string | null {
+  let mode: unknown;
+  try {
+    mode = (
+      Bun.TOML.parse(readFileSync(join(home, "config.toml"), "utf8")) as {
+        default_permission_mode?: unknown;
+      }
+    ).default_permission_mode;
+  } catch {
+    return null;
+  }
+  if (mode !== "yolo" && mode !== "auto") return null;
+  return (
+    `Kimi read-only is NOT enforced: this operator's config.toml pins ` +
+    `default_permission_mode = "${mode}", and Kimi offers no per-launch flag ` +
+    `or deny channel that can override it. The agent will hold write and shell ` +
+    `authority. Hive does not write vendor config — set ` +
+    `default_permission_mode = "manual" (or add [[permission.rules]]) in ` +
+    `${join(home, "config.toml")} if this agent must be contained.`
+  );
+}
+
+/**
  * Hive's (readOnly, dangerous) posture mapped to Kimi's permission modes:
  *
  * - readOnly (Hive "manual") maps to Kimi's default `manual` mode — no flag.

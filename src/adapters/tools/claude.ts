@@ -5,7 +5,6 @@ import {
   readFile,
   realpath,
   rename,
-  stat,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -96,41 +95,7 @@ export type ClaudeAgentConfigOptions = Pick<
   providerRunId?: string;
 };
 
-export type CommandRunner = (argv: string[]) => Promise<{
-  stdout: string;
-  exitCode: number;
-}>;
-
 const VERSION_PROBE_TIMEOUT_MS = 5_000;
-
-const runCommand: CommandRunner = async (argv) => {
-  const child = Bun.spawn(argv, {
-    stdout: "pipe",
-    stderr: "ignore",
-    timeout: VERSION_PROBE_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-  });
-  const [stdout, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    child.exited,
-  ]);
-  return { stdout, exitCode };
-};
-
-/** Read the installed Claude CLI version (e.g. "2.1.206"), or null when the
- * CLI is missing or unparseable. */
-export async function detectClaudeCliVersion(
-  run: CommandRunner = runCommand,
-  executable = "claude",
-): Promise<string | null> {
-  try {
-    const result = await run([executable, "--version"]);
-    if (result.exitCode !== 0) return null;
-    return /(\d+\.\d+\.\d+)/.exec(result.stdout)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
 
 /** Synchronous `--version` probe. Non-billable by construction: `--version`
  * never opens a session (a guessed subcommand, by contrast, becomes a billable
@@ -336,43 +301,6 @@ export function claudeProjectDirectory(
   );
 }
 
-// Disk-discovery fallback for a crashed agent whose session id was never
-// captured from hook traffic: the newest transcript in the worktree's
-// project directory is the session to resume.
-export async function findLatestClaudeSessionId(
-  worktreePath: string,
-  home = homedir(),
-): Promise<string | null> {
-  const directory = claudeProjectDirectory(worktreePath, home);
-  let entries: string[];
-  try {
-    entries = await readdir(directory);
-  } catch (error) {
-    if (isMissingRecoveryArtifact(error)) return null;
-    return invalidRecoveryArtifactEvidence(
-      "Claude",
-      directory,
-      "cannot be read",
-    );
-  }
-  let newest: { sessionId: string; mtimeMs: number } | null = null;
-  for (const entry of entries) {
-    if (!entry.endsWith(".jsonl")) continue;
-    try {
-      const info = await stat(join(directory, entry));
-      if (newest === null || info.mtimeMs > newest.mtimeMs) {
-        newest = {
-          sessionId: entry.slice(0, -".jsonl".length),
-          mtimeMs: info.mtimeMs,
-        };
-      }
-    } catch {
-      // A transcript deleted mid-scan is simply not a candidate.
-    }
-  }
-  return newest?.sessionId ?? null;
-}
-
 export async function discoverClaudeRecoverySessionId(
   worktreePath: string,
   agentCreatedAt: string,
@@ -559,7 +487,22 @@ export async function writeClaudeAgentConfig(
 
   // Denied tools are removed from the session and its subagents, including in
   // bypass mode; the permission mode alone does not make a session read-only.
-  const readOnlyDeny = ["Edit", "Write", "NotebookEdit", "Bash"];
+  // Every built-in tool the vendor marks "Permission required: Yes" that can
+  // run a shell command or mutate the filesystem must appear here, because
+  // under bypassPermissions nothing else stops it. Checked against
+  // https://code.claude.com/docs/en/tools-reference — re-check on CLI upgrade;
+  // a tool added upstream silently punches a hole in this list (Monitor did).
+  // Skill and Agent are deliberately absent: a skill's shell still goes through
+  // Bash, and a subagent's tool calls are checked against these same rules.
+  const readOnlyDeny = [
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "Bash",
+    "PowerShell",
+    "Monitor",
+    "EnterWorktree",
+  ];
   // A board-tools session is the queen's orchestrator role (#12): she keeps
   // the shell for gh and gains Edit/Write scoped to her own memory and
   // planning docs (orchestrator-role.ts) — every other command and path

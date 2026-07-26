@@ -1,3 +1,4 @@
+import type { RootDeliveryOutcome } from "../../src/daemon/delivery";
 import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -113,9 +114,11 @@ class RecordingRootProtocol implements RootProtocolDeliverer {
   async deliverMessage(
     content: string,
     meta: Record<string, string>,
-  ): Promise<boolean> {
+  ): Promise<RootDeliveryOutcome> {
     this.calls.push({ content, meta });
-    return this.confirmed;
+    return this.confirmed
+      ? { delivered: true }
+      : { delivered: false, reason: "fixture withheld confirmation" };
   }
 }
 
@@ -418,9 +421,9 @@ describe("event-driven orchestrator lifecycle", () => {
       isLive(): boolean {
         return this.live;
       },
-      async deliverMessage(content: string): Promise<boolean> {
+      async deliverMessage(content: string): Promise<RootDeliveryOutcome> {
         this.calls.push(content);
-        return true;
+        return { delivered: true };
       },
     };
     const delivery = new MessageDelivery(
@@ -452,7 +455,11 @@ describe("event-driven orchestrator lifecycle", () => {
     // A stale codex root socket: isLive says yes, delivery cannot confirm.
     const rootProtocol = {
       isLive: () => true,
-      deliverMessage: async () => false,
+      deliverMessage: async (): Promise<RootDeliveryOutcome> => ({
+        delivered: false,
+        reason:
+          "stale codex root socket: isLive says yes, delivery cannot confirm",
+      }),
     };
     const delivery = new MessageDelivery(
       db,

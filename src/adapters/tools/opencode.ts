@@ -163,6 +163,19 @@ export async function writeOpencodeAgentConfig(
     };
   }
   existing.mcp = mcp;
+  // The hive agent's own permission block does not bind a subagent spawned
+  // through the `task` tool: that subagent runs as a different agent and falls
+  // back to the global block. opencode merges global with agent rules and lets
+  // agent rules win, so a global barrier contains every agent in this worktree
+  // without loosening the queen's scoped grants. Read-only has to hold for the
+  // whole worktree, not just the primary agent. Keys the project already set
+  // are preserved.
+  if (options.readOnly === true && options.orchestrator !== true) {
+    const permission = isRecord(existing.permission) ? existing.permission : {};
+    permission.edit = "deny";
+    permission.bash = "deny";
+    existing.permission = permission;
+  }
   if (options.instructionPath !== undefined) {
     const agents = isRecord(existing.agent) ? existing.agent : {};
     agents[OPENCODE_HIVE_AGENT] = {

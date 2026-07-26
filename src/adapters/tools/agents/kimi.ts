@@ -7,6 +7,7 @@ import { wrapSpawnWithCapabilityEnv } from "../capability-env";
 import {
   buildKimiResumeCommand,
   buildKimiSpawnCommand,
+  kimiReadOnlyContainmentGap,
   type KimiSpawnOptions,
   resolveWorkingKimiExecutable,
   wrapKimiSpawnWithEffort,
@@ -34,6 +35,13 @@ export const kimiAgentAdapter: AgentAdapter = {
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
     });
+    // Read-only is a label Hive cannot enforce on this vendor. Say so at the
+    // moment it stops being true, rather than letting the posture read as
+    // contained on a launch that is not.
+    if (context.readOnly && !context.dangerous) {
+      const gap = kimiReadOnlyContainmentGap();
+      if (gap !== null) console.error(`Hive ${context.name}: ${gap}`);
+    }
     const options: KimiSpawnOptions = {
       model: context.model,
       readOnly: context.readOnly,

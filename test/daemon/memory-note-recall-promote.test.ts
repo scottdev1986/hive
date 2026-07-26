@@ -17,11 +17,9 @@ import {
   buildMemoryRecallBundle,
   MEMORY_RECALL_HINT_NOTE,
 } from "../../src/daemon/memory-triggers";
+import { MEMORY_RECALL_DEFAULT_BUDGET } from "../../src/daemon/memory-tools";
 import { projectHiveUuid } from "../../src/daemon/project-state";
-import {
-  HiveDaemon,
-  MEMORY_RECALL_DEFAULT_BUDGET,
-} from "../../src/daemon/server";
+import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
 import type { AgentRecord } from "../../src/schemas";

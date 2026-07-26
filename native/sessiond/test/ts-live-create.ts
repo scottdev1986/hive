@@ -578,9 +578,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               startToken: providerRun.startToken,
               processGroupId: providerRun.foregroundProcessGroupId,
             },
-            bytes: new TextEncoder().encode(
-              `\x1b[200~${text}\x1b[201~\r`,
-            ),
+            bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
             idempotencyKey,
           });
 

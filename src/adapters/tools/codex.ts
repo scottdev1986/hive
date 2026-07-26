@@ -382,13 +382,6 @@ export async function findCodexRolloutBySessionId(
   return findCodexRollout(worktreePath, home, sessionId);
 }
 
-export async function findLatestCodexSessionId(
-  worktreePath: string,
-  home = homedir(),
-): Promise<string | null> {
-  return (await findLatestCodexRollout(worktreePath, home))?.sessionId ?? null;
-}
-
 export async function discoverCodexRecoverySessionId(
   worktreePath: string,
   agentCreatedAt: string,

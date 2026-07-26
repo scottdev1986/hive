@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { HiveDatabase } from "../../src/daemon/db";
+import type { RootDeliveryOutcome } from "../../src/daemon/delivery";
 import type { SessionSender } from "../../src/daemon/delivery";
 import {
   compileDigest,
@@ -337,8 +338,8 @@ class SilentSessionSender implements SessionSender {
 
 const offlineRootProtocol = {
   isLive: () => false,
-  async deliverMessage(): Promise<boolean> {
-    return false;
+  async deliverMessage(): Promise<RootDeliveryOutcome> {
+    return { delivered: false, reason: "test double never delivers" };
   },
 };
 

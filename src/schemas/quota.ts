@@ -3,7 +3,7 @@ import {
   type CapabilityProvider,
   CapabilityProviderSchema,
 } from "./capability";
-import { type RoutingCategory, RoutingCategorySchema } from "./routing-policy";
+import type { RoutingCategory } from "./routing-policy";
 
 export const QuotaConfidenceSchema = z.enum([
   "authoritative",
@@ -69,11 +69,6 @@ export type QuotaLimit = z.infer<typeof QuotaLimitSchema>;
  * overwrite the *usage* these estimates stand in for as soon as a real number
  * arrives; the estimate only ever governs in-flight reservations.
  */
-const PercentEstimateSchema = z.strictObject({
-  fiveHour: z.number().positive().max(100),
-  weekly: z.number().positive().max(100),
-});
-
 export const DEFAULT_PERCENT_ESTIMATES: Record<
   RoutingCategory,
   { fiveHour: number; weekly: number }

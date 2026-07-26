@@ -38,6 +38,12 @@ public final class TerminalTelemetry: @unchecked Sendable {
     private var attaches = 0
     private var attachTotalUs = 0
     private var attachMaxUs = 0
+    private var feedApplies = 0
+    private var feedApplyMaxUs = 0
+    private var feedApplyAgents = 0
+    private var subprocesses = 0
+    private var subprocessMaxUs = 0
+    private var subprocessLabel = ""
     private var hopSamples: [Double] = []
     private var started = false
 
@@ -140,6 +146,18 @@ public final class TerminalTelemetry: @unchecked Sendable {
         attaches += 1
         attachTotalUs += microseconds
         attachMaxUs = max(attachMaxUs, microseconds)
+        lock.unlock()
+    }
+
+    /// `ProjectWindowController.applyFeed` on main: rebuilding pane state for
+    /// every agent in the feed, including creating panes and their Ghostty
+    /// surfaces. Recurs on every feed update, which is why a stall here repeats
+    /// rather than appearing once during spawn.
+    public func noteFeedApply(microseconds: Int, agents: Int) {
+        lock.lock()
+        feedApplies += 1
+        feedApplyMaxUs = max(feedApplyMaxUs, microseconds)
+        feedApplyAgents = max(feedApplyAgents, agents)
         lock.unlock()
     }
 

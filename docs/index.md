@@ -1,9 +1,21 @@
 # Knowledge Base Index
 
 Compiled knowledge about Hive, verified against the source tree. Where a document and
-the code disagreed, the code won and the document was corrected. Immutable measurement
-evidence lives in `raw/`, outside the briefing walk; the design authority is
+the code disagreed, the code won and the document was corrected. The design authority is
 [SPEC.md](../SPEC.md).
+
+**`raw/` no longer exists in the working tree.** It held immutable measurement
+evidence outside the briefing walk, and was removed in full on 2026-07-26 (156
+uncited files swept during the audit, the remaining 177 deleted by the operator).
+Every byte is still reachable in git history at `f9f01de6` — `git show
+f9f01de6:raw/<path>` retrieves any single file, `git checkout f9f01de6 -- raw/`
+restores the tree. Planning and acceptance records still cite `raw/...` paths in
+roughly 65 places; those are **historical pointers, deliberately left intact**
+rather than rewritten, because editing a signed acceptance record to match a
+later deletion would falsify the record. Read them as "this evidence existed and
+is in history", not as live paths. Do not re-create `raw/` to satisfy them.
+Note this is a different directory from the memory compiler's `.hive/memory/raw`,
+which is untouched and still live.
 
 ## routing
 

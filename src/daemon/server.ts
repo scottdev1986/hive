@@ -173,6 +173,23 @@ import {
 } from "./orchestrator-sessiond";
 import { deriveOrchestratorStatus } from "./orchestrator-status";
 import { harvestPitfalls } from "./pitfall-harvest";
+import { logAlertDeliveryFailure } from "./alert-log";
+import { registerMemoryTools } from "./memory-tools";
+import { registerAgentControlTools } from "./agent-control-tools";
+import {
+  LAND_REARM_PREFIX,
+  registerSpawnApprovalTools,
+} from "./spawn-approval-tools";
+import { registerGraphTool } from "./graph-tool";
+import { registerLandTool } from "./land-tool";
+import { LIVE_STATUSES, registerStatusTools } from "./status-tools";
+import { registerMessagingTools } from "./messaging-tools";
+import { registerQuotaTools } from "./quota-tools";
+import { toolResult } from "./tool-result";
+import { attachGrantEndpoint as attachGrantRoute } from "./attach-grant-endpoint";
+import { sweepResources as sweepResourcesCycle } from "./sweep-resources";
+import { checkWakePaths as checkWakePathsSweep } from "./wake-path-check";
+import { processEvent as processHookEvent } from "./process-event";
 import { projectHiveUuid } from "./project-state";
 import { recordProviderHookEvent } from "./provider-events";
 import type { QuotaService } from "./quota";
@@ -253,6 +270,7 @@ import {
   stopSessiondAgentSession,
 } from "./teardown";
 import { TokenUsageStore } from "./token-usage";
+import { refreshToolTelemetry as refreshToolTelemetrySweep } from "./tool-telemetry-refresh";
 import {
   type ClaudeTelemetryReader,
   clampPct,
@@ -295,15 +313,6 @@ const CODEX_SOCKET_DIR = tmpdir();
 // Enumerated on the live side deliberately: a status added later reads as
 // closed and gets reported, because a false alert is cheap and silence is what
 // loses work.
-const LIVE_STATUSES: AgentRecord["status"][] = [
-  "spawning",
-  "working",
-  "idle",
-  "awaiting-approval",
-  "control-paused",
-  "stuck",
-];
-
 function defaultOrphanDependencies(): ReapOrphanDependencies {
   return {
     listSocketDir: () => readdir(CODEX_SOCKET_DIR),
@@ -344,85 +353,12 @@ function defaultOrphanDependencies(): ReapOrphanDependencies {
   };
 }
 
-const SendRequestSchema = z.object({
-  from: z.string().min(1),
-  to: z.string().min(1),
-  body: z.string(),
-  priority: MessagePrioritySchema.optional(),
-  intent: ControlIntentSchema.optional(),
-  idempotencyKey: z.string().min(1).optional(),
-  deadlineMs: z.number().int().positive().optional(),
-});
-
-const MessageAcknowledgementSchema = z.object({
-  agent: z.string().min(1),
-  messageId: z.string().min(1),
-  capabilityEpoch: z.number().int().nonnegative().optional(),
-  applied: z.boolean().optional().default(false),
-});
-
 /**
  * A capability escalation is a typed claim with evidence, not a vibe: the
  * reason says why the task exceeds the model, and `failedApproaches` must name at least one
  * concrete attempt — an agent that has tried nothing has nothing to escalate.
  * The remaining fields are the handoff the replacement resumes from.
  */
-const EscalationRequestSchema = z.object({
-  agent: z.string().min(1),
-  reason: z.string().min(1),
-  goal: z.string().min(1),
-  done: z.array(z.string()).default([]),
-  remaining: z.array(z.string()).default([]),
-  decisions: z.array(z.string()).default([]),
-  failedApproaches: z.array(z.string().min(1)).min(1),
-});
-
-export function inferLegacyControl(body: string): {
-  priority: "critical";
-  intent: "pause" | "stop" | "cancel" | "restrict-writes";
-} | null {
-  const value = body.trim().toLowerCase();
-  if (/^cancel(?:\s+(?:this task|work|now))?[.!]?$/.test(value)) {
-    return { priority: "critical", intent: "cancel" };
-  }
-  if (/^stop(?:\s+(?:this task|work|now|working))?[.!]?$/.test(value)) {
-    return { priority: "critical", intent: "stop" };
-  }
-  if (
-    /^(?:pause before (?:coding|writing|modifying)|pause work)\b/.test(value)
-  ) {
-    return { priority: "critical", intent: "pause" };
-  }
-  if (/^(?:do not|don't) (?:modify|write|edit)\b/.test(value)) {
-    return { priority: "critical", intent: "restrict-writes" };
-  }
-  return null;
-}
-
-const InboxRequestSchema = z.object({
-  agent: z.string().min(1),
-});
-
-const ReadMessageRequestSchema = z.object({
-  id: z.string().min(1),
-});
-
-const PickupHandoffRequestSchema = z.object({
-  agent: z.string().min(1),
-  handoffId: z.string().uuid(),
-});
-
-const StatusRequestSchema = z.object({
-  detail: z.enum(["full", "active"]).optional(),
-  history: z.boolean().optional(),
-  fields: z.array(z.string().min(1)).max(32).optional(),
-});
-
-const QuotaObservationRequestSchema = QuotaObservationSchema.omit({
-  observedAt: true,
-}).extend({
-  observedAt: z.iso.datetime({ offset: true }).optional(),
-});
 
 const TokenUsageSessionRequestSchema = z.object({
   repoRoot: z.string().min(1),
@@ -433,97 +369,27 @@ const TokenUsageOrchestratorRequestSchema = z.object({
   cwd: z.string().min(1),
 });
 
-const MarkDeadRequestSchema = z.object({
-  agent: z.string().min(1),
-});
-
-const KillRequestSchema = z.object({
-  name: z.string().min(1),
-  removeWorktree: z.boolean().optional(),
-  discardWork: z.boolean().optional(),
-});
-
-const PreserveBranchRequestSchema = z.object({
-  agent: z.string().min(1),
-  preserved: z.boolean().default(true),
-});
-
-const ApprovalDecisionSchema = z.object({
-  id: z.string().min(1),
-  decision: z.enum(["approve", "deny"]),
-});
-
-const LandRequestSchema = z.object({
-  agent: z.string().min(1),
-  capabilityEpoch: z.number().int().nonnegative(),
-});
-
-const MemorySearchRequestSchema = z.object({
-  query: z.string().min(1),
-  scope: MemoryScopeSchema.optional(),
-  limit: z.number().int().positive().max(50).optional(),
-});
-
 // A fact id is a filename stem interpolated into `join(root, `${id}.md`)` by
 // the memory adapter, so the daemon boundary must refuse anything that could
 // name a path component: no slashes, no leading dot, nothing outside the
 // slug-plus-punctuation charset slugify and hand-authored facts actually use.
-const MemoryIdSchema = z
-  .string()
-  .min(1)
-  .max(120)
-  .regex(
-    /^[a-z0-9][a-z0-9._-]*$/i,
-    "memory id must be a filename stem: alphanumeric start, then [a-z0-9._-]",
-  );
-
-const MemoryFactRequestSchema = z.object({
-  scope: MemoryScopeSchema,
-  id: MemoryIdSchema,
-});
-
-const MemoryWriteRequestSchema = MemoryWriteInputSchema.safeExtend({
-  id: MemoryIdSchema.optional(),
-});
 
 // The focused pitfall surface (HiveMemory HM-2 WP5): search lists/searches
 // pitfall-kind articles only; get reads one and refuses non-pitfall ids.
-const MemoryPitfallRequestSchema = z.object({
-  action: z.enum(["search", "get"]),
-  query: z.string().min(1).optional(),
-  scope: MemoryScopeSchema.optional(),
-  id: MemoryIdSchema.optional(),
-  limit: z.number().int().positive().max(50).optional(),
-});
 
 // memory_note (HiveMemory plan §5): the lightweight episodic fact write.
 // Episodic topics are free-form (no wiki kebab-case constraint); source is
 // always the caller's own capability subject, never caller-supplied.
-const MemoryNoteRequestSchema = z.object({
-  topic: z.string().min(1).max(120),
-  title: z.string().min(1),
-  body: z.string(),
-  confidence: z.number().min(0).max(1).optional(),
-  validAt: z.iso.datetime({ offset: true }).optional(),
-});
 
 // memory_recall (HiveMemory plan §5): the trigger protocol's ranked bundle
 // as a tool. budget may only lower the server-enforced ceiling.
-const MemoryRecallRequestSchema = z.object({
-  query: z.string().min(1),
-  budget: z.number().int().positive().optional(),
-});
 
 // Server-enforced memory_recall token ceiling (chars/4 estimation, the same
 // accounting memory_query uses).
-export const MEMORY_RECALL_DEFAULT_BUDGET = 800;
 
 // memory_promote (HiveMemory plan D3): names a REPO-scope pitfall article to
 // copy into the global wiki. There is deliberately no scope parameter —
 // repo→global is the only direction promotion exists.
-const MemoryPromoteRequestSchema = z.object({
-  id: MemoryIdSchema,
-});
 
 export type { LandBranch };
 
@@ -531,11 +397,6 @@ export type { LandBranch };
 // the integrator round-trip): a refused land on a spent one-shot files an
 // approval, and approving it re-arms exactly one landing. The prefix is the
 // contract between the filing site and the approval hook.
-export const LAND_REARM_PREFIX = "Re-arm landing";
-const LAND_REARM_NOTE =
-  "Hive has already filed the re-arm approval for you — there is no command to run.\n" +
-  "Fix: the orchestrator approves that request, which grants exactly one more hive_land.";
-
 // How many landings past the first Hive will re-arm on its own evidence, per
 // agent — so a productive agent is not a human bottleneck, while an agent still
 // cannot merge an unbounded stream of unreviewed increments: the fifth landing
@@ -547,15 +408,6 @@ export const AUTO_REARM_REASON = "capability.auto-rearm";
 /** An agent whose work is already on main is not blocked by a spent grant — it
  * is finished. Saying so, and filing nothing, is the whole fix for the no-op
  * re-arms a human kept being asked to clear. */
-const nothingToLand = (name: string, branch: string | null): Error =>
-  new Error(
-    `Nothing to land for ${name}: every commit on ${
-      branch ?? "its branch"
-    } is already on main, so there is no diff to merge.\n` +
-      "No re-arm approval was filed — a landing grant is not needed to merge nothing.\n" +
-      "Fix: if you have new work, commit it on your branch and land again; otherwise you are done.",
-  );
-
 // Claude's `notification_type` when the CLI is holding a native permission
 // dialog open and waiting on a human. Measured against claude 2.1.207, where
 // the only other type an agent emits is `idle_prompt` — so this string, and not
@@ -569,18 +421,6 @@ const CLAUDE_PERMISSION_PROMPT = "permission_prompt";
 const isPermissionPrompt = (event: HookEvent): boolean =>
   event.kind === "notification" &&
   event.notificationType === CLAUDE_PERMISSION_PROMPT;
-
-// Resource and control alerts are the only way daemon degradation reaches the
-// orchestrator; a failed alert send must not crash the sweep, but it must not
-// vanish either.
-function logAlertDeliveryFailure(error: unknown): undefined {
-  console.error(
-    `Hive failed to deliver a daemon alert to the orchestrator: ${
-      error instanceof Error ? error.message : "unknown error"
-    }`,
-  );
-  return undefined;
-}
 
 export interface HiveDaemonOptions {
   spawner: Spawner;
@@ -757,17 +597,6 @@ function json(value: unknown, init?: ResponseInit): Response {
  * sees both blocks. That is exactly what a staleness warning needs — impossible
  * for the reader to miss, invisible to the parsers.
  */
-function toolResult(value: unknown, key: string, note?: string | null) {
-  const payload = { type: "text" as const, text: JSON.stringify(value) };
-  return {
-    content:
-      note === undefined || note === null
-        ? [payload]
-        : [payload, { type: "text" as const, text: note }],
-    structuredContent: { [key]: value },
-  };
-}
-
 export class HiveDaemon {
   static readonly statusGenerationUnavailable =
     unavailableStatusIncarnationGenerationSource;
@@ -1950,107 +1779,15 @@ export class HiveDaemon {
    * fault is one message rather than one every thirty seconds.
    */
   async checkWakePaths(): Promise<readonly string[]> {
-    const faults: string[] = [];
-    const live = this.db
-      .listAgents()
-      .filter((agent) => !["dead", "done", "failed"].includes(agent.status));
-    // No team, no wake to protect — and nobody to tell.
-    if (live.length > 0) {
-      const root = this.orchestratorSessiond?.snapshot() ?? null;
-      if (root === null) {
-        faults.push("the root wake path has no queen generation");
-      } else if (root.state !== "running") {
-        faults.push(
-          `the root wake path is ${root.state}` +
-            (root.diagnostic === null ? "" : `: ${root.diagnostic}`),
-        );
-      } else {
-        try {
-          const inspection = await this.terminalHost.inspect(
-            requireSessiondRootLocator(root.locator),
-          );
-          const activeRun = this.terminalHost.reconcileProviderRun(
-            root.locator,
-          );
-          if (sessiondAgentProviderRunIsDead(inspection, activeRun)) {
-            faults.push("the queen vendor process is confirmed dead");
-          } else if (inspection.presence !== "present") {
-            faults.push(
-              `the queen presence is ${inspection.presence}, not present`,
-            );
-          }
-        } catch (error) {
-          faults.push(
-            `the queen cannot be inspected (${
-              error instanceof Error ? error.message : "unknown error"
-            })`,
-          );
-        }
-      }
-      // A locator exists before sessiond finishes registering it. The broker
-      // cannot list that in-flight create yet, so absence is not death until
-      // the binding carries completed create evidence.
-      const sessiond = live.filter((agent) =>
+    return checkWakePathsSweep({
+      alertedWakeFaults: this.alertedWakeFaults,
+      db: this.db,
+      delivery: this.delivery,
+      orchestratorSessiond: this.orchestratorSessiond,
+      terminalHost: this.terminalHost,
+      hasCompletedSessiondBinding: (agent) =>
         this.hasCompletedSessiondBinding(agent),
-      );
-      if (sessiond.length > 0) {
-        let listed: Awaited<
-          ReturnType<HiveTerminalHostAdapter["list"]>
-        > | null = null;
-        try {
-          listed = await this.terminalHost.list(hiveInstanceSuffix());
-        } catch (error) {
-          faults.push(
-            `the sessiond broker will not list sessions (${
-              error instanceof Error ? error.message : "unknown error"
-            }), so no message can reach any sessiond agent`,
-          );
-        }
-        for (const agent of sessiond) {
-          if (listed === null) break;
-          const match = listed.find(
-            (inspection) =>
-              inspection.locator.sessionId === agent.sessionLocator?.sessionId,
-          );
-          if (match === undefined) {
-            faults.push(
-              `${agent.name}'s sessiond session is not listed by the broker`,
-            );
-          } else if (
-            sessiondAgentProviderRunIsDead(
-              match,
-              this.terminalHost.reconcileProviderRun(
-                requireSessiondAgentLocator(agent),
-              ),
-            )
-          ) {
-            faults.push(
-              `${agent.name}'s sessiond vendor process is confirmed dead`,
-            );
-          } else if (match.presence !== "present") {
-            faults.push(
-              `${agent.name}'s sessiond session presence is ${match.presence}, not present`,
-            );
-          }
-        }
-      }
-    }
-    for (const fault of faults) {
-      if (this.alertedWakeFaults.has(fault)) continue;
-      this.alertedWakeFaults.add(fault);
-      await this.delivery
-        .send(
-          "hive-control",
-          ORCHESTRATOR_NAME,
-          `Wake path check failed: ${fault}.`,
-        )
-        .catch(() => undefined);
-    }
-    // Re-arm cleared faults so a recurrence is reported again.
-    for (const fault of [...this.alertedWakeFaults]) {
-      if (!faults.includes(fault)) this.alertedWakeFaults.delete(fault);
-    }
-    return faults;
+    });
   }
 
   private hasCompletedSessiondBinding(agent: AgentRecord): boolean {
@@ -2346,214 +2083,16 @@ export class HiveDaemon {
    * test saw frozen while the agent had long since landed.
    */
   async refreshToolTelemetry(): Promise<void> {
-    for (const agent of this.db.listAgents()) {
-      if (
-        agent.status === "dead" ||
-        agent.status === "done" ||
-        agent.status === "failed"
-      )
-        continue;
-      const worktree = agent.worktreePath;
-      if (worktree === null || worktree === undefined) continue;
-      let telemetry: ToolTelemetry | null = null;
-      let claudeContext: number | null = null;
-      let grokTelemetry: GrokTelemetry | null = null;
-      // The vendor switch sits outside the read's catch: a failed read is
-      // routine and skips the agent, but a vendor with no reader is a bug that
-      // must be heard — swallowing it would report this agent's context off
-      // Codex's rollout parser and call the wrong number telemetry.
-      switch (agent.tool) {
-        case "claude":
-          try {
-            claudeContext = (
-              await this.readClaudeTelemetry(worktree, agent.toolSessionId)
-            ).contextTokens;
-          } catch {
-            continue;
-          }
-          break;
-        case "codex":
-          try {
-            telemetry = await this.readCodexTelemetry(
-              worktree,
-              agent.toolSessionId,
-            );
-          } catch {
-            continue;
-          }
-          break;
-        case "grok":
-          try {
-            grokTelemetry = await this.readGrokTelemetry(
-              worktree,
-              agent.toolSessionId,
-            );
-          } catch {
-            continue;
-          }
-          break;
-        case "kimi":
-          // No kimi telemetry artifact is wired: the CLI's hooks live only in
-          // the operator's global config (which Hive never writes) and no
-          // session-transcript reader exists yet, so there is nothing
-          // measured to read.
-          break;
-        case "opencode":
-          // opencode's session data lives in a sqlite database with no
-          // telemetry reader wired, and its plugins are global-config only.
-          break;
-        default:
-          unknownVendor(agent.tool, "refreshToolTelemetry");
-      }
-      // Layer-3 graphify adoption count, off the same artifacts. Only when
-      // this daemon has a graphify service at all. An unreadable known
-      // artifact keeps its measured cursor; no exact session clears it.
-      if (this.graphify !== undefined) {
-        const cursor = await readGraphifyCalls(
-          agent.tool,
-          worktree,
-          agent.toolSessionId,
-          this.graphifyCalls.get(agent.id),
-        ).catch(() => null);
-        if (cursor === null) this.graphifyCalls.delete(agent.id);
-        else this.graphifyCalls.set(agent.id, cursor);
-      }
-      // Re-read after the file I/O: hook events may have advanced the row.
-      const current = this.db.getAgentById(agent.id);
-      if (
-        current === null ||
-        current.status === "dead" ||
-        current.status === "done" ||
-        current.status === "failed"
-      )
-        continue;
-      const updates: Partial<AgentRecord> = {};
-      // What each vendor's read *means* for the row, dispatched once. The two
-      // arms are not symmetric and must not be written as claude-or-else: what
-      // Claude's transcript yields is a token count that still needs a window,
-      // and what Codex's rollout yields is a percentage and an mtime. A third
-      // vendor has neither until someone measures it, so it gets an arm of its
-      // own or it gets a compile error — never Codex's arm by default, which
-      // would write a percentage nothing computed.
-      switch (current.tool) {
-        case "claude": {
-          // Claude occupancy: the transcript's measured token count over a
-          // measured window — never a guessed denominator. The window is the one
-          // the statusline payload carried (contextWindow on the row); when no
-          // report has ever carried it, a token count that exceeds 200k is itself
-          // proof of the 1M window, because the API served a request no 200k
-          // window could hold. With neither, occupancy is unknown and the sweep
-          // writes nothing: unlike the codex arm it never records null over a
-          // number, because the statusline handler's direct reading may be the
-          // only observation there is, and a null contextPct marks an agent
-          // ineligible for reuse, so the flicker would not be cosmetic.
-          if (claudeContext !== null) {
-            const window =
-              current.contextWindow ??
-              (claudeContext > 200_000 ? 1_000_000 : undefined);
-            if (window !== undefined) {
-              const pct = clampPct((100 * claudeContext) / window);
-              if (pct !== current.contextPct) updates.contextPct = pct;
-            }
-          }
-          // The model the agent is *running*. The statusline handler observes
-          // this too, but only for agents whose statusline reports actually
-          // arrive — which is a subscriber-only path — so the sweep is what
-          // makes it true for everyone. A row nobody corrects is a row
-          // `hive status` lies from.
-          if (current.worktreePath !== null) {
-            const live = await this.readLiveModel(
-              current.worktreePath,
-              current.toolSessionId,
-            ).catch(() => null);
-            if (live !== null && live !== current.liveModel) {
-              updates.liveModel = live;
-            }
-          }
-          break;
-        }
-        case "codex": {
-          // The sweep writes what it *observed*, including "nothing" — a null
-          // used to be skipped as "no new information", which quietly meant the
-          // last number stood forever, and for an agent whose telemetry can
-          // never be read, the number that stood forever was the 0 it was born
-          // with. Unknown is a finding, not the absence of one, so it is
-          // recorded like any other.
-          if (
-            telemetry !== null &&
-            telemetry.contextPct !== current.contextPct
-          ) {
-            updates.contextPct = telemetry.contextPct;
-          }
-          if (
-            !current.writeRevoked &&
-            current.status !== "control-paused" &&
-            telemetry !== null &&
-            telemetry.lastActivityAt !== null &&
-            telemetry.lastActivityAt > current.lastEventAt
-          ) {
-            updates.lastEventAt = telemetry.lastActivityAt;
-            if (current.status === "spawning") updates.status = "working";
-          }
-          break;
-        }
-        case "grok": {
-          // Grok's occupancy is the vendor's own reading, and like the codex
-          // arm the sweep records what it observed *including* "nothing": a
-          // null that is skipped as "no new information" leaves whatever the
-          // row was born with standing forever.
-          if (
-            grokTelemetry !== null &&
-            grokTelemetry.contextPct !== current.contextPct
-          ) {
-            updates.contextPct = grokTelemetry.contextPct;
-          }
-          // The turn boundary nothing else reports. Grok drives no lifecycle
-          // hooks, so no turn-start ever promoted these rows off "spawning"
-          // and no turn-end ever settled them to "idle" — bridget sat at
-          // "spawning" long after her turn had ended with end_turn. The
-          // session's own updates.jsonl is the observable: its last record
-          // says whether a turn is streaming or finished. Unknown
-          // (turnCompleted null) writes nothing rather than guessing a state.
-          if (
-            !current.writeRevoked &&
-            current.status !== "control-paused" &&
-            current.status !== "awaiting-approval" &&
-            grokTelemetry !== null &&
-            grokTelemetry.lastActivityAt !== null &&
-            grokTelemetry.lastActivityAt > current.lastEventAt
-          ) {
-            updates.lastEventAt = grokTelemetry.lastActivityAt;
-            if (grokTelemetry.turnCompleted === true) updates.status = "idle";
-            else if (grokTelemetry.turnCompleted === false) {
-              updates.status = "working";
-            }
-          }
-          if (current.worktreePath !== null) {
-            const live = await this.readGrokLiveModel(
-              current.worktreePath,
-              current.toolSessionId,
-            ).catch(() => null);
-            if (live !== null && live !== current.liveModel) {
-              updates.liveModel = live;
-            }
-          }
-          break;
-        }
-        case "kimi":
-          // Nothing measured to fold into the row: no kimi telemetry
-          // artifact is wired (see the reader switch above).
-          break;
-        case "opencode":
-          // Nothing measured to fold into the row either.
-          break;
-        default:
-          unknownVendor(current.tool, "refreshToolTelemetry");
-      }
-      if (Object.keys(updates).length > 0) {
-        this.db.upsertAgent({ ...current, ...updates });
-      }
-    }
+    return refreshToolTelemetrySweep({
+      db: this.db,
+      graphify: this.graphify,
+      graphifyCalls: this.graphifyCalls,
+      readClaudeTelemetry: this.readClaudeTelemetry,
+      readCodexTelemetry: this.readCodexTelemetry,
+      readGrokTelemetry: this.readGrokTelemetry,
+      readLiveModel: this.readLiveModel,
+      readGrokLiveModel: this.readGrokLiveModel,
+    });
   }
 
   /**
@@ -2564,164 +2103,21 @@ export class HiveDaemon {
    * a durable orchestrator message, so degradation is visible, not silent.
    */
   async sweepResources(): Promise<void> {
-    const limits = this.resources;
-    if (limits === null || !limits.enabled) return;
-    try {
-      const [psRaw, vmRaw] = await Promise.all([
-        this.psSample(),
-        this.vmStatSample(),
-      ]);
-      const sessions: Array<{ owner: string; rootPids: number[] }> = [];
-      const root = this.orchestratorSessiond?.snapshot() ?? null;
-      if (root !== null) {
-        try {
-          const inspection = await this.terminalHost.inspect(
-            requireSessiondRootLocator(root.locator),
-          );
-          sessions.push({
-            owner: ORCHESTRATOR_NAME,
-            rootPids:
-              inspection.shellRoot === null ? [] : [inspection.shellRoot.pid],
-          });
-        } catch {
-          // A vanished session has no processes left to watch.
-        }
-      }
-      for (const agent of this.db
-        .listAgents()
-        .filter(
-          (candidate) => !["dead", "done", "failed"].includes(candidate.status),
-        )) {
-        try {
-          const inspection = await this.terminalHost.inspect(
-            requireSessiondAgentLocator(agent),
-          );
-          sessions.push({
-            owner: agent.name,
-            rootPids:
-              inspection.shellRoot === null ? [] : [inspection.shellRoot.pid],
-          });
-        } catch {
-          // A vanished session has no processes left to watch.
-        }
-      }
-      const assessment = assessResources({
-        samples: parseProcessTable(psRaw),
-        sessions,
-        daemonPid: process.pid,
-        availableMb: parseAvailableMemoryMb(vmRaw),
-        limits,
-      });
-      this.memoryPressure = assessment.memoryPressure;
-      for (const kill of assessment.kills) {
-        let reaped: ReapOutcome;
-        try {
-          reaped = await reapCapturedTree(
-            [
-              {
-                pid: kill.process.pid,
-                command: kill.process.command,
-              },
-            ],
-            {
-              ...this.reapDependencies,
-              kill: (pid) => this.killProcess(pid),
-            },
-          );
-        } catch (error) {
-          console.error(
-            `Hive memory watchdog could not verify pid ${kill.process.pid} under ${kill.owner}: ${
-              error instanceof Error ? error.message : "unknown error"
-            }`,
-          );
-          await this.delivery
-            .send(
-              "hive-resources",
-              ORCHESTRATOR_NAME,
-              `Hive memory watchdog FAILED to verify whether pid ${kill.process.pid} under ${kill.owner} stopped ` +
-                `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
-                `${kill.process.command.slice(0, 160)}. The process may still be allocating; ` +
-                `it may need to be stopped by hand.`,
-              { idempotencyKey: `resource-kill-failed:${kill.process.pid}` },
-            )
-            .catch(logAlertDeliveryFailure);
-          continue;
-        }
-        if (reaped.survivors.length > 0) {
-          console.error(
-            `Hive memory watchdog failed to kill pid ${kill.process.pid} under ${kill.owner}: process survived SIGKILL`,
-          );
-          await this.delivery
-            .send(
-              "hive-resources",
-              ORCHESTRATOR_NAME,
-              `Hive memory watchdog FAILED to kill pid ${kill.process.pid} under ${kill.owner} ` +
-                `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
-                `${kill.process.command.slice(0, 160)}. The process survived SIGKILL and may still be allocating; ` +
-                `it may need to be stopped by hand.`,
-              { idempotencyKey: `resource-kill-failed:${kill.process.pid}` },
-            )
-            .catch(logAlertDeliveryFailure);
-          continue;
-        }
-        await this.delivery
-          .send(
-            "hive-resources",
-            ORCHESTRATOR_NAME,
-            `Hive memory watchdog killed pid ${kill.process.pid} under ${kill.owner} ` +
-              `(${Math.round(kill.process.rssMb)} MB resident, limit ${limits.perProcessMemoryMb} MB): ` +
-              `${kill.process.command.slice(0, 160)}. The ${kill.owner} session itself is still running; ` +
-              `check whether its work needs to be retried.`,
-            { idempotencyKey: `resource-kill:${kill.process.pid}` },
-          )
-          .catch(logAlertDeliveryFailure);
-        // The agent whose child died sees only an opaque failed command, so it
-        // reads the death as "my command was wrong" and retries — the 2026-07-12
-        // incident was three escalating OOM kills in 90 seconds, each a wider
-        // search than the last. A killed process cannot report its own cause of
-        // death; only the killer can, and it must tell the agent, not just the
-        // orchestrator watching it.
-        if (kill.owner !== ORCHESTRATOR_NAME) {
-          await this.delivery
-            .send(
-              "hive-resources",
-              kill.owner,
-              `Hive's memory watchdog KILLED a process you started — the command did not fail on its own. ` +
-                `pid ${kill.process.pid} reached ${Math.round(kill.process.rssMb)} MB resident, ` +
-                `past the ${limits.perProcessMemoryMb} MB per-process ceiling that keeps this machine alive: ` +
-                `${kill.process.command.slice(0, 160)}. Do NOT retry it as written, and do not widen it — ` +
-                `a bigger version of the same command hits the same ceiling faster. Make it cheaper: ` +
-                `narrow the input (scope a search to a subdirectory), anchor patterns on real literals ` +
-                `instead of leading with \`.*\` or \`.{0,N}\`, or use a different tool. Your session is fine; ` +
-                `only that process was killed.`,
-              { idempotencyKey: `resource-kill-owner:${kill.process.pid}` },
-            )
-            .catch(logAlertDeliveryFailure);
-        }
-      }
-      if (assessment.memoryPressure && assessment.availableMb !== null) {
-        await this.delivery
-          .send(
-            "hive-resources",
-            ORCHESTRATOR_NAME,
-            `Hive paused agent spawning: ${Math.round(assessment.availableMb)} MB of ` +
-              `reclaimable system memory is below the ${limits.minSystemAvailableMb} MB floor. ` +
-              "Spawns resume automatically once memory pressure clears.",
-            // One alert per hour of sustained pressure, not one per sweep.
-            {
-              idempotencyKey: `resource-pressure:${new Date().toISOString().slice(0, 13)}`,
-            },
-          )
-          .catch(logAlertDeliveryFailure);
-      }
-      await this.reapCodexOrphans();
-    } catch (error) {
-      console.error(
-        `Hive resource sweep failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    }
+    return sweepResourcesCycle({
+      db: this.db,
+      delivery: this.delivery,
+      orchestratorSessiond: this.orchestratorSessiond,
+      terminalHost: this.terminalHost,
+      resources: this.resources,
+      psSample: this.psSample,
+      vmStatSample: this.vmStatSample,
+      killProcess: this.killProcess,
+      reapDependencies: this.reapDependencies,
+      setMemoryPressure: (value) => {
+        this.memoryPressure = value;
+      },
+      reapCodexOrphans: () => this.reapCodexOrphans(),
+    });
   }
 
   private async reapCodexOrphans(): Promise<void> {
@@ -5248,133 +4644,19 @@ export class HiveDaemon {
     pathname: string,
     request: Request,
   ): Promise<Response> {
-    const authenticated = this.authenticate(request, "/agents/attach-grant");
-    if (!authenticated.ok) return this.denied(authenticated);
-    const name = decodeURIComponent(
-      pathname.slice("/agents/".length, -"/attach-grant".length),
+    return attachGrantRoute(
+      {
+        db: this.db,
+        orchestratorSessiond: this.orchestratorSessiond,
+        terminalHost: this.terminalHost,
+        authenticate: (req, route) => this.authenticate(req, route),
+        authorize: (capability, route, action, subject, audit, reason) =>
+          this.authorize(capability, route, action, subject, audit, reason),
+        denied: (decision) => this.denied(decision),
+      },
+      pathname,
+      request,
     );
-    if (name === "") {
-      return json(
-        { error: "Invalid attach request: no agent" },
-        { status: 400 },
-      );
-    }
-    const decision = this.authorize(
-      authenticated.capability,
-      "/agents/attach-grant",
-      "terminal:observe",
-      name,
-    );
-    if (!decision.ok) return this.denied(decision);
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      body = null;
-    }
-    const parsed = z
-      .strictObject({
-        sessionLocator: SessionLocatorSchema,
-        viewerId: z.string().min(1),
-        geometry: TerminalGeometrySchema,
-        operations: z.array(z.enum(["view", "human-input", "resize"])),
-      })
-      .safeParse(body);
-    if (!parsed.success) {
-      return json(
-        {
-          state: "rejected",
-          reason: "invalid-attach-request",
-          error:
-            "Attach requires the pane's exact sessionLocator, viewer, and geometry",
-        },
-        { status: 400 },
-      );
-    }
-    if (isOrchestratorName(name)) {
-      const current = this.orchestratorSessiond?.snapshot() ?? null;
-      if (
-        current === null ||
-        !sameSessionLocator(current.locator, parsed.data.sessionLocator)
-      ) {
-        return json(
-          {
-            state: "rejected",
-            reason: "session-locator-mismatch",
-            error:
-              "Hive refused to attach queen: its session generation changed",
-          },
-          { status: 409 },
-        );
-      }
-      if (current.state !== "running") {
-        return json(
-          {
-            state: "rejected",
-            reason:
-              current.state === "awaiting-visibility"
-                ? "session-not-ready"
-                : "session-not-running",
-            error:
-              current.diagnostic ??
-              (current.state === "awaiting-visibility"
-                ? "Queen terminal is still starting"
-                : `Queen terminal is ${current.state}`),
-          },
-          { status: 409 },
-        );
-      }
-      try {
-        const grant = await this.terminalHost.issueAttach(
-          requireSessiondRootLocator(current.locator),
-          {
-            viewerId: parsed.data.viewerId,
-            geometry: parsed.data.geometry,
-            operations: parsed.data.operations,
-          },
-        );
-        return json({ state: "granted", grant });
-      } catch (error) {
-        return json(
-          { error: error instanceof Error ? error.message : "Attach failed" },
-          { status: 500 },
-        );
-      }
-    }
-    const agent = this.db.getAgentByName(name);
-    if (agent === null) {
-      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
-    }
-    if (
-      agent.sessionLocator === undefined ||
-      !sameSessionLocator(agent.sessionLocator, parsed.data.sessionLocator)
-    ) {
-      return json(
-        {
-          state: "rejected",
-          reason: "session-locator-mismatch",
-          error: `Hive refused to attach ${name}: its session generation changed`,
-        },
-        { status: 409 },
-      );
-    }
-    try {
-      const locator = requireSessiondAgentLocator({
-        id: agent.id,
-        sessionLocator: agent.sessionLocator,
-      });
-      const grant = await this.terminalHost.issueAttach(locator, {
-        viewerId: parsed.data.viewerId,
-        geometry: parsed.data.geometry,
-        operations: parsed.data.operations,
-      });
-      return json({ state: "granted", grant });
-    } catch (error) {
-      return json(
-        { error: error instanceof Error ? error.message : "Attach failed" },
-        { status: 500 },
-      );
-    }
   }
 
   private async recoverEndpoint(request: Request): Promise<Response> {
@@ -5414,261 +4696,21 @@ export class HiveDaemon {
   }
 
   async processEvent(event: HookEvent): Promise<void> {
-    const parsed = HookEventSchema.parse(event);
-    // One root identity at ingress: legacy/case-varied orchestrator events
-    // register and store as queen so status, token usage, and consumers agree.
-    const value = {
-      ...parsed,
-      agentName: canonicalOrchestratorName(parsed.agentName),
-    };
-    const eventAgent = this.db.getAgentByName(value.agentName);
-    const providerEvent =
-      eventAgent === null
-        ? null
-        : recordProviderHookEvent(this.db, eventAgent, value);
-    if (value.providerRunId !== undefined && providerEvent === null) {
-      // A run-bound hook speaks only for that exact active ProviderRun. Do not
-      // let a stale worktree hook mutate the legacy lifecycle row after the
-      // normalized ingestion path rejected it.
-      return;
-    }
-    if (
-      value.agentName === ORCHESTRATOR_NAME &&
-      value.toolSessionId !== undefined
-    ) {
-      this.tokenUsage.registerOrchestratorProviderSession(
-        value.toolSessionId,
-        this.repoRoot,
-      );
-    }
-    if (value.kind === "tool-boundary") {
-      // A deep agent fires this on every tool call — hundreds per turn — so
-      // it deliberately skips the events table and the quota machinery. It
-      // proves the process is alive mid-turn and marks the one safe moment
-      // to inject urgent traffic into a busy session.
-      const agent = this.db.getAgentByName(value.agentName);
-      if (
-        agent !== null &&
-        agent.status !== "dead" &&
-        agent.status !== "done" &&
-        agent.status !== "failed"
-      ) {
-        const observedAt = new Date(value.timestamp).toISOString();
-        this.db.transaction(() => {
-          // The boundary proves the popup was answered at the pane. Its exact
-          // approval generation is no longer eligible to inject into whatever
-          // prompt the vendor may render next.
-          this.db.stalePendingToolApprovals(value.agentName, observedAt);
-          this.db.upsertAgent({
-            ...agent,
-            lastEventAt: observedAt,
-            // A tool ran to completion, so any native permission dialog that was
-            // holding this agent has been answered. This is the only honest way
-            // back out of `awaiting-approval` for a vendor-raised dialog: Hive
-            // cannot answer that dialog, so it must wait to OBSERVE it gone
-            // rather than assume. Left alone, a reader that a human unblocked at
-            // the pane would keep reporting "blocked" for the rest of its turn.
-            ...(agent.status === "awaiting-approval"
-              ? { status: "working" }
-              : {}),
-            ...(value.toolSessionId === undefined
-              ? {}
-              : { toolSessionId: value.toolSessionId }),
-          });
-        });
-        this.delivery.confirmSteerAtToolBoundary(
-          value.agentName,
-          value.timestamp,
-        );
-        await this.delivery.flushUrgent(value.agentName);
-        await this.delivery.flushSteer(value.agentName);
-      }
-      return;
-    }
-    this.db.transaction(() => {
-      this.db.insertEvent(value);
-
-      const agent = this.db.getAgentByName(value.agentName);
-      if (
-        agent !== null &&
-        agent.status !== "dead" &&
-        agent.status !== "done" &&
-        agent.status !== "failed"
-      ) {
-        const updated: AgentRecord = {
-          ...agent,
-          status:
-            agent.writeRevoked &&
-            agent.controlMessageId !== undefined &&
-            value.kind !== "dead"
-              ? "control-paused"
-              : value.kind === "dead"
-                ? "dead"
-                : value.kind === "turn-start"
-                  ? "working"
-                  : value.kind === "tool-start"
-                    ? "working"
-                    : value.kind === "approval-request"
-                      ? "awaiting-approval"
-                      : value.kind === "notification"
-                        ? // The vendor's own dialog. Claude raises this hook when it is
-                          // BLOCKED asking for permission, and Hive used to hold the
-                          // agent's status here — so a session parked on a dialog went
-                          // on reporting "working" forever and told nobody. Any other
-                          // notification (notably idle_prompt, which an idle agent
-                          // emits while doing nothing) still changes nothing.
-                          isPermissionPrompt(value)
-                          ? "awaiting-approval"
-                          : agent.status
-                        : value.kind === "session-start"
-                          ? agent.status
-                          : value.kind === "session-launch" ||
-                              value.kind === "session-end" ||
-                              value.kind === "compacted"
-                            ? // Only the orchestrator supervisor emits this today. If a
-                              // future worker reports either supervisor lifecycle event,
-                              // process teardown remains the authority for that worker.
-                              agent.status
-                            : "idle",
-          contextPct:
-            value.kind === "turn-end" && value.contextPct !== undefined
-              ? value.contextPct
-              : agent.contextPct,
-          lastEventAt: new Date(value.timestamp).toISOString(),
-          // The tool-level session identity rides on hook traffic (Claude's
-          // stdin payload, Codex's notify thread-id); a resume forks Claude
-          // to a fresh id, so the newest observation always wins.
-          ...(value.toolSessionId === undefined
-            ? {}
-            : { toolSessionId: value.toolSessionId }),
-          // A completed turn proves the process is genuinely healthy, so the
-          // crash-resume budget rearms.
-          ...(value.kind === "turn-end" && agent.recoveryAttempts > 0
-            ? { recoveryAttempts: 0 }
-            : {}),
-        };
-        this.db.upsertAgent(updated);
-      }
-
-      if (value.kind === "approval-request") {
-        // One hook is one prompt generation. Superseded rows remain durable as
-        // STALE audit history but can never authorize this fresh popup.
-        this.db.stalePendingToolApprovals(value.agentName, value.timestamp);
-        this.db.insertApproval({
-          id: crypto.randomUUID(),
-          agentName: value.agentName,
-          // A tool's own permission prompt, relayed by the agent's hook: the
-          // description names what the tool wants to do. Never trimmed.
-          kind: "tool-permission",
-          description: value.description,
-          status: "pending",
-          createdAt: value.timestamp,
-          resolvedAt: null,
-        });
-      }
-    });
-
-    const statusAgent = this.db.getLiveAgentByName(value.agentName);
-    const turnState =
-      value.kind === "turn-start"
-        ? "working"
-        : value.kind === "tool-start"
-          ? "working"
-          : value.kind === "turn-end"
-            ? "idle"
-            : value.kind === "approval-request" || isPermissionPrompt(value)
-              ? "awaiting_approval"
-              : null;
-    if (statusAgent !== null && turnState !== null) {
-      const observedAt = new Date(value.timestamp).toISOString();
-      this.status.appendSourceEvent({
-        entity: { kind: "agent", id: statusAgent.id },
-        occurredAt: observedAt,
-        kind: "status.turn",
-        source: {
-          kind: "provider-hook",
-          id: `${statusAgent.tool}:${value.toolSessionId ?? statusAgent.id}`,
-          observedAt,
-          confidence: "high",
-        },
-        data: { value: turnState },
-      });
-    }
-
-    if (value.kind === "dead") {
-      const dead = this.db.getAgentByName(value.agentName);
-      if (dead !== null) {
-        await this.killAgentTeardown(dead, { at: value.timestamp });
-      }
-    }
-
-    const agent = this.db.getAgentByName(value.agentName);
-    if (
-      agent !== null &&
-      (value.kind === "session-start" || value.kind === "turn-start")
-    )
-      this.drainHandler.noteProviderAlive(agent.tool);
-    const eventReservationId =
-      agent?.controlQuotaReservationId ?? agent?.quotaReservationId;
-    if (eventReservationId !== undefined) {
-      if (value.kind === "session-start" || value.kind === "turn-start") {
-        this.quota?.markStarted(eventReservationId, value.timestamp);
-      } else if (value.kind === "turn-end") {
-        await this.quota?.reconcile(
-          eventReservationId,
-          value.usageUnits,
-          value.usageSource ?? "estimated",
-          value.timestamp,
-        );
-      } else if (value.kind === "dead") {
-        await this.quota?.cancel(eventReservationId, value.timestamp);
-      }
-    }
-
-    // Visibility is the whole point: a status nobody reads is not a fix. The
-    // agent cannot report this itself — it is blocked mid-turn, which is
-    // precisely why this went unnoticed — so the daemon speaks for it.
-    // Idempotent per agent per dialog: the hook fires once when the dialog
-    // opens, and re-notifying on a status Hive cannot clear on its own would
-    // spam the orchestrator.
-    if (
-      isPermissionPrompt(value) &&
-      agent !== undefined &&
-      agent !== null &&
-      agent.name !== ORCHESTRATOR_NAME
-    ) {
-      await this.delivery
-        .send(
-          "hive-resources",
-          ORCHESTRATOR_NAME,
-          `${value.agentName} is BLOCKED on a Claude Code permission dialog in its terminal ` +
-            `(session ${requireSessiondAgentLocator(agent).sessionId}) and cannot proceed until a human answers it. ` +
-            `Hive can see this dialog but cannot answer it: the notification hook carries no request id, ` +
-            `so there is no reply path back to the TUI. Someone must clear it in the Hive pane.\n` +
-            `An agent under full autonomy should never reach this: it means the session launched ` +
-            `without bypassPermissions, so check its spawn.`,
-          {
-            idempotencyKey: `permission-dialog:${agent.id}:${value.timestamp}`,
-          },
-        )
-        .catch(logAlertDeliveryFailure);
-    }
-
-    // Claude emits session-start while its TUI is still painting. Treating it
-    // as input-ready can paste a queued startup alert through the logo. A turn
-    // boundary proves the provider has completed startup and accepted input.
-    if (
-      isOrchestratorName(value.agentName) &&
-      (value.kind === "turn-start" || value.kind === "turn-end")
-    ) {
-      this.orchestratorSessiond?.markInputReady();
-    }
-    if (value.kind === "session-start") {
-      await this.delivery.recoverCriticalControls();
-    }
-    if (value.kind === "session-start" || value.kind === "turn-end") {
-      await this.delivery.flushQueued(value.agentName);
-    }
+    return processHookEvent(
+      {
+        db: this.db,
+        delivery: this.delivery,
+        drainHandler: this.drainHandler,
+        orchestratorSessiond: this.orchestratorSessiond,
+        quota: this.quota,
+        repoRoot: this.repoRoot,
+        status: this.status,
+        tokenUsage: this.tokenUsage,
+        killAgentTeardown: (agent, options) =>
+          this.killAgentTeardown(agent, options ?? {}),
+      },
+      event,
+    );
   }
 
   private async receiveEvent(request: Request): Promise<Response> {
@@ -5720,798 +4762,58 @@ export class HiveDaemon {
       version: HIVE_VERSION,
     });
 
-    server.registerTool(
-      "hive_status",
-      {
-        title: "Hive agent status",
-        description:
-          'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed. The structuredContent memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / embedding-runtime-unverified / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs.',
-        inputSchema: StatusRequestSchema,
-      },
-      async ({ detail, history, fields }) => {
-        this.authorizeTool(
-          capability,
-          "hive_status",
-          "status:read",
-          undefined,
-          false,
-        );
-        // graphifyCalls says whether the graph tools are earning their context
-        // cost (integration doc, layer 3). Null is unknown — no observation —
-        // never zero; only rendered at all when this daemon runs graphify.
-        // A recipient whose mail is not arriving reads as an ordinary idle agent
-        // in every other field here. deliveryBlocked is the one place the
-        // orchestrator can see it without knowing to look (2026-07-21 messaging
-        // regression: hours of silence that looked exactly like "nothing to say").
-        const blocked = this.delivery.blockedDeliveries();
-        // A sessiond row is Hive's private cleanup ownership until host creation
-        // completes. Publishing it earlier gives Workspace a locator that cannot
-        // attach yet and turns ordinary launch ordering into a renderer race.
-        const storedAgents = this.db
-          .listAgents()
-          .filter((agent) => this.hasCompletedSessiondBinding(agent));
-        let sessions: Awaited<
-          ReturnType<HiveTerminalHostAdapter["list"]>
-        > | null = null;
-        if (storedAgents.length > 0) {
-          sessions = await this.terminalHost
-            .list(hiveInstanceSuffix())
-            .catch(() => null);
-        }
-        let agents = storedAgents.map((agent): AgentRecord => {
-          const deliveryBlocked = blocked.get(agent.name);
-          return {
-            ...this.statusLiveness(agent, sessions),
-            ...(this.graphify === undefined
-              ? {}
-              : {
-                  graphifyCalls:
-                    this.graphifyCalls.get(agent.id)?.count ?? null,
-                }),
-            // Only when blocked, so a healthy `detail:"full"` record stays the
-            // agent row verbatim. The compact team view — what queen reads —
-            // always carries the field, null included.
-            ...(deliveryBlocked !== undefined ? { deliveryBlocked } : {}),
-          };
-        });
-        if (history !== true) {
-          agents = agents.filter(
-            (agent) => !["dead", "done", "failed"].includes(agent.status),
-          );
-        }
-        const messages = this.db.listMessages();
-        const evidence = new Map<
-          string,
-          { instructions: string[]; files: string[] }
-        >();
-        const activity = new Map<string, ActivitySnapshot>();
-        const includeActivity =
-          isOrchestratorName(capability.subject) ||
-          capability.role === "operator";
-        await Promise.all(
-          agents.map(async (agent) => {
-            const files = await observedWorktreeFiles(
-              this.repoRoot,
-              agent.worktreePath,
-              agent.branch,
-            ).catch(() => []);
-            evidence.set(agent.name, {
-              instructions: messages
-                .filter(
-                  (message) =>
-                    isOrchestratorName(message.from) &&
-                    message.to === agent.name &&
-                    message.intent === "instruction" &&
-                    Date.parse(message.createdAt) > Date.parse(agent.createdAt),
-                )
-                .map((message) => message.body),
-              files,
-            });
-            if (!includeActivity) return;
-            const locator = requireSessiondAgentLocator(agent);
-            const inspection =
-              sessions?.find((session) =>
-                sameSessionLocator(session.locator, locator),
-              ) ?? null;
-            const output =
-              this.observeTerminalOutput === null || inspection === null
-                ? null
-                : await this.observeTerminalOutput(
-                    locator,
-                    inspection.geometry,
-                  ).catch(() => null);
-            const run =
-              this.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
-            const providerEvents =
-              run === null ? [] : [...this.db.listProviderEvents(run.runId)];
-            if (
-              run !== null &&
-              run.state === "running" &&
-              inspection?.foreground.state === "managed" &&
-              inspection.foreground.runId === run.runId &&
-              agent.worktreePath !== null &&
-              getAgentAdapter(agent.tool).communication.eventSource ===
-                "transcript"
-            ) {
-              // TODO(C2): normalize Grok project-hook events after live hook
-              // firing can be verified; until then its transcript descriptor
-              // deliberately reaches the universal fallback below.
-            }
-            activity.set(
-              agent.id,
-              buildActivitySnapshot({
-                agent,
-                run,
-                inspection,
-                output,
-                gitPaths: files,
-                events: providerEvents,
-                status: fuseAgentStatus(
-                  this.status.listEventsForAgent(agent.id),
-                  {
-                    agentId: agent.id,
-                    incarnationGeneration: locator.generation,
-                  },
-                  new Date(),
-                ),
-                observedAt: new Date().toISOString(),
-              }),
-            );
-          }),
-        );
-        const result =
-          detail === "full"
-            ? agents
-            : compactActiveTeam(agents, evidence, activity);
-        // Defect D2: the semantic leg's health is an operator-visible status
-        // section, so embedding degradation is SEEN without reading code or
-        // logs. It rides structuredContent (the text payload stays the agents
-        // shape parsers already read).
-        const memory = { embeddings: this.memoryEmbeddingsStatusSection() };
-        if (fields !== undefined) {
-          const base = toolResult(
-            result.map((record) =>
-              Object.fromEntries(
-                Object.entries(record).filter(([field]) =>
-                  fields.includes(field),
-                ),
-              ),
-            ),
-            "agents",
-          );
-          return {
-            ...base,
-            structuredContent: { ...base.structuredContent, memory },
-          };
-        }
-        const base = toolResult(result, "agents");
-        return {
-          ...base,
-          structuredContent: { ...base.structuredContent, memory },
-        };
-      },
-    );
+    registerStatusTools(server, capability, {
+      db: this.db,
+      repoRoot: this.repoRoot,
+      delivery: this.delivery,
+      status: this.status,
+      terminalHost: this.terminalHost,
+      graphify: this.graphify,
+      graphifyCalls: this.graphifyCalls,
+      sessionHost: this.sessionHost,
+      statusIncarnationGenerationSource: this.statusIncarnationGenerationSource,
+      observeTerminalOutput: this.observeTerminalOutput,
+      resolveSessionLocator: this.resolveSessionLocator,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+      hasCompletedSessiondBinding: (agent) =>
+        this.hasCompletedSessiondBinding(agent),
+      memoryEmbeddingsStatusSection: () => this.memoryEmbeddingsStatusSection(),
+      statusLiveness: (agent, sessions) => this.statusLiveness(agent, sessions),
+    });
 
-    server.registerTool(
-      "hive_update_status",
-      {
-        title: "Report descriptive agent status",
-        description:
-          "Append an authenticated, Assignment-bound descriptive status report. Complete is descriptive and never approves work or changes task, gate, review, or landing authority. Report with the assignmentId and assignmentGeneration your prompt gave you; requestId is an optional idempotency key the daemon mints for you, and passing your own makes a retry return the first result instead of appending a second report.",
-        inputSchema: HiveUpdateStatusAdvertisedSchema,
-      },
-      async (input) => {
-        this.authorizeTool(
-          capability,
-          "hive_update_status",
-          "status:write",
-          capability.subject,
-        );
-        const agent = this.db.getLiveAgentByName(capability.subject);
-        if (agent === null) {
-          throw new Error(`No live agent is bound to ${capability.subject}`);
-        }
-        const incarnation =
-          await this.statusIncarnationGenerationSource.currentForAgent(
-            agent.id,
-          );
-        if (incarnation.kind === "unavailable") {
-          throw new StatusIncarnationUnavailableError(incarnation.reason);
-        }
-        return toolResult(
-          this.status.appendAgentReport(
-            {
-              subject: capability.subject,
-              agentId: agent.id,
-              role: capability.role,
-              incarnationGeneration: incarnation.generation,
-              capabilityEpoch: capability.epoch,
-              toolSessionId: agent.toolSessionId ?? null,
-            },
-            {
-              ...input,
-              requestId: input.requestId ?? mintSessionRequestId(),
-            },
-            new Date(),
-          ),
-          "statusReport",
-        );
-      },
-    );
+    registerQuotaTools(server, capability, {
+      quota: this.quota,
+      tokenUsage: this.tokenUsage,
+      modelInventory: this.modelInventory,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+    });
 
-    server.registerTool(
-      "hive_terminal_observe",
-      {
-        title: "Observe bounded terminal state",
-        description:
-          "Read self terminal metadata, or explicitly authorized active-screen text. This cannot focus, attach, resize, acquire input, refresh status, or trigger delivery.",
-        inputSchema: HiveTerminalObserveInputSchema,
-      },
-      async (input) => {
-        if (this.sessionHost === null || this.resolveSessionLocator === null) {
-          throw new Error("SessionHost terminal observation is unavailable");
-        }
-        const locator = await this.resolveSessionLocator(
-          input.sessionId,
-          input.generation,
-        );
-        if (
-          locator === null ||
-          locator.sessionId !== input.sessionId ||
-          locator.generation !== input.generation ||
-          locator.instanceId !== this.status.instanceId
-        ) {
-          throw new Error(
-            "No exact terminal generation matches the observation request",
-          );
-        }
-        const target =
-          locator.subject.kind === "agent"
-            ? this.db.getAgentById(locator.subject.agentId)
-            : null;
-        const targetSubjectId =
-          locator.subject.kind === "agent"
-            ? locator.subject.agentId
-            : ROOT_VISIBILITY_ID;
-        const targetName =
-          locator.subject.kind === "agent"
-            ? (target?.name ?? null)
-            : ORCHESTRATOR_NAME;
-        const rootBinding =
-          locator.subject.kind === "root"
-            ? this.db.getTerminalHostBindingByLocator(
-                requireSessiondRootLocator(locator),
-              )
-            : null;
-        if (
-          targetName === null ||
-          (locator.subject.kind === "root" &&
-            rootBinding?.createEvidence === undefined)
-        ) {
-          throw new Error("Terminal subject is unknown");
-        }
-        this.authorizeTool(
-          capability,
-          "hive_terminal_observe",
-          "terminal:observe",
-          targetName,
-        );
-        const readerAgentId = isOrchestratorName(capability.subject)
-          ? ROOT_VISIBILITY_ID
-          : (this.db.getLiveAgentByName(capability.subject)?.id ?? null);
-        if (
-          !permitsTerminalObservation(
-            capability,
-            readerAgentId,
-            targetSubjectId,
-            input.include,
-          )
-        ) {
-          throw new Error("Terminal observation scope was not granted");
-        }
-        const capture = await this.sessionHost.capture(locator, {
-          include: input.include,
-          maxRows: input.maxRows,
-        });
-        const visibleCapture =
-          input.include === "metadata" ? { ...capture, text: null } : capture;
-        let auditEventSeq: string | null = null;
-        if (input.include === "visible-text") {
-          const rowCount =
-            capture.text === null || capture.text.length === 0
-              ? 0
-              : Math.min(input.maxRows, capture.text.split("\n").length);
-          auditEventSeq = this.status.appendObservationAudit({
-            reader: capability.subject,
-            readerRole: capability.role,
-            subjectAgentId: targetSubjectId,
-            subjectGeneration: locator.generation,
-            rowCount,
-            reason: `capability:${capability.id}`,
-            observedAt: new Date().toISOString(),
-          }).seq;
-        }
-        return toolResult(
-          { capture: visibleCapture, auditEventSeq },
-          "terminalObservation",
-        );
-      },
-    );
+    registerAgentControlTools(server, capability, {
+      db: this.db,
+      terminalHost: this.terminalHost,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+      recoverCrashedAgents: (name) => this.recoverCrashedAgents(name),
+      hasNeverBoundSessiondGeneration: (agent) =>
+        this.hasNeverBoundSessiondGeneration(agent),
+      killAgentTeardown: (agent, options) =>
+        this.killAgentTeardown(agent, options ?? {}),
+    });
 
-    server.registerTool(
-      "hive_preserve_branch",
-      {
-        title: "Mark intentionally preserved branch",
-        description:
-          "Mark or unmark a closed agent branch as intentionally preserved so stranded-work reconciliation does not repeatedly alarm on a deliberate state.",
-        inputSchema: PreserveBranchRequestSchema,
-      },
-      async ({ agent, preserved }) => {
-        this.authorizeTool(
-          capability,
-          "hive_preserve_branch",
-          "agent:kill",
-          agent,
-          false,
-        );
-        const record = this.db.getAgentByName(agent);
-        if (record?.branch === null || record?.branch === undefined) {
-          throw new Error(`Agent ${agent} has no branch to preserve`);
-        }
-        if (LIVE_STATUSES.includes(record.status)) {
-          throw new Error(
-            `Agent ${agent} is still live; its branch is active work`,
-          );
-        }
-        await markBranchPreserved(this.repoRoot, record.branch, preserved);
-        return toolResult({ branch: record.branch, preserved }, "result");
-      },
-    );
-
-    server.registerTool(
-      "hive_quota_status",
-      {
-        title: "Hive quota status",
-        description:
-          "Show configured provider/account/model-pool capacity, reservations, telemetry confidence, freshness, and reset estimates.",
-        inputSchema: z.object({}),
-      },
-      async () => {
-        this.authorizeTool(
-          capability,
-          "hive_quota_status",
-          "quota:read",
-          undefined,
-          false,
-        );
-        return toolResult(this.quota?.statuses() ?? [], "quotas");
-      },
-    );
-
-    server.registerTool(
-      "hive_token_usage",
-      {
-        title: "Hive token usage",
-        description:
-          "Show provider-reported input/output token totals by Hive session, with exact orchestrator control usage separated from mixed worker-session usage.",
-        inputSchema: z.object({
-          repoRoot: z.string().min(1).optional(),
-        }),
-      },
-      async ({ repoRoot }) => {
-        this.authorizeTool(
-          capability,
-          "hive_token_usage",
-          "token-usage:read",
-          undefined,
-          false,
-        );
-        return toolResult(
-          await this.tokenUsage.snapshot(repoRoot),
-          "tokenUsage",
-        );
-      },
-    );
-
-    server.registerTool(
-      "hive_models",
-      {
-        title: "Hive model inventory",
-        description:
-          "List every model discovered from Claude and Codex, including hidden and unrouted models, with effort levels, plan status, routing roles, and when Hive would use each one.",
-        inputSchema: z.object({}),
-      },
-      async () => {
-        this.authorizeTool(
-          capability,
-          "hive_models",
-          "status:read",
-          undefined,
-          false,
-        );
-        if (this.modelInventory === undefined) {
-          throw new Error("Live model inventory is unavailable");
-        }
-        return toolResult(await this.modelInventory(), "inventory");
-      },
-    );
-
-    server.registerTool(
-      "hive_quota_reconcile",
-      {
-        title: "Reconcile Hive quota",
-        description:
-          "Record a provider, gateway, or manual usage observation for one configured quota pool.",
-        inputSchema: QuotaObservationRequestSchema,
-      },
-      async (observation) => {
-        this.authorizeTool(capability, "hive_quota_reconcile", "quota:write");
-        if (this.quota === undefined) {
-          throw new Error("Quota tracking is unavailable");
-        }
-        const value = await this.quota.observe({
-          ...observation,
-          observedAt: observation.observedAt ?? new Date().toISOString(),
-        });
-        return toolResult(value, "observation");
-      },
-    );
-
-    server.registerTool(
-      "hive_recover",
-      {
-        title: "Recover crashed Hive agents",
-        description:
-          "Resume crashed agent sessions with their conversation context restored (native tool resume in the same worktree). Omit agent to sweep all recoverable agents; name one — including an agent already marked dead — for a manual retry.",
-        inputSchema: z.object({ agent: z.string().min(1).optional() }),
-      },
-      async ({ agent }) => {
-        this.authorizeTool(capability, "hive_recover", "agent:recover", agent);
-        return toolResult(await this.recoverCrashedAgents(agent), "outcomes");
-      },
-    );
-
-    server.registerTool(
-      "hive_mark_dead",
-      {
-        title: "Mark Hive agent dead",
-        description:
-          "Mark an agent dead only after its exact provider run is confirmed stopped, then clean residual resources. A live shell without a provider does not block this; use hive_kill to stop a live provider and terminate its terminal.",
-        inputSchema: MarkDeadRequestSchema,
-      },
-      async ({ agent: agentName }) => {
-        this.authorizeTool(
-          capability,
-          "hive_mark_dead",
-          "agent:mark-dead",
-          agentName,
-        );
-        const agent = this.db.getAgentByName(agentName);
-        if (agent === null) {
-          throw new Error(`Hive agent not found: ${agentName}`);
-        }
-        if (this.hasNeverBoundSessiondGeneration(agent)) {
-          return toolResult(
-            (await this.killAgentTeardown(agent)).agent,
-            "agent",
-          );
-        }
-        const inspection = await this.terminalHost.inspect(
-          requireSessiondAgentLocator(agent),
-        );
-        const activeRun = this.terminalHost.reconcileProviderRun(
-          requireSessiondAgentLocator(agent),
-        );
-        const presence = inspection.presence;
-        if (presence === "unknown") {
-          throw new Error(
-            `Cannot mark ${agentName} dead: session presence is unknown; inspect the host and retry.`,
-          );
-        }
-        if (
-          presence === "present" &&
-          !sessiondAgentProviderRunIsDead(inspection, activeRun)
-        ) {
-          throw new Error(
-            `Cannot mark ${agentName} dead: its exact provider run is still active. Use hive_kill to stop the provider and terminate its terminal.`,
-          );
-        }
-        return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
-      },
-    );
-
-    server.registerTool(
-      "hive_kill",
-      {
-        title: "Kill Hive agent",
-        description:
-          "Kill a named Hive agent's terminal session, mark it dead, and optionally remove its worktree and branch. Removal refuses to delete unmerged commits or dirty files and reports them as stranded work instead; pass discardWork to delete them anyway.",
-        inputSchema: KillRequestSchema,
-      },
-      async ({ name, removeWorktree: shouldRemoveWorktree, discardWork }) => {
-        this.authorizeTool(capability, "hive_kill", "agent:kill", name);
-        const agent = this.db.getAgentByName(name);
-        if (agent === null) {
-          throw new Error(`Hive agent not found: ${name}`);
-        }
-        return toolResult(
-          await this.killAgentTeardown(agent, {
-            removeWorktree: shouldRemoveWorktree,
-            discardWork,
-          }),
-          "result",
-        );
-      },
-    );
-
-    server.registerTool(
-      "hive_send",
-      {
-        title: "Send agent message",
-        description:
-          'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok, OpenCode, and Kimi expose no Hive-wired mid-turn steer boundary, so steer degrades to the next turn. urgent is Codex-only: with a live native Codex control it cancels the exact in-flight turn, waits for turn/completed, then starts the urgent instruction; Claude, Grok, OpenCode, Kimi, queen, and Codex without a live native control fail without queuing because Hive cannot prove cancellation. To stop a runaway agent on any vendor, use critical: it revokes write and landing authority, applies the typed control to the verified provider run, and restarts the target read-only; unsupported or unverified control surfaces fail loudly. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient queen wakes the root (preferred name; synonym "orchestrator" remains accepted). The returned body is a short head-and-tail preview; read the durable message for the full body.',
-        inputSchema: SendRequestSchema,
-      },
-      async ({ from, to, body, ...requested }) => {
-        // `from` is a claim about identity, so it is checked against the bound
-        // subject rather than trusted. No agent can forge a message from another.
-        this.authorizeTool(
-          capability,
-          "hive_send",
-          "message:send",
-          from,
-          false,
-        );
-        const inferred =
-          requested.priority === undefined && requested.intent === undefined
-            ? inferLegacyControl(body)
-            : null;
-        const message = await this.delivery.send(from, to, body, {
-          ...requested,
-          ...(inferred ?? {}),
-        });
-        // A send that left the message queued tells the sender what queued means
-        // for THIS recipient right now — measured from its row, not implied by
-        // the state name. "Queued" read as "delivered" is how an agent shipped a
-        // migration without the safety requirements sent nine minutes earlier.
-        const note = queuedDeliveryNote(
-          message,
-          isOrchestratorName(to) ? null : this.db.getAgentByName(to),
-        );
-        return toolResult(
-          note === undefined
-            ? compactSendResult(message)
-            : { ...compactSendResult(message), delivery: note },
-          "message",
-        );
-      },
-    );
-
-    server.registerTool(
-      "hive_escalate",
-      {
-        title: "Escalate: wrong model for this task",
-        description:
-          "Raise a typed capability escalation: this task exceeds the model you were launched on. " +
-          "Carry evidence (why, and at least one concrete failed approach) plus a handoff " +
-          "(goal, done, remaining, decisions) the replacement resumes from. Commit your WIP " +
-          "to your branch FIRST — the handoff points at it. The orchestrator decides: it may " +
-          "respawn the task on a stronger route with your handoff, or tell you to continue. " +
-          "Keep working until it answers. Escalations are recorded and measured per model " +
-          "and category; escalate once per genuine wall, not to shop for a bigger model.",
-        inputSchema: EscalationRequestSchema,
-      },
-      async ({
-        agent,
-        reason,
-        goal,
-        done,
-        remaining,
-        decisions,
-        failedApproaches,
-      }) => {
-        // The claimed identity is checked, not trusted, exactly as in hive_send:
-        // an escalation is a structured send plus a telemetry row.
-        this.authorizeTool(
-          capability,
-          "hive_escalate",
-          "message:send",
-          agent,
-          false,
-        );
-        const record = this.db.getAgentByName(agent);
-        if (record === null) {
-          throw new Error(`Cannot escalate: no agent named ${agent} exists`);
-        }
-        if (record.branch === null) {
-          throw new Error(
-            `Cannot escalate: ${agent} has no branch to hand off. Only spawned ` +
-              "writer agents with a worktree can escalate",
-          );
-        }
-        const now = new Date().toISOString();
-        const handoff = HandoffSchema.parse({
-          agentName: agent,
-          goal,
-          done,
-          remaining,
-          decisions,
-          failedApproaches,
-          branch: record.branch,
-          timestamp: now,
-        });
-        // Measured BEFORE this row lands, so the message reports prior attempts.
-        const prior = this.db.countEscalationsForAgent(record.id);
-        const escalation = this.db.insertEscalation({
-          id: crypto.randomUUID(),
-          agentId: record.id,
-          agentName: agent,
-          // The launch identity: the row must join the routing decision that
-          // produced it, and that decision chose the launch model.
-          model: record.model,
-          category: record.category,
-          reason,
-          createdAt: now,
-        });
-        const message = await this.delivery.send(
-          agent,
-          ORCHESTRATOR_NAME,
-          [
-            `CAPABILITY ESCALATION from ${agent} (category=${record.category}, model=${record.model}` +
-              `${prior > 0 ? `; escalation #${prior + 1} from this agent` : ""}): ${reason}`,
-            `Tried and failed: ${failedApproaches.join("; ")}`,
-            `HANDOFF — goal: ${goal}`,
-            `  done: ${done.join("; ") || "nothing yet"}`,
-            `  remaining: ${remaining.join("; ") || "unstated"}`,
-            `  decisions: ${decisions.join("; ") || "none recorded"}`,
-            `  branch: ${record.branch} (WIP committed by the agent before escalating)`,
-            "You decide: respawn the task with a stronger chain or model and this handoff, " +
-              `kill ${agent} once the replacement confirms pickup — or tell ${agent} ` +
-              "to continue. Do not leave it unanswered; it keeps working meanwhile.",
-          ].join("\n"),
-        );
-        return toolResult(
-          { escalation, handoff, priorEscalations: prior, message },
-          "escalation",
-        );
-      },
-    );
-
-    server.registerTool(
-      "hive_ack_message",
-      {
-        title: "Acknowledge a control message",
-        description:
-          "Acknowledge an injected urgent or critical control using its capability epoch; optionally confirm it has been applied.",
-        inputSchema: MessageAcknowledgementSchema,
-      },
-      async ({ agent, messageId, capabilityEpoch, applied }) => {
-        this.authorizeTool(
-          capability,
-          "hive_ack_message",
-          "message:ack",
-          agent,
-        );
-        const message = await this.acknowledgeControlMessage(
-          agent,
-          messageId,
-          capabilityEpoch,
-          applied,
-        );
-        return toolResult(message, "message");
-      },
-    );
-
-    server.registerTool(
-      "hive_inbox",
-      {
-        title: "Read agent inbox",
-        description:
-          'Read and atomically acknowledge queued messages. Recipient queen returns bounded envelopes (synonym "orchestrator" is still accepted).',
-        inputSchema: InboxRequestSchema,
-      },
-      async ({ agent }) => {
-        // The global root inbox is reachable only by naming queen (or the
-        // accepted synonym), which only the root's own capability may do.
-        this.authorizeTool(
-          capability,
-          "hive_inbox",
-          "inbox:read",
-          agent,
-          false,
-        );
-        return toolResult(
-          isOrchestratorName(agent)
-            ? await this.delivery.orchestratorInbox()
-            : await this.delivery.inbox(agent),
-          "messages",
-        );
-      },
-    );
-
-    server.registerTool(
-      "hive_pickup_handoff",
-      {
-        title: "Pick up a durable handoff",
-        description:
-          "Read the exact durable handoff named in a replacement launch and record that this agent picked it up. Pickup never marks the task complete.",
-        inputSchema: PickupHandoffRequestSchema,
-      },
-      async ({ agent, handoffId }) => {
-        this.authorizeTool(
-          capability,
-          "hive_pickup_handoff",
-          "status:read",
-          agent,
-          false,
-        );
-        const replacement = this.db.getAgentByName(agent);
-        if (replacement === null) {
-          throw new Error(`Cannot pick up handoff: no agent named ${agent}`);
-        }
-        const stored = this.db.getHandoff(handoffId);
-        if (stored === null) {
-          throw new Error(`Handoff not found: ${handoffId}`);
-        }
-        if (stored.bundle.originalTaskRef.agentId === replacement.id) {
-          throw new Error("A source agent cannot acknowledge its own handoff");
-        }
-        if (
-          stored.bundle.originalTaskRef.digest !==
-          createHash("sha256").update(replacement.taskDescription).digest("hex")
-        ) {
-          throw new Error(
-            `Handoff ${handoffId} does not carry ${agent}'s exact task`,
-          );
-        }
-        const pickup = this.db.acknowledgeHandoffPickup(
-          handoffId,
-          replacement.id,
-          new Date().toISOString(),
-        );
-        if (pickup === null) {
-          throw new Error(
-            `Handoff ${handoffId} was picked up by another agent`,
-          );
-        }
-        return toolResult({ handoff: stored.bundle, pickup }, "handoff");
-      },
-    );
-
-    server.registerTool(
-      "hive_read_message",
-      {
-        title: "Read exact durable message",
-        description:
-          "Read one byte-complete message by the id referenced in a bounded projection or orchestrator envelope. Agents may read only messages addressed to themselves.",
-        inputSchema: ReadMessageRequestSchema,
-      },
-      async ({ id }) => {
-        this.authorizeTool(
-          capability,
-          "hive_read_message",
-          "message:read",
-          capability.subject,
-          false,
-        );
-        const message =
-          capability.role === "operator" || capability.role === "orchestrator"
-            ? this.delivery.readOrchestratorMessage(id)
-            : this.db.getMessage(id);
-        if (
-          message !== null &&
-          capability.role !== "operator" &&
-          capability.role !== "orchestrator" &&
-          message.to !== capability.subject
-        ) {
-          throw new Error(`Message not found for ${capability.subject}: ${id}`);
-        }
-        if (message === null) {
-          throw new Error(`Message not found for ${capability.subject}: ${id}`);
-        }
-        return toolResult(message, "message");
-      },
-    );
+    registerMessagingTools(server, capability, {
+      db: this.db,
+      delivery: this.delivery,
+      spawner: this.spawner,
+      status: this.status,
+      machineMutations: this.machineMutations,
+      memoryPressure: () => this.memoryPressure,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+      acknowledgeControlMessage: (name, id, epoch, applied) =>
+        this.acknowledgeControlMessage(name, id, epoch, applied),
+    });
 
     const spawnAgent = async (request: SpawnRequest): Promise<AgentRecord> => {
       if (this.memoryPressure) {
@@ -6543,895 +4845,52 @@ export class HiveDaemon {
         operation?.release();
       }
     };
+    registerSpawnApprovalTools(server, capability, {
+      db: this.db,
+      delivery: this.delivery,
+      capabilities: this.capabilities,
+      codexControl: this.codexControl,
+      resolvingApprovals: this.resolvingApprovals,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+      answerVendorPrompt: (approval, approved) =>
+        this.answerVendorPrompt(approval, approved),
+      spawnAgent,
+    });
 
-    server.registerTool(
-      "hive_spawn",
-      {
-        title: "Spawn Hive agent",
-        description:
-          "Start a new Hive agent for a delegated task. Name the task's category " +
-          "— complex_coding (multi-file builds, hard changes), simple_coding " +
-          "(small mechanical edits), debugging (root-causing a defect), " +
-          "code_review (independent review), planning (design before code), " +
-          "heavy_research (deep investigation), light_research (quick lookups), " +
-          "summarization (condensing text) — and the user's routing policy " +
-          "chain for that category decides the model: first enabled link that " +
-          "clears the launch gate runs. Optional: tool/model pin an explicit " +
-          "user choice (never substituted); minContextTokens filters links for " +
-          "long-context work (any category); effort overrides the link's. " +
-          "The admitted agent returns immediately with status=spawning while " +
-          "provider startup is verified in the background. For two or more " +
-          "independent tasks, use hive_spawn_many. " +
-          "Returns identity and state, not the task brief you just wrote — " +
-          "taskDescription comes back truncated (taskDescriptionLength carries " +
-          "the full count); read it in full via hive_status if ever needed.",
-        inputSchema: SpawnRequestSchema,
-      },
-      async (request: SpawnRequest) => {
-        this.authorizeTool(capability, "hive_spawn", "agent:spawn");
-        return toolResult(
-          compactSpawnResult(await spawnAgent(request)),
-          "agent",
-        );
-      },
-    );
+    registerLandTool(server, capability, {
+      db: this.db,
+      capabilities: this.capabilities,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+      landAgent: (name, epoch) => this.landAgent(name, epoch),
+      decideSpentLandGrant: (cap, branch, mayAutoRearm) =>
+        this.decideSpentLandGrant(cap, branch, mayAutoRearm),
+      fileLandRearmApproval: (subject) => this.fileLandRearmApproval(subject),
+    });
 
-    server.registerTool(
-      "hive_spawn_many",
-      {
-        title: "Spawn multiple Hive agents",
-        description:
-          "Admit 1–16 independent Hive agents concurrently. Each returns " +
-          "immediately with status=spawning while provider startup and readiness " +
-          "verification continue in the background. Results are independent, so " +
-          "one refused request does not hide agents already admitted. Use one " +
-          "request per non-overlapping delegated task.",
-        inputSchema: SpawnBatchRequestSchema,
-      },
-      async ({ requests }: SpawnBatchRequest) => {
-        this.authorizeTool(capability, "hive_spawn_many", "agent:spawn");
-        const results = await Promise.all(
-          requests.map(async (request) => {
-            try {
-              return {
-                ok: true as const,
-                agent: compactSpawnResult(await spawnAgent(request)),
-              };
-            } catch (error) {
-              return {
-                ok: false as const,
-                error:
-                  error instanceof Error ? error.message : "Agent spawn failed",
-              };
-            }
-          }),
-        );
-        return toolResult(results, "results");
-      },
-    );
+    registerMemoryTools(server, capability, {
+      db: this.db,
+      repoRoot: this.repoRoot,
+      memory: this.memory,
+      embeddingIndex: this.embeddingIndex,
+      episodic: this.episodic,
+      status: this.status,
+      tokenUsage: this.tokenUsage,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+      writeMemoryFact: (input) => this.writeMemoryFact(input),
+      deleteMemoryFact: (scope, id) => this.deleteMemoryFact(scope, id),
+      rebuildMemoryIndex: () => this.rebuildMemoryIndex(),
+      semanticRecall: () => this.semanticRecall(),
+      semanticRecallState: () => this.semanticRecallState(),
+    });
 
-    server.registerTool(
-      "hive_approvals",
-      {
-        title: "List pending approvals",
-        description:
-          "List approval requests currently waiting for a decision. Each carries " +
-          "a kind: tool-permission approvals (a command or tool call an agent " +
-          "wants to run) return their description IN FULL — that text is what you " +
-          "are deciding on. Boilerplate kinds (cost-consent, land-rearm) are " +
-          "truncated to ~200 characters, since the same pending requests are " +
-          "re-listed on every poll; truncated is true when the text was cut.",
-        inputSchema: z.object({}),
-      },
-      async () => {
-        this.authorizeTool(
-          capability,
-          "hive_approvals",
-          "approval:read",
-          undefined,
-          false,
-        );
-        return toolResult(
-          this.db.listApprovals("pending").map(compactApprovalDescription),
-          "approvals",
-        );
-      },
-    );
-
-    server.registerTool(
-      "hive_approve",
-      {
-        title: "Resolve agent approval",
-        description:
-          "Approve or deny a pending Hive agent approval request. Returns a " +
-          "typed resolved, stale, in-progress, or delivery-failed outcome.",
-        inputSchema: ApprovalDecisionSchema,
-      },
-      async ({ id, decision }) => {
-        // The approval names an agent only indirectly, through its id, so the
-        // subject is resolved from the record before it is authorized against.
-        const stored = this.db.getApproval(id);
-        this.authorizeTool(
-          capability,
-          "hive_approve",
-          "approval:decide",
-          stored?.agentName,
-        );
-        if (stored === null) {
-          throw new Error(`Pending approval not found: ${id}`);
-        }
-        if (stored.status !== "pending") {
-          return toolResult(
-            { ...stored, outcome: "stale" as const },
-            "approval",
-          );
-        }
-        if (this.resolvingApprovals.has(stored.id)) {
-          return toolResult(
-            { ...stored, outcome: "in-progress" as const },
-            "approval",
-          );
-        }
-        this.resolvingApprovals.add(stored.id);
-        try {
-          const approved = decision === "approve";
-          const appServerAnswered =
-            (await this.codexControl?.resolveApproval(stored.id, approved)) ??
-            false;
-          const vendorAnswer = appServerAnswered
-            ? { outcome: "not-applicable" as const }
-            : await this.answerVendorPrompt(stored, approved);
-
-          if (vendorAnswer.outcome === "stale") {
-            const stale =
-              this.db.staleApproval(stored.id, new Date().toISOString()) ??
-              this.db.getApproval(stored.id) ??
-              stored;
-            return toolResult(
-              { ...stale, outcome: "stale" as const },
-              "approval",
-            );
-          }
-          if (vendorAnswer.outcome === "delivery-failed") {
-            const current = this.db.getApproval(stored.id);
-            if (current?.status !== "pending") {
-              return toolResult(
-                { ...(current ?? stored), outcome: "stale" as const },
-                "approval",
-              );
-            }
-            const agent = this.db.getAgentByName(stored.agentName);
-            if (
-              agent !== null &&
-              agent.status !== "dead" &&
-              agent.status !== "done" &&
-              agent.status !== "failed"
-            ) {
-              this.db.upsertAgent({
-                ...agent,
-                status: agent.writeRevoked
-                  ? "control-paused"
-                  : "awaiting-approval",
-              });
-            }
-            return toolResult(
-              {
-                ...current,
-                outcome: "delivery-failed" as const,
-                reason: vendorAnswer.reason,
-              },
-              "approval",
-            );
-          }
-
-          const approval = this.db.resolveApproval(
-            stored.id,
-            approved ? "approved" : "denied",
-            new Date().toISOString(),
-          );
-          if (approval === null) {
-            const stale = this.db.getApproval(stored.id) ?? stored;
-            return toolResult(
-              { ...stale, outcome: "stale" as const },
-              "approval",
-            );
-          }
-          if (approved && approval.description.startsWith(LAND_REARM_PREFIX)) {
-            this.capabilities.rearmOneShot(approval.agentName, "branch:land");
-          }
-          const agent = this.db.getAgentByName(approval.agentName);
-          const stillAwaitingApproval = this.db
-            .listApprovals("pending")
-            .some((candidate) => candidate.agentName === approval.agentName);
-          if (agent?.status === "awaiting-approval" && !stillAwaitingApproval) {
-            this.db.upsertAgent({
-              ...agent,
-              // An answered vendor prompt hands the turn straight back to the
-              // model, so the agent is working, not idle: calling it idle invites
-              // the wake loop to paste queued mail into a busy pane.
-              status:
-                vendorAnswer.outcome === "answered" ||
-                this.codexControl?.isTurnActive(approval.agentName)
-                  ? "working"
-                  : "idle",
-            });
-            await this.delivery.flushQueued(approval.agentName);
-          }
-          // A resolution the requesting agent is never told about is a resolution
-          // it cannot act on: an agent whose land-rearm approval was silently
-          // granted has no reason to retry hive_land, so it just sits idle until a
-          // human notices and prods it with an urgent message. Every resolution —
-          // approve or deny — gets an explicit envelope naming the approval and
-          // the outcome, independent of whatever status-flush path
-          // above already applies.
-          const resolutionBody =
-            decision === "approve"
-              ? approval.description.startsWith(LAND_REARM_PREFIX)
-                ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
-                : `Your approval request "${approval.description}" was approved.`
-              : `Your approval request "${approval.description}" was denied — do not retry it; report back with the blocker instead.`;
-          // Not awaited: delivery may wait for a terminal turn boundary, and
-          // hive_approve's response must not hang on that. The message row itself
-          // is written synchronously before send() reaches its first await, so it
-          // is durable the instant this call is made.
-          void this.delivery
-            .send("hive-approvals", approval.agentName, resolutionBody, {
-              idempotencyKey: `approval-resolved:${approval.id}`,
-            })
-            .catch(logAlertDeliveryFailure);
-          return toolResult(
-            { ...approval, outcome: "resolved" as const },
-            "approval",
-          );
-        } finally {
-          this.resolvingApprovals.delete(stored.id);
-        }
-      },
-    );
-
-    server.registerTool(
-      "hive_land",
-      {
-        title: "Land an agent branch",
-        description:
-          "Land completed writer work through Hive's capability-gated fast-forward. Commit first, rebase the primary checkout's current branch, then rerun the relevant tests and typecheck. Abort and report any rebase conflict; never merge into the primary checkout directly. If the target moved, rebase and retry.",
-        inputSchema: LandRequestSchema,
-      },
-      async ({ agent: name, capabilityEpoch }) => {
-        const branch = this.db.getAgentByName(name)?.branch ?? null;
-        try {
-          this.authorizeTool(capability, "hive_land", "branch:land", name);
-        } catch (error) {
-          // A spent grant is a dead end the caller cannot fix alone (a live
-          // agent asked to land follow-up work simply stalls). Measure before
-          // spending a human on it: an empty branch needs no grant at all, and a
-          // rebased branch with real work re-arms on Hive's own evidence.
-          if (
-            error instanceof Error &&
-            error.message.includes("already spent")
-          ) {
-            const outcome = await this.decideSpentLandGrant(
-              capability,
-              branch,
-              true,
-            );
-            if (outcome === "nothing-to-land")
-              throw nothingToLand(name, branch);
-            if (outcome === "ask") {
-              this.fileLandRearmApproval(capability.subject);
-              throw new Error(`${error.message}. ${LAND_REARM_NOTE}`);
-            }
-            // Re-armed: the one-shot is available again and the land proceeds.
-          } else {
-            throw error;
-          }
-        }
-        // Reserve the one-shot right before merging, so two concurrent lands
-        // cannot both reach git. A lost fast-forward race releases it again:
-        // main moved, the writer must rebase, and the retry has to be possible.
-        if (!this.capabilities.consumeOneShot(capability, "branch:land")) {
-          this.capabilities.audit({
-            route: "/mcp:hive_land",
-            action: "branch:land",
-            callerSubject: capability.subject,
-            callerRole: capability.role,
-            capabilityId: capability.id,
-            requestedSubject: name,
-            epoch: capability.epoch,
-            decision: "deny",
-            reason: "capability.replayed",
-          });
-          // A lost reservation race means another land of this same branch is in
-          // flight, so this one is never auto-re-armed — but if that land already
-          // merged everything, there is still nothing here to grant.
-          if (
-            (await this.decideSpentLandGrant(capability, branch, false)) ===
-            "nothing-to-land"
-          ) {
-            throw nothingToLand(name, branch);
-          }
-          this.fileLandRearmApproval(capability.subject);
-          throw new Error(
-            `The one-shot branch:land grant for ${capability.subject} is already spent. ${LAND_REARM_NOTE}`,
-          );
-        }
-        try {
-          return toolResult(
-            await this.landAgent(name, capabilityEpoch),
-            "result",
-          );
-        } catch (error) {
-          this.capabilities.releaseOneShot(capability, "branch:land");
-          throw error;
-        }
-      },
-    );
-
-    server.registerTool(
-      "memory_search",
-      {
-        title: "Search Hive memory",
-        description:
-          'Full-text search compiled memory articles across repo (".hive/memory/wiki/") and global ("~/.hive/memory/wiki/") scope. Raw observations are immutable evidence and are not search results. Returns short snippets only; pull a full article with memory_read before relying on it.',
-        inputSchema: MemorySearchRequestSchema,
-      },
-      async ({ query, scope, limit }) => {
-        this.authorizeTool(
-          capability,
-          "memory_search",
-          "memory:read",
-          undefined,
-          false,
-        );
-        return toolResult(
-          this.memory.search(query, { scope, limit }),
-          "results",
-        );
-      },
-    );
-
-    server.registerTool(
-      "memory_write",
-      {
-        title: "Write a Hive memory observation and article",
-        description:
-          "Record one immutable raw observation and create or update its compiled memory article. The schema is enforced here: topic, source provenance, evidence, verification status, and supersedes relationships are required. Search first; update a matching id instead of adding a duplicate. A normalized-title duplicate under a different id is rejected — re-issue as an update to the id named in the error (id set, supersedes including it). A successful write may return similarCandidates: near-duplicate articles to resolve with a follow-up update or merge. The response's embedding field reports what happened to this write's vector projection: indexed, queued (projection running in the background), or unavailable:<state> (keyword-searchable only). For a correction, pass the corrected article id in supersedes, make body state current truth, and preserve prior reasoning through the raw history. status=verified requires verified=YYYY-MM-DD; conflicted means the article must describe the unresolved disagreement. Repo scope lives under .hive/memory/{raw,wiki}; global under ~/.hive/memory/{raw,wiki}. Writes are serialized, rebuild wiki/index.md, append wiki/log.md, and immediately update compiled-article search.",
-        inputSchema: MemoryWriteRequestSchema,
-      },
-      async (input) => {
-        this.authorizeTool(capability, "memory_write", "memory:write");
-        const written = await this.writeMemoryFact(input);
-        // Dedup layer 2 (HiveMemory plan D1): advisory candidates over the
-        // index writeMemoryFact just upserted.
-        const similarCandidates = findSimilarMemoryCandidates(
-          this.memory,
-          written,
-        );
-        const [reportedPath, reportedRawPath] = await Promise.all([
-          realpath(written.path),
-          realpath(written.rawPath),
-        ]);
-        return toolResult(
-          {
-            ...compactMemoryWriteResult(
-              { ...written, path: reportedPath },
-              reportedRawPath,
-              similarCandidates,
-            ),
-            // Defect D2: what actually happened to this write's vector
-            // projection — "indexed", "queued", or "unavailable:<state>".
-            embedding: written.embedding,
-          },
-          "fact",
-        );
-      },
-    );
-
-    server.registerTool(
-      "memory_read",
-      {
-        title: "Read a compiled Hive memory article",
-        description:
-          "Read one compiled memory article by scope and id, as referenced by the injected wiki index or memory_search. The result includes topic, evidence, verification status, supersedes relationships, and links to immutable raw observations. Reconcile unverified, stale, or conflicted knowledge before acting.",
-        inputSchema: MemoryFactRequestSchema,
-      },
-      async ({ scope, id }) => {
-        this.authorizeTool(
-          capability,
-          "memory_read",
-          "memory:read",
-          undefined,
-          false,
-        );
-        const fact = await readMemoryFact(this.repoRoot, scope, id);
-        if (fact === null) {
-          throw new Error(`Memory fact not found: [${scope}] ${id}`);
-        }
-        return toolResult(fact, "fact");
-      },
-    );
-
-    server.registerTool(
-      "memory_delete",
-      {
-        title: "Delete a compiled Hive memory article",
-        description:
-          "Delete one compiled article and remove it from the index. Refused while another article still lists this id in supersedes — update or delete the referencing article first. Immutable raw observations remain as audit evidence.",
-        inputSchema: MemoryFactRequestSchema,
-      },
-      async ({ scope, id }) => {
-        this.authorizeTool(capability, "memory_delete", "memory:delete");
-        return toolResult(
-          { deleted: await this.deleteMemoryFact(scope, id) },
-          "result",
-        );
-      },
-    );
-
-    server.registerTool(
-      "memory_reindex",
-      {
-        title: "Rebuild the Hive memory search index",
-        description:
-          "Non-destructively migrate legacy flat facts, rebuild each scope's wiki/index.md, and rebuild disposable SQLite FTS from compiled wiki articles. The first migration backs up the complete scope before writing, preserves every flat source, and returns the backup path; later rebuilds detect the completion marker and do not migrate again.",
-        inputSchema: z.object({}),
-      },
-      async () => {
-        this.authorizeTool(capability, "memory_reindex", "memory:write");
-        return toolResult(await this.rebuildMemoryIndex(), "result");
-      },
-    );
-
-    // The L0/L1 read side of the episodic store (HiveMemory HM-1 WP2). One
-    // tool, declared classes, server-enforced per-class token ceilings with
-    // loud in-band truncation, and scoping derived from the caller's
-    // capability identity and the daemon's own project — there is no project
-    // parameter at all.
-    server.registerTool(
-      "memory_query",
-      {
-        title: "Query Hive episodic memory",
-        description:
-          "Answer bounded questions against this project's episodic memory: agent-now / agent-history (agent name), fleet-summary, what-landed (optional since), who-blocked, token-spend (optional agent/since), point-search (query: FTS over episodic events and facts, bounded snippets), my-history (your own event history — scoped to your identity, any agent field is ignored), pitfall-check (query: search pitfall-class wiki articles relevant to your current task). Every class has a server-enforced token ceiling; budget may only lower it. Over-budget results come back truncated with truncated:true and an omitted count. The envelope state distinguishes ok, empty (surface built, no matches), and absent (surface not built). Rows carry their own source and asOf freshness labels — treat them as leads to verify, not authority.",
-        inputSchema: MemoryQueryInputSchema,
-      },
-      async (input) => {
-        this.authorizeTool(
-          capability,
-          "memory_query",
-          "memory:read",
-          undefined,
-          false,
-        );
-        const result = await runMemoryQuery(
-          {
-            episodic: this.episodic,
-            status: this.status,
-            tokenUsage: this.tokenUsage,
-            memory: this.memory,
-            repoRoot: this.repoRoot,
-            resolveAgentId: (name) => this.db.getAgentByName(name)?.id ?? null,
-          },
-          { subject: capability.subject },
-          input,
-        );
-        return toolResult(result, "result");
-      },
-    );
-
-    // The L2 read side of the episodic store (HiveMemory HM-2 WP4): session
-    // digests with drill-down. The digest is a hint-not-authority navigation
-    // aid compiled deterministically from the typed record; the eventId
-    // drill-down is the hint-to-authority path to the exact source rows.
-    server.registerTool(
-      "memory_digest",
-      {
-        title: "Read a Hive session digest",
-        description:
-          "Read a compiled session digest from this project's episodic memory: by digestId, or by agent name (optionally pinned to a sessionId; the newest digest wins). The digest is a navigation aid labeled hint-not-authority — every load-bearing line carries an [eN] event-id pointer, and exact values (SHAs, paths, error strings, exit codes) sit in a typed side table. Pass eventId to drill down to the exact source event row(s) behind a pointer before acting on any claim. The envelope state distinguishes ok, empty (store open, no match), and absent (episodic store not open). Server-enforced token ceiling: budget may only lower it; an over-budget body is cut with a loud truncation marker.",
-        inputSchema: MemoryDigestInputSchema,
-      },
-      async (input) => {
-        this.authorizeTool(
-          capability,
-          "memory_digest",
-          "memory:read",
-          undefined,
-          false,
-        );
-        const result = runMemoryDigest(
-          {
-            episodic: this.episodic,
-            resolveAgentId: (name) => this.db.getAgentByName(name)?.id ?? null,
-          },
-          input,
-        );
-        return toolResult(result, "result");
-      },
-    );
-
-    // The focused pitfall surface (HiveMemory HM-2 WP5): the mistake-harvest
-    // read path. Pitfall-kind articles only — an agent checking "has anyone
-    // burned themselves here before" never wades through the whole wiki.
-    // search with no query lists every pitfall (optionally scope-filtered);
-    // search with a query runs the same FTS memory_search uses, filtered to
-    // pitfalls; get reads one article and refuses a non-pitfall id. Every
-    // row carries its verification status — unverified is a hint, not
-    // authority, everywhere it appears.
-    server.registerTool(
-      "memory_pitfall",
-      {
-        title: "Search and read Hive pitfall memory",
-        description:
-          "List, search, or read pitfall-kind memory articles — the 'we burned ourselves before' class, including unverified harvest candidates from session boundaries. action=search with a query runs full-text search filtered to pitfalls; with no query it lists every pitfall article (optionally scope-filtered). action=get reads one article by scope+id and refuses non-pitfall ids. Every result carries its verification status: unverified is a harvested claim to reconcile before acting, never authority.",
-        inputSchema: MemoryPitfallRequestSchema,
-      },
-      async ({ action, query, scope, id, limit }) => {
-        this.authorizeTool(
-          capability,
-          "memory_pitfall",
-          "memory:read",
-          undefined,
-          false,
-        );
-        if (action === "get") {
-          if (scope === undefined || id === undefined) {
-            throw new Error("memory_pitfall action=get requires scope and id");
-          }
-          const fact = await readMemoryFact(this.repoRoot, scope, id);
-          if (fact === null) {
-            throw new Error(`Memory pitfall not found: [${scope}] ${id}`);
-          }
-          if (fact.kind !== "pitfall") {
-            throw new Error(
-              `Memory article [${scope}] ${id} is kind "${fact.kind}", not a pitfall`,
-            );
-          }
-          return toolResult(fact, "fact");
-        }
-        const facts = await listMemoryFacts(this.repoRoot);
-        const pitfalls = facts.filter(
-          (fact) =>
-            fact.kind === "pitfall" &&
-            (scope === undefined || fact.scope === scope),
-        );
-        if (query === undefined) {
-          return toolResult(
-            {
-              state: pitfalls.length === 0 ? "empty" : "ok",
-              pitfalls: pitfalls.map((fact) => ({
-                scope: fact.scope,
-                id: fact.id,
-                topic: fact.topic,
-                title: fact.title,
-                status: fact.status,
-                date: fact.date,
-              })),
-            },
-            "results",
-          );
-        }
-        const ids = new Set(pitfalls.map((fact) => `${fact.scope}:${fact.id}`));
-        const hits = this.memory
-          .search(query, {
-            ...(scope === undefined ? {} : { scope }),
-            limit: limit ?? 10,
-          })
-          .filter((hit) => ids.has(`${hit.scope}:${hit.id}`));
-        return toolResult(
-          {
-            state: hits.length === 0 ? "empty" : "ok",
-            pitfalls: hits.map((hit) => ({
-              scope: hit.scope,
-              id: hit.id,
-              topic: hit.topic,
-              title: hit.title,
-              status: hit.status,
-              date: hit.date,
-              snippet: hit.snippet,
-            })),
-          },
-          "results",
-        );
-      },
-    );
-
-    // The remaining HiveMemory plan §5 surface: episodic note writes, the
-    // trigger protocol's recall bundle as a tool, and D3 cross-scope pitfall
-    // promotion.
-    server.registerTool(
-      "memory_note",
-      {
-        title: "Record a Hive episodic memory note",
-        description:
-          "Record a lightweight fact in this project's episodic memory — the bi-temporal store agents and the queen share, not the curated wiki. Source is your own identity. Dedup is enforced: if a currently-believed fact with the same normalized title exists, the write is REFUSED and the existing fact's id and body are returned — to correct a belief, invalidate the named fact and record its replacement (the store is bi-temporal: never delete, supersede). The response's embedding field reports what happened to this note's vector projection: indexed, queued, or unavailable:<state> (keyword-searchable only). For durable curated knowledge use memory_write instead.",
-        inputSchema: MemoryNoteRequestSchema,
-      },
-      async (input) => {
-        this.authorizeTool(capability, "memory_note", "memory:write");
-        if (this.episodic === null) {
-          return toolResult(
-            {
-              state: "absent",
-              detail: "episodic store is not open on this daemon",
-            },
-            "result",
-          );
-        }
-        // Dedup layer 1 for the episodic layer (HiveMemory plan D1): the same
-        // normalized-title contract the wiki write path enforces. A duplicate
-        // is refused with the existing row, because the contradiction path is
-        // invalidate-and-supersede, never a silent second current belief.
-        const duplicate = this.episodic
-          .currentFacts()
-          .find(
-            (fact) =>
-              normalizeTitle(fact.title) === normalizeTitle(input.title),
-          );
-        if (duplicate !== undefined) {
-          return toolResult(
-            {
-              state: "duplicate",
-              detail:
-                "a currently-believed fact with this normalized title already " +
-                "exists — nothing was recorded. To correct it, invalidate the " +
-                "existing fact and record the replacement as its superseder.",
-              existing: {
-                id: duplicate.id,
-                title: duplicate.title,
-                body: duplicate.body,
-                validAt: duplicate.validAt,
-              },
-            },
-            "result",
-          );
-        }
-        const fact = this.episodic.recordFact({
-          kind: "fact",
-          topic: input.topic,
-          title: input.title,
-          body: input.body,
-          source: capability.subject,
-          ...(input.confidence === undefined
-            ? {}
-            : { confidence: input.confidence }),
-          ...(input.validAt === undefined ? {} : { validAt: input.validAt }),
-        });
-        // Semantic-leg index maintenance (HM-5): failure-isolated, and a later
-        // invalidate is covered by the prune pass on the rebuild boundary —
-        // only currently-believed facts stay indexed. The outcome rides the
-        // response (defect D2).
-        const embedding: MemoryEmbeddingWriteOutcome =
-          this.embeddingIndex === null
-            ? "unavailable:disabled"
-            : await this.embeddingIndex.upsertFact(
-                fact.id,
-                MemoryEmbeddingIndex.factText(fact),
-              );
-        return toolResult(
-          {
-            state: "recorded",
-            embedding,
-            fact: {
-              id: fact.id,
-              kind: fact.kind,
-              topic: fact.topic,
-              title: fact.title,
-              source: fact.source,
-              confidence: fact.confidence,
-              validAt: fact.validAt,
-            },
-          },
-          "fact",
-        );
-      },
-    );
-
-    server.registerTool(
-      "memory_recall",
-      {
-        title: "Recall ranked Hive memory for a query",
-        description:
-          "The ranked recall bundle the trigger protocol produces, as a tool: wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. Retrieval is hybrid: full-text search blended (reciprocal-rank) with local embedding similarity when the daemon's semantic leg is available, FTS-only otherwise. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it. The ceiling is partitioned so neither class can starve the other — each is bounded to a reserved share and unused capacity is reallocated to the other side. Over-budget bundles come back with truncated:true, an omitted count, and omittedPitfalls/omittedArticles naming which side was cut. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
-        inputSchema: MemoryRecallRequestSchema,
-      },
-      async ({ query, budget }) => {
-        this.authorizeTool(
-          capability,
-          "memory_recall",
-          "memory:read",
-          undefined,
-          false,
-        );
-        const bundle = await buildMemoryRecallBundle(query, {
-          memory: this.memory,
-          repoRoot: () => this.repoRoot,
-          semantic: this.semanticRecall(),
-          semanticStatus: this.semanticRecallState(),
-        });
-        const ceiling = MEMORY_RECALL_DEFAULT_BUDGET;
-        const effective = Math.min(budget ?? ceiling, ceiling);
-        // The bundle is PARTITIONED, not merely prioritized (plan §3). Taking
-        // pitfalls first and giving articles the remainder is a priority
-        // ordering, and it starves: a corpus that is mostly pitfalls fills the
-        // whole ceiling with them and a rank-1 semantic-only article becomes
-        // unreachable. Each class is bounded to a reserved share instead, and
-        // whatever one side leaves unused is reallocated to the other so a
-        // corpus with few pitfalls wastes none of its budget.
-        const fill = (
-          rows: readonly (typeof bundle.pitfalls)[number][],
-          budget: number,
-        ): { kept: (typeof bundle.pitfalls)[number][]; tokens: number } => {
-          const kept: (typeof bundle.pitfalls)[number][] = [];
-          let used = 0;
-          for (const row of rows) {
-            const cost = estimateTokens(row);
-            if (used + cost > budget) continue;
-            used += cost;
-            kept.push(row);
-          }
-          return { kept, tokens: used };
-        };
-        // Articles claim their reserved share first — that claim is the whole
-        // anti-starvation guarantee. Pitfalls then take everything else, so
-        // the mistake class keeps its priority over the unreserved remainder
-        // (and wins outright when the budget is too small for both). Finally
-        // articles reclaim whatever pitfalls could not use.
-        const articleReserve = Math.floor(effective / 2);
-        const reservedArticles = fill(bundle.articles, articleReserve);
-        const pitfallFill = fill(
-          bundle.pitfalls,
-          effective - reservedArticles.tokens,
-        );
-        const articleFill = fill(
-          bundle.articles,
-          effective - pitfallFill.tokens,
-        );
-        const keptPitfalls = pitfallFill.kept;
-        const keptArticles = articleFill.kept;
-        const tokens = pitfallFill.tokens + articleFill.tokens;
-        const omittedPitfalls = bundle.pitfalls.length - keptPitfalls.length;
-        const omittedArticles = bundle.articles.length - keptArticles.length;
-        const omitted = omittedPitfalls + omittedArticles;
-        // Defect D2: the envelope discriminates hybrid / degraded:<state> /
-        // disabled so FTS-only-because-embeddings-are-down is never
-        // indistinguishable from a genuine keyword-only result. The warning is
-        // envelope-level (field + note block), never a row — budget clamping
-        // cannot cut it.
-        const degraded = bundle.semantic.startsWith("degraded:");
-        const warning = degraded
-          ? memoryRecallDegradedWarning(
-              bundle.semantic.slice("degraded:".length),
-            )
-          : null;
-        return toolResult(
-          {
-            state: bundle.state,
-            semantic: bundle.semantic,
-            ...(warning === null ? {} : { warning }),
-            detail:
-              bundle.state === "absent"
-                ? "this daemon has no wiki search index wired"
-                : bundle.state === "empty"
-                  ? `the wiki was searched and nothing matched "${query}"`
-                  : null,
-            note: MEMORY_RECALL_HINT_NOTE,
-            budget: effective,
-            tokens,
-            truncated: omitted > 0,
-            omitted,
-            omittedPitfalls,
-            omittedArticles,
-            pitfalls: keptPitfalls,
-            articles: keptArticles,
-          },
-          "results",
-          warning,
-        );
-      },
-    );
-
-    server.registerTool(
-      "memory_promote",
-      {
-        title: "Promote a repo pitfall to global Hive memory",
-        description:
-          "Copy one REPO-scope pitfall article into the global wiki as a new article — the only way memory crosses a project boundary (HiveMemory plan D3). Queen/operator only. The copy keeps kind and status and gains an origin_project provenance block (project uuid, original id, date). A redaction check runs BEFORE anything is written: absolute paths, this repo's own path, home directories, private hostnames, and token-like strings in the body refuse the promotion and name every finding — edit the repo article to generalize it first, then re-run. Facts and events are never promotable; kind=pitfall only.",
-        inputSchema: MemoryPromoteRequestSchema,
-      },
-      async ({ id }) => {
-        // A cross-scope write rides the delete tier (operator/orchestrator),
-        // not memory:write — plan §5.
-        this.authorizeTool(capability, "memory_promote", "memory:delete");
-        const fact = await readMemoryFact(this.repoRoot, "repo", id);
-        if (fact === null) {
-          throw new Error(`Memory pitfall not found: [repo] ${id}`);
-        }
-        if (fact.kind !== "pitfall") {
-          throw new Error(
-            `Only pitfall-kind articles are promotable; [repo] ${id} is kind "${fact.kind}"`,
-          );
-        }
-        const findings = scanPromotionRedaction(fact.body, {
-          repoRoot: this.repoRoot,
-          home: homedir(),
-        });
-        if (findings.length > 0) {
-          throw new Error(
-            `memory_promote redaction check refused [repo] ${id}: the body ` +
-              "carries content that must not cross into global scope. Edit the " +
-              "repo article to generalize it, then re-run. Findings:\n" +
-              findings
-                .map((finding) => `- ${finding.kind}: ${finding.match}`)
-                .join("\n"),
-          );
-        }
-        const written = await this.writeMemoryFact({
-          scope: "global",
-          topic: fact.topic,
-          title: fact.title,
-          body:
-            fact.body +
-            promotionProvenanceBlock({
-              hiveUuid: projectHiveUuid(this.repoRoot),
-              id: fact.id,
-              date: new Date().toISOString().slice(0, 10),
-            }),
-          tags: [...fact.tags, "promoted"],
-          source: promotionSource(fact),
-          evidence: `Promoted from repo-scope pitfall "${fact.id}" by ${capability.subject} via memory_promote`,
-          status: fact.status,
-          kind: "pitfall",
-          supersedes: [],
-          ...(fact.verified === undefined ? {} : { verified: fact.verified }),
-        });
-        return toolResult(
-          {
-            promoted: {
-              scope: written.scope,
-              topic: written.topic,
-              id: written.id,
-              title: written.title,
-              status: written.status,
-            },
-            origin: { scope: "repo", id: fact.id },
-          },
-          "fact",
-        );
-      },
-    );
-
-    // The mid-task half of the graph-first mandate: the same locate the spawn
-    // brief runs (Hive-side seeding + expansion over graph.json), callable
-    // with a natural-language question. Lives on Hive's server, not
-    // graphify's — that surface is pre-1.0 and not ours — and never blocks:
-    // every failure is an honest "use grep" answer, not an error.
-    server.registerTool(
-      "graph_locate",
-      {
-        title: "Locate files for a question via the code knowledge graph",
-        description:
-          "Find where something lives or happens in this repo: returns the files, symbols (with file:line citations), and import edges (with EXTRACTED/INFERRED provenance tags) that best match a natural-language question, using the repo's local knowledge graph. Use it for locate- and structure-questions before grep; it matches names and structure, not file contents, so exact-string hunts and vocabulary the code does not use still belong to grep/rg. Answers are leads to verify, never authority.",
-        inputSchema: z.object({
-          question: z
-            .string()
-            .min(3)
-            .describe(
-              'What you are trying to find, in plain words — e.g. "where does the daemon attach the MCP server to a spawning agent"',
-            ),
-        }),
-      },
-      async ({ question }) => {
-        this.authorizeTool(
-          capability,
-          "graph_locate",
-          "status:read",
-          undefined,
-          false,
-        );
-        return toolResult(await graphLocate(this.repoRoot, question), "locate");
-      },
-    );
+    registerGraphTool(server, capability, {
+      repoRoot: this.repoRoot,
+      authorizeTool: (cap, tool, action, subject, auditAllow) =>
+        this.authorizeTool(cap, tool, action, subject, auditAllow),
+    });
 
     return server;
   }

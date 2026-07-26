@@ -1,6 +1,0 @@
-{"kind":"engine","host_arch":"arm64","boundary":"hive_ghostty_surface_process_output_v1","review":"fraser-round3-volume"}
-{"kind":"suite","name":"OrderedOutputEngineTests","executed":16,"failures":0,"transcript":"arm64-engine-xctest.txt"}
-{"kind":"suite","name":"OrderedOutputStressTests","executed":3,"failures":0,"transcript":"arm64-stress-xctest.txt"}
-{"kind":"stress","case":"large_stream_100mib_class","control":"testLargeOrderedStreamProvesReplyOrderAndLosslessContent","proof":"full_width_volume_rows_equal_source_every_byte","status":"PASS"}
-{"kind":"stress","case":"volume_negative_control","control":"testVolumeByteLossControlFailsOnSingleVolumeByteMutation","proof":"single_volume_byte_flip_fails_full_row_equality","status":"PASS"}
-{"kind":"closed","controls":["draw_restore","apc","concurrent","100mib_volume"],"status":"PASS"}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { UnmergedBranch } from "../../src/adapters/worktrees";
 import { HiveDatabase } from "../../src/daemon/db";
+import type { RootDeliveryOutcome } from "../../src/daemon/delivery";
 import type { SessionSender } from "../../src/daemon/delivery";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
@@ -47,8 +48,8 @@ class SilentSessionSender implements SessionSender {
 
 const offlineRootProtocol = {
   isLive: () => false,
-  async deliverMessage(): Promise<boolean> {
-    return false;
+  async deliverMessage(): Promise<RootDeliveryOutcome> {
+    return { delivered: false, reason: "test double never delivers" };
   },
 };
 

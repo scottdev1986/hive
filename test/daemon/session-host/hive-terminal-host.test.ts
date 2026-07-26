@@ -898,7 +898,9 @@ describe("HiveTerminalHostAdapter", () => {
         now: () => new Date("2026-07-18T01:00:01.000Z"),
         processIdentity: (pid) => ({
           startToken:
-            pid === run.pid ? run.startToken : required(inspection.child).startToken,
+            pid === run.pid
+              ? run.startToken
+              : required(inspection.child).startToken,
         }),
         processState: async () => state,
         signalProcessGroup: (processGroupId, signal) => {
@@ -907,8 +909,9 @@ describe("HiveTerminalHostAdapter", () => {
           if (signal === "SIGCONT") state = "running";
           if (signal === "SIGTERM") {
             state = "gone";
-            foregroundProcessGroupId = required(inspection.jobControl)
-              .childProcessGroupId;
+            foregroundProcessGroupId = required(
+              inspection.jobControl,
+            ).childProcessGroupId;
           }
         },
         sleep: async () => undefined,
@@ -1026,8 +1029,7 @@ describe("HiveTerminalHostAdapter", () => {
           if (pid !== run.pid) return { startToken: "4000:123400" };
           providerReads += 1;
           return {
-            startToken:
-              providerReads === 1 ? run.startToken : "4100:recycled",
+            startToken: providerReads === 1 ? run.startToken : "4100:recycled",
           };
         },
         processState: async () => "running",

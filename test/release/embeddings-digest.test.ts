@@ -174,8 +174,8 @@ describe("embedding digest build policy", () => {
   });
 
   test("keyed releases pin the runtime they ship", () => {
-    expect(embeddingsDigestForBuild("release-public-key", "loaded-digest")).toBe(
-      "loaded-digest",
-    );
+    expect(
+      embeddingsDigestForBuild("release-public-key", "loaded-digest"),
+    ).toBe("loaded-digest");
   });
 });

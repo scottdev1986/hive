@@ -14,13 +14,11 @@ import {
 import {
   type CapabilityRecord,
   CapabilityRecordSchema,
-  capabilityFreshness,
   capabilityKey,
   fingerprintAccount,
   known,
   splitVariant,
   unknown,
-  valueOr,
 } from "../../src/schemas/capability";
 
 const GROK_PAYLOAD = {
@@ -287,8 +285,7 @@ describe("claude initialize → capability records", () => {
     // The distinction this whole record exists to protect: absent ≠ false. The
     // record holds no value at all, so a caller wanting a boolean must supply
     // the fallback itself, in the open — whichever it picks is what it gets.
-    expect(valueOr(haiku.supportsEffort, false)).toBe(false);
-    expect(valueOr(haiku.supportsEffort, true)).toBe(true);
+    expect(haiku.supportsEffort.state).toBe("unknown");
   });
 
   test("records the effort fields the vendor did send, unmerged", () => {
@@ -598,26 +595,6 @@ describe("provenance and identity", () => {
       variant: "1m",
     });
     expect(splitVariant("gpt-5.5")).toEqual({ base: "gpt-5.5", variant: null });
-  });
-});
-
-describe("freshness", () => {
-  const at = (iso: string) => new Date(iso);
-
-  test("a record inside the TTL is fresh; past it, stale", () => {
-    const record = { observedAt: OBSERVED_AT };
-    expect(
-      capabilityFreshness(record, 30, at("2026-07-11T12:29:00.000Z")),
-    ).toBe("fresh");
-    expect(
-      capabilityFreshness(record, 30, at("2026-07-11T12:31:00.000Z")),
-    ).toBe("stale");
-  });
-
-  test("an unparseable timestamp is stale, never fresh", () => {
-    expect(
-      capabilityFreshness({ observedAt: "not-a-date" }, 30, at(OBSERVED_AT)),
-    ).toBe("stale");
   });
 });
 

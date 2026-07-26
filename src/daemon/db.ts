@@ -810,7 +810,9 @@ export class HiveDatabase {
       this.database.exec("ALTER TABLE agents ADD COLUMN holdResetAt TEXT");
     }
     if (!agentColumnNames.has("holdProviderRunId")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN holdProviderRunId TEXT");
+      this.database.exec(
+        "ALTER TABLE agents ADD COLUMN holdProviderRunId TEXT",
+      );
     }
     // The model an agent is *observed* running, which is a different fact from
     // `model` — the immutable launch identity decision 6 records so a control

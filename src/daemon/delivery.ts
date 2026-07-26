@@ -63,12 +63,26 @@ export interface SessionSender {
   ): Promise<InputReceipt | void>;
 }
 
+/**
+ * Why a root wake did not land, or that it did.
+ *
+ * This was a bare `boolean`, and the boolean is what made the 2026-07-21
+ * acceptance run unreadable: the deliverer knows precisely which gate refused —
+ * a changed foreground, an input claim held by someone else, a host that is not
+ * running — and returning one bit threw all of it away one call before the row
+ * that exists to record it. A refusal must carry its reason; a delivery has
+ * none to carry, so the shape makes that unrepresentable.
+ */
+export type RootDeliveryOutcome =
+  | { delivered: true }
+  | { delivered: false; reason: string };
+
 export interface RootProtocolDeliverer {
   isLive(): boolean;
   deliverMessage(
     content: string,
     meta: Record<string, string>,
-  ): Promise<boolean>;
+  ): Promise<RootDeliveryOutcome>;
 }
 
 export interface SendOptions {
@@ -848,16 +862,18 @@ export class MessageDelivery {
     const recipient = this.db.getAgentByName(agentName);
     const claim = () => {
       const deliveredAt = new Date().toISOString();
+      // Handing a row to a poller proves injection and nothing more, exactly as
+      // on the push path (see markInjected). Marking a normal message "applied"
+      // here claimed the recipient had acted on it when the only evidence was
+      // that it had been FETCHED — and it wrote that claim with injectedAt still
+      // null, a state the lifecycle cannot otherwise produce. That combination
+      // also hid the row from listInjectedUnapplied (which requires injectedAt),
+      // so it could never be reconciled or alerted on. "applied" is earned in
+      // reconcileInjected, on a real turn boundary.
       return this.db
         .claimUndeliveredMessages(agentName, deliveredAt)
         .map((message) =>
-          message.priority === "normal"
-            ? this.requireMessageTransition(message.id, "applied", deliveredAt)
-            : this.requireMessageTransition(
-                message.id,
-                "injected",
-                deliveredAt,
-              ),
+          this.requireMessageTransition(message.id, "injected", deliveredAt),
         );
     };
     if (recipient === null) return claim();
@@ -873,13 +889,18 @@ export class MessageDelivery {
       const claimed = orchestratorRecipientNames().flatMap((name) =>
         this.db.claimUndeliveredMessages(name, deliveredAt),
       );
+      // Same rule for the root: a drained row is injected, not applied.
+      // reconcileInjected confirms these against `turnBoundaryAt`, which is the
+      // surface that actually records the root's turns — the 105-of-107 case in
+      // its own comment. Claiming "applied" here bypassed that confirmation and
+      // left injectedAt null, which is what made the outage unreadable.
       return claimed.map((message) => {
-        const applied = this.requireMessageTransition(
+        const injected = this.requireMessageTransition(
           message.id,
-          "applied",
+          "injected",
           message.deliveredAt ?? deliveredAt,
         );
-        return createOrchestratorEnvelope(applied);
+        return createOrchestratorEnvelope(injected);
       });
     });
   }
@@ -953,9 +974,9 @@ export class MessageDelivery {
       );
       return null;
     }
-    let confirmed: boolean;
+    let outcome: RootDeliveryOutcome;
     try {
-      confirmed = await this.rootProtocol.deliverMessage(
+      outcome = await this.rootProtocol.deliverMessage(
         formatOrchestratorWake(createOrchestratorEnvelope(message)),
         {
           sender: message.from,
@@ -973,10 +994,10 @@ export class MessageDelivery {
       );
       return null;
     }
-    if (!confirmed) {
+    if (!outcome.delivered) {
       this.db.recordMessageDeliveryDiagnostic(
         message.id,
-        "root wake failed: the root protocol did not confirm delivery",
+        `root wake declined: ${outcome.reason}`,
         new Date().toISOString(),
       );
       return null;

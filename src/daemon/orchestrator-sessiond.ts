@@ -1,9 +1,6 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import {
-  CapabilityProviderSchema,
-  type ProviderRun,
-} from "../schemas";
+import { CapabilityProviderSchema, type ProviderRun } from "../schemas";
 import { domainUuidV7Schema } from "../schemas/session-protocol";
 import {
   mintRootSessiondLocator,

@@ -26,7 +26,6 @@ import {
 } from "./authorized-launch";
 import type {
   DiscoveredQuotaPool,
-  QuotaAlertState,
   QuotaLedger,
   QuotaReservation,
   ReserveQuotaInput,
@@ -273,10 +272,6 @@ function sameScope(left: QuotaLimit, right: QuotaLimit): boolean {
     left.account === right.account &&
     left.pool === right.pool
   );
-}
-
-function confidenceLabel(status: QuotaPoolStatus): string {
-  return `${status.confidence}/${status.freshness} from ${status.source}`;
 }
 
 /** Unknown is rendered as the word, never as a number a reader could trust. */
@@ -634,7 +629,6 @@ export class QuotaService {
     return [...general, ...specific];
   }
 
-
   /** The pool a run is booked against: its own cap if it has one, else general. */
   private limitFor(
     candidate: QuotaCandidateIdentity,
@@ -660,7 +654,10 @@ export class QuotaService {
 
   /** §07: is any pool metering this model spent, and when does the
    * drained window reset? The drain handler's one per-agent read. */
-  drainFor(candidate: QuotaCandidateIdentity, now = this.clock()): DrainedWindow | null {
+  drainFor(
+    candidate: QuotaCandidateIdentity,
+    now = this.clock(),
+  ): DrainedWindow | null {
     return drainedWindowFor(this.poolsGoverning(candidate, now));
   }
 
@@ -675,9 +672,7 @@ export class QuotaService {
   /** §07: every metered provider's general pool is spent. Unmetered routes
    * are not knowable here — the drain handler joins its own error record. */
   allMeteredDrained(now = this.clock()): boolean {
-    const providers = [
-      ...new Set(this.probes.map((probe) => probe.provider)),
-    ];
+    const providers = [...new Set(this.probes.map((probe) => probe.provider))];
     if (providers.length === 0) return false;
     return providers.every((provider) => {
       const general = this.generalLimit(provider);
@@ -694,7 +689,10 @@ export class QuotaService {
     fiveHour: string | null;
     weekly: string | null;
   } {
-    const nearest = { fiveHour: null as string | null, weekly: null as string | null };
+    const nearest = {
+      fiveHour: null as string | null,
+      weekly: null as string | null,
+    };
     for (const limit of this.resolvedLimits()) {
       if (!limit.routable || !limit.models.includes("*")) continue;
       const status = this.statusForLimit(limit, now);
@@ -896,7 +894,6 @@ export class QuotaService {
     );
   }
 
-
   /** The pool with the least room: the one that actually governs the run. */
   private tightest(
     entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
@@ -914,8 +911,6 @@ export class QuotaService {
     );
   }
 
-
-
   /**
    * Read live limits from every provider and fold them into the store.
    *
@@ -932,7 +927,10 @@ export class QuotaService {
    */
   async refreshFromProviders(
     now = this.clock(),
-    options: { force?: boolean; providers?: readonly CapabilityProvider[] } = {},
+    options: {
+      force?: boolean;
+      providers?: readonly CapabilityProvider[];
+    } = {},
   ): Promise<QuotaRefreshReport[]> {
     if (!this.config.discovery) return [];
     const reports: QuotaRefreshReport[] = [];
@@ -940,7 +938,8 @@ export class QuotaService {
       if (
         options.providers !== undefined &&
         !options.providers.includes(probe.provider)
-      ) continue;
+      )
+        continue;
       if (options.force !== true && this.hasFreshReading(probe.provider, now)) {
         reports.push({ provider: probe.provider, status: "skipped", pools: 0 });
         continue;
@@ -1067,9 +1066,6 @@ export class QuotaService {
               weeklyConfidence: reading.confidence,
             }),
       }),
-    );
-    const limit = this.resolvedLimits().find(
-      (candidate) => scopeKey(candidate) === scopeKey(scope),
     );
   }
 
@@ -1591,26 +1587,28 @@ export class QuotaService {
       item: (typeof attemptable)[number],
     ): ReserveQuotaInput[] =>
       item.entries.length === 0
-        ? [{
-          id: crypto.randomUUID(),
-          agentName: request.agentName,
-          provider: item.candidate.tool,
-          account: "default",
-          pool: `unconfigured:${item.candidate.model}`,
-          model: item.candidate.model,
-          effort: item.candidate.effort ?? null,
-          category: request.category,
-          estimatedUnits: 10,
-          now: iso(now),
-          expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-        }]
+        ? [
+            {
+              id: crypto.randomUUID(),
+              agentName: request.agentName,
+              provider: item.candidate.tool,
+              account: "default",
+              pool: `unconfigured:${item.candidate.model}`,
+              model: item.candidate.model,
+              effort: item.candidate.effort ?? null,
+              category: request.category,
+              estimatedUnits: 10,
+              now: iso(now),
+              expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
+            },
+          ]
         : this.reservationInputs(
-          request.agentName,
-          item.candidate,
-          item.entries,
-          request.category,
-          now,
-        );
+            request.agentName,
+            item.candidate,
+            item.entries,
+            request.category,
+            now,
+          );
 
     if (request.selection === "spread") {
       const fair = this.ledger.reserveFairGroups(
@@ -1624,20 +1622,20 @@ export class QuotaService {
       if (item === undefined || primary === undefined) {
         throw new Error("Quota fairness returned an empty reservation");
       }
-      const governing = item.entries.length === 0
-        ? undefined
-        : this.tightest(item.entries);
+      const governing =
+        item.entries.length === 0 ? undefined : this.tightest(item.entries);
       return {
         ...item.candidate,
         authorized: item.candidate,
         reservation: primary,
-        status: governing === undefined
-          ? this.gapStatus(item.candidate.tool, item.candidate.model, {
-            reserved: 0,
-            fiveHourRecorded: 0,
-            weeklyRecorded: 0,
-          })
-          : this.statusForLimit(governing.limit, now),
+        status:
+          governing === undefined
+            ? this.gapStatus(item.candidate.tool, item.candidate.model, {
+                reserved: 0,
+                fiveHourRecorded: 0,
+                weeklyRecorded: 0,
+              })
+            : this.statusForLimit(governing.limit, now),
         reason:
           "capability-cleared weighted fair dispatch over Hive-observed assignments",
         warnings: quarantineWarnings,
@@ -1655,25 +1653,24 @@ export class QuotaService {
     if (reservation === undefined) {
       throw new Error("Quota ledger returned an empty reservation");
     }
-    const governing = item.entries.length === 0
-      ? undefined
-      : this.tightest(item.entries);
+    const governing =
+      item.entries.length === 0 ? undefined : this.tightest(item.entries);
     return {
       ...item.candidate,
       authorized: item.candidate,
       reservation,
-      status: governing === undefined
-        ? this.gapStatus(item.candidate.tool, item.candidate.model, {
-          reserved: 0,
-          fiveHourRecorded: 0,
-          weeklyRecorded: 0,
-        })
-        : this.statusForLimit(governing.limit, now),
+      status:
+        governing === undefined
+          ? this.gapStatus(item.candidate.tool, item.candidate.model, {
+              reserved: 0,
+              fiveHourRecorded: 0,
+              weeklyRecorded: 0,
+            })
+          : this.statusForLimit(governing.limit, now),
       reason: "the user's chosen link",
       warnings: quarantineWarnings,
     };
   }
-
 
   async reserveControlRun(
     request: ControlQuotaRequest,
@@ -1786,10 +1783,6 @@ export class QuotaService {
       units === undefined ? "estimated" : source,
       at,
     );
-    const limit = this.limitFor({
-      tool: reservation.provider,
-      model: reservation.model,
-    });
   }
 
   /**
@@ -2064,8 +2057,6 @@ export class QuotaService {
         "being invented in their place.",
     );
   }
-
-
 }
 
 // ---------------------------------------------------------------------------
@@ -2113,7 +2104,8 @@ export function drainedWindowFor(
         drained === null ||
         (candidate.resetsAt !== null &&
           (drained.resetsAt === null || candidate.resetsAt < drained.resetsAt))
-      ) drained = candidate;
+      )
+        drained = candidate;
     }
   }
   return drained;

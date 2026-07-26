@@ -224,8 +224,7 @@ export async function stopSessiondAgentSession(
         result.state === "unknown" &&
         result.survivors.length === 0 &&
         result.errors.some(
-          (error) =>
-            error.diagnosticId === "process-tree-escapees-unaccounted",
+          (error) => error.diagnosticId === "process-tree-escapees-unaccounted",
         );
       if (
         (result.state !== "terminated" || result.survivors.length !== 0) &&

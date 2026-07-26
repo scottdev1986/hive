@@ -14,7 +14,7 @@
 // (HIVE_LIVE_MEMORY_CONFORMANCE=1), the repo's existing live e2e pattern;
 // this suite is the static half of the HM-4 matrix.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../src/adapters/tools/capability-env";

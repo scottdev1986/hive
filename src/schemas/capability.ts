@@ -273,13 +273,6 @@ export const unknown = <T>(
 ): Discovered<T> => ({ state: "unknown", reason, surface, observedAt });
 
 /**
- * Read a discovered fact, or fall back. The fallback is always the caller's own
- * explicit choice at the call site — there is no default hidden in here.
- */
-export const valueOr = <T>(fact: Discovered<T>, fallback: T): T =>
-  fact.state === "known" ? fact.value : fallback;
-
-/**
  * Effort levels are stored as the raw strings the vendor sent, never as a Hive
  * enum. A strict enum at the ingestion boundary recreates the release dependency
  * this whole design exists to remove: codex 0.144.1 already advertises `max` and
@@ -439,23 +432,12 @@ export const EffectiveDefaultSchema = z.strictObject({
 });
 export type EffectiveDefault = z.infer<typeof EffectiveDefaultSchema>;
 
-/**
- * Whether a record is fresh enough to *derive* a route from.
- *
- * A stale record still supports validation — it remains the best evidence Hive
- * has about what a model accepts, and rejecting a launch because the catalog is
- * old would turn a discovery hiccup into an outage. It no longer supports
- * derivation: choosing a model from a catalog that may have changed is exactly
- * the silent guess this design exists to prevent. Callers that derive must check
- * this; callers that validate must name the staleness in their warning instead.
- */
-export const capabilityFreshness = (
-  record: Pick<CapabilityRecord, "observedAt">,
-  ttlMinutes: number,
-  now: Date = new Date(),
-): "fresh" | "stale" => {
-  const observed = new Date(record.observedAt).getTime();
-  if (Number.isNaN(observed)) return "stale";
-  const ageMinutes = (now.getTime() - observed) / 60_000;
-  return ageMinutes >= 0 && ageMinutes <= ttlMinutes ? "fresh" : "stale";
-};
+// `capabilityFreshness` lived here: a fresh/stale verdict for a capability
+// record, written for the derivation engine that chose models from the catalog.
+// That engine was deleted in the 2026-07-13 cutover (the user is the router —
+// see routing-derivation.ts), taking every caller with it, and the helper sat
+// dead behind a passing test for months. Validation deliberately does NOT gate
+// on staleness: a stale record is still the best evidence Hive has about what a
+// model accepts, and refusing a launch over an old catalog turns a discovery
+// hiccup into an outage. Naming staleness in a validation warning remains
+// unimplemented; restore a freshness helper only when something surfaces it.

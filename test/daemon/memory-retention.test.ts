@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { readMemoryFact, writeMemoryFact } from "../../src/adapters/memory";
 import { loadHiveConfig } from "../../src/config/load";
 import { HiveDatabase } from "../../src/daemon/db";
+import type { RootDeliveryOutcome } from "../../src/daemon/delivery";
 import type { SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { runRetentionSweep } from "../../src/daemon/memory-retention";
@@ -452,8 +453,8 @@ class SilentSessionSender implements SessionSender {
 
 const offlineRootProtocol = {
   isLive: () => false,
-  async deliverMessage(): Promise<boolean> {
-    return false;
+  async deliverMessage(): Promise<RootDeliveryOutcome> {
+    return { delivered: false, reason: "test double never delivers" };
   },
 };
 

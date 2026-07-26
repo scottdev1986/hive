@@ -389,8 +389,10 @@ describe("the drain handler", () => {
     // act on: the agent would wait for a poke that cannot arrive. The seam
     // reports this agent instead of holding it.
     const row = h.db.getAgentById("agent-maya")!;
-    expect({ status: row.status, holdResetAt: row.holdResetAt ?? null }).not
-      .toEqual({ status: "held", holdResetAt: null });
+    expect({
+      status: row.status,
+      holdResetAt: row.holdResetAt ?? null,
+    }).not.toEqual({ status: "held", holdResetAt: null });
     expect(h.replacements).toHaveLength(1);
   });
 

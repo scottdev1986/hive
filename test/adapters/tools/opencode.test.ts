@@ -123,6 +123,7 @@ describe("opencode adapter", () => {
     const written = JSON.parse(await readFile(path, "utf8")) as {
       agent: Record<string, Record<string, unknown>>;
       mcp: Record<string, Record<string, unknown>>;
+      permission: Record<string, unknown>;
     };
     // The repo's own entries survive.
     expect(written.agent.review).toEqual({
@@ -154,6 +155,11 @@ describe("opencode adapter", () => {
       prompt: "{file:/tmp/prompt.txt}",
       permission: { edit: "deny", bash: "deny" },
     });
+    // The agent block alone is not the barrier. A subagent spawned through the
+    // `task` tool runs as a different agent and falls back to the global block,
+    // so read-only has to be global or the subagent keeps bash and edit.
+    // Source: https://opencode.ai/docs/permissions/ (checked 2026-07-25).
+    expect(written.permission).toEqual({ edit: "deny", bash: "deny" });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 
     // A respawn without a fresh token or brief keeps both, and a missing

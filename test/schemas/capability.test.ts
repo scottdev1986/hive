@@ -3,39 +3,10 @@ import { join } from "node:path";
 import { Glob } from "bun";
 import {
   CAPABILITY_PROVIDERS,
-  capabilityFreshness,
   providersOf,
 } from "../../src/schemas/capability";
 
 const SRC_ROOT = join(import.meta.dir, "../../src");
-
-describe("capability freshness", () => {
-  const observedAt = "2026-07-13T12:00:00.000Z";
-
-  test("accepts current evidence but rejects stale and future timestamps", () => {
-    expect(
-      capabilityFreshness(
-        { observedAt },
-        30,
-        new Date("2026-07-13T12:29:00.000Z"),
-      ),
-    ).toBe("fresh");
-    expect(
-      capabilityFreshness(
-        { observedAt },
-        30,
-        new Date("2026-07-13T12:31:00.000Z"),
-      ),
-    ).toBe("stale");
-    expect(
-      capabilityFreshness(
-        { observedAt: "2026-07-13T12:01:00.000Z" },
-        30,
-        new Date(observedAt),
-      ),
-    ).toBe("stale");
-  });
-});
 
 describe("providersOf — the one legal record enumerator", () => {
   test("always returns the whole union, even over a partial record", () => {

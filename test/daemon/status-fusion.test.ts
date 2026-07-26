@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  composeVisibleStatus,
-  fuseAgentStatus,
-} from "../../src/daemon/status-fusion";
+import { fuseAgentStatus } from "../../src/daemon/status-fusion";
 import type { WorkspaceEventV2 } from "../../src/schemas/status-envelope";
 
 const AT = "2026-07-16T12:00:00.000Z";
@@ -89,10 +86,6 @@ describe("status fusion", () => {
     expect(status.conflicts).toContain(
       "report=complete conflicts with provider lifecycle=awaiting_approval",
     );
-    expect(composeVisibleStatus(status)).toMatchObject({
-      primaryLabel: "complete: Tests are green",
-      progress: 100,
-    });
   });
 
   test("expires reports and provider lifecycle without inventing idle or death", () => {
@@ -131,10 +124,6 @@ describe("status fusion", () => {
     expect(status.healthState).toMatchObject({
       value: "unknown",
       freshness: "unknown",
-    });
-    expect(composeVisibleStatus(status)).toMatchObject({
-      primaryLabel: "working (stale)",
-      progress: null,
     });
   });
 

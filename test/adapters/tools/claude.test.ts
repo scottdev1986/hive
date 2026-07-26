@@ -23,9 +23,7 @@ import {
   claudeConfigPath,
   claudeExecutableCandidates,
   claudeProjectDirectory,
-  detectClaudeCliVersion,
   discoverClaudeRecoverySessionId,
-  findLatestClaudeSessionId,
   resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
@@ -307,28 +305,6 @@ describe("Claude adapter", () => {
     ).toEqual("/home/u/.claude/projects/-repo--hive-worktrees-maya");
   });
 
-  test("disk discovery returns the newest transcript's session id, or null", async () => {
-    const fakeHome = join(tempRoot, "claude-home");
-    const projectDir = join(
-      fakeHome,
-      ".claude",
-      "projects",
-      worktreePath.replace(/[^A-Za-z0-9]/g, "-"),
-    );
-    expect(await findLatestClaudeSessionId(worktreePath, fakeHome)).toBeNull();
-
-    await mkdir(projectDir, { recursive: true });
-    await writeFile(join(projectDir, "older-session.jsonl"), "{}\n");
-    // Ensure a strictly newer mtime for the second transcript.
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await writeFile(join(projectDir, "newer-session.jsonl"), "{}\n");
-    await writeFile(join(projectDir, "not-a-transcript.txt"), "ignored");
-
-    expect(await findLatestClaudeSessionId(worktreePath, fakeHome)).toEqual(
-      "newer-session",
-    );
-  });
-
   test("recovery discovery uses internal creation evidence and refuses ambiguity", async () => {
     const fakeHome = join(tempRoot, "claude-recovery-home");
     const projectDir = claudeProjectDirectory(worktreePath, fakeHome);
@@ -562,10 +538,45 @@ describe("Claude adapter", () => {
       "Write",
       "NotebookEdit",
       "Bash",
+      "PowerShell",
+      "Monitor",
+      "EnterWorktree",
     ]);
     // No allow list: an allow list is what broke this, by having to name every
     // readable tool up front. Under bypass there is nothing left to gate.
     expect(settings.permissions.allow).toBeUndefined();
+  });
+
+  // The deny list is the whole read-only barrier under bypassPermissions, where
+  // nothing prompts. It is a denylist against a moving vendor tool table, so it
+  // fails open: Monitor shipped upstream, took an arbitrary shell command, and
+  // silently punched a hole that four tool names did not cover. This asserts the
+  // property rather than the literal, so the next such tool fails the build.
+  // Source: https://code.claude.com/docs/en/tools-reference (checked 2026-07-25).
+  test.each([
+    ["Bash", "executes shell commands"],
+    ["PowerShell", "executes shell commands on Windows"],
+    ["Monitor", "takes an arbitrary shell command in an until-loop"],
+    ["Edit", "modifies files"],
+    ["Write", "creates and overwrites files"],
+    ["NotebookEdit", "modifies notebook files"],
+    ["EnterWorktree", "creates a git worktree on disk"],
+  ])("a read-only session denies %s, which %s", async (tool) => {
+    const worktreePath = await mkdtemp(join(tmpdir(), "hive-readonly-"));
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "reader",
+      daemonPort: 4317,
+      readOnly: true,
+      dangerous: true,
+      hiveCommand: ["hive"],
+    });
+    const settings = JSON.parse(
+      await readFile(
+        join(worktreePath, ".claude", "settings.local.json"),
+        "utf8",
+      ),
+    ) as { permissions: { deny: string[] } };
+    expect(settings.permissions.deny).toContain(tool);
   });
 
   test("an autonomous reader is not pinned to manual approval by argv", () => {
@@ -617,7 +628,15 @@ describe("Claude adapter", () => {
 
     expect(settings.permissions).toEqual({
       defaultMode: "default",
-      deny: ["Edit", "Write", "NotebookEdit", "Bash"],
+      deny: [
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "Bash",
+        "PowerShell",
+        "Monitor",
+        "EnterWorktree",
+      ],
       allow: ["Read", "Glob", "Grep", "mcp__hive__*"],
     });
     expect(settings.enableAllProjectMcpServers).toEqual(true);
@@ -1025,39 +1044,6 @@ describe("Claude Hive integration", () => {
       headersHelper: "hive credential --agent maya",
     });
     expect(Object.keys(mcp.mcpServers)).toEqual(["hive"]);
-  });
-});
-
-describe("detectClaudeCliVersion", () => {
-  test("reads the version from `claude --version`", async () => {
-    let argv: string[] = [];
-    expect(
-      await detectClaudeCliVersion(async (command) => {
-        argv = command;
-        return {
-          stdout: "2.1.206 (Claude Code)\n",
-          exitCode: 0,
-        };
-      }, "/native/claude"),
-    ).toBe("2.1.206");
-    expect(argv).toEqual(["/native/claude", "--version"]);
-  });
-
-  test("returns null when the CLI is missing, fails, or is unparseable", async () => {
-    expect(
-      await detectClaudeCliVersion(async () => ({ stdout: "", exitCode: 1 })),
-    ).toBeNull();
-    expect(
-      await detectClaudeCliVersion(async () => ({
-        stdout: "unknown",
-        exitCode: 0,
-      })),
-    ).toBeNull();
-    expect(
-      await detectClaudeCliVersion(async () => {
-        throw new Error("ENOENT");
-      }),
-    ).toBeNull();
   });
 });
 

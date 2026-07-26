@@ -1,3 +1,0 @@
-observer_parent=30502 observer_child=30531
-30502 30500 30500      0 S    /bin/bash
-30531 30502 30500      0 S    /bin/sleep

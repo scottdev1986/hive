@@ -15,6 +15,7 @@ import {
   buildKimiResumeCommand,
   buildKimiSpawnCommand,
   discoverKimiRecoverySessionId,
+  kimiReadOnlyContainmentGap,
   probeKimiDefaultModel,
   wrapKimiSpawnWithEffort,
   wrapKimiWithInstructionFile,
@@ -255,5 +256,48 @@ describe("Kimi adapter", () => {
       name: "RecoverySessionDiscoveryError",
       reason: "invalid-evidence",
     });
+  });
+});
+
+describe("read-only containment is reported, never faked", () => {
+  /**
+   * Kimi has no per-launch deny channel: its only permission surface is the
+   * operator's global config.toml, which Hive must not write (that gate belongs
+   * to the user). So a Hive "read-only" Kimi agent under an operator default of
+   * yolo/auto holds write authority and Hive cannot stop it. The contract Hive
+   * CAN keep is refusing to pretend, and these cases pin exactly when it speaks.
+   */
+  test.each([
+    ["no config file at all", null, false],
+    ['pinned "manual"', 'default_permission_mode = "manual"\n', false],
+    ["a config with no permission key", 'default_model = "k2"\n', false],
+    ['pinned "yolo"', 'default_permission_mode = "yolo"\n', true],
+    ['pinned "auto"', 'default_permission_mode = "auto"\n', true],
+  ])("%s", async (_label, toml, expectGap) => {
+    const home = await mkdtemp(join(tmpdir(), "hive-kimi-perm-"));
+    try {
+      if (toml !== null) await writeFile(join(home, "config.toml"), toml);
+      const gap = kimiReadOnlyContainmentGap(home);
+      expect(gap === null).toBe(!expectGap);
+      if (expectGap) {
+        // It must name the vendor gate and hand the fix to the user.
+        expect(gap).toContain("NOT enforced");
+        expect(gap).toContain("Hive does not write vendor config");
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("reporting the gap never writes the operator's config", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-kimi-perm-"));
+    try {
+      const original = 'default_permission_mode = "yolo"\n';
+      await writeFile(join(home, "config.toml"), original);
+      kimiReadOnlyContainmentGap(home);
+      expect(await readFile(join(home, "config.toml"), "utf8")).toBe(original);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });

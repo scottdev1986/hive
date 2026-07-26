@@ -91,7 +91,7 @@ describe("SessiondOrchestratorRootDelivery", () => {
       await delivery.deliverMessage("agent report", {
         message_id: "message-1",
       }),
-    ).toBe(true);
+    ).toEqual({ delivered: true });
     expect(calls).toEqual([
       {
         terminal: sessiondRoot.locator,
@@ -118,9 +118,11 @@ describe("SessiondOrchestratorRootDelivery", () => {
         },
       },
     });
+    // The host's own reason, not a bucket: a refusal that cannot name itself is
+    // what made the 2026-07-21 root wake unreadable.
     await expect(
       delivery.deliverMessage("agent report", { message_id: "message-1" }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({ delivered: false, reason: "claim denied" });
   });
 
   test("is not live before the root host is running", () => {
@@ -154,7 +156,10 @@ describe("SessiondOrchestratorRootDelivery", () => {
       delivery.deliverMessage("queued startup alert", {
         message_id: "message-1",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      delivered: false,
+      reason: "root host is not ready for input",
+    });
   });
 
   test("does not turn a queued Hive message into a shell command after the TUI exits", async () => {
@@ -171,7 +176,10 @@ describe("SessiondOrchestratorRootDelivery", () => {
     });
     await expect(
       delivery.deliverMessage("agent report", { message_id: "message-1" }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      delivered: false,
+      reason: "root declined injection (canInject gate)",
+    });
   });
 
   test("an unbound root foreground has no automated input authority", async () => {
@@ -187,6 +195,9 @@ describe("SessiondOrchestratorRootDelivery", () => {
     });
     await expect(
       delivery.deliverMessage("agent report", { message_id: "message-1" }),
-    ).resolves.toBe(false);
+    ).resolves.toEqual({
+      delivered: false,
+      reason: "no active provider run is bound to the root terminal",
+    });
   });
 });

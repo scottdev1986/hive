@@ -22,7 +22,6 @@ import {
   CODEX_NOTIFY_SCRIPT,
   codexSessionsDirectory,
   discoverCodexRecoverySessionId,
-  findLatestCodexSessionId,
   writeCodexAgentConfig,
 } from "../../../src/adapters/tools/codex";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/tools/graphify-hook";
@@ -403,41 +402,6 @@ describe("Codex adapter", () => {
     expect(command).toContain('sandbox_mode="read-only"');
   });
 
-  test("rollout disk discovery matches session_meta cwd and prefers the newest file", async () => {
-    const fakeHome = join(tempRoot, "codex-home");
-    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "10");
-    await mkdir(dayDir, { recursive: true });
-    const meta = (sessionId: string, cwd: string): string =>
-      `${JSON.stringify({
-        timestamp: "2026-07-10T09:00:00.000Z",
-        type: "session_meta",
-        payload: { session_id: sessionId, id: sessionId, cwd },
-      })}\n`;
-    await writeFile(
-      join(dayDir, "rollout-2026-07-10T08-00-00-other.jsonl"),
-      meta("other-session", "/somewhere/else"),
-    );
-    await writeFile(
-      join(dayDir, "rollout-2026-07-10T08-30-00-older.jsonl"),
-      meta("older-match", worktreePath),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await writeFile(
-      join(dayDir, "rollout-2026-07-10T09-00-00-newer.jsonl"),
-      meta("newer-match", worktreePath),
-    );
-
-    expect(await findLatestCodexSessionId(worktreePath, fakeHome)).toEqual(
-      "newer-match",
-    );
-    expect(
-      await findLatestCodexSessionId("/no/such/worktree", fakeHome),
-    ).toBeNull();
-    expect(
-      await findLatestCodexSessionId(worktreePath, join(tempRoot, "missing")),
-    ).toBeNull();
-  });
-
   test("rollout disk discovery reads session_meta lines larger than 8 KiB", async () => {
     const fakeHome = join(tempRoot, "large-meta-codex-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
@@ -457,9 +421,13 @@ describe("Codex adapter", () => {
       `${firstLine}\n`,
     );
 
-    expect(await findLatestCodexSessionId(worktreePath, fakeHome)).toEqual(
-      "large-meta-session",
-    );
+    expect(
+      await discoverCodexRecoverySessionId(
+        worktreePath,
+        "2026-07-11T08:00:00.000Z",
+        fakeHome,
+      ),
+    ).toEqual("large-meta-session");
   });
 
   test("refuses a session_meta record whose session id key is unknown", async () => {
@@ -474,9 +442,13 @@ describe("Codex adapter", () => {
       })}\n`,
     );
 
-    expect(findLatestCodexSessionId(worktreePath, fakeHome)).rejects.toThrow(
-      "Invalid Codex session_meta",
-    );
+    expect(
+      discoverCodexRecoverySessionId(
+        worktreePath,
+        "2026-07-11T09:00:00.000Z",
+        fakeHome,
+      ),
+    ).rejects.toThrow("Invalid Codex session_meta");
   });
 
   test("recovery discovery uses session_meta creation evidence and refuses ambiguity", async () => {

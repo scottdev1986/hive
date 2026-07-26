@@ -285,7 +285,9 @@ test("a model no catalog claims cannot be billed to any vendor's pool", () => {
   // Positive control: the catalog's own models still book, and a model billed
   // to the wrong vendor's meter still refuses. If either breaks, the guard is
   // not doing what it says.
-  expect(reserve(ledger, "claude", "claude-opus-4-8").length).toBeGreaterThan(0);
+  expect(reserve(ledger, "claude", "claude-opus-4-8").length).toBeGreaterThan(
+    0,
+  );
   expect(() => reserve(ledger, "codex", "claude-opus-4-8")).toThrow(
     /Refusing to bill claude model/,
   );

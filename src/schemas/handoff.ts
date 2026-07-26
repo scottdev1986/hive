@@ -26,12 +26,7 @@ export const HandoffBundleSchema = z
     handoffId: z.string().uuid(),
     sourceRunId: z.string().uuid(),
     runOutcome: RunOutcomeSchema,
-    reason: z.enum([
-      "quota-drain",
-      "capability-wall",
-      "crash",
-      "operator",
-    ]),
+    reason: z.enum(["quota-drain", "capability-wall", "crash", "operator"]),
     originalTaskRef: z
       .strictObject({
         kind: z.literal("agent-task"),

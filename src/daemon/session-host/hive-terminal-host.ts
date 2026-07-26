@@ -276,14 +276,13 @@ export class HiveTerminalHostAdapter {
     expected: ProviderRun,
     signal: "SIGSTOP" | "SIGCONT" | "SIGTERM" | "SIGKILL",
   ): Promise<boolean> {
-    if (!(await this.providerForegroundMatches(locator, expected))) return false;
+    if (!(await this.providerForegroundMatches(locator, expected)))
+      return false;
     try {
       // Unlike C1 input, this read and signal cannot be one sessiond commit.
       // Re-check the exact leader token immediately before the group signal.
       // ESRCH is honest provider exit; token drift defeats pgid recycling.
-      if (
-        this.processIdentity(expected.pid).startToken !== expected.startToken
-      )
+      if (this.processIdentity(expected.pid).startToken !== expected.startToken)
         return false;
       this.signalProcessGroup(expected.foregroundProcessGroupId, signal);
       return true;
@@ -369,9 +368,7 @@ export class HiveTerminalHostAdapter {
     const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
     if (active === null) return null;
     try {
-      if (
-        this.processIdentity(active.pid).startToken === active.startToken
-      ) {
+      if (this.processIdentity(active.pid).startToken === active.startToken) {
         return active;
       }
     } catch {

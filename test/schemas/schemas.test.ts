@@ -14,7 +14,6 @@ import {
   ORCHESTRATOR_NAME,
   ORCHESTRATOR_NAME_ALIASES,
   orchestratorRecipientNames,
-  QuotaConfigSchema,
   RoutingPolicySchema,
   StatuslineReportSchema,
 } from "../../src/schemas";

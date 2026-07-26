@@ -1285,7 +1285,6 @@ describe("pools gate the models they actually meter", () => {
     expect(fable?.routable).toBe(true);
   });
 
-
   test("every id form of a model is bound to the same meter", () => {
     const catalog = catalogFromClaudeModels(claudeModels);
     const namesOf = (modelId: string) =>
@@ -1684,8 +1683,7 @@ describe("a route that cannot start is not a route", () => {
   });
 });
 
-describe("a refusal names the way out, and never takes it", () => {
-});
+describe("a refusal names the way out, and never takes it", () => {});
 
 describe("a spend belongs to the vendor whose model produced it", () => {
   test("the ledger refuses to bill a Claude model to the Codex meter", async () => {

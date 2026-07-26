@@ -48,10 +48,7 @@ class RecordingSender implements SessionSender {
 class RecordingControlRuntime implements CriticalControlRuntime {
   readonly calls: Array<{ agent: AgentRecord; message: AgentMessage }> = [];
   constructor(private readonly failure?: Error) {}
-  async apply(
-    value: AgentRecord,
-    message: AgentMessage,
-  ): Promise<void> {
+  async apply(value: AgentRecord, message: AgentMessage): Promise<void> {
     this.calls.push({ agent: value, message });
     if (this.failure !== undefined) throw this.failure;
   }

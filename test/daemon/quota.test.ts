@@ -3,13 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/db";
-import type { RootProtocolDeliverer } from "../../src/daemon/delivery";
 import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
-import {
-  calendarWeekBounds,
-  QuotaExhaustedError,
-  QuotaService,
-} from "../../src/daemon/quota";
+import { calendarWeekBounds, QuotaService } from "../../src/daemon/quota";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
@@ -17,7 +12,6 @@ import {
 } from "../../src/daemon/quota-ledger";
 import { HiveDaemon } from "../../src/daemon/server";
 import {
-  DEFAULT_QUOTA_CONFIG,
   type QuotaConfig,
   QuotaConfigSchema,
   type QuotaLimit,
@@ -350,7 +344,6 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
-
   test("shares reservations across instance databases without aliasing same-repo agent names", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-quota-shared-instances-"));
     roots.push(root);
@@ -613,7 +606,6 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
-
   test("persists reconciliation, releases unstarted cancellations, and conservatively recovers started reservations", async () => {
     const { root, path, db } = await fileDatabase("recovery");
     const ledger = new QuotaLedger(db, "instance-a", join(root, "a"));
@@ -777,7 +769,6 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
-
   test("atomic fair dispatch gives concurrent spawns different providers", async () => {
     const { db } = await fileDatabase("reservations-spread");
     const service = new QuotaService(
@@ -843,7 +834,6 @@ describe("quota-aware routing", () => {
     expect(decision.tool).toBe("claude");
     db.close();
   });
-
 
   test("routes review to the other vendor when quota is equally healthy", async () => {
     const { db } = await fileDatabase("review");
@@ -1003,7 +993,6 @@ describe("quota telemetry and alerts", () => {
     db.close();
   });
 
-
   test("marks old provider observations stale and takes the conservative maximum", async () => {
     const { db } = await fileDatabase("stale");
     const service = new QuotaService(
@@ -1032,7 +1021,6 @@ describe("quota telemetry and alerts", () => {
     }
     db.close();
   });
-
 });
 
 /**

@@ -68,3 +68,7 @@ apple
 .hive/worktrees/
 graphify-out/
 .graphifyignore
+
+# Executable proofs of production contracts — run locally, not tracked.
+# See prototypes/README.md; the properties they prove are pinned by tests in test/.
+prototypes/
