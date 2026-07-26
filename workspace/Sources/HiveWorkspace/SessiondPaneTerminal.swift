@@ -171,17 +171,64 @@ final class SessiondPaneTerminal {
         self.transport?.close()
         self.transport = transport
         do {
-            TerminalTelemetry.shared.startIfNeeded() // TELEMETRY — REMOVE
-            let attachStart = ProcessInfo.processInfo.systemUptime // TELEMETRY — REMOVE
-            let outcome = try view.attach(
+            // The handshake runs OFF main. `AttachReplayClient.attach` blocks in
+            // `transport.receive` until the host sends a frame or the 5 second
+            // handshake timeout expires, and a terminal that has produced
+            // nothing yet sends nothing — so on main that is a five-second
+            // frozen workspace per pane, serially. Measured with real vendor
+            // TUIs on real PTYs (prototypes/terminal, proto-viewer): two such
+            // panes stalled the main queue for 10,000 ms; off main the worst
+            // stall in the same run was 1.9 ms.
+            //
+            // Only the fence and the publish stay on main, and the panes now
+            // attach concurrently rather than one after another.
+            let client = try view.prepareAttach(
                 grant: grant,
-                geometry: geometry,
                 afterSeq: afterSeq,
                 transport: transport
             )
-            TerminalTelemetry.shared.noteAttach( // TELEMETRY — REMOVE
-                microseconds: Int((ProcessInfo.processInfo.systemUptime - attachStart) * 1_000_000)
-            )
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let result = Result {
+                    try client.attach(
+                        grant: grant,
+                        geometry: geometry,
+                        afterSeq: afterSeq,
+                        transport: transport
+                    )
+                }
+                DispatchQueue.main.async {
+                    self?.publishAttach(
+                        result,
+                        client: client,
+                        grant: grant,
+                        geometry: geometry,
+                        transport: transport
+                    )
+                }
+            }
+        } catch {
+            NSLog("sessiond surface attach for %@ refused: %@", agentName, "\(error)")
+            transport.close()
+            recordRecoverableFailure("\(error)")
+        }
+    }
+
+    /// Main-thread tail of the attach: publish the handshake's result onto the
+    /// view and start the live pump.
+    private func publishAttach(
+        _ result: Result<AttachReplayOutcome, Error>,
+        client: AttachReplayClient,
+        grant: AttachGrant,
+        geometry: TerminalGeometry,
+        transport: UdsHostTransport
+    ) {
+        guard !detached, let view, self.transport === transport else {
+            transport.close()
+            return
+        }
+        do {
+            let outcome = try result.get()
+            try view.finishAttach(outcome, client: client, geometry: geometry)
             if case .failed(let state) = outcome {
                 transport.close()
                 NSLog("sessiond surface attach for %@ failed: %@", agentName, "\(state)")

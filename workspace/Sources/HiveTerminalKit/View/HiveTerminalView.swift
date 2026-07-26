@@ -173,7 +173,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private func handleBridgeEvent(_ event: BridgeEvent) {
         switch event.type {
         case .invalidate:
-            TerminalTelemetry.shared.noteInvalidate() // TELEMETRY — REMOVE
             scheduleDraw()
             accessibilitySemanticStateDidInvalidate()
         case .title:
@@ -209,11 +208,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             guard self.pendingDraw, self.canPresentGhosttyFrame else { return }
             self.pendingDraw = false
             self.drawScheduledCount += 1
-            let drawStart = ProcessInfo.processInfo.systemUptime // TELEMETRY — REMOVE
             self.engine.draw()
-            TerminalTelemetry.shared.noteDraw( // TELEMETRY — REMOVE
-                microseconds: Int((ProcessInfo.processInfo.systemUptime - drawStart) * 1_000_000)
-            )
             if !self.hasCompletedInitialDraw {
                 self.hasCompletedInitialDraw = true
                 self.synchronizeOcclusion()
@@ -280,12 +275,10 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             handleBridgeEvent(event)
             return
         }
-        // INVALIDATE arrives once per parsed chunk from the terminal I/O
-        // thread. Posting each one floods the main queue with blocks a
-        // keystroke then queues behind, so collapse them: INVALIDATE carries no
-        // payload and its handler is idempotent (schedule a draw, mark the AX
-        // cache dirty), so one delivery covers any number of them. Every other
-        // event type is rare and carries payload, so it posts normally.
+        // Bridge events are already main-confined by
+        // `BridgeCallbackContext.enqueueEvent`, which is also where redundant
+        // INVALIDATEs collapse into one delivery. This branch exists for hosts
+        // that invoke the handler directly off-main (tests), and posts as-is.
         DispatchQueue.main.async { [weak self] in self?.handleBridgeEvent(event) }
     }
 
@@ -296,18 +289,60 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         afterSeq: UInt64 = 0,
         transport: HostTransport
     ) throws -> AttachReplayOutcome {
-        try admitBinding(
-            SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId),
-            highWater: afterSeq
+        let client = try prepareAttach(
+            grant: grant,
+            afterSeq: afterSeq,
+            transport: transport
         )
-        setSurfaceState(.attaching)
-        let client = attachClient ?? makeAttachClient()
         let outcome = try client.attach(
             grant: grant,
             geometry: geometry,
             afterSeq: afterSeq,
             transport: transport
         )
+        try finishAttach(outcome, client: client, geometry: geometry)
+        return outcome
+    }
+
+    /// Main-thread half of an attach: fence the locator, mark the surface
+    /// attaching, and hand back the client the caller will drive.
+    ///
+    /// Split out so a host that is slow to answer cannot hold the main thread.
+    /// `AttachReplayClient.attach` blocks in `transport.receive` until the host
+    /// sends a frame or the 5 second handshake timeout expires, and a terminal
+    /// that has not produced output yet — a freshly created one, an idle
+    /// provider — sends nothing. Measured with real vendor TUIs on real PTYs
+    /// (`prototypes/terminal`, proto-viewer): two such panes attaching on the
+    /// main thread produced a 10,000 ms main-queue stall, i.e. a ten-second
+    /// frozen workspace; with the wait moved off main the worst stall in the
+    /// same run was 1.9 ms.
+    ///
+    /// Both halves stay main-thread-only. Only `client.attach` between them is
+    /// safe to run elsewhere: it serializes on its own lock, and the engine
+    /// ingress it uses (`processOutput`/`restoreCheckpoint`) is the same
+    /// off-main path `pumpHostFrame` already takes.
+    @discardableResult
+    public func prepareAttach(
+        grant: AttachGrant,
+        afterSeq: UInt64,
+        transport: HostTransport
+    ) throws -> AttachReplayClient {
+        dispatchPrecondition(condition: .onQueue(.main))
+        try admitBinding(
+            SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId),
+            highWater: afterSeq
+        )
+        setSurfaceState(.attaching)
+        return attachClient ?? makeAttachClient()
+    }
+
+    /// Main-thread half of an attach: publish what the handshake produced.
+    public func finishAttach(
+        _ outcome: AttachReplayOutcome,
+        client: AttachReplayClient,
+        geometry: TerminalGeometry
+    ) throws {
+        dispatchPrecondition(condition: .onQueue(.main))
         highWater = client.highWater
         claimPresentation = client.claimPresentation
         switch outcome {
@@ -322,7 +357,6 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         case .rejectedLateFrame, .continueReplay:
             break
         }
-        return outcome
     }
 
     /// Applies one live post-attach host frame through the locator-fenced
@@ -339,15 +373,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// state copy.
     public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
         guard let client = attachClient else { return }
-        // TELEMETRY — REMOVE
-        TerminalTelemetry.shared.startIfNeeded()
-        if frame.type == .output { TerminalTelemetry.shared.noteOutputFrame(bytes: frame.payload.count) }
-        let feedStart = ProcessInfo.processInfo.systemUptime
         let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
             ?? .rejectedLateFrame
-        TerminalTelemetry.shared.noteFeed( // TELEMETRY — REMOVE
-            microseconds: Int((ProcessInfo.processInfo.systemUptime - feedStart) * 1_000_000)
-        )
         let snapshot = client.uiSnapshot()
         // Callers already on main (tests, attach replay) still see their state
         // update synchronously, so read-after-pump keeps meaning what it did.

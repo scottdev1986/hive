@@ -175,18 +175,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     /// One feed snapshot in, pane set reconciled.
     func applyFeed(_ agents: [AgentSnapshot], orchestrator: OrchestratorSnapshot? = nil) {
-        // TELEMETRY — REMOVE
-        // Repeating ~900 ms main-queue stalls during a 10-agent spawn showed
-        // zero terminal activity: no frames, draws, feeds, attaches, or AX
-        // refreshes. FeedClient delivers `consume` to the main queue, and this
-        // is where that lands, so it is the next candidate on the path.
-        TerminalTelemetry.shared.startIfNeeded()
-        let applyStart = ProcessInfo.processInfo.systemUptime
         react(to: state.apply(feed: agents, orchestrator: orchestrator))
-        TerminalTelemetry.shared.noteFeedApply(
-            microseconds: Int((ProcessInfo.processInfo.systemUptime - applyStart) * 1_000_000),
-            agents: agents.count
-        )
     }
 
     /// The feed process exited: agent statuses can no longer be trusted.
