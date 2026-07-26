@@ -1,0 +1,100 @@
+import AppKit
+import XCTest
+@testable import HiveTerminalKit
+
+/// What a flooding pane is allowed to put on the main queue.
+///
+/// A keystroke is main-queue work, so every block the output path posts is
+/// something the next keystroke queues behind. Two of those blocks used to be
+/// posted per parsed chunk — one bridge INVALIDATE delivery and one accessibility
+/// export — and both were unbounded in the number of chunks.
+///
+/// Measured shape of the problem, with 32 live panes each flooding a real zsh
+/// through a real PTY (`prototypes/terminal`, 3 runs per arm): 2.45M INVALIDATEs
+/// posted 2.45M main-queue blocks and 56k viewport exports; main-queue
+/// scheduling latency ran p50 9.5 / p99 13.0 ms. Collapsed and made on-demand,
+/// the same run posts 70k deliveries and 2.1k exports at p50 7.4 / p99 10.1 ms.
+///
+/// These rows pin the two policies in process, where the counts are exact.
+///
+/// The coalescing lives in `BridgeCallbackContext.enqueueEvent` — the point that
+/// actually posts to the main queue. `HiveTerminalView` receives every bridge
+/// event already on main, so a collapse there would never run.
+final class MainQueueFloodTests: XCTestCase {
+    /// Redundant INVALIDATEs that arrive while a delivery is already queued must
+    /// collapse into that one delivery. INVALIDATE carries no payload and its
+    /// handler is idempotent, so one delivery covers any number of them.
+    func testBurstOfInvalidatesCollapsesIntoOneMainQueueDelivery() throws {
+        _ = NSApplication.shared
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            engine: engine,
+            viewerId: "flood-viewer"
+        )
+        let deliveriesBefore = engine.callbackContext.invalidateDeliveryCount
+
+        // Posted from off-main, exactly like the terminal I/O thread, and with
+        // the main queue unable to run in between: this is the saturated case
+        // the coalescing exists for.
+        let posted = 500
+        let finished = expectation(description: "burst posted")
+        DispatchQueue.global(qos: .userInitiated).async {
+            for _ in 0 ..< posted {
+                engine.callbackContext.enqueueEvent(BridgeEvent(type: .invalidate))
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 5)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+        let delivered = engine.callbackContext.invalidateDeliveryCount - deliveriesBefore
+        XCTAssertGreaterThan(delivered, 0, "the burst never reached the main thread at all")
+        XCTAssertLessThan(
+            delivered,
+            posted / 10,
+            "\(posted) INVALIDATEs produced \(delivered) main-queue deliveries; "
+                + "redundant invalidates are not being collapsed"
+        )
+        XCTAssertGreaterThan(view.drawScheduledCount, 0, "collapsing dropped the draw entirely")
+    }
+
+    /// Output-driven invalidates must not export the viewport on the main thread
+    /// while nothing is consuming accessibility. The export takes Ghostty's
+    /// renderer mutex — the lock the I/O thread holds for a whole chunk parse.
+    func testInvalidateDoesNotExportTheViewportUntilAnAccessibilityClientReads() throws {
+        _ = NSApplication.shared
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            engine: engine,
+            viewerId: "flood-ax-viewer"
+        )
+
+        for _ in 0 ..< 50 {
+            view.accessibilitySemanticStateDidInvalidate()
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(
+            view.accessibilityExportCount,
+            0,
+            "the viewport was exported on the main thread with no accessibility client present"
+        )
+
+        // A client reads: correctness is unchanged, because the read itself
+        // re-exports on demand.
+        XCTAssertNotNil(view.accessibilityValue(), "an accessibility read returned nothing")
+        let exportsAfterFirstRead = view.accessibilityExportCount
+        XCTAssertGreaterThan(exportsAfterFirstRead, 0, "an accessibility read did not export")
+
+        // ...and from then on invalidates notify eagerly again, so a live
+        // assistive client still hears output as it arrives.
+        view.accessibilitySemanticStateDidInvalidate()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertGreaterThan(
+            view.accessibilityExportCount,
+            exportsAfterFirstRead,
+            "after a client read, an invalidate no longer refreshes accessibility"
+        )
+    }
+}

@@ -51,6 +51,11 @@ final class BridgeCallbackContext: @unchecked Sendable {
     private var acceptingCallbacks = true
     private var activeCallbacks = 0
     private let condition = NSCondition()
+    /// INVALIDATE coalescing state — see `enqueueEvent`.
+    private var invalidateDeliveryPending = false
+    /// Test seam: how many INVALIDATE deliveries actually reached the main
+    /// queue, which is what the coalescing is about.
+    private(set) var invalidateDeliveryCount = 0
 
     /// Gate 3 test seam: production leaves this nil. Runs inside the admitted
     /// copy scope so teardown-vs-callback ordering can be proved without a
@@ -171,10 +176,40 @@ final class BridgeCallbackContext: @unchecked Sendable {
 
     /// Fake-engine seam: uses the same deferred delivery discipline without
     /// manufacturing an unsafe C pointer.
+    ///
+    /// INVALIDATE is the one high-frequency event here: it arrives once per
+    /// parsed chunk, from whichever thread is parsing. Posting each one puts a
+    /// block on the main queue that the next keystroke queues behind, so
+    /// redundant ones collapse into the delivery already pending — INVALIDATE
+    /// carries no payload and its host handler is idempotent (schedule a draw,
+    /// mark the accessibility cache dirty), so one delivery covers any number
+    /// of them. Every other event type is rare and carries payload, so it posts
+    /// normally and keeps its exact multiplicity.
+    ///
+    /// Measured with 32 live panes each flooding a real zsh through a real PTY
+    /// (`prototypes/terminal`, 3 runs per arm): 2.45M INVALIDATEs became 70k
+    /// main-queue deliveries. On its own that moved main-queue scheduling
+    /// latency — what a keystroke waits behind — from p50 9.5 / p99 13.0 ms to
+    /// p50 9.4 / p99 12.5 ms; together with the on-demand accessibility export
+    /// in `HiveTerminalView+Accessibility.schedule(_:)`, p50 7.4 / p99 10.1 ms.
+    ///
+    /// The pending flag clears BEFORE the handler runs, so an INVALIDATE that
+    /// arrives while the handler is executing still queues a fresh delivery.
     func enqueueEvent(_ event: BridgeEvent) {
+        if event.type == .invalidate {
+            condition.lock()
+            let alreadyPending = invalidateDeliveryPending
+            invalidateDeliveryPending = true
+            condition.unlock()
+            if alreadyPending { return }
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.condition.lock()
+            if event.type == .invalidate {
+                self.invalidateDeliveryPending = false
+                self.invalidateDeliveryCount += 1
+            }
             let handler = self.acceptingCallbacks ? self.eventHandler : nil
             self.condition.unlock()
             handler?(event)

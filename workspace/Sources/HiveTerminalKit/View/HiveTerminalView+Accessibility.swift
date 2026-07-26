@@ -76,6 +76,12 @@ private final class TerminalAccessibilityController {
     /// Nested pin depth: while > 0, getters share one generation and never re-export.
     private var pinDepth = 0
     private var dirtyWhilePinned = false
+    /// Set by the first `currentSnapshot()` read — i.e. the first time an
+    /// assistive client asked this view anything. Until then, output-driven
+    /// invalidates only mark the cache dirty.
+    private var hasAccessibilityReader = false
+    /// Test seam: counts engine exports so the invalidate policy is observable.
+    private(set) var exportCount = 0
 
     init(view: HiveTerminalView) {
         self.view = view
@@ -115,6 +121,10 @@ private final class TerminalAccessibilityController {
 
     func currentSnapshot() -> ManualSurfaceSemanticSnapshot? {
         dispatchPrecondition(condition: .onQueue(.main))
+        // Every AX getter on the view funnels through here, so the first read is
+        // the moment an assistive client actually exists. Before it, posting
+        // notifications is work with no listener — see `schedule(_:)`.
+        hasAccessibilityReader = true
         // Pinned batch: never re-export mid-read (prevents torn flat-vs-children).
         if pinDepth > 0 {
             return snapshot
@@ -134,6 +144,22 @@ private final class TerminalAccessibilityController {
         } else {
             cacheValid = false
         }
+        // An output-driven invalidate is the only high-frequency signal here:
+        // it arrives once per parsed chunk, and its scheduled refresh exports
+        // the whole viewport on the main thread, taking the same renderer mutex
+        // the terminal I/O thread holds for a chunk parse. Until an assistive
+        // client has actually read this view there is nobody to notify, and
+        // `currentSnapshot()` re-exports on demand anyway — so marking the
+        // cache dirty (done above) is the entire obligation.
+        //
+        // Measured with 32 live panes flooding real zsh shells through real
+        // PTYs (prototypes/terminal, 3 runs per arm): 56k main-thread exports
+        // become 2.1k, and main-queue scheduling latency goes from
+        // p50 9.5 / p99 13.0 ms to p50 8.1 / p99 10.8 ms.
+        //
+        // Selection, scroll, geometry and lifecycle signals are user-paced and
+        // keep notifying eagerly.
+        if signal == .invalidate, !hasAccessibilityReader { return }
         guard !refreshScheduled else { return }
         refreshScheduled = true
         // Always defer. A bridge INVALIDATE may be delivered while Ghostty is
@@ -142,11 +168,7 @@ private final class TerminalAccessibilityController {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.refreshScheduled = false
-            let axStart = ProcessInfo.processInfo.systemUptime // TELEMETRY — REMOVE
             self.refresh(postNotifications: true)
-            TerminalTelemetry.shared.noteAccessibilityRefresh( // TELEMETRY — REMOVE
-                microseconds: Int((ProcessInfo.processInfo.systemUptime - axStart) * 1_000_000)
-            )
             self.pendingSignals = []
             if self.pinDepth == 0 {
                 self.cacheValid = true
@@ -224,6 +246,7 @@ private final class TerminalAccessibilityController {
     }
 
     private func refresh(postNotifications: Bool) {
+        exportCount += 1
         guard
             let view,
             let provider = view.engine as? ManualSurfaceSemanticSnapshotProviding,
@@ -412,6 +435,10 @@ extension HiveTerminalView {
         get { terminalAccessibilityController.notificationProbe }
         set { terminalAccessibilityController.notificationProbe = newValue }
     }
+
+    /// Test seam: how many times the semantic viewport has been exported from
+    /// the engine. Pins the invalidate policy in `schedule(_:)`.
+    var accessibilityExportCount: Int { terminalAccessibilityController.exportCount }
 
     func wireAccessibilitySignals() {
         guard let surface = engine as? GhosttyManualSurface else { return }
