@@ -124,6 +124,7 @@ pub fn build(b: *std.Build) void {
     });
     daemon_identity_module.addImport("session_protocol_generated", generated);
     daemon_identity_module.addImport("protocol", test_module);
+    _ = addTest(b, test_step, daemon_identity_module);
     const broker_transport_module = b.createModule(.{
         .root_source_file = b.path("src/broker_transport.zig"),
         .target = target,

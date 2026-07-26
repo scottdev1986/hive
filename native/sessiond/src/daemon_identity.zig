@@ -64,13 +64,33 @@ pub fn observeExactProcess(
     ownership: HostProcessOwnership,
 ) ExactProcessPresence {
     if (pid <= 0 or expected_start_token.len == 0) return .unknown;
+    var reaped_by_earlier_observation = false;
     if (ownership == .child) {
         // Child ownership is recorded only after exact launch identity
         // readback. Until this broker reaps it, that PID cannot be reused.
         var status: c_int = 0;
         const waited = c.waitpid(pid, &status, c.WNOHANG);
         if (waited == pid) return .absent;
-        if (waited != 0) return .unknown;
+        if (waited != 0) {
+            // ECHILD is not "I cannot tell": it means this PID is not a child
+            // of ours to wait for, and the ordinary way that happens is that an
+            // EARLIER observation on this same path already reaped it. The
+            // first caller consumed the exit status; every caller after it used
+            // to get `unknown` — and `unknown` occupies a registry slot
+            // forever, so a host killed through a TERMINATE whose readback did
+            // not verify took its slot with it and no restart-free path
+            // returned it. That is the CAPACITY_EXCEEDED exhaustion recorded in
+            // planning/2026-07-25-sessiond-capacity-exhaustion.md; reproduced
+            // with real processes in prototypes/capacity (S3/S4).
+            //
+            // Falling through to the ordinary identity evidence is strictly
+            // more evidence, never less: a gone PID answers absent through the
+            // kill probe, a REUSED PID answers absent on the start token, and a
+            // live process whose recorded identity still matches answers
+            // present. Absence is never asserted from ECHILD alone.
+            if (std.posix.errno(waited) != .CHILD) return .unknown;
+            reaped_by_earlier_observation = true;
+        }
     }
 
     const observed = inspectProcess(pid) catch return observeKillAbsence(pid);
@@ -78,7 +98,7 @@ pub fn observeExactProcess(
     const token = formatStartToken(observed.start_token, &token_storage) catch return .unknown;
     if (!std.mem.eql(u8, token, expected_start_token)) return .absent;
 
-    if (ownership == .child) return .present;
+    if (ownership == .child and !reaped_by_earlier_observation) return .present;
 
     const rc = c.kill(pid, 0);
     if (rc == 0) return .present;
@@ -265,4 +285,81 @@ pub fn verifyDaemonPeer(
     if (!claims.product or !claims.build or !claims.protocol or !claims.schema or !claims.project)
         return .{ .code = .forbidden, .close_connection = true };
     return null;
+}
+
+// A killed child host must stay reclaimable after the first observation has
+// already reaped it. `waitForExactProcessAbsence` runs inside TERMINATE and
+// consumes the exit status; the broker's later `reapExitedHosts` pass is what
+// actually returns the registry slot, and it must not be told `unknown` merely
+// because there is no exit status left to collect. Real fork/exec/kill: a
+// simulated PID cannot exercise waitpid's ECHILD at all.
+test "an already-reaped child host is still observed absent" {
+    const pid = try std.posix.fork();
+    if (pid == 0) {
+        const argv = [_:null]?[*:0]const u8{ "sleep", "30", null };
+        const envp = [_:null]?[*:0]const u8{null};
+        std.posix.execveZ("/bin/sleep", &argv, &envp) catch {};
+        std.posix.exit(127);
+    }
+
+    var token_storage: [64]u8 = undefined;
+    var observed = inspectProcess(pid);
+    var attempts: usize = 0;
+    while (std.meta.isError(observed) and attempts < 200) : (attempts += 1) {
+        std.Thread.sleep(std.time.ns_per_ms);
+        observed = inspectProcess(pid);
+    }
+    const start_token = try formatStartToken((try observed).start_token, &token_storage);
+
+    try std.testing.expectEqual(
+        ExactProcessPresence.present,
+        observeExactProcess(pid, start_token, .child),
+    );
+
+    _ = c.kill(pid, c.SIGKILL);
+    // The first observation reaps: this is TERMINATE's absence poll.
+    try std.testing.expect(waitForExactProcessAbsence(pid, start_token, .child));
+    // Every observation after it is the broker's reap pass, and must agree.
+    try std.testing.expectEqual(
+        ExactProcessPresence.absent,
+        observeExactProcess(pid, start_token, .child),
+    );
+    try std.testing.expectEqual(
+        ExactProcessPresence.absent,
+        observeExactProcess(pid, start_token, .child),
+    );
+}
+
+// The fall-through must never manufacture absence. A live child whose recorded
+// identity still matches is present, however its exit status was accounted for.
+test "a live child host is never reported absent" {
+    const pid = try std.posix.fork();
+    if (pid == 0) {
+        const argv = [_:null]?[*:0]const u8{ "sleep", "30", null };
+        const envp = [_:null]?[*:0]const u8{null};
+        std.posix.execveZ("/bin/sleep", &argv, &envp) catch {};
+        std.posix.exit(127);
+    }
+    defer {
+        _ = c.kill(pid, c.SIGKILL);
+        var status: c_int = 0;
+        _ = c.waitpid(pid, &status, 0);
+    }
+
+    var token_storage: [64]u8 = undefined;
+    var observed = inspectProcess(pid);
+    var attempts: usize = 0;
+    while (std.meta.isError(observed) and attempts < 200) : (attempts += 1) {
+        std.Thread.sleep(std.time.ns_per_ms);
+        observed = inspectProcess(pid);
+    }
+    const start_token = try formatStartToken((try observed).start_token, &token_storage);
+
+    var index: usize = 0;
+    while (index < 5) : (index += 1) {
+        try std.testing.expectEqual(
+            ExactProcessPresence.present,
+            observeExactProcess(pid, start_token, .child),
+        );
+    }
 }
