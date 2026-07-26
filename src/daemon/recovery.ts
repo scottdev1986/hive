@@ -36,8 +36,12 @@ import {
   requireSessiondAgentLocator,
   sessiondAgentProviderRunIsDead,
 } from "./session-host/hive-terminal-host";
-import { nextAgentSessionLocator } from "./session-host/locators";
+import {
+  mintSessionRequestId,
+  nextAgentSessionLocator,
+} from "./session-host/locators";
 import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
+import type { SessionLocator } from "./session-host/contract";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 
@@ -85,7 +89,7 @@ export interface CrashRecoveryDependencies {
   db: RecoveryStore;
   terminalHost?: Pick<
     HiveTerminalHostAdapter,
-    "inspect" | "reconcileProviderRun"
+    "inspect" | "reconcileProviderRun" | "terminate"
   >;
   /** Resolved lazily because a daemon configured with port 0 learns its
    * ephemeral listening port only after Bun.serve() binds. */
@@ -569,6 +573,24 @@ export class CrashRecovery {
     agent: AgentRecord,
     sessionId: string,
   ): Promise<RecoveryOutcome> {
+    // Release the generation this resume supersedes, while the record still
+    // names it. Every teardown path — stopSession, killAgentTeardown, the MCP
+    // close — resolves the locator from the agent record, and the next
+    // statement replaces it with a brand-new generation and session id. The
+    // old one then exists nowhere: not in the record, not in any index, so
+    // nothing can address it again.
+    //
+    // A dead provider does not release it either. The host outlives its
+    // provider by design (terminal-stack-transition.html §02 — the shell stays
+    // at a prompt after the provider exits), so the host is still running and
+    // still holding its sessiond slot. Measured with real vendor TUIs on real
+    // PTYs (prototypes/resume-leak): four resumes of ONE agent left four live,
+    // unaddressable hosts and consumed four of eight slots, while the only
+    // terminate production could issue reached just the newest generation.
+    // That is the second half of the CAPACITY_EXCEEDED exhaustion in
+    // planning/2026-07-25-sessiond-capacity-exhaustion.md.
+    await this.releaseSupersededGeneration(agent);
+
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
     const nextLocator = nextAgentSessionLocator(agent);
@@ -742,6 +764,50 @@ export class CrashRecovery {
       )
       .catch(() => undefined);
     return { agent: record.name, action: "resumed", sessionId };
+  }
+
+  /**
+   * Terminate the generation a resume is about to supersede.
+   *
+   * Never blocks the resume: an agent whose conversation can be restored must
+   * come back even if its predecessor's terminal cannot be reached. But a slot
+   * that could not be released is said out loud rather than silently consumed —
+   * the exhaustion this prevents was invisible for a whole session precisely
+   * because nothing reported it.
+   */
+  private async releaseSupersededGeneration(agent: AgentRecord): Promise<void> {
+    const terminalHost = this.deps.terminalHost;
+    if (terminalHost?.terminate === undefined) return;
+    let locator: SessionLocator;
+    try {
+      locator = requireSessiondAgentLocator(agent);
+    } catch {
+      return; // no sessiond generation to supersede
+    }
+    try {
+      const result = await terminalHost.terminate(locator, {
+        mode: "immediate",
+        reason: `superseded by crash resume of ${agent.name}`,
+        requestId: mintSessionRequestId(),
+      });
+      if (result.state === "terminated" && result.survivors.length === 0)
+        return;
+      console.error(
+        `Hive could not release ${agent.name}'s superseded terminal ` +
+          `(generation ${locator.generation}): ${result.state}` +
+          (result.survivors.length === 0
+            ? ""
+            : `, ${result.survivors.length} survivor(s)`) +
+          `. Its sessiond slot stays occupied until that host exits.`,
+      );
+    } catch (error) {
+      console.error(
+        `Hive could not release ${agent.name}'s superseded terminal ` +
+          `(generation ${locator.generation}): ${
+            error instanceof Error ? error.message : "unknown error"
+          }. Its sessiond slot stays occupied until that host exits.`,
+      );
+    }
   }
 
   private async failResume(
