@@ -4,13 +4,16 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
+  rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import { withFileLock } from "../file-lock";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { resolveProviderExecutable } from "./provider-executable";
 import {
@@ -148,7 +151,28 @@ function grokPermissionArgs(readOnly: boolean): string[] {
 }
 
 function grokLaunchArgs(options: GrokSpawnOptions): string[] {
-  const argv = [options.executable ?? "grok", "-m", options.model];
+  // `--no-auto-update` is REQUIRED for automated launches and is not optional
+  // polish: xAI's own headless/scripting guide says to pass it "when using
+  // headless mode (-p) or ACP (grok agent stdio) in scripts, CI, or other
+  // automated environments" (docs.x.ai/build/cli/headless-scripting, read
+  // 2026-07-26 against grok 0.2.112). A Hive agent is exactly that — nobody is
+  // at the keyboard to answer an update prompt or wait out a background
+  // re-exec.
+  //
+  // The flag is HIDDEN from `grok --help`, so it cannot be discovered by
+  // probing the binary; it is accepted and exits 0. That is why this was
+  // missed: the vendor rule for this repo is to read the vendor's
+  // documentation, not to infer the surface from the CLI.
+  //
+  // Deliberately a launch flag rather than `auto_update = false` in
+  // ~/.grok/config.toml: that file is the operator's, and Hive does not write
+  // vendor configuration to gain a capability.
+  const argv = [
+    options.executable ?? "grok",
+    "--no-auto-update",
+    "-m",
+    options.model,
+  ];
   if (options.effort !== undefined) {
     argv.push("--reasoning-effort", options.effort);
   }
@@ -174,7 +198,9 @@ export function buildGrokResumeCommand(
   sessionId: string,
 ): string[] {
   const argv = grokLaunchArgs(options);
-  argv.splice(1, 0, "-r", sessionId);
+  // After the executable AND `--no-auto-update`, so the update-suppression flag
+  // stays adjacent to argv[0] on both the spawn and resume paths.
+  argv.splice(2, 0, "-r", sessionId);
   return argv;
 }
 
@@ -248,6 +274,75 @@ export function grokHookFilename(instanceId = hiveInstanceSuffix()): string {
     .digest("hex")
     .slice(0, 12);
   return `hive-${suffix}.json`;
+}
+
+/**
+ * The repository an agent worktree belongs to, or null when it cannot be
+ * determined.
+ *
+ * This exists for one sentence in one error message, and that sentence is the
+ * whole value of the message. Grok's folder trust INHERITS: a decision recorded
+ * for an ancestor covers every folder beneath it, worktrees included (measured
+ * — `prototypes/live/grok-mcp-trust.ts`). Telling a user to trust the agent
+ * worktree would be advice they cannot act on, because that directory is minted
+ * per spawn and deleted after; telling them to trust the repository is one
+ * action that covers every agent they will ever run there.
+ */
+export function repositoryRootForWorktree(worktreePath: string): string | null {
+  const result = Bun.spawnSync(
+    [
+      "git",
+      "-C",
+      worktreePath,
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir",
+    ],
+    { stdout: "pipe", stderr: "ignore", timeout: 5_000 },
+  );
+  if (result.exitCode !== 0) return null;
+  const gitDir = result.stdout.toString().trim();
+  return gitDir.endsWith("/.git")
+    ? gitDir.slice(0, -"/.git".length)
+    : gitDir.length === 0
+      ? null
+      : dirname(gitDir);
+}
+
+/**
+ * Why a Grok spawn into an untrusted worktree is refused rather than launched.
+ *
+ * Grok does not start repo-local (project-scoped) MCP servers in an untrusted
+ * folder — its own `grok mcp doctor` says so verbatim — and Hive's MCP server
+ * is exactly that. An agent that cannot reach it can still paint a screen and
+ * hold a process, so every liveness signal Hive has reads healthy, and the
+ * spawn still dies ~30s later when `waitForMcpReporting` gives up. The old
+ * behaviour promised the agent "will run normally"; it never could.
+ *
+ * Hive does not write `~/.grok/trusted_folders.toml`. The trust contract is the
+ * user's, and this message hands them the one action that settles it for good.
+ */
+export function grokUntrustedWorktreeRefusal(
+  name: string,
+  worktreePath: string,
+  repositoryRoot: string | null,
+): string {
+  const remedy =
+    repositoryRoot === null
+      ? "Trust the repository this worktree belongs to"
+      : `Trust ${repositoryRoot}`;
+  return (
+    `Grok reports ${worktreePath} as untrusted, so it will not start Hive's ` +
+    `MCP server there — grok does not start repo-local (project-scoped) MCP ` +
+    `servers in untrusted folders. Without it ${name} could open, hold a ` +
+    `terminal and look healthy while being unable to hive_send, hive_inbox or ` +
+    `hive_land, so the spawn is refused now instead of failing in ~30s with a ` +
+    `transport error that names none of this.\n` +
+    `${remedy} — run \`grok\` there once and accept the trust prompt. Grok's ` +
+    `trust inherits, so that one decision covers every agent worktree Hive ` +
+    `mints beneath it. Hive does not write grok's trust store: the grant is ` +
+    `yours to make.`
+  );
 }
 
 export function inspectGrokProjectTrust(
@@ -436,10 +531,93 @@ export async function removeGrokAgentConfig(
   return true;
 }
 
-export function grokSessionsDirectory(
-  home = Bun.env.GROK_HOME ?? join(homedir(), ".grok"),
-): string {
+export function grokHome(): string {
+  return Bun.env.GROK_HOME ?? join(homedir(), ".grok");
+}
+
+export function grokSessionsDirectory(home = grokHome()): string {
   return join(home, "sessions");
+}
+
+/** Serialize the trust store back out, preserving every key it carried. */
+function renderTrustedFolders(
+  folders: Record<string, Record<string, unknown>>,
+): string {
+  return `${Object.entries(folders)
+    .map(([path, entry]) => {
+      const body = Object.entries(entry)
+        .map(([key, value]) => `${key} = ${JSON.stringify(value)}`)
+        .join("\n");
+      return `[folders.${JSON.stringify(path)}]\n${body}`;
+    })
+    .join("\n\n")}\n`;
+}
+
+/**
+ * Record, in grok's own trust store, the decision the user already made by
+ * opening Hive on this repository.
+ *
+ * Grok will not start repo-local MCP servers — Hive's included — in an
+ * untrusted folder, and Hive's own config write is what makes a fresh agent
+ * worktree untrusted. Without this every grok agent looked healthy for ~30
+ * seconds and then died on the MCP reporting deadline
+ * (`prototypes/live/grok-mcp-trust.ts` reproduces that against a real daemon).
+ *
+ * The grant is the REPOSITORY, not the worktree, and that is not a choice:
+ * grok ignores a trust entry keyed to a nested git root, so an entry for the
+ * agent worktree has no effect at all (measured — same store, same format,
+ * `Project trusted: no`). The narrowest grant that works is the repository the
+ * user pointed Hive at, and it is therefore also broader than Hive's own
+ * worktrees: the user's own manual `grok` runs in that repository become
+ * trusted too. That is the cost of the assumption "opening Hive here is the
+ * trust decision", and it is stated here so it is never a surprise.
+ *
+ * An entry the user already decided is left exactly as it is, including a
+ * deliberate `trusted = false` — this seeds a missing decision, it never
+ * overturns one.
+ */
+export async function seedGrokRepositoryTrust(
+  repositoryRoot: string,
+  home = grokHome(),
+): Promise<"seeded" | "already-decided" | "unwritable"> {
+  const key = await realpath(repositoryRoot).catch(() =>
+    resolve(repositoryRoot),
+  );
+  const path = join(home, "trusted_folders.toml");
+  try {
+    // Hive's own lock, NOT grok's `trusted_folders.toml.lock`. Hive's is
+    // create-exclusive and grok keeps its lock file present permanently, so
+    // reusing the vendor's path blocks until the timeout, every time — which
+    // is exactly how the first version of this silently seeded nothing and
+    // left the spawn to refuse a repository Hive had just decided to trust.
+    // Two writers cannot be serialized across two different mutex disciplines
+    // anyway; this one keeps concurrent HIVE spawns off each other.
+    return await withFileLock(`${path}.hive.lock`, async () => {
+      const source = await readFile(path, "utf8").catch(() => "");
+      const parsed =
+        source.trim().length === 0
+          ? {}
+          : (Bun.TOML.parse(source) as {
+              folders?: Record<string, Record<string, unknown>>;
+            });
+      const folders = parsed.folders ?? {};
+      if (folders[key] !== undefined) return "already-decided";
+      const next = {
+        ...folders,
+        [key]: { trusted: true, decided_at: Math.floor(Date.now() / 1000) },
+      };
+      await mkdir(home, { recursive: true });
+      const temporary = `${path}.hive-${process.pid}.tmp`;
+      await writeFile(temporary, renderTrustedFolders(next), { mode: 0o600 });
+      await rename(temporary, path);
+      return "seeded";
+    });
+  } catch {
+    // A store Hive cannot write is not fatal: the spawn path still inspects
+    // trust afterwards and refuses with the manual remedy. Never let a failed
+    // convenience become a failed launch on its own.
+    return "unwritable";
+  }
 }
 
 interface GrokSummaryLocation {

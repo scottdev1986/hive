@@ -2,6 +2,7 @@ import { buildScopedBrief } from "../adapters/brief";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
 import { provisionSkills } from "../adapters/skills";
+import type { PreparedAgentSpawn } from "../adapters/tools/agents/agent-adapter";
 import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
@@ -2886,27 +2887,49 @@ export class HiveSpawner implements Spawner {
         await adapter.prepareWorktree?.(worktree.path);
         const providerRunId = crypto.randomUUID();
         const kickoff = "Begin the assigned task.";
-        const preparedLaunch = await adapter.prepareSpawn({
-          daemonPort: this.daemonPort(),
-          model,
-          ...(effort === undefined ? {} : { effort }),
-          name,
-          readOnly,
-          dangerous,
-          worktreePath: worktree.path,
-          executable: this.executableFor(tool),
-          hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-          ...(capabilityToken === undefined ? {} : { withCapability: true }),
-          ...(graphifyUrl === null ? {} : { graphifyUrl }),
-          instructionPath,
-          sessionId: this.requireAgentLocator(record).sessionId,
-          providerRunId,
-          ...(grokSessionId === undefined
-            ? {}
-            : { newVendorSessionId: grokSessionId }),
-          excludeMcpServers,
-          kickoff,
-        });
+        // An adapter may REFUSE here — Grok does, when the worktree is
+        // untrusted and the vendor would therefore never start Hive's MCP
+        // server in it. Nothing has been launched at this point: prepareSpawn
+        // builds a command and writes provider config, and no terminal host
+        // exists yet. Reporting that through the generic catch below would
+        // send it down the teardown-verification path and record the agent as
+        // `stuck` with "teardown could not be verified" — a cleanup failure
+        // that did not happen, about a session that was never created.
+        let preparedLaunch: PreparedAgentSpawn;
+        try {
+          preparedLaunch = await adapter.prepareSpawn({
+            daemonPort: this.daemonPort(),
+            model,
+            ...(effort === undefined ? {} : { effort }),
+            name,
+            readOnly,
+            dangerous,
+            worktreePath: worktree.path,
+            executable: this.executableFor(tool),
+            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+            ...(capabilityToken === undefined ? {} : { withCapability: true }),
+            ...(graphifyUrl === null ? {} : { graphifyUrl }),
+            instructionPath,
+            sessionId: this.requireAgentLocator(record).sessionId,
+            providerRunId,
+            ...(grokSessionId === undefined
+              ? {}
+              : { newVendorSessionId: grokSessionId }),
+            excludeMcpServers,
+            kickoff,
+          });
+        } catch (error) {
+          await this.failSpawnIfStillSpawning(
+            record,
+            worktree,
+            error instanceof Error
+              ? error.message
+              : "provider launch preparation failed",
+            "transport",
+            true,
+          );
+          return;
+        }
         const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
           const revalidated = await requireGate({
             tool: authorized.tool,

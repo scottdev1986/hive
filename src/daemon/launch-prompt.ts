@@ -114,7 +114,12 @@ export function wrapGrokWithRulesFile(
   path: string,
   initialPrompt?: string,
 ): string {
-  return `exec ${command} --rules ${promptArgument(path)}${
+  // No `exec` here. `exec` replaces the bootstrap login shell with the vendor
+  // process, so when Grok exits there is no shell left and the pane dies with
+  // it — the `exec /bin/zsh -l -i` fallback in SHELL_BOOTSTRAP becomes
+  // unreachable. Running Grok as an ordinary child lets that fallback do its
+  // job. (An env-assignment prefix would also defeat `exec`; see kimi.ts.)
+  return `${command} --rules ${promptArgument(path)}${
     initialPrompt === undefined ? "" : ` ${shellQuote(initialPrompt)}`
   }`;
 }

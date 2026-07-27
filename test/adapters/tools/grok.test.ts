@@ -5,6 +5,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -24,10 +25,15 @@ import {
   probeGrokCliVersion,
   readLiveGrokModel,
   removeGrokAgentConfig,
+  seedGrokRepositoryTrust,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
 } from "../../../src/adapters/tools/grok";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+
+/** The path grok's trust store is keyed by: /tmp is a symlink on macOS. */
+const resolveReal = (path: string): Promise<string> =>
+  realpath(path).catch(() => resolve(path));
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -46,12 +52,14 @@ describe("Grok adapter", () => {
   test("launches a writer with model and optional effort on argv", () => {
     expect(buildGrokSpawnCommand(writer)).toEqual([
       "grok",
+      "--no-auto-update",
       "-m",
       "catalog-model",
       "--always-approve",
     ]);
     expect(buildGrokSpawnCommand({ ...writer, effort: "high" })).toEqual([
       "grok",
+      "--no-auto-update",
       "-m",
       "catalog-model",
       "--reasoning-effort",
@@ -69,6 +77,7 @@ describe("Grok adapter", () => {
     const sessionId = "3f8b2c1a-9d4e-4f6b-8a2c-1e5d7b9c3a0f";
     expect(buildGrokSpawnCommand({ ...writer, sessionId })).toEqual([
       "grok",
+      "--no-auto-update",
       "-m",
       "catalog-model",
       "--always-approve",
@@ -78,13 +87,22 @@ describe("Grok adapter", () => {
     // The CLI rejects --session-id on resume (it names a NEW conversation), so
     // the resume path carries -r and nothing else.
     expect(buildGrokResumeCommand({ ...writer, sessionId }, sessionId)).toEqual(
-      ["grok", "-r", sessionId, "-m", "catalog-model", "--always-approve"],
+      [
+        "grok",
+        "--no-auto-update",
+        "-r",
+        sessionId,
+        "-m",
+        "catalog-model",
+        "--always-approve",
+      ],
     );
   });
 
   test("uses the cross-model reader barrier", () => {
     expect(buildGrokSpawnCommand({ ...writer, readOnly: true })).toEqual([
       "grok",
+      "--no-auto-update",
       "-m",
       "catalog-model",
       "--deny",
@@ -106,6 +124,7 @@ describe("Grok adapter", () => {
     const command = buildGrokResumeCommand(writer, "019f-session");
     expect(command).toEqual([
       "grok",
+      "--no-auto-update",
       "-r",
       "019f-session",
       "-m",
@@ -312,7 +331,13 @@ describe("Grok adapter", () => {
     );
   });
 
-  test("an untrusted worktree still launches and reports its evidence fallback", async () => {
+  // This test used to assert the opposite — that an untrusted worktree "still
+  // launches and reports its evidence fallback". That was measured false:
+  // trust withholds repo-local MCP servers, not just hooks, so the agent could
+  // never reach the daemon and the spawn was killed 15s later by the reporting
+  // deadline. `prototypes/live/grok-mcp-trust.ts` reproduces the whole chain
+  // against a real daemon and a real grok.
+  test("an untrusted worktree is REFUSED, naming the gate and the one-time remedy", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-grok-untrusted-"));
     roots.push(root);
     const executable = join(root, "grok");
@@ -323,26 +348,37 @@ describe("Grok adapter", () => {
     await chmod(executable, 0o755);
     const warning = spyOn(console, "warn").mockImplementation(() => {});
     try {
-      const prepared = await grokAgentAdapter.prepareSpawn({
-        name: "maya",
-        model: "grok-4",
-        worktreePath: root,
-        daemonPort: 4317,
-        readOnly: false,
-        dangerous: false,
-        executable,
-        providerRunId: "018f1e90-7b5a-7cc0-8000-000000000224",
-      });
-      expect(prepared.argv[0]).toBe(executable);
+      const refusal = await grokAgentAdapter
+        .prepareSpawn({
+          name: "maya",
+          model: "grok-4",
+          worktreePath: root,
+          daemonPort: 4317,
+          readOnly: false,
+          dangerous: false,
+          executable,
+          providerRunId: "018f1e90-7b5a-7cc0-8000-000000000224",
+        })
+        .then(
+          () => null,
+          (error: Error) => error.message,
+        );
+      expect(refusal).not.toBeNull();
+      // The refusal has to name what is withheld and what to do about it. A
+      // message that only said "untrusted" would reproduce the original bug in
+      // a faster form: a user who cannot act on it still loses the agent.
+      expect(refusal).toContain("MCP server");
+      expect(refusal).toContain("trust prompt");
+      expect(refusal).toContain("inherits");
+      // The config is still written before the check, and still on disk. The
+      // trust decision is ABOUT that config, so skipping the write would make
+      // the folder read trusted and the refusal would never fire.
       expect(
         await readFile(
           join(root, ".grok", "hooks", grokHookFilename()),
           "utf8",
         ),
       ).toContain("018f1e90-7b5a-7cc0-8000-000000000224");
-      expect(warning).toHaveBeenCalledWith(
-        expect.stringContaining("agent will run normally using updates.jsonl"),
-      );
 
       warning.mockClear();
       await mkdir(join(root, ".claude"), { recursive: true });
@@ -373,6 +409,67 @@ describe("Grok adapter", () => {
     } finally {
       warning.mockRestore();
     }
+  });
+
+  test("seeds a repository's trust once, preserving every other decision", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-grok-trusthome-"));
+    const repository = await mkdtemp(join(tmpdir(), "hive-grok-repo-"));
+    roots.push(home, repository);
+    const store = join(home, "trusted_folders.toml");
+    await writeFile(
+      store,
+      '[folders."/Users/someone/Projects/theirs"]\ntrusted = true\ndecided_at = 1784143367\n',
+    );
+
+    expect(await seedGrokRepositoryTrust(repository, home)).toBe("seeded");
+    const seeded = await readFile(store, "utf8");
+    // The operator's own decisions are not collateral. Losing one would revoke
+    // trust they granted for a repository Hive has nothing to do with.
+    expect(seeded).toContain("/Users/someone/Projects/theirs");
+    expect(seeded).toContain(await resolveReal(repository));
+    expect(seeded).toContain("trusted = true");
+
+    // Running Hive again is not a new decision.
+    expect(await seedGrokRepositoryTrust(repository, home)).toBe(
+      "already-decided",
+    );
+    expect(await readFile(store, "utf8")).toBe(seeded);
+  });
+
+  test("a deliberate `trusted = false` survives Hive seeding", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-grok-trusthome-"));
+    const repository = await mkdtemp(join(tmpdir(), "hive-grok-repo-"));
+    roots.push(home, repository);
+    const store = join(home, "trusted_folders.toml");
+    const key = await resolveReal(repository);
+    await writeFile(
+      store,
+      `[folders.${JSON.stringify(key)}]\ntrusted = false\ndecided_at = 1784143367\n`,
+    );
+
+    expect(await seedGrokRepositoryTrust(repository, home)).toBe(
+      "already-decided",
+    );
+    // Seeding fills a gap. Turning a refusal into a grant would be Hive
+    // overruling the user on the one decision this whole path says is theirs.
+    expect(await readFile(store, "utf8")).toContain("trusted = false");
+  });
+
+  test("a vendor lock file left lying around does not block the seed", async () => {
+    const home = await mkdtemp(join(tmpdir(), "hive-grok-trusthome-"));
+    const repository = await mkdtemp(join(tmpdir(), "hive-grok-repo-"));
+    roots.push(home, repository);
+    // Grok keeps `trusted_folders.toml.lock` present permanently. The first
+    // version of the seed locked on exactly that path, and Hive's lock is
+    // create-exclusive — so every seed timed out, returned "unwritable", and
+    // the spawn then refused a repository Hive had just decided to trust. The
+    // failure was silent and cost a whole live run to find.
+    await writeFile(join(home, "trusted_folders.toml.lock"), "");
+
+    expect(await seedGrokRepositoryTrust(repository, home)).toBe("seeded");
+    expect(
+      await readFile(join(home, "trusted_folders.toml"), "utf8"),
+    ).toContain("trusted = true");
   });
 
   test.todo("trusted Grok 0.2.112 fires the written hook after quota resets 2026-07-26T17:18Z", () => {});

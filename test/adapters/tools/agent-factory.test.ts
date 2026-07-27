@@ -172,6 +172,7 @@ describe("agent adapter factory", () => {
     });
     expect(prepared.argv).toEqual([
       "grok",
+      "--no-auto-update",
       "-m",
       "grok-4",
       "--always-approve",
