@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   discoverMemoryFacts,
   parseMemoryFile,
@@ -388,171 +388,132 @@ describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
   });
 });
 
-describe("runInit — installing the shipped skills", () => {
-  /** A machine with exactly these CLIs on it. Nothing shells out: the test says
-   * what the machine has. */
-  const machineWith = (...clis: string[]): typeof defaultInitDeps => ({
-    ...testDeps(),
-    hasCli: (command) => clis.includes(command),
-  });
+describe("runInit — installing the base skills", () => {
+  /** `<repo>/.hive/skills/<address>/<skill>/SKILL.md` — the same path a person
+   * writes by hand, which is the point of installing here. */
+  const baseSkill = (root: string, address: string, name: string): string =>
+    join(root, ".hive", "skills", address, name, "SKILL.md");
 
-  const skillFile = (root: string, native: string, name: string): string =>
-    join(root, native, "skills", name, "SKILL.md");
-
-  test("installs each vendor's skills where that vendor actually reads them", async () => {
+  test("installs Hive's own skills at the addresses that reach their readers", async () => {
     const root = await tsRepo();
     try {
-      const result = await runInit(root, {}, machineWith("claude", "codex"));
+      const result = await runInit(root, {}, testDeps());
 
-      // Vendor-verified paths: Claude Code reads .claude/skills, Codex .agents/skills.
+      // A vendor contract is addressed to that vendor's agents, so it lands
+      // under that vendor — not in a directory a second vendor also reads.
       expect(
-        await readFile(skillFile(root, ".claude", "hive-claude"), "utf8"),
-      ).toEqual(required(shippedSkillsFor("claude")[0]?.content));
-      expect(
-        await readFile(skillFile(root, ".agents", "hive-codex"), "utf8"),
-      ).toEqual(required(shippedSkillsFor("codex")[0]?.content));
-      // The shared skill goes to both; the vendor-specific ones do not cross over.
-      expect(
-        await Bun.file(
-          skillFile(root, ".claude", "karpathy-guidelines"),
-        ).exists(),
-      ).toBe(true);
-      expect(
-        await Bun.file(
-          skillFile(root, ".agents", "karpathy-guidelines"),
-        ).exists(),
-      ).toBe(true);
-      expect(
-        await Bun.file(skillFile(root, ".claude", "hive-codex")).exists(),
-      ).toBe(false);
-      expect(
-        await Bun.file(skillFile(root, ".agents", "hive-claude")).exists(),
-      ).toBe(false);
-
-      expect(result.skills.map((report) => report.tool)).toEqual([
-        "claude",
-        "codex",
-      ]);
-      expect(result.skills.every((report) => report.createdDirectory)).toBe(
-        true,
+        await readFile(baseSkill(root, "agent/claude", "hive-claude"), "utf8"),
+      ).toEqual(
+        required(
+          shippedSkillsFor({ role: "agent", tool: "claude" }).find(
+            (skill) => skill.name === "hive-claude",
+          )?.content,
+        ),
       );
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  const codexPromptTest = Bun.which("codex") === null ? test.skip : test;
-  codexPromptTest(
-    "a shared Codex/Grok directory exposes no foreign contract to the model",
-    async () => {
-      const root = await tsRepo();
-      try {
-        const result = await runInit(root, {}, machineWith("codex", "grok"));
-        expect(
-          result.skills.map((report) => [report.tool, report.withheld]),
-        ).toEqual([
-          ["codex", ["hive-codex"]],
-          ["grok", ["hive-grok"]],
-        ]);
-
-        const renderCodexPrompt = (): string => {
-          const rendered = Bun.spawnSync(
-            ["codex", "debug", "prompt-input", "shared-skill probe"],
-            { cwd: root, stderr: "pipe", stdout: "pipe" },
-          );
-          expect(rendered.exitCode).toBe(0);
-          return new TextDecoder().decode(rendered.stdout);
-        };
-
-        // The effect is model-visible, not merely a directory listing. The
-        // shared skill is the positive control that Codex read this directory;
-        // the foreign Grok contract must still be absent from the same render.
-        const prompt = renderCodexPrompt();
-        expect(prompt).toContain("karpathy-guidelines");
-        expect(prompt).not.toContain("hive-grok");
-
-        // Agent worktrees have one reader and receive only their own contract.
-        const worktree = join(root, "grok-worktree");
-        await provisionSkills(
-          worktree,
-          worktree,
-          "grok",
-          join(root, "missing-global"),
-        );
-        expect(
-          await Bun.file(skillFile(worktree, ".agents", "hive-grok")).exists(),
-        ).toBe(true);
-        expect(
-          await Bun.file(skillFile(worktree, ".agents", "hive-codex")).exists(),
-        ).toBe(false);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    },
-  );
-
-  test("a vendor whose CLI is absent gets no directory at all", async () => {
-    const root = await tsRepo();
-    try {
-      const result = await runInit(root, {}, machineWith("claude"));
-
-      // Someone with no Codex does not get a .agents/ directory in their repo.
-      expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
       expect(
-        await Bun.file(skillFile(root, ".claude", "hive-claude")).exists(),
+        await Bun.file(baseSkill(root, "agent/codex", "hive-codex")).exists(),
       ).toBe(true);
-      expect(result.skills.map((report) => report.tool)).toEqual(["claude"]);
+      // Every vendor, so no vendor segment; every reviewer, so a category one.
+      expect(
+        await Bun.file(
+          baseSkill(root, "agent", "karpathy-guidelines"),
+        ).exists(),
+      ).toBe(true);
+      expect(
+        await Bun.file(
+          baseSkill(root, "agent/code_review", "code-review"),
+        ).exists(),
+      ).toBe(true);
+      // Both roles is two addresses, because a directory cannot say "both".
+      expect(
+        await Bun.file(baseSkill(root, "queen", "hive-memory")).exists(),
+      ).toBe(true);
+      expect(
+        await Bun.file(baseSkill(root, "agent", "hive-memory")).exists(),
+      ).toBe(true);
+
+      expect(result.skills.installed).toContain(
+        join("agent/claude", "hive-claude"),
+      );
+      expect(result.skills.drifted).toEqual([]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("with neither CLI installed, init touches no vendor directory and says so", async () => {
+  test("installs without any vendor CLI, and writes no vendor directory", async () => {
     const root = await tsRepo();
     try {
-      const result = await runInit(root, {}, machineWith());
+      await runInit(root, {}, testDeps());
 
+      // An address carries its own vendor, so what the machine happens to have
+      // installed today decides nothing — and a stranger's repo gets no empty
+      // `.claude/` or `.agents/` it never asked for.
       expect(await Bun.file(join(root, ".claude")).exists()).toBe(false);
       expect(await Bun.file(join(root, ".agents")).exists()).toBe(false);
-      expect(result.skills).toEqual([]);
       expect(
-        result.messages.some((m) =>
-          m.includes("No Claude Code, Codex, or Grok CLI"),
-        ),
+        await Bun.file(baseSkill(root, "agent/grok", "hive-grok")).exists(),
       ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("merges into a .claude the user already has, touching nothing of theirs", async () => {
+  test("a second run changes nothing and says so", async () => {
     const root = await tsRepo();
     try {
-      // A repo that already uses Claude Code, with settings and a skill of their own.
-      await mkdir(join(root, ".claude", "skills", "their-skill"), {
-        recursive: true,
-      });
-      await writeFile(
-        join(root, ".claude", "settings.json"),
-        '{"theirs":true}\n',
-      );
-      await writeFile(
-        join(root, ".claude", "skills", "their-skill", "SKILL.md"),
-        "# their skill\n",
-      );
+      const first = await runInit(root, {}, testDeps());
+      const second = await runInit(root, {}, testDeps());
 
-      const result = await runInit(root, {}, machineWith("claude"));
+      expect(first.skills.installed.length).toBeGreaterThan(0);
+      expect(second.skills.installed).toEqual([]);
+      expect(second.skills.unchanged).toEqual(first.skills.installed);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
+  test("a skill the user wrote beside them is left alone", async () => {
+    const root = await tsRepo();
+    try {
+      const theirs = join(
+        root,
+        ".hive",
+        "skills",
+        "agent",
+        "their-skill",
+        "SKILL.md",
+      );
+      await mkdir(dirname(theirs), { recursive: true });
+      await writeFile(theirs, "# their skill\n");
+
+      await runInit(root, {}, testDeps());
+
+      expect(await readFile(theirs, "utf8")).toEqual("# their skill\n");
       expect(
-        await readFile(join(root, ".claude", "settings.json"), "utf8"),
-      ).toEqual('{"theirs":true}\n');
-      expect(
-        await readFile(skillFile(root, ".claude", "their-skill"), "utf8"),
-      ).toEqual("# their skill\n");
-      expect(
-        await Bun.file(skillFile(root, ".claude", "hive-claude")).exists(),
+        await Bun.file(baseSkill(root, "agent/claude", "hive-claude")).exists(),
       ).toBe(true);
-      expect(result.skills[0]?.createdDirectory).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a skill with no role bucket reaches nobody, and init says which", async () => {
+    const root = await tsRepo();
+    try {
+      const orphan = join(root, ".hive", "skills", "written-before-roles");
+      await mkdir(orphan, { recursive: true });
+      await writeFile(join(orphan, "SKILL.md"), "# orphan\n");
+
+      const result = await runInit(root, {}, testDeps());
+
+      expect(
+        result.messages.some(
+          (message) =>
+            message.includes("written-before-roles") &&
+            message.includes("no role bucket"),
+        ),
+      ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -561,21 +522,21 @@ describe("runInit — installing the shipped skills", () => {
   test("an edited skill survives init, is reported, and yields only to --force", async () => {
     const root = await tsRepo();
     try {
-      await runInit(root, {}, machineWith("claude"));
-      const edited = skillFile(root, ".claude", "karpathy-guidelines");
+      await runInit(root, {}, testDeps());
+      const edited = baseSkill(root, "agent", "karpathy-guidelines");
       await writeFile(edited, "# my own rules\n");
 
-      const second = await runInit(root, {}, machineWith("claude"));
-      expect(second.skills[0]?.drifted).toEqual(["karpathy-guidelines"]);
+      const second = await runInit(root, {}, testDeps());
+      expect(second.skills.drifted).toContain(
+        join("agent", "karpathy-guidelines"),
+      );
       expect(await readFile(edited, "utf8")).toEqual("# my own rules\n");
       expect(second.messages.some((m) => m.includes("--force"))).toBe(true);
 
-      const forced = await runInit(
-        root,
-        { force: true },
-        machineWith("claude"),
+      const forced = await runInit(root, { force: true }, testDeps());
+      expect(forced.skills.installed).toContain(
+        join("agent", "karpathy-guidelines"),
       );
-      expect(forced.skills[0]?.installed).toContain("karpathy-guidelines");
       expect(await readFile(edited, "utf8")).not.toEqual("# my own rules\n");
     } finally {
       await rm(root, { recursive: true, force: true });

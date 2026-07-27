@@ -16,7 +16,7 @@ import {
   CAPABILITY_PROVIDERS,
   isLiveAgent,
 } from "../schemas";
-import { shippedSkillsFor } from "../skills/shipped";
+import { SHIPPED_SKILLS } from "../skills/shipped";
 import {
   nativeSkillDirectory,
   provisionedSkillLinks,
@@ -589,9 +589,16 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
  * for that reason; they are not. Hive knows which links it created, because
  * each worktree records them at spawn.
  */
+// The union over every agent audience, not one audience's set: a worktree may
+// have been provisioned for any category, and reconciliation asks "could Hive
+// have put this here", which a category filter would answer wrongly for a
+// worktree spawned under a different one.
 const HIVE_WORKTREE_SKILLS: readonly string[] = CAPABILITY_PROVIDERS.flatMap(
   (provider) =>
-    shippedSkillsFor(provider).map((skill) =>
+    SHIPPED_SKILLS.filter(
+      (skill) =>
+        skill.tools.includes(provider) && skill.roles.includes("agent"),
+    ).map((skill) =>
       join(nativeSkillDirectory(provider), skill.name, "SKILL.md"),
     ),
 );

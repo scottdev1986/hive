@@ -74,7 +74,7 @@ import {
 } from "../daemon/mutation-lease";
 import { projectStateDir } from "../daemon/project-state";
 import { CAPABILITY_PROVIDERS } from "../schemas";
-import { shippedSkillsFor } from "../skills/shipped";
+import { SHIPPED_SKILLS, shippedSkillAddresses } from "../skills/shipped";
 import { binLink, detectInstallMethod, installRoot } from "../update/paths";
 import { stopHive } from "./control";
 import { fetchAgentStatus } from "./mcp";
@@ -199,9 +199,53 @@ async function confirmed(
   return answer;
 }
 
+/**
+ * Remove the base skills Hive installed into `.hive/skills`, where they sit
+ * beside the user's own. Only byte-identical copies are Hive's to remove; an
+ * edited one is the human's and is reported instead, and their own skills are
+ * never candidates at all — a name Hive does not ship is not looked at.
+ */
+async function removeBaseSkills(
+  root: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const skillsRoot = join(root, ".hive", "skills");
+  if (!existsSync(skillsRoot)) return;
+  for (const skill of SHIPPED_SKILLS) {
+    for (const address of shippedSkillAddresses(skill)) {
+      const directory = join(skillsRoot, address, skill.name);
+      const relativePath = join(".hive", "skills", address, skill.name);
+      const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
+        () => null,
+      );
+      if (current === null) continue;
+      if (current === skill.content) {
+        await rm(directory, { recursive: true, force: true });
+        log(`Removed ${relativePath}.`);
+      } else {
+        log(
+          `Left ${relativePath}: it differs from what Hive ships, so it is yours.`,
+        );
+      }
+    }
+  }
+  // The address directories Hive created, emptied by the removals above. Only
+  // when empty: a bucket holding the user's own skills is theirs.
+  for (const address of new Set(
+    SHIPPED_SKILLS.flatMap(shippedSkillAddresses),
+  )) {
+    // Deepest first, so `agent/claude` is gone before `agent` is tried.
+    const parts = address.split("/");
+    for (let depth = parts.length; depth > 0; depth -= 1) {
+      await rmdir(join(skillsRoot, ...parts.slice(0, depth))).catch(() => {});
+    }
+  }
+}
+
 /** Remove the shipped skills Hive installed into one vendor directory of the
  * primary checkout. Only byte-identical copies are Hive's to remove; an
- * edited skill is the human's and is reported instead. */
+ * edited skill is the human's and is reported instead. Older builds installed
+ * here rather than into `.hive/skills`, and those copies are still Hive's. */
 async function removeShippedSkills(
   root: string,
   tool: SkillTool,
@@ -210,7 +254,13 @@ async function removeShippedSkills(
   const nativeDirectory = nativeSkillDirectory(tool);
   const nativeRoot = join(root, nativeDirectory);
   if (!existsSync(nativeRoot)) return;
-  for (const skill of shippedSkillsFor(tool)) {
+  // Every skill Hive ships for this vendor, not the set one audience would be
+  // given today: uninstall removes Hive's own files, and a copy installed by an
+  // older build — before roles narrowed who receives what — is still Hive's to
+  // take back. Filtering by audience here is how a directory gets orphaned.
+  for (const skill of SHIPPED_SKILLS.filter((skill) =>
+    skill.tools.includes(tool),
+  )) {
     const directory = join(nativeRoot, skill.name);
     const current = await readFile(join(directory, "SKILL.md"), "utf8").catch(
       () => null,
@@ -360,6 +410,9 @@ export async function runUninstallRepo(
     );
     return 1;
   }
+  await removeBaseSkills(root, deps.log);
+  // Vendor directories too: builds before `.hive/skills` became the base
+  // skills' home installed there, and those copies are still Hive's to remove.
   for (const tool of CAPABILITY_PROVIDERS) {
     await removeShippedSkills(root, tool, deps.log);
   }

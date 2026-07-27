@@ -500,7 +500,7 @@ describe("hive wiring", () => {
       await provisionSkills(
         repoRoot,
         created.path,
-        tool,
+        { role: "agent", tool },
         join(tempRoot, "no-skills"),
       );
 
@@ -519,7 +519,7 @@ describe("hive wiring", () => {
   test("discounts the user's own skills every vendor spawn links in", async () => {
     // Uncommitted in the primary checkout, which is the whole point: this is
     // what a person gets for dropping a directory into .hive/skills.
-    for (const name of ["zig-best-practices", "grok/only-grok"]) {
+    for (const name of ["agent/zig-best-practices", "agent/grok/only-grok"]) {
       await mkdir(join(repoRoot, ".hive", "skills", name), { recursive: true });
       await writeFile(
         join(repoRoot, ".hive", "skills", name, "SKILL.md"),
@@ -529,7 +529,7 @@ describe("hive wiring", () => {
 
     for (const tool of CAPABILITY_PROVIDERS) {
       const created = await createWorktree(repoRoot, `user-${tool}`, "hive");
-      await provisionSkills(repoRoot, created.path, tool);
+      await provisionSkills(repoRoot, created.path, { role: "agent", tool });
 
       expect({
         tool,
@@ -545,7 +545,7 @@ describe("hive wiring", () => {
   // a baseline read from the same source as the code under test agrees with a
   // broken implementation.
   test("does not adopt a foreign vendor's skill link as its own wiring", async () => {
-    for (const name of ["grok/grok-only", "every-vendor"]) {
+    for (const name of ["agent/grok/grok-only", "agent/every-vendor"]) {
       await mkdir(join(repoRoot, ".hive", "skills", name), { recursive: true });
       await writeFile(
         join(repoRoot, ".hive", "skills", name, "SKILL.md"),
@@ -558,10 +558,13 @@ describe("hive wiring", () => {
       "foreignlink",
       "hive wiring",
     );
-    await provisionSkills(repoRoot, created.path, "codex");
+    await provisionSkills(repoRoot, created.path, {
+      role: "agent",
+      tool: "codex",
+    });
     // Made after the spawn, at a path Codex provisioning never wrote.
     await symlink(
-      join(repoRoot, ".hive", "skills", "grok", "grok-only"),
+      join(repoRoot, ".hive", "skills", "agent", "grok", "grok-only"),
       join(created.path, ".agents", "skills", "grok-only"),
       "dir",
     );
@@ -579,21 +582,35 @@ describe("hive wiring", () => {
   // link must not be read against Kimi's.
   test("keeps a link clean when another vendor owns the same skill name", async () => {
     for (const vendor of ["codex", "kimi"]) {
-      await mkdir(join(repoRoot, ".hive", "skills", vendor, "review"), {
-        recursive: true,
-      });
+      await mkdir(
+        join(repoRoot, ".hive", "skills", "agent", vendor, "review"),
+        {
+          recursive: true,
+        },
+      );
       await writeFile(
-        join(repoRoot, ".hive", "skills", vendor, "review", "SKILL.md"),
+        join(
+          repoRoot,
+          ".hive",
+          "skills",
+          "agent",
+          vendor,
+          "review",
+          "SKILL.md",
+        ),
         `# ${vendor} review\n`,
       );
     }
 
     const created = await createWorktree(repoRoot, "namecollide", "hive");
-    await provisionSkills(repoRoot, created.path, "codex");
+    await provisionSkills(repoRoot, created.path, {
+      role: "agent",
+      tool: "codex",
+    });
 
     expect(
       await readlink(join(created.path, ".agents", "skills", "review")),
-    ).toBe(join(repoRoot, ".hive", "skills", "codex", "review"));
+    ).toBe(join(repoRoot, ".hive", "skills", "agent", "codex", "review"));
     const stranded = await assessStrandedWork(
       repoRoot,
       created.path,
@@ -606,17 +623,20 @@ describe("hive wiring", () => {
   // a source leaves behind a link Hive really did create, and a worktree that
   // reads dirty forever is never reaped.
   test("keeps a provisioned link clean after its source is deleted", async () => {
-    await mkdir(join(repoRoot, ".hive", "skills", "vanishing"), {
+    await mkdir(join(repoRoot, ".hive", "skills", "agent", "vanishing"), {
       recursive: true,
     });
     await writeFile(
-      join(repoRoot, ".hive", "skills", "vanishing", "SKILL.md"),
+      join(repoRoot, ".hive", "skills", "agent", "vanishing", "SKILL.md"),
       "# vanishing\n",
     );
 
     const created = await createWorktree(repoRoot, "vanishing", "hive");
-    await provisionSkills(repoRoot, created.path, "claude");
-    await rm(join(repoRoot, ".hive", "skills", "vanishing"), {
+    await provisionSkills(repoRoot, created.path, {
+      role: "agent",
+      tool: "claude",
+    });
+    await rm(join(repoRoot, ".hive", "skills", "agent", "vanishing"), {
       recursive: true,
       force: true,
     });
@@ -652,7 +672,7 @@ describe("hive wiring", () => {
     await provisionSkills(
       repoRoot,
       created.path,
-      "claude",
+      { role: "agent", tool: "claude" },
       join(tempRoot, "no-skills"),
     );
     await writeFile(

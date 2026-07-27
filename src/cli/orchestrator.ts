@@ -3,6 +3,11 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
+import {
+  grokQueenHome,
+  provisionQueenSkills,
+  queenSkillDelivery,
+} from "../adapters/queen-skills";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/tools/capability-env";
 import {
   buildClaudeSpawnCommand,
@@ -147,10 +152,16 @@ export async function prepareOrchestratorConfig(
       // config lands where the root runs; the brief rides the hive agent's
       // {file:} prompt in it, and the queen's role (#12) rides the agent's
       // permission set.
+      const skills = queenSkillDelivery("opencode", orchestratorConfigRoot());
       await writeOpencodeAgentConfig(cwd, {
         daemonPort: port,
         orchestrator: true,
         instructionPath: launchPromptPath(orchestratorSessionKey()),
+        // opencode has no launch flag for this; the directory reaches her
+        // through the config file Hive already owns.
+        ...(skills.directory === null
+          ? {}
+          : { skillPaths: [skills.directory] }),
       });
       return;
     }
@@ -194,6 +205,11 @@ export function buildOrchestratorCommand(
   codexTokenFile = "",
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
+  /** What this vendor needs on the command line to read the queen's own skill
+   * directory (adapters/queen-skills.ts). Empty for the vendors that reach it
+   * through the environment or a config file, and for codex, which has no
+   * isolated directory at all. */
+  queenSkillArgs: readonly string[] = [],
 ): string[] {
   const _brief = buildOrchestratorInstructions(
     memoryIndex,
@@ -219,6 +235,11 @@ export function buildOrchestratorCommand(
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
           appendSystemPromptFile: launchPromptPath(orchestratorSessionKey()),
         }),
+        // `--setting-sources user` above is what keeps the repository's own
+        // settings out of the queen's session, and it switches off project
+        // skill discovery with them. A plugin directory is the one channel that
+        // still reaches her.
+        ...queenSkillArgs,
       ];
     }
     case "codex":
@@ -302,14 +323,18 @@ export function buildOrchestratorCommand(
         // --yolo auto-approves her tool calls and the
         // no-implementation-code boundary rides her brief.
         wrapKimiWithInstructionFile(
-          shellJoin(
-            buildKimiSpawnCommand({
+          shellJoin([
+            ...buildKimiSpawnCommand({
               model,
               readOnly: false,
               dangerous: false,
               executable: kimiExecutable,
             }),
-          ),
+            // `--skills-dir` replaces kimi's own user and project discovery, so
+            // this is the queen's whole skill surface rather than an addition
+            // to it.
+            ...queenSkillArgs,
+          ]),
           launchPromptPath(orchestratorSessionKey()),
         ),
       ];
@@ -461,6 +486,19 @@ export async function launchOrchestrator(
     default:
       unknownVendor(tool, "orchestrator root token");
   }
+  // Her skills, before the command that has to name their directory. A vendor
+  // with no isolated path returns `degraded` instead of a directory, and the
+  // launch says which rather than implying a provisioning that never happened.
+  const queenSkills = await provisionQueenSkills(
+    cwd,
+    tool,
+    orchestratorConfigRoot(),
+  );
+  if (queenSkills.degraded !== null) {
+    console.warn(
+      `Hive gave the ${tool} queen no skill directory of her own: ${queenSkills.degraded}`,
+    );
+  }
   const [memoryIndex, docGuidance] = await Promise.all([
     buildMemoryIndex(cwd).catch(() => ""),
     buildOrchestratorDocGuidance(cwd).catch(() => ""),
@@ -486,6 +524,7 @@ export async function launchOrchestrator(
     codexTokenFile,
     recoveryBrief,
     codexMcpExclusionArgs,
+    queenSkills.launchArgs,
   );
   // Every provider but claude reads its bearer from HIVE_CAPABILITY_TOKEN, so
   // the operator token stays out of the config files kimi and opencode read
@@ -501,7 +540,7 @@ export async function launchOrchestrator(
             ).replace(/^Bearer\s+/, ""),
             ...(tool === "grok"
               ? {
-                  GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
+                  GROK_HOME: grokQueenHome(orchestratorConfigRoot()),
                   ...GROK_COMPATIBILITY_ENV,
                 }
               : {}),

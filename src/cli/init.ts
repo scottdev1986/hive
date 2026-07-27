@@ -39,32 +39,20 @@ import {
   writeMemoryFact,
 } from "../adapters/memory";
 import {
-  installShippedSkills,
-  type SkillInstallReport,
-  type SkillTool,
+  type BaseSkillInstallReport,
+  globalSkillsRoot,
+  installBaseSkills,
+  unaddressedSkills,
 } from "../adapters/skills";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { probeDaemonReuse } from "../daemon/lifecycle";
 import { projectStateDir } from "../daemon/project-state";
 import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
-import { CAPABILITY_PROVIDERS } from "../schemas";
 import { ensureEmbeddingsRuntime } from "./embeddings";
 import { provisionGraphify } from "./graphify";
 import { reindexMemory } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { projectRootOrCwd } from "./project-root";
-
-/** The vendors Hive installs skills for, and the command whose presence on PATH
- * means the user actually has that CLI. Hive does not create a `.claude/` for
- * someone who has no Claude Code: an empty vendor directory in a stranger's repo
- * is litter, not a feature. */
-const VENDORS: Record<SkillTool, { command: string; label: string }> = {
-  claude: { command: "claude", label: "Claude Code" },
-  codex: { command: "codex", label: "Codex" },
-  grok: { command: "grok", label: "Grok" },
-  kimi: { command: "kimi", label: "Kimi Code" },
-  opencode: { command: "opencode", label: "opencode" },
-};
 
 /** A narrative fact for init to seed. A stable id keeps a re-run upserting the
  * same fact in place rather than accumulating duplicates. */
@@ -91,9 +79,9 @@ export interface InitResult {
   agentsScaffolded: boolean;
   /** Ids of the facts seeded (upserted) this run. */
   factsSeeded: string[];
-  /** One report per vendor CLI found on the machine. A vendor that is not
-   * installed produces no report and no directory. */
-  skills: SkillInstallReport[];
+  /** What Hive's own skills did in `.hive/skills`: written, already current,
+   * or left alone because the copy there is the human's. */
+  skills: BaseSkillInstallReport;
   messages: string[];
 }
 
@@ -113,14 +101,10 @@ export interface InitDeps {
   writeFile: (path: string, contents: string) => Promise<void>;
   /** The next daemon rebuilds the index when no daemon is available yet. */
   reindexMemory: (root: string) => Promise<"indexed" | "deferred">;
-  /** Is this CLI installed on the machine? A dependency so a test can decide
-   * what the machine has without a real `claude` on PATH. */
-  hasCli: (command: string) => boolean;
-  installShippedSkills: (
+  installBaseSkills: (
     root: string,
-    tool: SkillTool,
-    options: { force?: boolean; coresidentVendors?: readonly SkillTool[] },
-  ) => Promise<SkillInstallReport>;
+    options: { force?: boolean },
+  ) => Promise<BaseSkillInstallReport>;
   /** Install or re-prove Graphify and build this repository's code graph. */
   provisionGraphify: (root: string) => Promise<number>;
   /** Record that init completed here, so bare `hive` stops offering to init. */
@@ -153,8 +137,7 @@ export const defaultInitDeps: InitDeps = {
     await reindexMemory(daemon.port);
     return "indexed";
   },
-  hasCli: (command) => Bun.which(command) !== null,
-  installShippedSkills,
+  installBaseSkills,
   provisionGraphify,
   writeInitStamp: async (root) => {
     const path = initStampPath(root);
@@ -342,63 +325,41 @@ export async function runInit(
 
   // 2. Skills. Hive's own skills live in the binary (src/skills/shipped.ts), so
   //    this works on a machine that has only the binary and never consults a
-  //    checkout. We install for the CLIs the user actually has, into the
-  //    directory each vendor actually reads, creating `.claude/` or `.agents/`
-  //    when they are missing and merging into them when they are not. Nothing
-  //    the user wrote is overwritten; drift is reported, and `--force` is the
-  //    only way to take Hive's copy over theirs.
-  const skills: SkillInstallReport[] = [];
-  // Keyed by the vendor union rather than a hand-written list: a vendor with no
-  // row is a compile error here, not a CLI Hive quietly never looks for.
-  const installed = CAPABILITY_PROVIDERS.map((tool) => ({
-    tool,
-    ...VENDORS[tool],
-  })).filter((vendor) => deps.hasCli(vendor.command));
-  if (installed.length === 0) {
+  //    checkout. They install into `.hive/skills/` at the same addresses a
+  //    person writes by hand, beside the skills they wrote — one directory that
+  //    answers "what do my agents know", rather than Hive's half of the answer
+  //    living inside the binary and appearing only inside a worktree. No vendor
+  //    needs to be installed for this to be right: an address carries its own
+  //    vendor. Nothing the user wrote is overwritten; drift is reported, and
+  //    `--force` is the only way to take Hive's copy over theirs.
+  const skills = await deps.installBaseSkills(
+    cwd,
+    options.force === true ? { force: true } : {},
+  );
+  if (skills.installed.length > 0) {
     messages.push(
-      "No Claude Code, Codex, or Grok CLI found on PATH; installed no skills and created no vendor directories.",
+      `Skills: installed ${skills.installed.join(", ")} into .hive/skills/`,
     );
   }
-  for (const vendor of installed) {
-    // Every CLI on this machine writes into the same repo root, and vendors do
-    // not each get their own directory — Grok reads `.agents/skills`, which is
-    // where Codex reads too. So a skill installed "for Codex" here is read by
-    // Grok as well, and Hive's vendor contract is addressed to neither of them
-    // in that case. Passing the detected CLIs is what lets the installer
-    // withhold a contract from a directory a second vendor also reads.
-    const report = await deps.installShippedSkills(cwd, vendor.tool, {
-      ...(options.force === true ? { force: true } : {}),
-      coresidentVendors: installed.map((other) => other.tool),
-    });
-    skills.push(report);
-    const where = `${report.nativeDirectory}/${report.createdDirectory ? " (created)" : " (merged into what was already there)"}`;
-    if (report.installed.length > 0) {
+  if (skills.unchanged.length > 0) {
+    messages.push(
+      `Skills: ${skills.unchanged.join(", ")} already up to date; left alone.`,
+    );
+  }
+  if (skills.drifted.length > 0) {
+    messages.push(
+      `Skills: ${skills.drifted.join(", ")} differs from the version Hive ships — your copy is untouched. Re-run \`hive init --force\` to take Hive's.`,
+    );
+  }
+  // A skill at an address nobody reads is the one failure this layout can hide,
+  // so it is named here with the path rather than left to be noticed.
+  for (const root of [join(cwd, ".hive", "skills"), globalSkillsRoot()]) {
+    const orphans = await unaddressedSkills(root).catch(() => []);
+    if (orphans.length > 0) {
       messages.push(
-        `${vendor.label}: installed ${report.installed.join(", ")} into ${where}`,
-      );
-    }
-    if (report.unchanged.length > 0) {
-      messages.push(
-        `${vendor.label}: ${report.unchanged.join(", ")} already up to date; left alone.`,
-      );
-    }
-    if (report.userOwned.length > 0) {
-      messages.push(
-        `${vendor.label}: ${report.userOwned.join(", ")} is provided by your own skills; yours wins, left alone.`,
-      );
-    }
-    if (report.withheld.length > 0) {
-      // Said out loud, because a skill that quietly did not install reads
-      // exactly like one that failed to. The agents Hive spawns still get their
-      // contract: it is written into each worktree at spawn, where one vendor
-      // reads one directory.
-      messages.push(
-        `${vendor.label}: left ${report.withheld.join(", ")} out of ${report.nativeDirectory}/ — another installed CLI reads that directory too, and this skill is not addressed to it. Agents still get it in their own worktree.`,
-      );
-    }
-    if (report.drifted.length > 0) {
-      messages.push(
-        `${vendor.label}: ${report.drifted.join(", ")} differs from the version Hive ships — your copy is untouched. Re-run \`hive init --force\` to take Hive's.`,
+        `⚠ ${root}: ${orphans.join(", ")} — no role bucket, so nobody is given ${
+          orphans.length === 1 ? "it" : "them"
+        }. Move each under queen/ or agent/.`,
       );
     }
   }

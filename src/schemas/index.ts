@@ -15,5 +15,6 @@ export * from "./routing-derivation";
 export * from "./routing-policy";
 export * from "./run-outcome";
 export * from "./session-protocol";
+export * from "./skill-address";
 export * from "./status-envelope";
 export * from "./token-usage";

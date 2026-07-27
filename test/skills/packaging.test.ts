@@ -9,8 +9,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
-import { SHIPPED_SKILLS } from "../../src/skills/shipped";
+import { basename, dirname, join, relative } from "node:path";
+import {
+  SHIPPED_SKILLS,
+  shippedSkillAddresses,
+} from "../../src/skills/shipped";
+import { required } from "../required";
 
 /**
  * The packaging guard. Two obligations, and both are about a stranger's disk:
@@ -36,10 +40,13 @@ const repoRoot = join(import.meta.dir, "..", "..");
 
 const EXPECTED_SHIPPED_SKILLS = [
   "code-review",
+  "hive-alignment",
   "hive-claude",
   "hive-codex",
   "hive-grok",
+  "hive-kimi",
   "hive-memory",
+  "hive-opencode",
   "karpathy-guidelines",
 ];
 
@@ -134,23 +141,35 @@ function fingerprint(contents: string): string {
 }
 
 test("the shipped skills directory matches the declared list exactly", async () => {
+  // `skills/` is laid out by install address, so a skill's directory is a claim
+  // about who receives it. Reading the tree back and checking that claim against
+  // the declaration is what keeps the two from drifting: a skill filed under
+  // `agent/claude/` while declared for every vendor would otherwise be a
+  // mismatch nobody sees until someone reads the wrong directory and believes it.
   const entries = await readdir(join(repoRoot, "skills"), {
     withFileTypes: true,
+    recursive: true,
   });
-  const directories = entries
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+  const found = entries
+    .filter((entry) => entry.isFile() && entry.name === "SKILL.md")
+    .map((entry) => ({
+      name: basename(entry.parentPath),
+      address: relative(join(repoRoot, "skills"), dirname(entry.parentPath)),
+    }));
 
-  expect(directories).toEqual(EXPECTED_SHIPPED_SKILLS);
+  expect(found.map((skill) => skill.name).sort()).toEqual(
+    EXPECTED_SHIPPED_SKILLS,
+  );
   expect(SHIPPED_SKILLS.map((skill) => skill.name).sort()).toEqual(
     EXPECTED_SHIPPED_SKILLS,
   );
 
-  for (const name of directories) {
-    expect(
-      await Bun.file(join(repoRoot, "skills", name, "SKILL.md")).exists(),
-    ).toEqual(true);
+  for (const { name, address } of found) {
+    const declared = SHIPPED_SKILLS.find((skill) => skill.name === name);
+    expect(declared).toBeDefined();
+    // One source copy per skill, at one of the addresses it installs to — a
+    // skill with two audiences installs twice from the one file.
+    expect(shippedSkillAddresses(required(declared))).toContain(address);
   }
 });
 
@@ -190,8 +209,11 @@ test("the compiled binary carries no Hive memory and no dev-only skill", async (
       // content living in a dev tree, not dev content leaking out, so it
       // isn't a hit here — but only when the bytes actually match the
       // canonical skills/ source; a diverged copy still counts as dev-only.
-      const topLevel = relative(root, entry.parentPath).split(sep)[0] ?? "";
-      const canonical = shippedContent.get(topLevel);
+      // Keyed on the directory that *contains* the file, not on the first
+      // segment of its path: a skill's own directory is its name at whatever
+      // depth it sits, and the role/vendor/category buckets under
+      // `.hive/skills` put real depth between the root and the skill.
+      const canonical = shippedContent.get(basename(entry.parentPath));
       if (
         canonical !== undefined &&
         (await readFile(path, "utf8")) === canonical

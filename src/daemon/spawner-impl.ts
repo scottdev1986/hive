@@ -1785,11 +1785,11 @@ export class HiveSpawner implements Spawner {
           // Claude/Cursor MCP imports through its ten process environment switches.
           [];
     try {
-      await provisionSkills(
-        this.dependencies.repoRoot,
-        agent.worktreePath,
-        identity.tool,
-      );
+      await provisionSkills(this.dependencies.repoRoot, agent.worktreePath, {
+        role: "agent",
+        tool: identity.tool,
+        category: agent.category,
+      });
       const adapter = getAgentAdapter(identity.tool);
       const assignmentAt = new Date().toISOString();
       this.dependencies.assignments?.close(prepared.record.id, assignmentAt);
@@ -2879,7 +2879,11 @@ export class HiveSpawner implements Spawner {
           readOnly ? "reader" : "writer",
           record.capabilityEpoch,
         );
-        await provisionSkills(this.dependencies.repoRoot, worktree.path, tool);
+        await provisionSkills(this.dependencies.repoRoot, worktree.path, {
+          role: "agent",
+          tool,
+          category: request.category,
+        });
         // Before the config, because an untrusted workspace makes the CLI
         // discard the hooks and permissions the config write is about to lay
         // down (claude's folder-trust seed; the other vendors have none).

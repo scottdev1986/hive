@@ -11,16 +11,38 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
+  type RoutingCategory,
+  SKILL_CATEGORY_BUCKETS,
+  SKILL_ROLES,
+  type SkillRole,
+  skillBucketNames,
+  unknownRole,
   unknownVendor,
 } from "../schemas";
-import { SHIPPED_SKILLS, shippedSkillsFor } from "../skills/shipped";
+import {
+  SHIPPED_SKILLS,
+  shippedSkillAddresses,
+  shippedSkillsFor,
+} from "../skills/shipped";
 
 /** The shared vendor enum keeps skill provisioning exhaustive. */
 export type SkillTool = CapabilityProvider;
+
+/**
+ * Who is being provisioned: the reader a skill has to be addressed to before it
+ * is staged for them.
+ *
+ * A queen carries no category and the type says so, because she is spawned
+ * under none — a `category` on a queen would be a filter nothing could ever
+ * match, and the one place that reads it would quietly stage nothing.
+ */
+export type SkillAudience =
+  | { role: "queen"; tool: SkillTool }
+  | { role: "agent"; tool: SkillTool; category?: RoutingCategory };
 
 /** Project skill roots are vendor contracts; an unknown vendor must fail
  * before any directory is chosen or written. */
@@ -49,6 +71,11 @@ const isMissingFileError = (error: unknown): boolean =>
 
 function hiveHome(): string {
   return Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
+}
+
+/** The machine-wide skill root: `~/.hive/skills`, every repository's skills. */
+export function globalSkillsRoot(): string {
+  return join(hiveHome(), "skills");
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -99,26 +126,126 @@ async function discoverSkills(root: string): Promise<Map<string, string>> {
 }
 
 /**
- * The user's skills in one source root, for one vendor.
+ * The directories one audience reads, least specific first.
  *
- * `<root>/<skill>` reaches every vendor; `<root>/<vendor>/<skill>` reaches that
- * vendor only. A directory named exactly after a vendor is always a bucket, so
- * a skill cannot be named after one — the ambiguity is resolved here rather
- * than discovered later, and the vendor bucket wins a name it shares with an
- * all-vendor skill.
+ * Role is always the first segment. There is no unbucketed skill and no
+ * top-level vendor bucket: a directory that does not say who it is for is not
+ * addressed to anyone, and "everyone" is not an audience — it is the absence of
+ * a decision, which is what the old bare form encoded.
+ *
+ * Order is precedence: a later directory overwrites a name an earlier one
+ * staged, so the most specific address wins. Vendor precedes category because
+ * what a CLI *is* changes less often than what an agent was sent to *do*.
+ */
+export function skillOverlays(audience: SkillAudience): string[] {
+  switch (audience.role) {
+    case "queen":
+      return ["queen", join("queen", audience.tool)];
+    case "agent": {
+      const base = ["agent", join("agent", audience.tool)];
+      const category = audience.category;
+      // `default` is a routing fallback chain, never a task an agent ran under,
+      // so it addresses no directory (schemas/skill-address.ts).
+      if (category === undefined || category === "default") return base;
+      return [
+        ...base,
+        join("agent", category),
+        join("agent", audience.tool, category),
+      ];
+    }
+    default:
+      return unknownRole(audience, "skill overlays");
+  }
+}
+
+/** Which level of the tree an overlay sits at, so the bucket names excluded
+ * from it are the ones that are buckets *there*. */
+function overlayLevel(overlay: string): "role" | "vendor" {
+  return overlay.includes(sep) ? "vendor" : "role";
+}
+
+/**
+ * The user's skills in one source root, for one audience.
+ *
+ * A directory that names a bucket at its level is always a bucket, so a skill
+ * cannot be named after one — the ambiguity is resolved here rather than
+ * discovered later, and the bucket wins a name it shares with a skill.
  */
 async function discoverSkillsFor(
   root: string,
-  tool: SkillTool,
+  audience: SkillAudience,
 ): Promise<Map<string, string>> {
-  const shared = await discoverSkills(root);
-  for (const vendor of CAPABILITY_PROVIDERS) {
-    shared.delete(vendor);
+  const found = new Map<string, string>();
+  for (const overlay of skillOverlays(audience)) {
+    const buckets = new Set(
+      skillBucketNames(audience.role, overlayLevel(overlay)),
+    );
+    for (const [name, source] of await discoverSkills(join(root, overlay))) {
+      if (buckets.has(name)) continue;
+      found.set(name, source);
+    }
   }
-  for (const [name, source] of await discoverSkills(join(root, tool))) {
-    shared.set(name, source);
+  return found;
+}
+
+/** Every directory any audience can reach, relative to a source root. */
+function addressableDirectories(): Set<string> {
+  const directories = new Set<string>();
+  for (const role of SKILL_ROLES) {
+    for (const tool of CAPABILITY_PROVIDERS) {
+      const audiences: SkillAudience[] =
+        role === "queen"
+          ? [{ role, tool }]
+          : [
+              { role, tool },
+              ...SKILL_CATEGORY_BUCKETS.map((category) => ({
+                role,
+                tool,
+                category,
+              })),
+            ];
+      for (const audience of audiences) {
+        for (const overlay of skillOverlays(audience)) directories.add(overlay);
+      }
+    }
   }
-  return shared;
+  return directories;
+}
+
+/**
+ * Skills nobody can be given: a `SKILL.md` sitting at a path no audience reads.
+ *
+ * Every skill written before roles existed is one of these, and so is every
+ * mis-ordered path (`agent/planning/claude/` rather than
+ * `agent/claude/planning/`). They are returned rather than skipped because a
+ * skill someone wrote that quietly stops loading is the worst failure this
+ * grammar can produce — the caller's job is to say so, with the path.
+ */
+export async function unaddressedSkills(root: string): Promise<string[]> {
+  const addressable = addressableDirectories();
+  const unaddressed: string[] = [];
+
+  const walk = async (at: string): Promise<void> => {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(join(root, at), { withFileTypes: true });
+    } catch (error) {
+      if (isMissingFileError(error)) return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const path = at === "" ? entry.name : join(at, entry.name);
+      if (await isSkillDirectory(join(root, path))) {
+        if (!addressable.has(at)) unaddressed.push(path);
+        continue;
+      }
+      await walk(path);
+    }
+  };
+
+  await walk("");
+  return unaddressed.sort();
 }
 
 /**
@@ -133,14 +260,14 @@ async function discoverSkillsFor(
  */
 async function userSkillsFor(
   repoRoot: string,
-  tool: SkillTool,
+  audience: SkillAudience,
   globalSkillsPath: string,
 ): Promise<Map<string, string>> {
-  const global = await discoverSkillsFor(globalSkillsPath, tool);
+  const global = await discoverSkillsFor(globalSkillsPath, audience);
   // The repository's skills intentionally override global ones of the name.
   for (const [name, source] of await discoverSkillsFor(
     join(repoRoot, ".hive", "skills"),
-    tool,
+    audience,
   )) {
     global.set(name, source);
   }
@@ -278,15 +405,96 @@ export function skillAddressesEveryReader(
   return readers.every((reader) => skill.tools.includes(reader));
 }
 
+/** What installing Hive's base skills into a repository's `.hive/skills` did.
+ * Same three outcomes as a vendor install, keyed by address so a name that
+ * installs twice is reported twice — it is two files. */
+export interface BaseSkillInstallReport {
+  /** `<address>/<skill>`, written now. */
+  installed: string[];
+  /** Already byte-identical. */
+  unchanged: string[];
+  /** Present and different: the human's, left alone until `--force`. */
+  drifted: string[];
+}
+
+/**
+ * Put Hive's own skills where the user's own skills live.
+ *
+ * `.hive/skills` is the one place a person looks to answer "what do my agents
+ * know", and until now Hive's half of that answer was invisible — inside the
+ * binary, appearing only inside a worktree nobody reads. Installing here makes
+ * the base skills ordinary: addressed by the same grammar, editable in place,
+ * and beaten by an edit exactly like every other skill in the tree.
+ *
+ * No vendor directory is touched and no vendor needs to be installed for this
+ * to be right, because an address carries its own vendor: `agent/claude/` is
+ * for claude whether or not claude is on this machine today.
+ */
+export async function installBaseSkills(
+  repoRoot: string,
+  options: { force?: boolean } = {},
+): Promise<BaseSkillInstallReport> {
+  const report: BaseSkillInstallReport = {
+    installed: [],
+    unchanged: [],
+    drifted: [],
+  };
+  const root = join(repoRoot, ".hive", "skills");
+
+  for (const skill of SHIPPED_SKILLS) {
+    for (const address of shippedSkillAddresses(skill)) {
+      const directory = join(root, address, skill.name);
+      const file = join(directory, "SKILL.md");
+      const current = await readFile(file, "utf8").catch((error: unknown) => {
+        if (isMissingFileError(error)) return null;
+        throw error;
+      });
+
+      if (current === skill.content) {
+        report.unchanged.push(join(address, skill.name));
+        continue;
+      }
+      if (current !== null && options.force !== true) {
+        report.drifted.push(join(address, skill.name));
+        continue;
+      }
+      await mkdir(directory, { recursive: true });
+      await writeFile(file, skill.content);
+      report.installed.push(join(address, skill.name));
+    }
+  }
+  return report;
+}
+
 /** Install without overwriting human files or writing through user symlinks.
  * Shared roots withhold skills not addressed to every reader. */
 export async function installShippedSkills(
   root: string,
-  tool: SkillTool,
+  audience: SkillAudience,
   options: { force?: boolean; coresidentVendors?: readonly SkillTool[] } = {},
 ): Promise<SkillInstallReport> {
+  return installShippedSkillsInto(
+    join(root, nativeSkillDirectory(audience.tool)),
+    audience,
+    options,
+  );
+}
+
+/**
+ * The same install, into a directory named outright.
+ *
+ * An agent's destination is derived from its worktree and its vendor's native
+ * path; a queen's is whatever her vendor gave Hive to work with — a plugin
+ * directory, a `--skills-dir`, a redirected home — and none of those are under
+ * a checkout. The choosing belongs to the caller, so this takes the answer.
+ */
+export async function installShippedSkillsInto(
+  nativeRoot: string,
+  audience: SkillAudience,
+  options: { force?: boolean; coresidentVendors?: readonly SkillTool[] } = {},
+): Promise<SkillInstallReport> {
+  const tool = audience.tool;
   const nativeDirectory = nativeSkillDirectory(tool);
-  const nativeRoot = join(root, nativeDirectory);
   const readers = skillReaders(tool, options.coresidentVendors ?? []);
   const report: SkillInstallReport = {
     tool,
@@ -299,7 +507,7 @@ export async function installShippedSkills(
     withheld: [],
   };
 
-  for (const skill of shippedSkillsFor(tool)) {
+  for (const skill of shippedSkillsFor(audience)) {
     if (!skillAddressesEveryReader(skill, readers)) {
       report.withheld.push(skill.name);
       continue;
@@ -356,33 +564,88 @@ export async function installShippedSkills(
 export async function provisionSkills(
   repoRoot: string,
   worktreePath: string,
-  tool: SkillTool,
-  globalSkillsPath = join(hiveHome(), "skills"),
+  audience: SkillAudience,
+  globalSkillsPath = globalSkillsRoot(),
 ): Promise<void> {
   // Before any disk work: an unknown vendor must not get the user's own skills
   // symlinked into a directory chosen for a different CLI, and must not get a
   // half-provisioned worktree that a later read would call provisioned.
-  const nativeDirectory = nativeSkillDirectory(tool);
-  const skills = await userSkillsFor(repoRoot, tool, globalSkillsPath);
-  if (skills.size > 0) {
-    await mkdir(join(worktreePath, nativeDirectory), { recursive: true });
-    const links = new Map(
-      [...skills.entries()].map(
-        ([name, source]) => [join(nativeDirectory, name), source] as const,
-      ),
-    );
-    await Promise.all(
-      [...links.entries()].map(([path, source]) =>
-        linkSkill(source, join(worktreePath, path)),
-      ),
-    );
+  const nativeDirectory = nativeSkillDirectory(audience.tool);
+  const staged = await stageUserSkills(
+    repoRoot,
+    join(worktreePath, nativeDirectory),
+    audience,
+    globalSkillsPath,
+  );
+  if (staged.size > 0) {
     // After the links exist, so a failed staging never leaves a path recorded
     // as Hive's that Hive did not create.
-    await recordProvisionedLinks(worktreePath, links);
+    await recordProvisionedLinks(
+      worktreePath,
+      new Map(
+        [...staged].map(([path, source]) => [
+          relative(worktreePath, path),
+          source,
+        ]),
+      ),
+    );
   }
 
-  await installShippedSkills(worktreePath, tool);
-  await removeForeignShippedSkills(worktreePath, tool);
+  await installShippedSkillsInto(join(worktreePath, nativeDirectory), audience);
+  await removeForeignShippedSkillsFrom(
+    join(worktreePath, nativeDirectory),
+    audience,
+  );
+}
+
+/**
+ * Symlink one audience's own skills into one directory, and say what was
+ * linked, keyed by the absolute path each link was created at.
+ *
+ * No manifest is written here. A worktree records its links because
+ * reconciliation later has to tell Hive's wiring from the agent's own work; a
+ * queen's directory belongs to Hive outright and is rebuilt at every launch,
+ * so there is nothing there to mistake for someone's work.
+ */
+async function stageUserSkills(
+  repoRoot: string,
+  destination: string,
+  audience: SkillAudience,
+  globalSkillsPath: string,
+): Promise<Map<string, string>> {
+  const skills = await userSkillsFor(repoRoot, audience, globalSkillsPath);
+  if (skills.size === 0) return new Map();
+  await mkdir(destination, { recursive: true });
+  const links = new Map(
+    [...skills.entries()].map(
+      ([name, source]) => [join(destination, name), source] as const,
+    ),
+  );
+  await Promise.all(
+    [...links.entries()].map(([path, source]) => linkSkill(source, path)),
+  );
+  return links;
+}
+
+/**
+ * Everything one audience is owed, in a directory Hive chose rather than a
+ * worktree: the user's own skills, then Hive's shipped ones, then the prune.
+ *
+ * This is `provisionSkills` for a reader who has no checkout of their own —
+ * the queen, whose vendor hands Hive a plugin directory or a `--skills-dir`
+ * instead. The order and the precedence are the same, so a skill the user wrote
+ * still beats a skill Hive ships.
+ */
+export async function provisionSkillsInto(
+  repoRoot: string,
+  destination: string,
+  audience: SkillAudience,
+  globalSkillsPath = globalSkillsRoot(),
+): Promise<void> {
+  await mkdir(destination, { recursive: true });
+  await stageUserSkills(repoRoot, destination, audience, globalSkillsPath);
+  await installShippedSkillsInto(destination, audience);
+  await removeForeignShippedSkillsFrom(destination, audience);
 }
 
 /**
@@ -390,15 +653,19 @@ export async function provisionSkills(
  * retain the other vendor's contracts, so remove only byte-identical Hive
  * copies. User symlinks and modified files are never touched.
  *
+ * Foreign is now anything this audience is not offered — another vendor's
+ * contract, and equally a skill for the other role or another category. A
+ * worktree reused by an agent of a different category would otherwise keep a
+ * contract addressed to work it was not sent to do.
+ *
  * This runs at spawn, not multi-vendor init: one shared checkout cannot hide a
  * file from only one of two readers, while each agent worktree has one reader.
  */
-async function removeForeignShippedSkills(
-  root: string,
-  tool: SkillTool,
+async function removeForeignShippedSkillsFrom(
+  nativeRoot: string,
+  audience: SkillAudience,
 ): Promise<void> {
-  const nativeRoot = join(root, nativeSkillDirectory(tool));
-  const mine = new Set(shippedSkillsFor(tool).map((skill) => skill.name));
+  const mine = new Set(shippedSkillsFor(audience).map((skill) => skill.name));
 
   for (const skill of SHIPPED_SKILLS) {
     if (mine.has(skill.name)) continue;

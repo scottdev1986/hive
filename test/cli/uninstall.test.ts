@@ -153,7 +153,7 @@ describe("hive uninstall --repo", () => {
     const root = await gitRepo();
     try {
       // Hive's full repo footprint, laid down the way Hive lays it down.
-      const shipped = shippedSkillsFor("claude");
+      const shipped = shippedSkillsFor({ role: "agent", tool: "claude" });
       expect(shipped.length).toBeGreaterThan(1);
       const [ours, theirs] = [required(shipped[0]), required(shipped[1])];
       await mkdir(join(root, ".claude", "skills", ours.name), {

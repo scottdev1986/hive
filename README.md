@@ -56,14 +56,20 @@ worker's assignment remains its visible initial user message.
 
 ## Your own skills
 
-Drop a skill into `.hive/skills/` (this repository) or `~/.hive/skills/` (every repository) and every agent Hive spawns gets it. No commit is needed: Hive reads these from your checkout, so uncommitted, committed, and gitignored skills all behave the same. The repository's copy wins a name it shares with a global one, and both roots use the same layout:
+Drop a skill into `.hive/skills/` (this repository) or `~/.hive/skills/` (every repository) and Hive gives it to the readers you address it to. `hive init` installs Hive's own skills into the same tree at the same addresses, so one directory answers "what do my agents know" — and a skill you edit there beats the one Hive ships, exactly like any other. No commit is needed: Hive reads these from your checkout, so uncommitted, committed, and gitignored skills all behave the same. The repository's copy wins a name it shares with a global one, and both roots use the same layout:
 
 | Layout | Reaches |
 | --- | --- |
-| `.hive/skills/<skill>/SKILL.md` | every vendor |
-| `.hive/skills/<vendor>/<skill>/SKILL.md` | that vendor only — `claude`, `codex`, `grok`, `kimi`, `opencode` |
+| `.hive/skills/queen/<skill>/SKILL.md` | every queen |
+| `.hive/skills/queen/<vendor>/<skill>/SKILL.md` | that vendor's queen |
+| `.hive/skills/agent/<skill>/SKILL.md` | every agent |
+| `.hive/skills/agent/<vendor>/<skill>/SKILL.md` | that vendor's agents |
+| `.hive/skills/agent/<category>/<skill>/SKILL.md` | agents spawned under that task category |
+| `.hive/skills/agent/<vendor>/<category>/<skill>/SKILL.md` | both filters at once |
 
-A directory named exactly after a vendor is always a vendor bucket, so a skill cannot be named `claude`, `codex`, `grok`, `kimi`, or `opencode`.
+Vendors are `claude`, `codex`, `grok`, `kimi`, and `opencode`. Categories are the task categories agents are spawned under — `light_research`, `heavy_research`, `simple_coding`, `standard_coding`, `complex_coding`, `code_review`, `planning`, `debugging`, `summarization` — and they address agents only, because a queen is spawned under none.
+
+The first directory is always `queen` or `agent`: a skill that does not say who it is for is addressed to nobody, and Hive reports it rather than guessing. The most specific address wins, so `agent/claude/planning/` beats `agent/claude/` beats `agent/`. A directory whose name is a bucket at its own level is always a bucket, so a skill cannot be named after one there — though `planning` is an ordinary skill name under `queen/`, where no category exists.
 
 ## Commands
 

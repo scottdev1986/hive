@@ -2,6 +2,8 @@ import { afterAll, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SkillAudience } from "../../src/adapters/skills";
+import { CAPABILITY_PROVIDERS } from "../../src/schemas";
 import { SHIPPED_SKILLS, shippedSkillsFor } from "../../src/skills/shipped";
 
 /**
@@ -31,10 +33,13 @@ async function tempRoot(prefix: string): Promise<string> {
 test("every shipped skill carries real content and vendor-required frontmatter", () => {
   expect(SHIPPED_SKILLS.map((skill) => skill.name).sort()).toEqual([
     "code-review",
+    "hive-alignment",
     "hive-claude",
     "hive-codex",
     "hive-grok",
+    "hive-kimi",
     "hive-memory",
+    "hive-opencode",
     "karpathy-guidelines",
   ]);
 
@@ -50,25 +55,49 @@ test("every shipped skill carries real content and vendor-required frontmatter",
   }
 });
 
-test("each vendor is offered the skills written for it", () => {
-  expect(shippedSkillsFor("claude").map((skill) => skill.name)).toEqual([
+const names = (audience: SkillAudience): string[] =>
+  shippedSkillsFor(audience).map((skill) => skill.name);
+
+test("each vendor's agent is offered the skills written for it", () => {
+  expect(names({ role: "agent", tool: "claude" })).toEqual([
     "hive-claude",
     "hive-memory",
     "karpathy-guidelines",
-    "code-review",
   ]);
-  expect(shippedSkillsFor("codex").map((skill) => skill.name)).toEqual([
+  expect(names({ role: "agent", tool: "codex" })).toEqual([
     "hive-codex",
     "hive-memory",
     "karpathy-guidelines",
-    "code-review",
   ]);
-  expect(shippedSkillsFor("grok").map((skill) => skill.name)).toEqual([
+  expect(names({ role: "agent", tool: "grok" })).toEqual([
     "hive-grok",
     "hive-memory",
     "karpathy-guidelines",
-    "code-review",
   ]);
+});
+
+test("a queen is offered neither a worktree contract nor coding guidance", () => {
+  for (const tool of CAPABILITY_PROVIDERS) {
+    // She is not standing in a worktree and writes no implementation code.
+    // What is hers: aligning with the user before delegating, and memory.
+    expect(names({ role: "queen", tool })).toEqual([
+      "hive-memory",
+      "hive-alignment",
+    ]);
+  }
+});
+
+test("code-review reaches the agent spawned to review, and no other", () => {
+  expect(
+    names({ role: "agent", tool: "claude", category: "code_review" }),
+  ).toContain("code-review");
+  // Another category, and no category at all: both are agents that were not
+  // sent to review, and the skill claims in its first line that they were.
+  expect(
+    names({ role: "agent", tool: "claude", category: "planning" }),
+  ).not.toContain("code-review");
+  expect(names({ role: "agent", tool: "claude" })).not.toContain("code-review");
+  expect(names({ role: "queen", tool: "claude" })).not.toContain("code-review");
 });
 
 test("a compiled binary installs the shipped skills with no checkout to read from", async () => {
@@ -84,9 +113,9 @@ test("a compiled binary installs the shipped skills with no checkout to read fro
     entry,
     `import { installShippedSkills } from ${JSON.stringify(installer)};\n` +
       `const root = process.argv[2]!;\n` +
-      `await installShippedSkills(root, "claude");\n` +
-      `await installShippedSkills(root, "codex");\n` +
-      `await installShippedSkills(root, "grok");\n`,
+      `for (const tool of ["claude", "codex", "grok"] as const) {\n` +
+      `  await installShippedSkills(root, { role: "agent", tool, category: "code_review" });\n` +
+      `}\n`,
   );
 
   const compile = Bun.spawnSync([
@@ -106,8 +135,13 @@ test("a compiled binary installs the shipped skills with no checkout to read fro
   expect(run.stderr.toString()).toEqual("");
   expect(run.exitCode).toEqual(0);
 
+  // Every skill a code_review agent of these three vendors is offered — the
+  // audience the entry above installed for, chosen because it is the widest
+  // one and so leaves nothing unproven.
   for (const skill of SHIPPED_SKILLS) {
     for (const tool of skill.tools) {
+      if (!skill.roles.includes("agent")) continue;
+      if (tool === "kimi" || tool === "opencode") continue;
       const native =
         tool === "claude"
           ? join(".claude", "skills")

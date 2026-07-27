@@ -11,9 +11,11 @@ import { join } from "node:path";
  * architectural role word.
  */
 const WORKER_SKILLS = [
-  "skills/hive-claude/SKILL.md",
-  "skills/hive-codex/SKILL.md",
-  "skills/hive-grok/SKILL.md",
+  "skills/agent/claude/hive-claude/SKILL.md",
+  "skills/agent/codex/hive-codex/SKILL.md",
+  "skills/agent/grok/hive-grok/SKILL.md",
+  "skills/agent/kimi/hive-kimi/SKILL.md",
+  "skills/agent/opencode/hive-opencode/SKILL.md",
 ] as const;
 
 /** Operational address patterns that must prefer queen (the systematic sweep). */

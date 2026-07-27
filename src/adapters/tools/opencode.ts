@@ -34,6 +34,10 @@ export interface OpencodeAgentConfigOptions {
    * Bash scoped to gh (orchestrator-role.ts), instead of the read-only
    * barrier. */
   orchestrator?: boolean;
+  /** Directories opencode reads skills from on top of its own discovery. This
+   * is the queen's channel: opencode offers no launch flag, and her skills are
+   * provisioned outside the checkout (adapters/queen-skills.ts). */
+  skillPaths?: readonly string[];
 }
 
 export function resolveWorkingOpencodeExecutable() {
@@ -175,6 +179,11 @@ export async function writeOpencodeAgentConfig(
     permission.edit = "deny";
     permission.bash = "deny";
     existing.permission = permission;
+  }
+  if (options.skillPaths !== undefined && options.skillPaths.length > 0) {
+    const skills = isRecord(existing.skills) ? existing.skills : {};
+    skills.paths = [...options.skillPaths];
+    existing.skills = skills;
   }
   if (options.instructionPath !== undefined) {
     const agents = isRecord(existing.agent) ? existing.agent : {};
