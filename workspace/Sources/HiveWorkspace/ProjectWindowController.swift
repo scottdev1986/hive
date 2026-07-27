@@ -21,6 +21,13 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
+    /// Panes the reducer has created but whose views have not been built yet.
+    /// See `admitPane(_:)`.
+    private var pendingAdmissions: [PaneID] = []
+    private var admissionDrainScheduled = false
+    /// Panes built in the current main-queue turn; reset on every entry to the
+    /// reducer's change loop and on every drain slice.
+    private var admittedThisTurn = 0
     private var composerKeyMonitor: Any?
     private var feedFailureWindow: NSWindow?
     private var isClosing = false
@@ -222,10 +229,11 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     private func react(to changes: [StateChange]) {
         guard !changes.isEmpty else { return }
+        admittedThisTurn = 0
         for change in changes {
             switch change {
             case .paneAdded(let paneID):
-                addPaneView(for: paneID)
+                admitPane(paneID)
             case .paneRemoved(let paneID):
                 pendingCloses.remove(paneID)
                 if let view = paneViews.removeValue(forKey: paneID) {
@@ -252,7 +260,66 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: Pane management
 
+    /// One feed snapshot can announce every agent at once — a fan-out spawn
+    /// reports thirty-two in a single line. Building all of them here would run
+    /// thirty-two `PaneView` constructions and thirty-two Ghostty surface
+    /// creations back to back inside ONE main-queue turn, and every click,
+    /// keystroke and pane redraw queues behind that turn.
+    ///
+    /// Measured with the real UI on real sessiond sessions
+    /// (prototypes/workspace-fanout): thirty-two agents arriving in one snapshot
+    /// stalled the main queue for ~400 ms, about two seconds after the snapshot
+    /// landed. Spreading the identical work across turns is what removes it —
+    /// the same total work, just never all in one turn.
+    ///
+    /// Panes are admitted in arrival order, so the workspace fills in the order
+    /// the daemon reported the agents rather than in an order the run loop
+    /// happened to produce.
+    /// The first slice of a snapshot is built INLINE, so a workspace that
+    /// gains one or two agents — every ordinary case, and every case the pane
+    /// contract tests assert — still has its views the moment `applyFeed`
+    /// returns. Only the surplus of an unusually wide snapshot is deferred,
+    /// which is the only case that was ever too much for one turn.
+    private func admitPane(_ paneID: PaneID) {
+        guard pendingAdmissions.isEmpty, admittedThisTurn < Self.paneAdmissionsPerTurn else {
+            pendingAdmissions.append(paneID)
+            scheduleAdmissionDrain()
+            return
+        }
+        admittedThisTurn += 1
+        addPaneView(for: paneID)
+    }
+
+    private func scheduleAdmissionDrain() {
+        guard !admissionDrainScheduled, !pendingAdmissions.isEmpty else { return }
+        admissionDrainScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.drainAdmissions()
+        }
+    }
+
+    private func drainAdmissions() {
+        admissionDrainScheduled = false
+        admittedThisTurn = 0
+        guard !pendingAdmissions.isEmpty else { return }
+        for _ in 0 ..< Self.paneAdmissionsPerTurn where !pendingAdmissions.isEmpty {
+            addPaneView(for: pendingAdmissions.removeFirst())
+        }
+        // The reducer's own `.layoutChanged` already fired for these panes, at a
+        // point when their views did not exist yet, so the solved frames have to
+        // be applied again now that they do.
+        applyLayout(animated: true)
+        onStateChange?()
+        scheduleAdmissionDrain()
+    }
+
+    /// Small enough that one turn stays well inside a frame, large enough that a
+    /// full workspace still fills in promptly.
+    private static let paneAdmissionsPerTurn = 4
+
     private func addPaneView(for paneID: PaneID) {
+        // A pane can be closed while it is still queued behind an earlier slice.
+        guard state.panes[paneID] != nil else { return }
         guard let pane = state.panes[paneID] else { return }
         let view = PaneView(
             paneID: paneID,
@@ -370,6 +437,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         isClosing = true
+        // Nothing queued may build a terminal for a window that is going away.
+        pendingAdmissions.removeAll()
         terminateAllTerminals()
         onWindowWillClose?()
     }

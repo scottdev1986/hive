@@ -142,7 +142,7 @@ final class C13PaneChromeTests: XCTestCase {
             a view's sublayers beneath its subviews' layers). It instead read \
             as \(sublayerDimmed) against an undimmed \(undimmed). If this now \
             passes as visible, the hazard's premise changed and the overlay \
-            requirement in PaneAttenuationView/PaneFocusRingView should be \
+            requirement in PaneFocusRingView should be \
             re-derived rather than trusted.
             """)
 
@@ -280,61 +280,31 @@ final class C13PaneChromeTests: XCTestCase {
     // the fill re-resolving across light and dark — is covered above and is
     // mutation-proven by `hardcode-the-background-color`.
 
-    // MARK: - 4. Focus by attenuation
+    // MARK: - 4. No attenuation
 
-    func testUnfocusedPaneIsAttenuatedAndFocusedPaneIsNot() {
-        let view = PaneAttenuationView()
-
-        view.indicator = .none
-        XCTAssertTrue(view.isAttenuated, "An unfocused pane must be dimmed.")
-
-        view.indicator = .active
-        XCTAssertFalse(view.isAttenuated, "The focused pane must render normally.")
-
-        // `.inactive` still IS the focused pane — the window merely is not key.
-        view.indicator = .inactive
-        XCTAssertFalse(
-            view.isAttenuated,
-            "A focused pane in a non-key window must not be dimmed; that would claim focus had moved.")
-    }
-
-    func testAttenuationPassesClicksThroughToTheTerminal() {
-        let view = PaneAttenuationView(frame: NSRect(x: 0, y: 0, width: 50, height: 50))
-        XCTAssertNil(
-            view.hitTest(NSPoint(x: 25, y: 25)),
-            "The attenuation overlay must never take a click from the terminal below it.")
-    }
-
-    /// Attenuation sits above the pane background but below the status border
-    /// and focus ring: status is a correctness signal and stays legible.
-    func testAttenuationIsBelowStatusAndFocusChrome() {
+    /// Panes are never dimmed. Focus-by-attenuation was removed: with many
+    /// agents open, every pane but one was an unfocused pane, so the dim
+    /// applied to nearly the whole workspace at once and agents were not
+    /// legible. Every pane now renders at full strength and focus is carried
+    /// by the ring and header tint alone.
+    func testNoPaneChromeDimsThePane() {
         let pane = makePane()
         pane.layoutSubtreeIfNeeded()
 
-        let subviews = pane.subviews
-        func index(ofType type: AnyClass) -> Int? {
-            subviews.firstIndex { $0.isKind(of: type) }
+        for chrome in pane.subviews {
+            XCTAssertFalse(
+                String(describing: type(of: chrome)).contains("Attenuation"),
+                "No pane chrome may dim the pane: found \(type(of: chrome)).")
         }
-
-        guard let attenuationIndex = index(ofType: PaneAttenuationView.self),
-              let statusIndex = index(ofType: PaneStatusBorderView.self),
-              let focusIndex = index(ofType: PaneFocusRingView.self),
-              let backgroundIndex = index(ofType: PaneBackgroundView.self) else {
-            return XCTFail("pane is missing one of background/attenuation/status/focus: \(subviews)")
-        }
-
-        XCTAssertLessThan(backgroundIndex, attenuationIndex, "Attenuation must be above the pane background.")
-        XCTAssertLessThan(attenuationIndex, statusIndex, "Status must stay above attenuation.")
-        XCTAssertLessThan(attenuationIndex, focusIndex, "The focus ring must stay above attenuation.")
     }
 
-    /// The attenuation overlay is a sibling view, never a sublayer — the
-    /// hazard demonstrated in test 1 is what forbids the alternative.
+    /// Pane chrome is a sibling view, never a sublayer — the hazard
+    /// demonstrated in test 1 is what forbids the alternative.
     func testPaneChromeAddsNoSublayers() {
         let pane = makePane()
         pane.layoutSubtreeIfNeeded()
 
-        for chrome in pane.subviews where chrome is PaneAttenuationView || chrome is PaneFocusRingView {
+        for chrome in pane.subviews where chrome is PaneFocusRingView {
             XCTAssertTrue(
                 chrome.layer?.sublayers?.isEmpty ?? true,
                 "\(type(of: chrome)) attached a sublayer; chrome must draw itself, not stack layers.")

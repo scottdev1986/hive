@@ -19,7 +19,6 @@ final class PaneView: NSView {
     private let failureBadge = NSImageView()
     let contentView = NSView()
 
-    private let attenuation = PaneAttenuationView()
     private let statusBorder = PaneStatusBorderView()
     private let focusRing = PaneFocusRingView()
     private var currentStatus: PaneStatus = .unknown
@@ -209,20 +208,11 @@ final class PaneView: NSView {
         // Status and focus are sibling overlays above the opaque background.
         // Both pass every click through to the terminal below.
         headerView.wantsLayer = true
-        // Attenuation dims the whole unfocused pane, so it goes above the
-        // background but below status and focus: pane status is a correctness
-        // signal and must stay legible on every pane at once.
-        attenuation.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(attenuation)
         statusBorder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(statusBorder)
         focusRing.translatesAutoresizingMaskIntoConstraints = false
         addSubview(focusRing)
         NSLayoutConstraint.activate([
-            attenuation.topAnchor.constraint(equalTo: topAnchor),
-            attenuation.leadingAnchor.constraint(equalTo: leadingAnchor),
-            attenuation.trailingAnchor.constraint(equalTo: trailingAnchor),
-            attenuation.bottomAnchor.constraint(equalTo: bottomAnchor),
             statusBorder.topAnchor.constraint(equalTo: topAnchor),
             statusBorder.leadingAnchor.constraint(equalTo: leadingAnchor),
             statusBorder.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -374,7 +364,6 @@ final class PaneView: NSView {
         guard indicator != focusIndicator else { return }
         focusIndicator = indicator
         focusRing.indicator = indicator
-        attenuation.indicator = indicator
         applyHeaderTint()
         // The status border is untouched: focus never overwrites status.
     }
