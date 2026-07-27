@@ -36,6 +36,9 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const OUTPUT_TAIL_BYTES = 32 * 1024;
 const OUTPUT_REPLAY_TIMEOUT_MS = 1_000;
+/** No frame for this long means the host has finished replaying. */
+const OUTPUT_QUIET_MS = 120;
+const OUTPUT_POLL_MS = 20;
 
 const frameNames = new Map<number, FrameTypeName>(
   Object.entries(FRAME_TYPES).map(([name, code]) => [
@@ -179,6 +182,8 @@ export class SessiondViewerAttachClient {
   private failure: Error | null = null;
   private maxInputTransactionBytes = TERMINAL_LIMITS.inputTransactionBytes;
   private outputHighWater = 0n;
+  /** When the last OUTPUT frame landed, for the replay-settled wait. */
+  private lastOutputAt = 0;
   private attachRequestId: bigint | null = null;
   private outputTail = new Uint8Array();
   private outputComplete = true;
@@ -226,7 +231,7 @@ export class SessiondViewerAttachClient {
       deps.grant.checkpointSeq,
     );
     try {
-      await client.waitForOutput(deps.grant.outputSeq);
+      await client.settleReplay(deps.grant.outputSeq);
       return {
         outputThrough: client.outputHighWater.toString(),
         text: new TextDecoder().decode(client.outputTail),
@@ -234,6 +239,43 @@ export class SessiondViewerAttachClient {
       };
     } finally {
       client.close();
+    }
+  }
+
+  /**
+   * Wait for the host's replay, without trusting the grant's sequence as the
+   * whole story.
+   *
+   * The grant carries the sequence the BROKER has on record, and the broker
+   * learns it when a host registers — not as the pane produces output. So a
+   * pane that has been printing for minutes can still be advertised at
+   * `outputSeq: 0`, and `waitForOutput("0")` then resolves on the spot with an
+   * empty tail and reports `complete`. That is not a hypothetical: it is
+   * exactly what an operator hit when a grok agent wrote a story and the queen
+   * could only answer "outputThrough still 0 — there's no captured text to
+   * read". The observation succeeded; it just observed nothing, and because it
+   * succeeded nothing anywhere logged a problem.
+   *
+   * A HOST_ATTACH connection is streamed SNAPSHOT/OUTPUT immediately, so the
+   * bytes are already on their way. The honest wait is therefore: satisfy the
+   * grant's target when it is real, and otherwise keep reading until the host
+   * goes quiet.
+   */
+  private async settleReplay(target: string): Promise<void> {
+    const through = BigInt(target);
+    if (through > 0n) {
+      await this.waitForOutput(target);
+      return;
+    }
+    const deadline = Date.now() + OUTPUT_REPLAY_TIMEOUT_MS;
+    for (;;) {
+      const quietFor = Date.now() - this.lastOutputAt;
+      if (this.lastOutputAt !== 0 && quietFor >= OUTPUT_QUIET_MS) return;
+      if (Date.now() >= deadline) return;
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, OUTPUT_POLL_MS);
+        timer.unref?.();
+      });
     }
   }
 
@@ -601,6 +643,7 @@ export class SessiondViewerAttachClient {
       this.outputTail = combined;
     }
     this.outputHighWater = throughSeq;
+    this.lastOutputAt = Date.now();
     if (
       this.outputWaiter !== null &&
       this.outputHighWater >= this.outputWaiter.target

@@ -68,6 +68,14 @@ const AGENT_DIRECTED: readonly Action[] = [
   "agent:mark-dead",
   "agent:recover",
   "approval:decide",
+  // The queen may look at any agent she is running. She can already kill,
+  // recover and mark them dead without naming them ahead of time; withholding
+  // the ability to LOOK left her deciding those things blind, and made
+  // "what is she doing?" answerable only by interrupting the agent to ask —
+  // the one thing observation exists to avoid. Reading a pane takes no input,
+  // no focus, and no claim; `permitsTerminalObservation` still governs what a
+  // non-orchestrator may see, and an agent still cannot read a peer.
+  "terminal:observe",
 ];
 
 const OPERATOR_ACTIONS: readonly Action[] = [
@@ -558,6 +566,17 @@ export function permitsTerminalObservation(
   if (self && include === "visible-text") {
     return capability.constraints?.content === true;
   }
+  // The orchestrator reads any agent in her own fleet, metadata or text.
+  //
+  // Hive promises the queen can see what an agent is doing without disturbing
+  // it. Restricting cross-agent reads to an operator credential that names the
+  // subject in advance meant she could not: an agent's work was observable only
+  // through a derived one-line summary, and the actual content only by sending
+  // the agent a message and interrupting it. She already spawns, kills and
+  // recovers these agents unnamed; being unable to look at them was the odd
+  // one out. This does not widen what an AGENT may see — a peer still cannot
+  // read a peer, and self-reads still require the content constraint.
+  if (capability.role === "orchestrator") return true;
   return (
     capability.role === "operator" &&
     capability.constraints?.scope === "operator" &&

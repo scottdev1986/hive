@@ -161,6 +161,7 @@ export interface ProductionTerminalComposition {
   daemonDependencies: Readonly<{
     terminalHost: SessiondHost;
     sessiondInput: SessiondAgentInput;
+    sessionHost: SessiondHost;
     observeTerminalOutput: (
       locator: SessionLocator,
       geometry: TerminalGeometry,
@@ -189,6 +190,11 @@ export function createProductionTerminalComposition(
     daemonDependencies: {
       terminalHost,
       sessiondInput,
+      // The queen's explicit "show me the screen" read. Production never
+      // supplied this, so `hive_terminal_observe` refused every call with
+      // "SessionHost terminal observation is unavailable" — the tool existed,
+      // was authorized, was documented, and could not run.
+      sessionHost: terminalHost,
       observeTerminalOutput: (locator, geometry) =>
         observeSessiondOutput(
           terminalHost,
@@ -421,6 +427,33 @@ export async function runDaemon(): Promise<void> {
   });
   daemon = new HiveDaemon({
     ...terminalComposition.daemonDependencies,
+    // Resolve an exact terminal generation for `hive_terminal_observe`. The
+    // tool refuses anything that is not an exact match, so this returns the
+    // locator only when BOTH the session id and the generation agree — a
+    // reader must never be handed a newer incarnation's screen while believing
+    // it asked about the one it named.
+    resolveSessionLocator: async (sessionId, generation) => {
+      for (const agent of db.listAgents()) {
+        const locator = agent.sessionLocator;
+        if (
+          locator != null &&
+          locator.sessionId === sessionId &&
+          locator.generation === generation
+        ) {
+          return locator;
+        }
+      }
+      return (
+        db
+          .listTerminalHostBindings(hiveInstanceSuffix())
+          .map((binding) => binding.locator)
+          .find(
+            (locator) =>
+              locator.sessionId === sessionId &&
+              locator.generation === generation,
+          ) ?? null
+      );
+    },
     statusIncarnationGenerationSource:
       agentRecordStatusIncarnationGenerationSource((agentId) =>
         db.getAgentById(agentId),

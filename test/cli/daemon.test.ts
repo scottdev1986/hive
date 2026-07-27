@@ -30,9 +30,16 @@ test("production terminal composition constructs sessiond only", () => {
     daemonDependencies: {
       terminalHost,
       sessiondInput: expect.any(Object),
+      // The queen's visible-text read. Absent here, `hive_terminal_observe`
+      // refuses every call in production while looking perfectly wired in the
+      // tool registry — so the composition is where it has to be pinned.
+      sessionHost: terminalHost,
       observeTerminalOutput: expect.any(Function),
     },
   });
+  expect(composition.daemonDependencies.sessionHost).toBe(
+    composition.terminalHost,
+  );
   expect(composition.spawnerDependencies.sessiondInput).toBe(
     composition.daemonDependencies.sessiondInput,
   );

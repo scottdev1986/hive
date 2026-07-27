@@ -156,7 +156,18 @@ export function registerStatusTools(
       if (storedAgents.length > 0) {
         sessions = await deps.terminalHost
           .list(hiveInstanceSuffix())
-          .catch(() => null);
+          .catch((error: unknown) => {
+            // Losing this list costs every agent its inspection, and an absent
+            // inspection silently costs every agent its terminal output. One
+            // failure here reads downstream as a whole fleet producing nothing.
+            console.warn(
+              `Hive could not list terminal sessions; no agent will report ` +
+                `terminal activity this pass: ${
+                  error instanceof Error ? error.message : "unknown failure"
+                }`,
+            );
+            return null;
+          });
       }
       let agents = storedAgents.map((agent): AgentRecord => {
         const deliveryBlocked = blocked.get(agent.name);
@@ -212,12 +223,45 @@ export function registerStatusTools(
             sessions?.find((session) =>
               sameSessionLocator(session.locator, locator),
             ) ?? null;
+          if (inspection === null && sessions !== null) {
+            // The list came back and this agent was not in it. That is a
+            // locator mismatch, not an outage, and it is the difference
+            // between "sessiond is down" and "we are asking about the wrong
+            // generation" — which no amount of staring at `outputThrough: 0`
+            // would ever distinguish.
+            console.warn(
+              `Hive has no terminal session matching ${agent.name} ` +
+                `(${locator.sessionId}#${locator.generation}); its terminal ` +
+                `output cannot be observed. sessiond listed ${sessions.length}: ` +
+                sessions
+                  .map(
+                    (session) =>
+                      `${session.locator.sessionId}#${session.locator.generation}`,
+                  )
+                  .join(", "),
+            );
+          }
+          // A failed observation is REPORTED, not dropped. `.catch(() => null)`
+          // here rendered downstream as `outputThrough: "0"` and an empty
+          // summary, which reads to a queen as "the agent produced nothing"
+          // rather than "Hive could not look".
           const output =
             deps.observeTerminalOutput === null || inspection === null
               ? null
               : await deps
                   .observeTerminalOutput(locator, inspection.geometry)
-                  .catch(() => null);
+                  .catch((error: unknown) => {
+                    console.warn(
+                      `Hive could not observe ${agent.name}'s terminal output: ` +
+                        `${error instanceof Error ? error.message : "unknown failure"}`,
+                    );
+                    return null;
+                  });
+          if (output?.failure !== undefined) {
+            console.warn(
+              `Hive observed no terminal output for ${agent.name}: ${output.failure}`,
+            );
+          }
           const run = deps.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
           const providerEvents =
             run === null ? [] : [...deps.db.listProviderEvents(run.runId)];

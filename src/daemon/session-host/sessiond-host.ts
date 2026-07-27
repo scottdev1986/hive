@@ -37,17 +37,22 @@ import {
   WelcomePayloadSchema,
   type WireErrorCode,
 } from "../../schemas/session-protocol";
+import { createHash as nodeCreateHash } from "node:crypto";
 import { type DaemonHandshake, expectedDaemonHandshake } from "../handshake";
 import { resolveHiveHome } from "../instance-identity";
+import { observeSessiondOutput } from "./sessiond-output-observer";
 import type {
   AttachGrant,
   AttachRequest,
+  CaptureRequest,
+  CaptureResult,
   CreateResult,
   SessionHost,
   SessionSpec,
   VisibilityLease,
   VisibilityRequest,
 } from "./contract";
+
 import {
   HiveTerminalBindingSchema,
   type TerminalHostBindingStore,
@@ -61,6 +66,33 @@ import type {
   TerminalHost,
   TerminationResult,
 } from "./terminal-host-contract";
+
+const CAPTURE_COLUMNS = 200;
+const CAPTURE_CELL_PX = 10;
+/**
+ * ANSI control sequences, built rather than written as a literal: the escape
+ * byte in a regex literal trips `noControlCharactersInRegex`, and suppressing
+ * that lint is worse than not needing it.
+ */
+const ESC = String.fromCharCode(27);
+const ANSI_SEQUENCES = new RegExp(
+  `${ESC}\\[[0-9;?]*[a-zA-Z]|${ESC}[()][A-Z0-9]|${ESC}[=>]|${ESC}\\][^\\u0007]*\\u0007`,
+  "g",
+);
+
+/**
+ * The tail of a captured pane as rows a reader can act on. The viewer replay is
+ * a byte stream with control sequences in it; a queen reading a screen wants
+ * the lines, most recent last, bounded by what she asked for.
+ */
+function lastVisibleRows(text: string, maxRows: number): string {
+  const rows = text
+    .replaceAll(ANSI_SEQUENCES, "")
+    .split(/\r?\n/)
+    .map((row) => row.replace(/\s+$/, ""))
+    .filter((row, index, all) => row.length > 0 || all[index - 1] !== "");
+  return rows.slice(-maxRows).join("\n");
+}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -863,6 +895,64 @@ export class SessiondHost implements LandedTerminalHost {
     } finally {
       broker.close();
     }
+  }
+
+  /**
+   * The bounded visible-text read behind `hive_terminal_observe`.
+   *
+   * `capture` is deliberately absent from `LandedTerminalHost`, so nothing ever
+   * supplied one and the queen's explicit "show me the screen" tool refused
+   * every call with "SessionHost terminal observation is unavailable" — for
+   * every vendor, in every deployment. That left observation with no CONTENT
+   * path at all: the activity summary carries a derived one-liner, and the pane
+   * itself was reachable only by interrupting the agent to ask what it did,
+   * which is the one thing observation exists to avoid.
+   *
+   * It rides the same viewer attach the activity observer uses, because that is
+   * the surface that already streams a pane's bytes to a reader who never takes
+   * input. This does not focus, claim, resize, or type.
+   */
+  async capture(
+    locator: Parameters<SessionHost["capture"]>[0],
+    request: CaptureRequest,
+  ): Promise<CaptureResult> {
+    // The viewer declares a size for the attach; it never resizes the pane, and
+    // the replayed bytes do not depend on it. The result reports the size that
+    // produced the text rather than implying knowledge of the real window.
+    const rows = Math.max(request.maxRows, 1);
+    const geometry = {
+      columns: CAPTURE_COLUMNS,
+      rows,
+      widthPx: CAPTURE_COLUMNS * CAPTURE_CELL_PX,
+      heightPx: rows * CAPTURE_CELL_PX,
+      cellWidthPx: CAPTURE_CELL_PX,
+      cellHeightPx: CAPTURE_CELL_PX,
+    } as const;
+    const observed = await observeSessiondOutput(
+      this,
+      locator,
+      geometry,
+      `hive-daemon:capture:${locator.sessionId}`,
+    );
+    const raw = observed?.text ?? "";
+    const rendered = lastVisibleRows(raw, request.maxRows);
+    return {
+      locator,
+      outputSeq: observed?.outputThrough ?? "0",
+      columns: geometry.columns,
+      rows: geometry.rows,
+      screen: "primary",
+      cursor: { row: 0, column: 0, visible: false },
+      text: request.include === "visible-text" ? rendered : null,
+      // Truncated when rows were dropped OR the observer itself reported a gap:
+      // a reader deciding whether to trust a tail needs both facts, and the
+      // viewer's own 32KiB tail cap is exactly the case that would otherwise
+      // present a partial screen as a whole one.
+      truncated:
+        observed?.completeness === "gap" ||
+        rendered.length < raw.replace(ANSI_SEQUENCES, "").trimEnd().length,
+      sha256: nodeCreateHash("sha256").update(rendered, "utf8").digest("hex"),
+    };
   }
 
   async issueAttach(
