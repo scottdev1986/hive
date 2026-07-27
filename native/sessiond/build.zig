@@ -500,6 +500,27 @@ pub fn build(b: *std.Build) void {
     const run_real_host_golden = b.addRunArtifact(real_host_golden);
     test_step.dependOn(&run_real_host_golden.step);
 
+    // THROWAWAY PROBE (lucas): spawn-concurrency ceiling measurement. Not wired
+    // into test_step; build/run explicitly with -Doptimize=ReleaseFast.
+    const spawn_ceiling_module = b.createModule(.{
+        .root_source_file = b.path("test/spawn-ceiling.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    spawn_ceiling_module.addImport("broker", broker_module);
+    spawn_ceiling_module.addImport("session_protocol_generated", generated);
+    spawn_ceiling_module.addImport("process_inspector", process_inspector_module);
+    spawn_ceiling_module.addImport("protocol", test_module);
+    spawn_ceiling_module.addImport("session_host", session_host_module);
+    const spawn_ceiling = b.addExecutable(.{
+        .name = "sessiond-spawn-ceiling",
+        .root_module = spawn_ceiling_module,
+    });
+    spawn_ceiling.linkLibrary(ghostty_vt);
+    const spawn_ceiling_step = b.step("spawn-ceiling", "Run the spawn concurrency ceiling probe");
+    spawn_ceiling_step.dependOn(&b.addRunArtifact(spawn_ceiling).step);
+
     const stub_module = b.createModule(.{
         .root_source_file = b.path("test/stub_host.zig"),
         .target = target,
