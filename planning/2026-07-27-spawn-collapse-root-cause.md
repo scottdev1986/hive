@@ -91,15 +91,19 @@ Measured in the incident:
   and got `sessiond NOT_READY: not_ready` — **907 refusals** through 20:39+,
   each one another broker connection keeping the loop busy during the
   recovery window.
-- The two auto-resume retries (david gen 2 created 20:36:21Z, liam gen 2
-  20:38:50Z) died the same death at their own +15 s — during the attach storm
-  the system could not save even a single new spawn. (Additionally the
-  Workspace kept the *old generation* in its inventory: `Hive refused to
-  attach david: its session generation changed
-  [session-locator-mismatch]` from 20:36:17Z on — so the renewal loop, which
-  only renews terminals in the accepted workspace inventory, had no path to
-  the gen-2 locators at all. Recovery cannot currently produce a renewable
-  session; see Open questions.)
+- david's auto-resume (gen 2, created 20:36:21Z) died the same death at
+  its own +15 s (final.json: VISIBILITY_EXPIRED) — during the attach storm
+  the system could not save even a single new spawn. The Workspace also
+  kept the *old generation* in its inventory: `Hive refused to attach
+  david: its session generation changed [session-locator-mismatch]` from
+  20:36:17Z on — so the renewal loop, which only renews terminals in the
+  accepted workspace inventory, had no path to his gen-2 locator. liam's
+  gen 2 (20:38:50Z) fared differently: his lease WAS renewed (final.json
+  shows SIGKILL, not VISIBILITY_EXPIRED, and hook events show him working
+  at 20:38:52–20:39:00Z) — he then went `lost` a second time with his
+  vendor dead and was killed. So recovery renewability is not uniformly
+  broken, but the generation-pinned inventory demonstrably blocked it for
+  david; see Open questions.
 - maya (20:29:47Z, alone) had her lease renewed for ten minutes straight —
   the renewal mechanism itself was healthy when the loops were idle.
 
@@ -217,10 +221,10 @@ stall) the ceiling falls to **2–8 concurrent spawns**. The incident admitted
    into a stuck agent with a misleading reason.
 4. **One bug or two** — one. Groups A, B, D are the same queue/lease
    collapse observed at three points of the spawn lifecycle; the probe error
-   is the teardown echo of all three. (The gen-2 recovery deaths share the
-   mechanism but add a genuinely separate defect: the workspace inventory
-   pins the old session generation, so a recovered session is structurally
-   unrenewable — worth its own fix.)
+   is the teardown echo of all three. (david's gen-2 death shares the
+   mechanism and adds a second, real-but-not-universal defect on top: the
+   workspace inventory pinned his old session generation, so his recovered
+   session had no renewal path. liam's gen-2 was renewed fine.)
 5. **Recommended fix** — see below.
 
 ## Recommended fix
