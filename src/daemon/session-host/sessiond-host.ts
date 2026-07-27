@@ -41,6 +41,7 @@ import { createHash as nodeCreateHash } from "node:crypto";
 import { type DaemonHandshake, expectedDaemonHandshake } from "../handshake";
 import { resolveHiveHome } from "../instance-identity";
 import { observeSessiondOutput } from "./sessiond-output-observer";
+import { renderVisibleScreen } from "./terminal-screen";
 import type {
   AttachGrant,
   AttachRequest,
@@ -69,31 +70,6 @@ import type {
 
 const CAPTURE_COLUMNS = 200;
 const CAPTURE_CELL_PX = 10;
-/**
- * ANSI control sequences, built rather than written as a literal: the escape
- * byte in a regex literal trips `noControlCharactersInRegex`, and suppressing
- * that lint is worse than not needing it.
- */
-const ESC = String.fromCharCode(27);
-const ANSI_SEQUENCES = new RegExp(
-  `${ESC}\\[[0-9;?]*[a-zA-Z]|${ESC}[()][A-Z0-9]|${ESC}[=>]|${ESC}\\][^\\u0007]*\\u0007`,
-  "g",
-);
-
-/**
- * The tail of a captured pane as rows a reader can act on. The viewer replay is
- * a byte stream with control sequences in it; a queen reading a screen wants
- * the lines, most recent last, bounded by what she asked for.
- */
-function lastVisibleRows(text: string, maxRows: number): string {
-  const rows = text
-    .replaceAll(ANSI_SEQUENCES, "")
-    .split(/\r?\n/)
-    .map((row) => row.replace(/\s+$/, ""))
-    .filter((row, index, all) => row.length > 0 || all[index - 1] !== "");
-  return rows.slice(-maxRows).join("\n");
-}
-
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -934,8 +910,13 @@ export class SessiondHost implements LandedTerminalHost {
       geometry,
       `hive-daemon:capture:${locator.sessionId}`,
     );
+    // Render the SCREEN, not the tail of the stream. A vendor that repaints —
+    // Claude drives an alternate screen with cursor addressing — sends bytes
+    // whose most recent slice is a pile of redraw fragments, so a tail reports
+    // text the terminal has already replaced. `renderVisibleScreen` replays the
+    // stream through a terminal and reads the cells back.
     const raw = observed?.text ?? "";
-    const rendered = lastVisibleRows(raw, request.maxRows);
+    const rendered = renderVisibleScreen(raw, geometry.columns, geometry.rows);
     return {
       locator,
       outputSeq: observed?.outputThrough ?? "0",
@@ -948,9 +929,11 @@ export class SessiondHost implements LandedTerminalHost {
       // a reader deciding whether to trust a tail needs both facts, and the
       // viewer's own 32KiB tail cap is exactly the case that would otherwise
       // present a partial screen as a whole one.
-      truncated:
-        observed?.completeness === "gap" ||
-        rendered.length < raw.replace(ANSI_SEQUENCES, "").trimEnd().length,
+      // Truncated when the observer reported a gap: the viewer keeps a bounded
+      // tail, so a long-running pane's earliest bytes are already gone and the
+      // reconstruction starts mid-session. A reader deciding whether to trust a
+      // screen needs to know that.
+      truncated: observed?.completeness === "gap",
       sha256: nodeCreateHash("sha256").update(rendered, "utf8").digest("hex"),
     };
   }
