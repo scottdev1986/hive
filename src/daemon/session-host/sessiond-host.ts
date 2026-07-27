@@ -735,7 +735,40 @@ async function connectBroker(
   }
 }
 
+/**
+ * Bounds in-flight broker create transactions. The sessiond broker serves one
+ * connection start-to-finish, launch included, so every concurrent create is
+ * queue time on a serial loop measured against a fixed 10 s RPC timeout. At
+ * the 2026-07-27 incident's measured ~320 ms per loaded launch, 8 in flight
+ * queues at most ~2.6 s of create work — deep inside the budget with margin
+ * for the cheap RPCs (renew/inspect) that interleave behind it
+ * (planning/2026-07-27-spawn-collapse-root-cause.md).
+ */
+const MAX_IN_FLIGHT_CREATES = 8;
+
+class CreateAdmission {
+  private inFlight = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  async acquire(): Promise<() => void> {
+    if (this.inFlight >= MAX_IN_FLIGHT_CREATES) {
+      await new Promise<void>((resolve) => {
+        this.waiters.push(resolve);
+      });
+    }
+    this.inFlight += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.inFlight -= 1;
+      this.waiters.shift()?.();
+    };
+  }
+}
+
 export class SessiondHost implements LandedTerminalHost {
+  private readonly createAdmission = new CreateAdmission();
   private readonly connectBroker: () => Promise<SessiondBrokerClient>;
   private readonly connectDirect: (
     session: SessionRef,
@@ -780,34 +813,37 @@ export class SessiondHost implements LandedTerminalHost {
       ...parsedSpec,
       visibility: binding.visibility,
     });
-    const broker = await this.connectBroker();
+    const release = await this.createAdmission.acquire();
     try {
-      const engineBuildId = this.requireEngineBuildId(broker);
-      if (engineBuildId !== parsedSpec.locator.engineBuildId) {
-        throw new SessiondProtocolError(
-          "sessiond broker engine build changed before create",
-        );
-      }
+      const broker = await this.connectBroker();
       try {
-        const { schemaVersion: _, ...result } = await broker.createTransaction(
-          payload,
-          initialInput,
-        );
-        return result;
-      } catch (error) {
-        // launchHost rejects capacity before it opens a host directory or
-        // launches a process. That typed receipt is positive never-created
-        // evidence, so the pending product binding must not survive as a pane.
-        if (
-          error instanceof SessiondWireError &&
-          error.code === "CAPACITY_EXCEEDED"
-        ) {
-          this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
+        const engineBuildId = this.requireEngineBuildId(broker);
+        if (engineBuildId !== parsedSpec.locator.engineBuildId) {
+          throw new SessiondProtocolError(
+            "sessiond broker engine build changed before create",
+          );
         }
-        throw error;
+        try {
+          const { schemaVersion: _, ...result } =
+            await broker.createTransaction(payload, initialInput);
+          return result;
+        } catch (error) {
+          // launchHost rejects capacity before it opens a host directory or
+          // launches a process. That typed receipt is positive never-created
+          // evidence, so the pending product binding must not survive as a pane.
+          if (
+            error instanceof SessiondWireError &&
+            error.code === "CAPACITY_EXCEEDED"
+          ) {
+            this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
+          }
+          throw error;
+        }
+      } finally {
+        broker.close();
       }
     } finally {
-      broker.close();
+      release();
     }
   }
 

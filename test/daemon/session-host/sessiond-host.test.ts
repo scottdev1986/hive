@@ -926,18 +926,17 @@ describe("SessiondHost landed frozen operations", () => {
               case "INSPECT":
                 return { schemaVersion: 1, ...transportInspection };
               case "VISIBILITY_RENEW":
-                expect(request.payload).toEqual({
-                  schemaVersion: 1,
-                  locator: brokerLocator,
-                  ...brokerVisibility,
-                  openTerminalRevision: "2",
-                });
+                // Echo the requested revision: create now renews at
+                // create-return (revision "1") before the explicit renewal
+                // below (revision "2").
                 return {
                   schemaVersion: 1,
                   locator: brokerLocator,
                   state: "active",
                   expiresAt: "2026-07-18T01:00:30.000Z",
-                  openTerminalRevision: "2",
+                  openTerminalRevision: (
+                    request.payload as { openTerminalRevision: string }
+                  ).openTerminalRevision,
                 };
               default:
                 throw new Error(`unexpected request: ${request.requestType}`);
@@ -970,7 +969,14 @@ describe("SessiondHost landed frozen operations", () => {
         executableVerified: createdPayload.inspection.executableVerified,
         verifiedShellRoot: createdPayload.inspection.shellRoot,
         geometry: sessionSpec.geometry,
-        visibility: createdPayload.inspection.visibility,
+        // Renewed at create-return: the binding holds the lease's visibility,
+        // not the launch record's.
+        visibility: {
+          state: "visible" as const,
+          workspaceSessionId: brokerVisibility.workspaceSessionId,
+          openTerminalRevision: "1",
+          expiresAt: "2026-07-18T01:00:30.000Z",
+        },
       };
       expect(db.getTerminalHostBindingByLocator(brokerLocator)).toEqual({
         ...pendingBinding,
@@ -1061,11 +1067,13 @@ describe("SessiondHost landed frozen operations", () => {
           initialInput: new Uint8Array(),
         },
       ]);
+      // Two renewals on the wire: the create-return renewal (revision "1")
+      // and the explicit one (revision "2").
       expect(
         brokers
           .flatMap((broker) => broker.requests)
           .map((request) => request.requestType),
-      ).toEqual(["VISIBILITY_RENEW", "LIST", "INSPECT"]);
+      ).toEqual(["VISIBILITY_RENEW", "VISIBILITY_RENEW", "LIST", "INSPECT"]);
     } finally {
       db.close();
       await rm(directory, { recursive: true, force: true });
@@ -1142,6 +1150,53 @@ describe("SessiondHost landed frozen operations", () => {
     expect(absent.creates).toEqual([]);
     expect(changed.creates).toEqual([]);
     expect(brokers).toEqual([]);
+  });
+
+  test("bounds in-flight create transactions at the measured admission limit", async () => {
+    // The broker is serial and every create holds its accept loop for the
+    // whole launch; this bound is what keeps a 31-spawn burst inside the 10 s
+    // RPC budget (planning/2026-07-27-spawn-collapse-root-cause.md).
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let completed = 0;
+    const gate: Array<() => void> = [];
+    const gatingClient = (): SessiondBrokerClient => ({
+      engineBuildId: brokerLocator.engineBuildId,
+      request: () => {
+        throw new Error("create issues no plain requests");
+      },
+      createTransaction: async () => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise<void>((resolve) => {
+          gate.push(resolve);
+        });
+        inFlight -= 1;
+        completed += 1;
+        return createdPayload;
+      },
+      close: () => undefined,
+    });
+    const host = new SessiondHost({
+      connectBroker: async () => gatingClient(),
+      pendingBindings,
+    });
+
+    const total = 12;
+    const creates = Array.from({ length: total }, () =>
+      host.create(sessionSpec, new Uint8Array()),
+    );
+    // Only the admitted eight may reach the broker; the rest queue locally.
+    while (completed === 0 && gate.length < 8) await Bun.sleep(1);
+    expect(gate).toHaveLength(8);
+    expect(maxInFlight).toBe(8);
+    while (completed < total) {
+      if (gate.length > 0) gate.shift()?.();
+      await Bun.sleep(1);
+    }
+    await Promise.all(creates);
+    expect(completed).toBe(total);
+    expect(maxInFlight).toBe(8);
   });
 
   test("projects claim, idempotent input, and resize onto an attached neutral host", async () => {

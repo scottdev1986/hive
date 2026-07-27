@@ -44,7 +44,11 @@ export const SpawnRequestSchema = z.strictObject({
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
 export const SpawnBatchRequestSchema = z.strictObject({
-  requests: z.array(SpawnRequestSchema).min(1).max(16),
+  // 32, matching the measured spawn-collapse ceiling work
+  // (planning/2026-07-27-spawn-collapse-root-cause.md): the admission bound in
+  // SessiondHost.create, not this schema, is what keeps a burst inside the
+  // broker's budget, so the cap only needs to clear the 31-agent target.
+  requests: z.array(SpawnRequestSchema).min(1).max(32),
 });
 
 export type SpawnBatchRequest = z.infer<typeof SpawnBatchRequestSchema>;

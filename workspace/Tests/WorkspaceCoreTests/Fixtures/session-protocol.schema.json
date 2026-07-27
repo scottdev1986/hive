@@ -13277,7 +13277,7 @@
         "ghosttyBuildScript": "scripts/build-ghosttykit.sh"
       },
       "limits": {
-        "liveSessionsPerHiveHome": 32,
+        "liveSessionsPerHiveHome": 64,
         "authenticatedViewersPerGeneration": 4,
         "controlJsonBytesPerFrame": 262144,
         "inputTransactionBytes": 131072,

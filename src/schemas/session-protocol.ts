@@ -37,7 +37,10 @@ export const SESSION_PROTOCOL_PATHS = {
 } as const;
 
 export const TERMINAL_LIMITS = {
-  liveSessionsPerHiveHome: 32,
+  // 64 = 2x the 31-agent spawn target (planning/2026-07-27-spawn-collapse-
+  // root-cause.md): 31 agents + the orchestrator host + recovery generations
+  // must fit with real headroom. Fixed array in the broker, not a knob.
+  liveSessionsPerHiveHome: 64,
   authenticatedViewersPerGeneration: 4,
   controlJsonBytesPerFrame: 256 * 1024,
   inputTransactionBytes: 128 * 1024,

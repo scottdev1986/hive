@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { parseProcessTable, runPs } from "../../src/daemon/resources";
-import { SessiondBrokerUnavailableError } from "../../src/daemon/session-host/sessiond-host";
+import {
+  SessiondBrokerUnavailableError,
+  SessiondWireError,
+} from "../../src/daemon/session-host/sessiond-host";
 import {
   captureProcessTree,
   type ReapDependencies,
@@ -402,6 +405,97 @@ describe("reapProcessTree", () => {
         selfPid: 1,
       }),
     ).rejects.toThrow("sessiond broker is unavailable");
+  });
+
+  test("a positively-absent root with a broker NOT_FOUND is a completed teardown", async () => {
+    // The 2026-07-27 collapse shape: the host self-terminated (lease expiry)
+    // long before teardown ran, so the probe correctly finds no root and the
+    // broker has already reaped the session. Two independent absences are a
+    // completed teardown, not "could not be verified"
+    // (planning/2026-07-27-spawn-collapse-root-cause.md).
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-expired" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000303",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const record = {
+      id: "agent-expired",
+      name: "expired",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/expired",
+      branch: "hive/expired-test",
+      sessionLocator,
+      contextPct: null,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      lastEventAt: "2026-07-13T00:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    const brokerNotFound = {
+      terminate: async () => {
+        throw new SessiondWireError("NOT_FOUND", "no such session", null);
+      },
+    };
+
+    const gone = world([{ pid: 100, ppid: 1, command: "sessiond host" }]);
+    gone.alive.delete(100);
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: brokerNotFound,
+        reap: gone.dependencies,
+        readHostPid: async () => 100,
+        selfPid: 1,
+      }),
+    ).resolves.toEqual({ killed: [], survivors: [] });
+
+    // Negative control: NOT_FOUND against a root still standing in the process
+    // table stays a failure — the session may be live while the broker
+    // disagrees about it.
+    const present = world([{ pid: 100, ppid: 1, command: "sessiond host" }]);
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: brokerNotFound,
+        reap: present.dependencies,
+        readHostPid: async () => 100,
+        selfPid: 1,
+      }),
+    ).rejects.toThrow("NOT_FOUND");
+
+    // Negative control: an absent root does not excuse a survivor reported by
+    // the terminate readback — that is the failure the whole path exists for.
+    const orphaned = world([
+      { pid: 100, ppid: 1, command: "sessiond host" },
+      { pid: 101, ppid: 100, command: "nohup long-build", unkillable: true },
+    ]);
+    orphaned.alive.delete(100);
+    await expect(
+      stopSessiondAgentSession(record, {
+        terminalHost: {
+          terminate: async () => ({
+            locator: sessionLocator,
+            state: "terminated",
+            exit: null,
+            survivors: [
+              { pid: 101, startToken: "101:1", reason: "nohup long-build" },
+            ],
+            errors: [],
+          }),
+        },
+        reap: orphaned.dependencies,
+        readHostPid: async () => 100,
+        selfPid: 1,
+      }),
+    ).rejects.toThrow("not positively verified");
   });
 
   test("refuses capture after the root has vanished", async () => {

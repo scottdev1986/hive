@@ -416,6 +416,14 @@ export class HiveTerminalHostAdapter {
       geometry: spec.geometry,
       visibility: result.inspection.visibility,
     });
+    // Renew the lease before returning, on the same admission that admitted
+    // the create. A fresh host's first lease is 15 s of "attaching"; its next
+    // renewal otherwise waits for the Workspace's next publish AND the 5 s
+    // loop — the window that killed all sixteen spawns on 2026-07-27
+    // (planning/2026-07-27-spawn-collapse-root-cause.md). A create whose
+    // lease cannot be renewed even once, immediately, is on a broken path:
+    // fail it loudly here rather than let the host expire silently at +15 s.
+    await this.renewVisibility(policy.locator, policy.visibility);
     return result;
   }
 

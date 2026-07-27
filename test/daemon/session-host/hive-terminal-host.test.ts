@@ -311,12 +311,19 @@ describe("HiveTerminalHostAdapter", () => {
     };
     const terminateRequests: unknown[] = [];
     const directRequests: unknown[] = [];
+    const renewalRequests: unknown[] = [];
     const host = {
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
 
-      renewVisibility,
+      renewVisibility: async (
+        requestedLocator: typeof locator,
+        request: typeof visibility,
+      ) => {
+        renewalRequests.push({ locator: requestedLocator, request });
+        return renewVisibility(requestedLocator, request);
+      },
       create: async (spec: SessionSpec, input: Uint8Array) => {
         expect(spec).toEqual(sessionSpec);
         expect(input).toEqual(new Uint8Array());
@@ -363,12 +370,21 @@ describe("HiveTerminalHostAdapter", () => {
     await expect(
       adapter.create(sessionSpec, new Uint8Array(), { locator, visibility }),
     ).resolves.toEqual(createResult);
+    // Renew-at-create: the first lease renewal lands before create returns,
+    // on the same admission (2026-07-27 spawn-collapse fix). The binding is
+    // left in the renewed state the lease reports.
+    expect(renewalRequests).toEqual([{ locator, request: visibility }]);
     const createEvidence = {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
       verifiedShellRoot: createResult.inspection.shellRoot,
       geometry,
-      visibility: createResult.inspection.visibility,
+      visibility: {
+        state: "visible" as const,
+        workspaceSessionId: visibility.workspaceSessionId,
+        openTerminalRevision: "1",
+        expiresAt: "2026-07-18T01:00:15.000Z",
+      },
     };
     expect(bindings.values).toEqual([{ locator, visibility, createEvidence }]);
     const projectedInspection = {
@@ -393,7 +409,7 @@ describe("HiveTerminalHostAdapter", () => {
       viewerCount: 0,
       geometry: { ...geometry, widthPx: 810, heightPx: 500 },
       resources: {},
-      visibility: createResult.inspection.visibility,
+      visibility: createEvidence.visibility,
       exit: null,
       survivors: [],
       evidenceAt: inspection.evidenceAt,

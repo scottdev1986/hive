@@ -226,7 +226,7 @@ pub const checkpoint = struct {
 };
 
 pub const limits = struct {
-    pub const live_sessions_per_hive_home: usize = 32;
+    pub const live_sessions_per_hive_home: usize = 64;
     pub const viewers_per_generation: usize = 4;
     pub const control_json_bytes: usize = 262144;
     pub const input_transaction_bytes: usize = 131072;

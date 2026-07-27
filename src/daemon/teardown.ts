@@ -29,7 +29,10 @@ import {
   requireSessiondAgentLocator,
 } from "./session-host/hive-terminal-host";
 import { mintSessionRequestId } from "./session-host/locators";
-import { SessiondBrokerUnavailableError } from "./session-host/sessiond-host";
+import {
+  SessiondBrokerUnavailableError,
+  SessiondWireError,
+} from "./session-host/sessiond-host";
 
 export interface ReapDependencies {
   /** `ps -axo pid=,ppid=,rss=,command=` — the tree, with commands for the report. */
@@ -94,6 +97,11 @@ const REAP_SETTLE_MS = 250;
  * the leak the whole path exists to close. Every unit test passed, because a
  * fake process table does not reparent anything.
  */
+/** The root pid given to captureProcessTree is positively absent from the
+ * process table. Distinct from an invalid root (pid <= 1, self): there is no
+ * tree to capture, so teardown can succeed on the terminate readback alone. */
+export class ProcessTreeRootAbsentError extends Error {}
+
 export async function captureProcessTree(
   rootPids: readonly number[],
   dependencies: ReapDependencies = defaultReapDependencies(),
@@ -111,7 +119,9 @@ export async function captureProcessTree(
   const processes = parseProcessTable(await dependencies.ps());
   for (const pid of roots) {
     if (!processes.some((process) => process.pid === pid)) {
-      throw new Error(`Process-tree probe did not contain root pid ${pid}`);
+      throw new ProcessTreeRootAbsentError(
+        `Process-tree probe did not contain root pid ${pid}`,
+      );
     }
   }
   return descendantsOf(processes, roots)
@@ -203,11 +213,26 @@ export async function stopSessiondAgentSession(
     if (!(error instanceof SessiondBrokerUnavailableError)) throw error;
     terminalError = error;
   }
-  const captured = await captureProcessTree(
-    hostPid === null ? [] : [hostPid],
-    reap,
-    selfPid,
-  );
+  let rootAbsent = false;
+  let captured: CapturedTree;
+  try {
+    captured = await captureProcessTree(
+      hostPid === null ? [] : [hostPid],
+      reap,
+      selfPid,
+    );
+  } catch (error) {
+    // An absent root is not an unknown tree — it is a positively dead one.
+    // The 2026-07-27 collapse recorded sixteen agents `stuck` on exactly this
+    // misclassification: their hosts had already self-terminated (lease
+    // expiry), the probe correctly found no root, and teardown reported
+    // "could not be verified" over a tree that was simply gone
+    // (planning/2026-07-27-spawn-collapse-root-cause.md). The terminate
+    // readback below remains the verification leg for survivors.
+    if (!(error instanceof ProcessTreeRootAbsentError)) throw error;
+    rootAbsent = true;
+    captured = [];
+  }
   await beforeKill?.();
 
   if (terminalError === undefined) {
@@ -238,7 +263,19 @@ export async function stopSessiondAgentSession(
         );
       }
     } catch (error) {
-      terminalError = error;
+      // The broker positively has no such session and the root pid is
+      // positively absent from the process table: two independent absences
+      // are a completed teardown, not an unverifiable one. NOT_FOUND against
+      // a root that is still in the process table stays a failure.
+      if (
+        !(
+          rootAbsent &&
+          error instanceof SessiondWireError &&
+          error.code === "NOT_FOUND"
+        )
+      ) {
+        terminalError = error;
+      }
     }
   }
 

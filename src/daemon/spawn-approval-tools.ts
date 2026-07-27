@@ -114,7 +114,7 @@ export function registerSpawnApprovalTools(
     {
       title: "Spawn multiple Hive agents",
       description:
-        "Admit 1–16 independent Hive agents concurrently. Each returns " +
+        "Admit 1–32 independent Hive agents concurrently. Each returns " +
         "immediately with status=spawning while provider startup and readiness " +
         "verification continue in the background. Results are independent, so " +
         "one refused request does not hide agents already admitted. Use one " +

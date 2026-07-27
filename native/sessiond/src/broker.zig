@@ -1627,6 +1627,42 @@ pub fn serveAuthenticatedFrames(
     }
 }
 
+/// Caches the daemon's /handshake across connections, keyed by instance id.
+/// Fetching it is a blocking HTTP GET against the daemon's own event loop —
+/// paid per accepted connection, that turned any daemon-loop stall into
+/// multi-second service time on the broker's serialized accept loop, which is
+/// precisely what converted the 2026-07-27 sixteen-spawn burst into a fleet
+/// death (planning/2026-07-27-spawn-collapse-root-cause.md). The instance id
+/// is minted per daemon launch, so a matching id means the handshake is
+/// current; a restart changes the id and forces exactly one re-fetch. The
+/// cheap daemon.lock file read stays per-connection: the kernel peer check
+/// (pid + start token + executable) is the actual authentication and is never
+/// cached.
+pub const DaemonHandshakeCache = struct {
+    allocator: std.mem.Allocator,
+    canonical_home: []const u8,
+    cached: ?std.json.Parsed(DaemonHandshake) = null,
+
+    pub fn deinit(self: *DaemonHandshakeCache) void {
+        if (self.cached) |*cached| cached.deinit();
+        self.cached = null;
+    }
+
+    pub fn getForInstance(
+        self: *DaemonHandshakeCache,
+        instance_id: []const u8,
+    ) !*const DaemonHandshake {
+        if (self.cached) |*cached| {
+            if (std.mem.eql(u8, cached.value.instanceId, instance_id))
+                return &cached.value;
+            cached.deinit();
+            self.cached = null;
+        }
+        self.cached = try loadDaemonHandshake(self.allocator, self.canonical_home);
+        return &self.cached.?.value;
+    }
+};
+
 fn serveDaemonConnection(
     allocator: std.mem.Allocator,
     runtime: *Runtime,
@@ -1635,6 +1671,7 @@ fn serveDaemonConnection(
     build_id: []const u8,
     timer: *std.time.Timer,
     backend: BrokerBackend,
+    handshake_cache: *DaemonHandshakeCache,
 ) !void {
     try setTransportReadTimeout(stream.handle);
     // The pre-auth HELLO read is the broker's only unauthenticated blocking
@@ -1694,15 +1731,14 @@ fn serveDaemonConnection(
         return err;
     };
     defer daemon_lock.deinit();
-    var daemon_handshake = loadDaemonHandshake(allocator, runtime.canonical_home) catch |err| {
+    const daemon_handshake = handshake_cache.getForInstance(daemon_lock.value.instanceId) catch |err| {
         writeFailure(allocator, stream, hello_frame.header, .{
             .code = .not_ready,
             .close_connection = true,
         }) catch {};
         return err;
     };
-    defer daemon_handshake.deinit();
-    if (!std.mem.eql(u8, daemon_lock.value.instanceId, daemon_handshake.value.instanceId)) {
+    if (!std.mem.eql(u8, daemon_lock.value.instanceId, daemon_handshake.instanceId)) {
         writeFailure(allocator, stream, hello_frame.header, .{
             .code = .instance_mismatch,
             .close_connection = true,
@@ -1727,7 +1763,7 @@ fn serveDaemonConnection(
         try writeFailure(allocator, stream, hello_frame.header, failure);
         return;
     }
-    if (verifyDaemonHello(hello.value, daemon_handshake.value)) |failure| {
+    if (verifyDaemonHello(hello.value, daemon_handshake.*)) |failure| {
         try writeFailure(allocator, stream, hello_frame.header, failure);
         return;
     }
@@ -1737,7 +1773,7 @@ fn serveDaemonConnection(
     const welcome = buildWelcome(
         allocator,
         hello_frame.header,
-        daemon_handshake.value.instanceId,
+        daemon_handshake.instanceId,
         build_id,
         timer.read(),
         selected_minor,
@@ -2302,6 +2338,11 @@ pub fn serve(
     );
     defer production_backend.deinit();
     const backend = production_backend.backend();
+    var handshake_cache: DaemonHandshakeCache = .{
+        .allocator = allocator,
+        .canonical_home = runtime.canonical_home,
+    };
+    defer handshake_cache.deinit();
     while (true) {
         if (!brokerOwnerIsLive(owner)) return;
         _ = recovered.registry.reapExitedHosts();
@@ -2336,6 +2377,7 @@ pub fn serve(
             build_id,
             &timer,
             backend,
+            &handshake_cache,
         ) catch |err| {
             std.log.err(
                 "broker daemon connection failed closed during authentication/control: {s}",
@@ -2577,6 +2619,11 @@ const DaemonWireHarness = struct {
     fn run(self: *DaemonWireHarness) void {
         defer self.stream.close();
         var backend: StartupBackend = .{};
+        var handshake_cache: DaemonHandshakeCache = .{
+            .allocator = std.heap.page_allocator,
+            .canonical_home = self.runtime.canonical_home,
+        };
+        defer handshake_cache.deinit();
         serveDaemonConnection(
             std.heap.page_allocator,
             self.runtime,
@@ -2585,6 +2632,7 @@ const DaemonWireHarness = struct {
             self.build_id,
             self.timer,
             backend.backend(),
+            &handshake_cache,
         ) catch |err| {
             self.failure = err;
         };
@@ -2823,6 +2871,76 @@ test "daemon evidence instance mismatch sends a correlated typed ERROR" {
     try expectTypedErrorFrame(client, 82, .instance_mismatch);
     var trailing: [1]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+}
+
+test "daemon handshake is fetched once per instance and re-fetched on instance change" {
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(home);
+
+    const CountingServer = struct {
+        listener: std.net.Server,
+        fetches: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+        stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+        fn run(self: *@This()) void {
+            // Poll-bounded accept: a blocking accept never wakes on macOS when
+            // the listener closes, which wedged this thread (and the suite)
+            // on its first version.
+            while (!self.stop.load(.acquire)) {
+                var poll_fds = [_]std.posix.pollfd{.{
+                    .fd = self.listener.stream.handle,
+                    .events = std.posix.POLL.IN,
+                    .revents = 0,
+                }};
+                _ = std.posix.poll(&poll_fds, 50) catch return;
+                if (poll_fds[0].revents & std.posix.POLL.IN == 0) continue;
+                var connection = self.listener.accept() catch continue;
+                defer connection.stream.close();
+                _ = self.fetches.fetchAdd(1, .acq_rel);
+                var request_storage: [1024]u8 = undefined;
+                _ = connection.stream.read(&request_storage) catch continue;
+                const response = std.fmt.allocPrint(
+                    std.heap.page_allocator,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
+                    .{ test_daemon_handshake_json.len, test_daemon_handshake_json },
+                ) catch continue;
+                defer std.heap.page_allocator.free(response);
+                connection.stream.writeAll(response) catch continue;
+            }
+        }
+    };
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var server: CountingServer = .{ .listener = try address.listen(.{}) };
+    defer server.listener.deinit();
+    try writeDaemonEvidenceFixture(tmp.dir, test_daemon_lock_json, server.listener.listen_address.in.getPort());
+    const server_thread = try std.Thread.spawn(.{}, CountingServer.run, .{&server});
+    defer {
+        server.stop.store(true, .release);
+        server_thread.join();
+    }
+
+    var cache: DaemonHandshakeCache = .{
+        .allocator = allocator,
+        .canonical_home = home,
+    };
+    defer cache.deinit();
+
+    // First use fetches; the same instance reuses the cached handshake.
+    _ = try cache.getForInstance("instance-a");
+    _ = try cache.getForInstance("instance-a");
+    try std.testing.expectEqual(@as(u32, 1), server.fetches.load(.acquire));
+
+    // A different instance id (a restarted daemon) forces exactly one
+    // re-fetch; the refetched body still names instance-a, so asking for
+    // instance-b again would fetch again — evidence mismatch never goes
+    // stale-silent. Asking for the body's own instance reuses the cache.
+    _ = try cache.getForInstance("instance-b");
+    try std.testing.expectEqual(@as(u32, 2), server.fetches.load(.acquire));
+    _ = try cache.getForInstance("instance-a");
+    try std.testing.expectEqual(@as(u32, 2), server.fetches.load(.acquire));
 }
 
 test "WELCOME validation failure sends a typed ERROR with no WELCOME bytes" {

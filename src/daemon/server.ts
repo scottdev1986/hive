@@ -3927,7 +3927,17 @@ export class HiveDaemon {
 
   /** Renews one inventory's leases. `admit` is the only liveness gate: it
    * returns null unless the recorded Workspace source still verifies by PID and
-   * start token, so an unverified or dead Workspace renews nothing. */
+   * start token, so an unverified or dead Workspace renews nothing.
+   *
+   * The renewal target resolves to the agent's LATEST binding with create
+   * evidence, never blindly to the inventory's locator: after a recovery moves
+   * an agent to generation N+1 the Workspace keeps publishing its gen-N pane
+   * (2026-07-27, david — the attach path refused the generation change and
+   * the inventory never learned the new locator), and the gen-N binding still
+   * carries create evidence, so renewing the inventory's locator is a
+   * guaranteed failure that also strands the live session. The inventory
+   * still decides WHO is visible; the binding store decides WHICH generation
+   * of them exists. */
   private async renewVisibleTerminals(
     terminals: WorkspaceVisibilitySnapshot["terminals"],
   ): Promise<
@@ -3939,11 +3949,37 @@ export class HiveDaemon {
   > {
     const workspaceVisibility = this.workspaceVisibility;
     if (workspaceVisibility == null) return terminals.map(() => null);
+    const bindingsByAgent = new Map<
+      string,
+      NonNullable<ReturnType<HiveDatabase["getTerminalHostBindingByLocator"]>>
+    >();
+    const instances = new Set(
+      terminals.map((terminal) => terminal.locator.instanceId),
+    );
+    for (const instanceId of instances) {
+      for (const binding of this.db.listTerminalHostBindings(instanceId)) {
+        if (binding.locator.subject.kind !== "agent") continue;
+        if (binding.createEvidence === undefined) continue;
+        const agentId = binding.locator.subject.agentId;
+        const current = bindingsByAgent.get(agentId);
+        if (
+          current === undefined ||
+          binding.locator.generation > current.locator.generation
+        ) {
+          bindingsByAgent.set(agentId, binding);
+        }
+      }
+    }
     return await Promise.all(
       terminals.map(async (terminal) => {
-        const binding = this.db.getTerminalHostBindingByLocator(
-          terminal.locator,
-        );
+        // Resolve by agent, not by the inventory's locator: a recovery moves
+        // the agent to generation N+1 while the Workspace keeps publishing
+        // its gen-N pane (2026-07-27, david), and the gen-N binding still
+        // carries create evidence — renewing it is a guaranteed failure that
+        // also leaves the live gen-N+1 session with no renewal path at all.
+        const binding =
+          bindingsByAgent.get(terminal.agentId) ??
+          this.db.getTerminalHostBindingByLocator(terminal.locator);
         if (binding?.createEvidence === undefined) return null;
         const admission = await workspaceVisibility.admit({
           agentId: terminal.agentId,
@@ -3952,16 +3988,16 @@ export class HiveDaemon {
         if (admission === null) return null;
         try {
           await this.terminalHost.renewVisibility(
-            terminal.locator,
+            binding.locator,
             admission.visibility,
           );
           return {
-            sessionId: terminal.locator.sessionId,
+            sessionId: binding.locator.sessionId,
             state: "renewed" as const,
           };
         } catch {
           return {
-            sessionId: terminal.locator.sessionId,
+            sessionId: binding.locator.sessionId,
             state: "unknown" as const,
             diagnostic: "sessiond visibility renewal failed closed",
           };
