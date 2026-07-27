@@ -408,14 +408,21 @@ export function accountBillingFromGrokBilling(
     ? unknown("field-absent", GROK_BILLING, observedAt)
     : known(anyPositive, GROK_BILLING, observedAt);
 
+  // Same decode as `readingsFromGrokBilling`, and deliberately identical: xAI
+  // omits `creditUsagePercent` while it rounds to zero, so an absent key is a
+  // measured 0 rather than an unknown. A key that is PRESENT but unreadable
+  // stays unknown — two decoders disagreeing about one field is how a wire
+  // reading drifts.
   const percent = config.creditUsagePercent;
   const generalUtilization: Discovered<number> =
-    typeof percent === "number" &&
-    Number.isFinite(percent) &&
-    percent >= 0 &&
-    percent <= 100
-      ? known(percent, GROK_BILLING, observedAt)
-      : unknown("field-absent", GROK_BILLING, observedAt);
+    percent === undefined || percent === null
+      ? known(0, GROK_BILLING, observedAt)
+      : typeof percent === "number" &&
+          Number.isFinite(percent) &&
+          percent >= 0 &&
+          percent <= 100
+        ? known(percent, GROK_BILLING, observedAt)
+        : unknown("field-absent", GROK_BILLING, observedAt);
 
   return {
     creditsEnabled,

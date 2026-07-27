@@ -64,13 +64,16 @@ import type { CodexRateLimitSnapshot, CodexRateLimitsResponse } from "./quota";
  * Re-measured live on 2026-07-26; `grok` exposes no other usage surface (no
  * `usage` subcommand, and the TUI's `/usage` calls this same method).
  *
- * The consequence is deliberate and worth stating: with no gauge,
- * `readingsFromGrokBilling` yields both windows null, `recordDiscoveredReading`
- * writes no observation, `drainedWindowFor` can never drain grok, and grok is
- * therefore **unmetered in practice** — routed like opencode (§10), its only
- * exhaustion signal a classified vendor error. Inventing a number to restore
- * metering is exactly what §04 forbids. If the field returns, this parser
- * already handles it: the 0.2.99 path is still live and still tested.
+ * That absence is not the vendor going quiet: it is how xAI encodes ZERO. The
+ * field is omitted while usage rounds to 0 and reappears as an integer the
+ * moment it does not — watched crossing that boundary on 2026-07-27, absent
+ * throughout a freshly reset window and `creditUsagePercent: 1` after
+ * deliberate spend. grok's own TUI decodes the same absence the same way; its
+ * debug log shows the `/usage` panel calling this exact method, receiving this
+ * exact payload, and printing "Weekly limit: 0%". So grok stays METERED, and
+ * reading absence as unknown is what left it unmetered for the opening slice
+ * of every window. A key that is present but unparseable is the other case
+ * entirely and still reads unknown — see `readingsFromGrokBilling`.
  *
  * The reset (`config.currentPeriod.end`) IS still supplied, and is kept: the
  * weekly window survives with `usedPct: null`, which `recordDiscoveredReading`
@@ -1052,14 +1055,31 @@ export function readingsFromGrokBilling(
   const config = parsed.data.config;
   if (config === null || config === undefined) return [];
 
+  // ABSENT and MALFORMED are different answers and must not collapse.
+  //
+  // xAI omits `creditUsagePercent` entirely while it rounds to zero, and its
+  // own client decodes that absence as 0% — captured from grok's debug log,
+  // which shows the TUI calling this same `x.ai/billing` method, receiving a
+  // payload byte-identical to this one, and rendering "Weekly limit: 0%".
+  // Watched cross the boundary on 2026-07-27: absent throughout a freshly
+  // reset window, then `creditUsagePercent: 1` the moment deliberate spend
+  // pushed usage to 1%. Reading absence as unknown left grok unmetered for the
+  // whole first slice of every window, which is exactly when it has capacity.
+  //
+  // A key that is PRESENT but unreadable is the opposite case: the vendor tried
+  // to tell us something and we could not parse it. That stays unknown, because
+  // a renamed or reshaped gauge must never read as an empty meter — the
+  // dangerous direction is reporting 0% used for an account that is full.
   const percent = config.creditUsagePercent;
   const usablePercent =
-    typeof percent === "number" &&
-    Number.isFinite(percent) &&
-    percent >= 0 &&
-    percent <= 100
-      ? percent
-      : null;
+    percent === undefined || percent === null
+      ? 0
+      : typeof percent === "number" &&
+          Number.isFinite(percent) &&
+          percent >= 0 &&
+          percent <= 100
+        ? percent
+        : null;
   const period = config.currentPeriod;
   const resetsAt = isoOrNull(period?.end ?? config.billingPeriodEnd);
   const windowMinutes =
@@ -1069,17 +1089,23 @@ export function readingsFromGrokBilling(
       end: config.billingPeriodEnd,
     });
 
-  // A recognized weekly period (or a usable percent) means this surface is
-  // the subscription pool. An empty config with no period and no percent is
-  // not a reading at all.
-  if (usablePercent === null && period === null && resetsAt === null) {
+  // A recognized weekly period (or a gauge the vendor actually sent) means this
+  // surface is the subscription pool. An empty config is not a reading at all —
+  // and this test asks whether the KEY was sent, not what it decoded to, because
+  // absence now decodes to 0 and an empty config would otherwise announce
+  // itself as a pool at 0% used.
+  // `== null` on purpose: an omitted `currentPeriod` arrives as undefined, not
+  // null, and the strict check missed it — an empty config then announced
+  // itself as a subscription pool at 0% used.
+  const gaugeSent = percent !== undefined && percent !== null;
+  if (!gaugeSent && period == null && resetsAt === null) {
     return [];
   }
 
   // A gauge OR a boundary is enough to be a window. 0.2.112 supplies only the
-  // boundary, and dropping the window for want of a percent threw the reset
-  // away with it — `hive quota` then reported "reset unknown" about a reset the
-  // vendor had plainly stated. The percent stays null: unknown is unknown.
+  // boundary while usage rounds to zero, and dropping the window for want of a
+  // percent threw the reset away with it — `hive quota` then reported "reset
+  // unknown" about a reset the vendor had plainly stated.
   const weekly: DiscoveredWindow | null =
     usablePercent === null && resetsAt === null
       ? null

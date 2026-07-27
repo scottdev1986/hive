@@ -260,15 +260,71 @@ describe("the real Grok payload, verbatim off the wire", () => {
       "default",
       now.toISOString(),
     );
-    // The gauge is unread, and unread is null — never the 2.0 sitting under the
-    // wrong key, and never a 0 standing in for it. The window itself survives
-    // because the vendor still stated when it turns over; that boundary is a
-    // separate fact and dropping it is what made `hive quota` report "reset
-    // unknown" about a reset the vendor named.
-    expect(routable?.weekly?.usedPct).toBeNull();
+    // The 2.0 under the wrong key is NEVER read. That is the property this test
+    // was written for and it still holds.
+    expect(routable?.weekly?.usedPct).not.toBe(2.0);
+    // It now reads 0, not unknown, because xAI omits `creditUsagePercent` while
+    // usage rounds to zero and its own client decodes that absence as 0% —
+    // measured, including the absent → `1` transition under deliberate spend.
+    //
+    // KNOWN HAZARD, recorded here because this fixture is exactly it: a genuine
+    // RENAME of the gauge is indistinguishable from zero on the wire, so this
+    // would report an empty meter for an account that might be full. The
+    // vendor's own TUI has the same blind spot. What guards it is shape
+    // measurement, not this decode: `prototypes/vendors/grok-billing-shape.ts`
+    // pins the live payload's key set and fails when the wire moves.
+    expect(routable?.weekly?.usedPct).toBe(0);
     expect(routable?.weekly?.resetsAt).toBe("2026-07-19T17:18:56.768Z");
-    expect(routable?.weeklyMeterState).toBe("unknown");
+    expect(routable?.weeklyMeterState).toBe("metered");
     expect(routable?.fiveHourMeterState).toBe("not-metered");
+  });
+
+  test("a gauge that is PRESENT but unreadable stays unknown", () => {
+    // The other half of the decode, and the reason absence and malformation
+    // must not collapse: here the vendor tried to tell us something and we
+    // could not parse it. Reading that as 0 would publish an empty meter for a
+    // pool we failed to measure.
+    // A number the vendor sent that cannot be a percentage: the surface is
+    // still recognisable, so the pool survives with an unknown meter.
+    for (const bad of [150, -1]) {
+      const [routable] = readingsFromGrokBilling(
+        {
+          ...raw,
+          config: { ...raw.config, creditUsagePercent: bad },
+        } as GrokBillingResponse,
+        "default",
+        now.toISOString(),
+      );
+      expect(routable?.weekly?.usedPct ?? null).toBeNull();
+      expect(routable?.weeklyMeterState).toBe("unknown");
+    }
+    // A value that is not a number at all fails the schema, and the whole
+    // payload is refused rather than half-read. Either way the one thing that
+    // must never happen is a confident 0.
+    for (const bad of [Number.NaN, "42" as unknown as number]) {
+      expect(
+        readingsFromGrokBilling(
+          {
+            ...raw,
+            config: { ...raw.config, creditUsagePercent: bad },
+          } as GrokBillingResponse,
+          "default",
+          now.toISOString(),
+        ),
+      ).toEqual([]);
+    }
+  });
+
+  test("an empty billing config is not a pool at 0%", () => {
+    // Absence decoding to 0 must not turn a payload that says nothing into a
+    // confident "0% used". The surface has to be recognisable first.
+    expect(
+      readingsFromGrokBilling(
+        { config: {} } as GrokBillingResponse,
+        "default",
+        now.toISOString(),
+      ),
+    ).toEqual([]);
   });
 
   test("status surfaces the weekly gauge and not-metered five-hour", async () => {
