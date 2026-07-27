@@ -260,7 +260,13 @@ describe("the real Grok payload, verbatim off the wire", () => {
       "default",
       now.toISOString(),
     );
-    expect(routable?.weekly).toBeNull();
+    // The gauge is unread, and unread is null — never the 2.0 sitting under the
+    // wrong key, and never a 0 standing in for it. The window itself survives
+    // because the vendor still stated when it turns over; that boundary is a
+    // separate fact and dropping it is what made `hive quota` report "reset
+    // unknown" about a reset the vendor named.
+    expect(routable?.weekly?.usedPct).toBeNull();
+    expect(routable?.weekly?.resetsAt).toBe("2026-07-19T17:18:56.768Z");
     expect(routable?.weeklyMeterState).toBe("unknown");
     expect(routable?.fiveHourMeterState).toBe("not-metered");
   });

@@ -311,8 +311,6 @@ export interface CodexRateLimitSnapshot {
 export interface CodexRateLimitsResponse {
   rateLimits: CodexRateLimitSnapshot;
   rateLimitsByLimitId?: Record<string, CodexRateLimitSnapshot> | null;
-  /** Unspent "full reset" grants. Hive reports them and never redeems one. */
-  rateLimitResetCredits?: { availableCount?: number } | null;
 }
 
 export interface CodexQuotaReading {
@@ -354,7 +352,7 @@ export class QuotaService {
   private alertSink: QuotaAlertSink | null = null;
   private readonly probes: QuotaProbe[];
   private readonly probeErrors = new Map<CapabilityProvider, string>();
-  /** Unspent usage-limit reset grants, as the provider reports them. Read only. */
+  /** When the last refresh pass finished; `needsRefresh` reads it. */
   private lastRefreshAt: Date | null = null;
 
   constructor(
@@ -469,10 +467,14 @@ export class QuotaService {
         response.rateLimits;
       const windows = orderRateLimitWindows(snapshot);
       if (windows.fiveHour === null || windows.weekly === null) return null;
+      // A window may carry a boundary without a gauge; this caller reports a
+      // measured pair or nothing, so an unread gauge is no reading at all.
+      const fiveHourPct = windows.fiveHour.usedPct;
+      const weeklyPct = windows.weekly.usedPct;
+      if (fiveHourPct === null || weeklyPct === null) return null;
       const reading = {
-        fiveHourUsed:
-          (limit.fiveHourAllowance * windows.fiveHour.usedPct) / 100,
-        weeklyUsed: (limit.weeklyAllowance * windows.weekly.usedPct) / 100,
+        fiveHourUsed: (limit.fiveHourAllowance * fiveHourPct) / 100,
+        weeklyUsed: (limit.weeklyAllowance * weeklyPct) / 100,
       };
       await this.observe({
         provider: "codex",
@@ -503,11 +505,10 @@ export class QuotaService {
     ).find((reading) => reading.models.includes("*"));
     if (routable === undefined) return null;
     await this.recordDiscoveredReading(routable);
-    if (routable.fiveHour === null || routable.weekly === null) return null;
-    return {
-      fiveHourUsed: routable.fiveHour.usedPct,
-      weeklyUsed: routable.weekly.usedPct,
-    };
+    const fiveHourUsed = routable.fiveHour?.usedPct ?? null;
+    const weeklyUsed = routable.weekly?.usedPct ?? null;
+    if (fiveHourUsed === null || weeklyUsed === null) return null;
+    return { fiveHourUsed, weeklyUsed };
   }
 
   /**
@@ -1011,9 +1012,15 @@ export class QuotaService {
   }
 
   /**
-   * Persist one probe reading. Only the windows the provider actually reported
-   * are stamped; an absent window keeps whatever provenance it already had, so a
-   * partial reading can never make a stale fact look fresh.
+   * Persist one probe reading. Only the windows the provider actually *gauged*
+   * are stamped; a window that was absent, or present with no readable gauge,
+   * keeps whatever provenance it already had, so a partial reading can never
+   * make a stale fact look fresh.
+   *
+   * A window with a boundary and no gauge still lands: its reset is written and
+   * its provenance is not. That is the reset-only row — usage stays unknown
+   * (`statusForLimit` publishes `used: null`, so nothing can drain from it)
+   * while the boundary the vendor stated is no longer thrown away.
    */
   private async recordDiscoveredReading(
     reading: DiscoveredPoolReading,
@@ -1035,30 +1042,34 @@ export class QuotaService {
       target === undefined || target.unit === "percent"
         ? usedPct
         : (usedPct * allowance) / 100;
+    // The gauge, or null when this reading did not carry one. Everything that
+    // claims a measurement below keys off this, never off the window's presence.
+    const fiveHourPct = reading.fiveHour?.usedPct ?? null;
+    const weeklyPct = reading.weekly?.usedPct ?? null;
     this.ledger.upsertObservation(
       QuotaObservationSchema.parse({
         ...scope,
         fiveHourUsed:
-          reading.fiveHour === null
+          fiveHourPct === null
             ? (prior?.fiveHourUsed ?? 0)
-            : scale(reading.fiveHour.usedPct, target?.fiveHourAllowance ?? 100),
+            : scale(fiveHourPct, target?.fiveHourAllowance ?? 100),
         weeklyUsed:
-          reading.weekly === null
+          weeklyPct === null
             ? (prior?.weeklyUsed ?? 0)
-            : scale(reading.weekly.usedPct, target?.weeklyAllowance ?? 100),
+            : scale(weeklyPct, target?.weeklyAllowance ?? 100),
         observedAt: reading.observedAt,
         fiveHourResetAt: reading.fiveHour?.resetsAt ?? null,
         weeklyResetAt: reading.weekly?.resetsAt ?? null,
         source: reading.source,
         confidence: reading.confidence,
-        ...(reading.fiveHour === null
+        ...(fiveHourPct === null
           ? {}
           : {
               fiveHourObservedAt: reading.observedAt,
               fiveHourSource: reading.source,
               fiveHourConfidence: reading.confidence,
             }),
-        ...(reading.weekly === null
+        ...(weeklyPct === null
           ? {}
           : {
               weeklyObservedAt: reading.observedAt,
@@ -1273,6 +1284,15 @@ export class QuotaService {
               ? this.ledger.earliestUsageAt(scope, bounds.weeklyStart)
               : null
           : null;
+      // A boundary the vendor stated is published whether or not anyone gauged
+      // the window. Reporting "reset unknown" about a reset the vendor named is
+      // a lie of omission, and it is what `hive quota` did for grok once its
+      // billing payload dropped the usage gauge and kept the period end
+      // (`readingsFromGrokBilling`). Usage stays `null` and availability
+      // stays `unknown`, so `drainedWindowFor` still cannot drain this pool —
+      // only the boundary is published, never a number nobody read.
+      const statedReset =
+        resetsAtRaw !== null && valid(resetsAtRaw) ? resetsAtRaw : null;
       const fallbackReset =
         limit.unit === "units"
           ? window === "fiveHour"
@@ -1307,7 +1327,9 @@ export class QuotaService {
         reservedIsEstimate: true,
         remaining,
         remainingPct: remaining === null ? null : remaining / allowance,
-        resetsAt: observationValid ? resetsAtRaw : fallbackReset,
+        resetsAt: observationValid
+          ? resetsAtRaw
+          : (statedReset ?? fallbackReset),
         confidence,
         source: unmeasured
           ? "none"
@@ -1950,8 +1972,7 @@ export class QuotaService {
     ) {
       return prior;
     }
-    const value = this.ledger.upsertObservation(observation);
-    return value;
+    return this.ledger.upsertObservation(observation);
   }
 
   /**
@@ -2017,8 +2038,7 @@ export class QuotaService {
         `Quota pool is not known: ${parsed.provider}/${parsed.account}/${parsed.pool}`,
       );
     }
-    const value = this.ledger.upsertObservation(parsed);
-    return value;
+    return this.ledger.upsertObservation(parsed);
   }
 
   private async sendAlert(body: string): Promise<void> {

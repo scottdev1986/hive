@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readingsFromKimiUsages } from "../../src/daemon/quota-sources";
 import {
   mkdir,
   mkdtemp,
@@ -294,5 +295,94 @@ describe("kimi usage probe", () => {
       state: "unknown",
       reason: "surface-silent",
     });
+  });
+});
+
+/**
+ * The five-hour window arrives with `remaining` and no `used`.
+ *
+ * `KimiUsageWindowSchema` required `used`, so every payload carrying a rate
+ * window failed validation — and because the failure was at the top-level
+ * object it took the account's WEEKLY window down with it, a window that had
+ * parsed perfectly. `KimiQuotaProbe` then reported "no usable usage reading"
+ * while the endpoint was answering, so Hive went blind on a live provider and
+ * had no second source to fall back to (kimi has no push feed).
+ *
+ * The body below is the literal shape `GET /usages` returned from kimi 0.29.1
+ * on 2026-07-26. Reproduced by prototypes/vendors/kimi-usage-windows.ts.
+ */
+describe("kimi /usages window counters", () => {
+  const OBSERVED = "2026-07-26T16:00:00.000Z";
+  const CAPTURED = {
+    user: { membership: { level: "LEVEL_ADVANCED" } },
+    // The account window reports `used`.
+    usage: {
+      limit: "100",
+      used: "51",
+      remaining: "49",
+      resetTime: "2026-07-29T21:38:00.343103Z",
+    },
+    // The rate window reports only `remaining`.
+    limits: [
+      {
+        window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+        detail: {
+          limit: "100",
+          remaining: "100",
+          resetTime: "2026-07-26T20:38:00.343103Z",
+        },
+      },
+    ],
+  };
+
+  test("reads both windows when the rate window reports remaining instead of used", () => {
+    const pools = readingsFromKimiUsages(CAPTURED, "default", OBSERVED);
+    expect(pools).toHaveLength(1);
+    expect(pools[0]?.weekly).toMatchObject({
+      usedPct: 51,
+      windowMinutes: 10_080,
+    });
+    // limit 100 − remaining 100 = 0 consumed. Arithmetic on two supplied
+    // numbers, not an estimate.
+    expect(pools[0]?.fiveHour).toMatchObject({
+      usedPct: 0,
+      windowMinutes: 300,
+    });
+    expect(pools[0]?.fiveHourMeterState).toBe("metered");
+    expect(pools[0]?.weeklyMeterState).toBe("metered");
+  });
+
+  test("an unreadable rate window costs that window, never the readable weekly one", () => {
+    const pools = readingsFromKimiUsages(
+      {
+        ...CAPTURED,
+        limits: [
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_FURLONG" },
+            detail: { junk: 1 },
+          },
+        ],
+      },
+      "default",
+      OBSERVED,
+    );
+    expect(pools).toHaveLength(1);
+    expect(pools[0]?.weekly).toMatchObject({ usedPct: 51 });
+    // Unknown, not a confident zero.
+    expect(pools[0]?.fiveHour).toBeNull();
+    expect(pools[0]?.fiveHourMeterState).toBe("unknown");
+  });
+
+  test("a genuinely silent surface still yields no reading at all", () => {
+    expect(
+      readingsFromKimiUsages(
+        { user: { membership: { level: "x" } } },
+        "default",
+        OBSERVED,
+      ),
+    ).toEqual([]);
+    expect(
+      readingsFromKimiUsages({ totally: "different" }, "default", OBSERVED),
+    ).toEqual([]);
   });
 });

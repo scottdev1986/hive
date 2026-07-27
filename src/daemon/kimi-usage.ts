@@ -50,10 +50,24 @@ export function kimiCredentialsPath(home: string = kimiHome()): string {
   return join(home, "credentials", "kimi-code.json");
 }
 
+/**
+ * One window's counters. Kimi reports the same window two different ways
+ * depending on where it appears: the account `usage` object carries `used`,
+ * while a `limits[].detail` carries only `remaining` (measured against kimi
+ * 0.29.1 on 2026-07-26). Requiring `used` made every payload with a rate window
+ * fail validation, and because the failure was at the top-level object it took
+ * the perfectly readable weekly window down with it — the probe reported "no
+ * usable usage reading" while the endpoint was answering.
+ *
+ * Both are therefore optional here and `kimiUsageWindowPercent` derives one
+ * from the other. A window carrying neither stays unreadable, which is the
+ * honest outcome; it is not the same thing as the payload being unreadable.
+ */
 const KimiUsageWindowSchema = z
   .object({
     limit: z.string(),
-    used: z.string(),
+    used: z.string().optional(),
+    remaining: z.string().optional(),
     resetTime: z.string().optional(),
   })
   .passthrough();
@@ -70,7 +84,16 @@ export const KimiUsagesResponseSchema = z
       .nullish(),
     /** The weekly quota window. */
     usage: KimiUsageWindowSchema.nullish(),
-    /** Rate-limit windows; the 300-minute one is the rolling five-hour window. */
+    /**
+     * Rate-limit windows; the 300-minute one is the rolling five-hour window.
+     *
+     * An entry Hive cannot interpret becomes `null` and is dropped by the
+     * readers, rather than failing the whole payload. A strict element schema
+     * put the account's weekly window — which parsed perfectly — behind the
+     * validity of a rate window sitting next to it, so one shape change made
+     * Hive blind to a provider that was still answering. Losing the window we
+     * cannot read is a gap; losing the one we can is a defect.
+     */
     limits: z
       .array(
         z
@@ -83,7 +106,9 @@ export const KimiUsagesResponseSchema = z
               .passthrough(),
             detail: KimiUsageWindowSchema,
           })
-          .passthrough(),
+          .passthrough()
+          .nullable()
+          .catch(null),
       )
       .nullish(),
   })
@@ -109,20 +134,26 @@ export function kimiUsageWindowMinutes(
 }
 
 /** Percent consumed of one window, or null when the string numbers do not
- * describe one — a malformed window is unknown, never a confident zero. */
+ * describe one — a malformed window is unknown, never a confident zero.
+ *
+ * `used` is preferred where the vendor sends it; where it sends only
+ * `remaining` (every `limits[].detail`), the consumed figure is `limit −
+ * remaining`. That is arithmetic on two numbers the vendor supplied, not an
+ * estimate: nothing is inferred about a window that reports neither. */
 export function kimiUsageWindowPercent(detail: {
   limit: string;
-  used: string;
+  used?: string | undefined;
+  remaining?: string | undefined;
 }): number | null {
   const limit = Number(detail.limit);
-  const used = Number(detail.used);
-  if (
-    !Number.isFinite(limit) ||
-    limit <= 0 ||
-    !Number.isFinite(used) ||
-    used < 0
-  )
-    return null;
+  if (!Number.isFinite(limit) || limit <= 0) return null;
+  const used =
+    detail.used === undefined
+      ? detail.remaining === undefined
+        ? Number.NaN
+        : limit - Number(detail.remaining)
+      : Number(detail.used);
+  if (!Number.isFinite(used) || used < 0) return null;
   return (used / limit) * 100;
 }
 

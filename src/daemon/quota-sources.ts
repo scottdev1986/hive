@@ -27,24 +27,57 @@ import type { CodexRateLimitSnapshot, CodexRateLimitsResponse } from "./quota";
  * windows. Verified against codex-cli 0.144.0 by driving the binary: the call
  * needs no thread, no turn, and no prompt, so a startup probe costs nothing.
  * That makes Codex limits `authoritative` and available before any agent spawns.
+ * How MANY windows it returns is the account's business, not Hive's: re-measured
+ * on codex-cli 0.145.0 (Pro), the payload carried `primary` at 10080 minutes and
+ * `secondary: null` — one weekly window and no five-hour one. `orderRateLimitWindows`
+ * places by duration, so the five-hour window is simply unknown there rather than
+ * being filled from the weekly figure.
  *
- * **Claude Code** has no equivalent. Its `initialize` control response carries the
- * account and the model list but no usage. The only program-readable subscriber
- * signal is the `statusLine` hook payload, which appears only after a session has
- * produced a response. So Claude limits are `reported`, they arrive once an agent
- * is running, and before that Hive reports them as unknown rather than guessing.
- * Hive refuses to build on `api.anthropic.com/api/oauth/usage`: it is an
- * undocumented endpoint the CLI calls for itself, and routing on it would break
- * silently the day Anthropic changes it.
+ * **Claude Code** answers on the same stdio transport, and the account's five-hour
+ * and weekly windows arrive with it before any session has run. (An earlier note
+ * here said Claude had no program-readable usage at all and that `statusLine` was
+ * the only signal — measured against claude 2.1.220 on 2026-07-26 that is wrong:
+ * the probe returns a `subscription` pool carrying both windows plus any
+ * model-scoped weekly cap. `statusLine` remains a live push feed, but it is a
+ * second source, not the only one.) Readings stay `reported` rather than
+ * `authoritative` because they are a vendor-rendered figure. Hive still refuses to
+ * build on `api.anthropic.com/api/oauth/usage`: it is an undocumented endpoint the
+ * CLI calls for itself, and routing on it would break silently the day Anthropic
+ * changes it.
+ *
+ * **Kimi** answers `GET /usages`, the CLI's own usage panel endpoint: an account
+ * `usage` object (weekly) plus a `limits[]` array whose 300-minute entry is the
+ * rolling five-hour window. The two carry their counters differently — `usage`
+ * reports `used`, a `limits[].detail` reports only `remaining` — which is why
+ * `kimiUsageWindowPercent` accepts either. See `kimi-usage.ts`.
  *
  * **Grok** answers on ACP `_x.ai/billing` after the same free `initialize` +
- * `initialized` handshake that the CLI's `/usage` slash command uses. Measured
- * against grok 0.2.99: the payload carries `config.creditUsagePercent` (0–100
- * used of the shared weekly SuperGrok pool) and a rolling
- * `config.currentPeriod` with start/end. The money rails (`onDemandCap`,
- * `onDemandUsed`, `prepaidBalance`) remain a guard, never a gauge. There is no
- * five-hour window on the wire. Readings are `reported` because the shape has
- * moved recently (`creditUsagePercent` was absent from earlier captures).
+ * `initialized` handshake that the CLI's `/usage` slash command uses. The money
+ * rails (`onDemandCap`, `onDemandUsed`, `prepaidBalance`) are a guard, never a
+ * gauge, and there is no five-hour window on the wire.
+ *
+ * **As of grok 0.2.112 there is no usage gauge on the wire at all.**
+ * `config.creditUsagePercent` — the 0–100 figure this parser reads, captured
+ * from 0.2.99 on 2026-07-13 — is absent from the 0.2.112 payload, which now
+ * carries only `currentPeriod{type,start,end}`, the money rails,
+ * `isUnifiedBillingUser`, `billingPeriodStart/End` and `subscription_tier`.
+ * Re-measured live on 2026-07-26; `grok` exposes no other usage surface (no
+ * `usage` subcommand, and the TUI's `/usage` calls this same method).
+ *
+ * The consequence is deliberate and worth stating: with no gauge,
+ * `readingsFromGrokBilling` yields both windows null, `recordDiscoveredReading`
+ * writes no observation, `drainedWindowFor` can never drain grok, and grok is
+ * therefore **unmetered in practice** — routed like opencode (§10), its only
+ * exhaustion signal a classified vendor error. Inventing a number to restore
+ * metering is exactly what §04 forbids. If the field returns, this parser
+ * already handles it: the 0.2.99 path is still live and still tested.
+ *
+ * The reset (`config.currentPeriod.end`) IS still supplied, and is kept: the
+ * weekly window survives with `usedPct: null`, which `recordDiscoveredReading`
+ * stores as a boundary with no window provenance. So `hive quota` reports the
+ * reset the vendor stated while still reporting usage as unknown, and no hold
+ * can be taken from it — a hold needs a DRAINED window, and a null gauge never
+ * drains. Proved by `prototypes/vendors/grok-billing-shape.ts`.
  *
  * Providers report the *fraction* of a window consumed, never its absolute size.
  * A discovered pool is therefore denominated in percent: allowance is 100 by
@@ -56,7 +89,15 @@ import type { CodexRateLimitSnapshot, CodexRateLimitsResponse } from "./quota";
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 
 export interface DiscoveredWindow {
-  usedPct: number;
+  /**
+   * The fraction of the window consumed, or null when the vendor states the
+   * window's boundary but not its gauge (grok 0.2.112). Null is unknown and
+   * never zero: the window exists and turns over at a stated time, and nobody
+   * read how much of it is spent. Every consumer must treat null as unmeasured
+   * rather than empty — `recordDiscoveredReading` writes no window provenance
+   * for it, so it can never be mistaken for a measurement.
+   */
+  usedPct: number | null;
   windowMinutes: number | null;
   resetsAt: string | null;
 }
@@ -117,12 +158,6 @@ export type QuotaProbeResult =
       pools: DiscoveredPoolReading[];
       /** The provider's model catalog, when the probe could read it. */
       catalog: ModelCatalogEntry[];
-      /**
-       * Unspent usage-limit reset grants the account is holding. Hive surfaces
-       * this in a refusal and never redeems one itself: spending a human's finite
-       * credit to admit a spawn is the human's decision to make.
-       */
-      resetCredits?: number;
     }
   | { status: "unavailable"; reason: string };
 
@@ -311,17 +346,7 @@ export class CodexQuotaProbe implements QuotaProbe {
             "codex app-server returned no usable rate-limit windows; the account may not be signed in",
         };
       }
-      const credits = CodexResetCreditsSchema.safeParse(
-        payload.limits.rateLimitResetCredits,
-      );
-      return {
-        status: "ok",
-        pools,
-        catalog: payload.catalog,
-        ...(credits.success && credits.data.availableCount !== undefined
-          ? { resetCredits: credits.data.availableCount }
-          : {}),
-      };
+      return { status: "ok", pools, catalog: payload.catalog };
     } catch (error) {
       return {
         status: "unavailable",
@@ -330,12 +355,6 @@ export class CodexQuotaProbe implements QuotaProbe {
     }
   }
 }
-
-const CodexResetCreditsSchema = z
-  .object({
-    availableCount: z.number().int().nonnegative().optional(),
-  })
-  .passthrough();
 
 /**
  * Drive a throwaway `codex app-server` over stdio. The handshake is mandatory —
@@ -694,10 +713,7 @@ export function readingsFromClaudeUsage(
   const parsed = ClaudeUsageResponseSchema.safeParse(response);
   if (!parsed.success) return [];
   response = parsed.data;
-  if (
-    response.rate_limits_available !== true ||
-    response.rate_limits === null
-  ) {
+  if (!response.rate_limits_available || response.rate_limits === null) {
     return [];
   }
   const limits = response.rate_limits ?? {};
@@ -757,7 +773,7 @@ export interface ClaudeProbeTransport {
 
 /** The CLI appends `[1m]` to name a 1M-context variant of the same model. */
 const withoutContextSuffix = (model: string): string =>
-  model.replace(/\[\d+m\]$/i, "");
+  model.replace(/\[\d+m]$/i, "");
 
 /**
  * The `models[]` block of an `initialize` control response → catalog entries.
@@ -825,7 +841,7 @@ export class ClaudeQuotaProbe implements QuotaProbe {
   async read(): Promise<QuotaProbeResult> {
     try {
       const payload = await this.transport.readUsage(HANDSHAKE_TIMEOUT_MS);
-      if (payload.usage.rate_limits_available !== true) {
+      if (!payload.usage.rate_limits_available) {
         return { status: "unavailable", reason: CLAUDE_NO_SUBSCRIBER_LIMITS };
       }
       const pools = readingsFromClaudeUsage(
@@ -1060,8 +1076,12 @@ export function readingsFromGrokBilling(
     return [];
   }
 
+  // A gauge OR a boundary is enough to be a window. 0.2.112 supplies only the
+  // boundary, and dropping the window for want of a percent threw the reset
+  // away with it — `hive quota` then reported "reset unknown" about a reset the
+  // vendor had plainly stated. The percent stays null: unknown is unknown.
   const weekly: DiscoveredWindow | null =
-    usablePercent === null
+    usablePercent === null && resetsAt === null
       ? null
       : {
           usedPct: usablePercent,
@@ -1083,7 +1103,9 @@ export function readingsFromGrokBilling(
       fiveHourMeterState: "not-metered",
       // Missing percent with a recognized surface is unknown, never not-metered:
       // the vendor does meter the weekly pool; we just did not get the number.
-      weeklyMeterState: weekly === null ? "unknown" : "metered",
+      // Keyed on the gauge, not on the window: a boundary-only window is still
+      // an unread meter.
+      weeklyMeterState: weekly?.usedPct == null ? "unknown" : "metered",
       observedAt,
       source: "provider",
       confidence: "reported",
@@ -1274,6 +1296,9 @@ export function readingsFromKimiUsages(
         };
 
   const fiveHourEntry = (parsed.data.limits ?? [])
+    // A window Hive could not interpret is null here; dropping it costs that
+    // window, not the whole reading.
+    .filter((entry) => entry !== null)
     .map((entry) => ({
       minutes: kimiUsageWindowMinutes(
         entry.window.duration,

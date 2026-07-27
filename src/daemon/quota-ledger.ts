@@ -351,6 +351,30 @@ const newer = (left: string | null, right: string | null): boolean =>
   left !== null && (right === null || left >= right);
 
 /**
+ * A window's boundary is a fact of its own, and does not travel with its gauge.
+ * A vendor can state when the period turns over while stating nothing about how
+ * much of it is spent (grok's `_x.ai/billing` since 0.2.112); such a reading
+ * writes no `*ObservedAt`, so keying its reset to the gauge's recency would
+ * pick the prior window every time and the new boundary would never land — the
+ * stored reset would sit frozen at a time that has already passed, which reads
+ * downstream as "reset unknown" forever.
+ *
+ * A boundary only ever moves forward: a period that has turned over ends later
+ * than the one it replaced. So the later of the two wins, which also makes an
+ * out-of-order arrival harmless — an older reading cannot drag a fresh boundary
+ * backwards. An incoming reading with no boundary at all asserts nothing and
+ * keeps the stored one.
+ */
+const laterBoundary = (
+  incoming: string | null,
+  stored: string | null,
+): string | null => {
+  if (incoming === null) return stored;
+  if (stored === null) return incoming;
+  return incoming > stored ? incoming : stored;
+};
+
+/**
  * Fold an incoming observation into the stored one, one window at a time. The
  * caller stamps `*ObservedAt` on exactly the windows it actually read; the rest
  * keep whatever provenance they already had.
@@ -384,12 +408,15 @@ export function mergeObservationWindows(
   return {
     ...incoming,
     fiveHourUsed: five.fiveHourUsed,
-    fiveHourResetAt: five.fiveHourResetAt,
+    fiveHourResetAt: laterBoundary(
+      incoming.fiveHourResetAt,
+      five.fiveHourResetAt,
+    ),
     fiveHourObservedAt: five.fiveHourObservedAt,
     fiveHourSource: five.fiveHourSource,
     fiveHourConfidence: five.fiveHourConfidence,
     weeklyUsed: week.weeklyUsed,
-    weeklyResetAt: week.weeklyResetAt,
+    weeklyResetAt: laterBoundary(incoming.weeklyResetAt, week.weeklyResetAt),
     weeklyObservedAt: week.weeklyObservedAt,
     weeklySource: week.weeklySource,
     weeklyConfidence: week.weeklyConfidence,
@@ -560,6 +587,7 @@ export class QuotaLedger {
     const observationColumnNames = new Set(
       observationColumns.map((column) => column.name),
     );
+    let addedObservationColumns = false;
     for (const [column, type] of [
       ["fiveHourObservedAt", "TEXT"],
       ["fiveHourSource", "TEXT"],
@@ -577,6 +605,26 @@ export class QuotaLedger {
       this.db.database.exec(
         `ALTER TABLE quota_observations ADD COLUMN ${column} ${type}`,
       );
+      addedObservationColumns = true;
+    }
+    // Rows written before per-window provenance existed carry a real reading
+    // for both windows under a single row-level stamp. Backfill them HERE,
+    // once, at the moment the columns appear: every row present then is by
+    // definition a legacy one. Doing it at read time instead would have to
+    // guess, and there is now a second row shape that looks identical — a
+    // reset-only row, whose windows are deliberately unstamped because the
+    // vendor stated a boundary and no gauge. Guessing would hand that row a
+    // measurement's provenance and publish an unread 0 as "0% used".
+    if (addedObservationColumns) {
+      this.db.database.exec(`
+        UPDATE quota_observations SET
+          fiveHourObservedAt = COALESCE(fiveHourObservedAt, observedAt),
+          fiveHourSource = COALESCE(fiveHourSource, source),
+          fiveHourConfidence = COALESCE(fiveHourConfidence, confidence),
+          weeklyObservedAt = COALESCE(weeklyObservedAt, observedAt),
+          weeklySource = COALESCE(weeklySource, source),
+          weeklyConfidence = COALESCE(weeklyConfidence, confidence)
+      `);
     }
     const reservationColumns = z
       .array(z.object({ name: z.string() }))
@@ -1831,25 +1879,11 @@ export class QuotaLedger {
       .get(scope.provider, scope.account, scope.pool);
     if (row === null) return null;
     try {
-      const parsed = QuotaObservationSchema.parse(row);
-      // Rows written before per-window provenance existed carry real readings
-      // for both windows under a single row-level stamp. Absent that backfill
-      // they would read as "never observed" and discard a true measurement.
-      if (
-        parsed.fiveHourObservedAt === null &&
-        parsed.weeklyObservedAt === null
-      ) {
-        return {
-          ...parsed,
-          fiveHourObservedAt: parsed.observedAt,
-          fiveHourSource: parsed.source,
-          fiveHourConfidence: parsed.confidence,
-          weeklyObservedAt: parsed.observedAt,
-          weeklySource: parsed.source,
-          weeklyConfidence: parsed.confidence,
-        };
-      }
-      return parsed;
+      // No backfill here. A null `*ObservedAt` means exactly what the schema
+      // says — that window was never observed — because legacy rows were
+      // stamped once at migration time (see the ALTER above). Inferring it at
+      // read time cannot distinguish a legacy row from a reset-only one.
+      return QuotaObservationSchema.parse(row);
     } catch (error) {
       throw new Error(
         `Corrupt quota observation for ${scope.provider}/${scope.account}/${scope.pool}: ${

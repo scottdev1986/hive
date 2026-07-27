@@ -9,7 +9,7 @@ import {
   known,
   unknown,
   unknownVendor,
-} from "../schemas/capability";
+} from "../schemas";
 import {
   KimiHttpUsageTransport,
   KimiUsagesResponseSchema,
@@ -467,6 +467,7 @@ export function accountBillingFromKimiUsage(
   }
 
   const windows = (parsed.data.limits ?? [])
+    .filter((entry) => entry !== null)
     .map((entry) => ({
       minutes: kimiUsageWindowMinutes(
         entry.window.duration,
