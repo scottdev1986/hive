@@ -130,7 +130,9 @@ describe("ActivitySnapshot", () => {
         output: {
           locator: active.terminal,
           outputThrough: "9",
-          text: "\u001b[31mworking\u001b[0m\nworking\nBearer secret-token",
+          // Already the rendered screen: the emulator resolved the escape
+          // sequences into cells before this layer saw them.
+          screen: "working\nworking\nBearer secret-token",
           completeness: "complete",
         },
         gitPaths: ["src/a.ts"],

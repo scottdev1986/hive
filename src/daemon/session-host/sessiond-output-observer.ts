@@ -5,7 +5,12 @@ import { SessiondViewerAttachClient } from "./sessiond-viewer-attach";
 export type SessiondOutputObservation = Readonly<{
   locator: SessionLocator;
   outputThrough: string;
-  text: string;
+  /**
+   * What the pane is SHOWING — the reconstructed screen, not the tail of the
+   * byte stream that produced it. Every vendor TUI revises what it has already
+   * printed, so the two differ by everything the terminal has overwritten.
+   */
+  screen: string;
   completeness: "complete" | "gap";
   /** Why the observation is empty, when it is. Absent on success. */
   failure?: string;
@@ -39,7 +44,7 @@ export async function observeSessiondOutput(
     return {
       locator,
       outputThrough: grant.outputSeq,
-      text: "",
+      screen: "",
       completeness: "gap",
       failure:
         error instanceof Error ? error.message : "unknown attach failure",

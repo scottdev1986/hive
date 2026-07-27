@@ -81,130 +81,177 @@ function parameters(raw: string, fallback: number): number[] {
 }
 
 /**
- * Render `stream` as the screen a terminal of this size would be showing.
+ * A terminal that can be fed a session's bytes in pieces and asked, at any
+ * point, what is on its screen.
  *
- * The stream may begin mid-session — a viewer attaches to a pane that has been
- * running — so an unmatched "leave alternate screen" is normal and simply means
- * the capture started inside one.
+ * Incremental matters for more than convenience. A viewer receives a pane's
+ * output as a series of frames chosen by the host's chunking, not by where
+ * escape sequences happen to end, so a parser that starts fresh per chunk
+ * prints the tail of a split sequence as literal text. It also removes the
+ * reason to cap the input: a screen is bounded by its own rows and columns, so
+ * the emulator can consume a megabyte and still occupy one window. Capping the
+ * BYTES instead discards the head of the stream — which is precisely where a
+ * repainting TUI puts the full-screen paint everything after it revises.
  */
-export function renderVisibleScreen(
-  stream: string,
-  columns: number,
-  rows: number,
-): string {
-  const width = Math.max(1, Math.floor(columns));
-  const height = Math.max(1, Math.floor(rows));
-  let primary = new Screen(width, height);
-  let alternate: Screen | null = null;
-  const active = (): Screen => alternate ?? primary;
+export class TerminalScreen {
+  private primary: Screen;
+  private alternate: Screen | null = null;
+  /** An escape sequence cut in half by a frame boundary, awaiting its rest. */
+  private leftover = "";
+  private readonly width: number;
+  private readonly height: number;
 
-  let index = 0;
-  let pending = "";
-  const flush = (): void => {
-    if (pending === "") return;
-    active().write(pending);
-    pending = "";
-  };
+  constructor(columns: number, rows: number) {
+    this.width = Math.max(1, Math.floor(columns));
+    this.height = Math.max(1, Math.floor(rows));
+    this.primary = new Screen(this.width, this.height);
+  }
 
-  while (index < stream.length) {
-    const code = stream.charCodeAt(index);
+  private active(): Screen {
+    return this.alternate ?? this.primary;
+  }
 
-    if (code === ESC) {
-      flush();
-      const next = stream[index + 1];
-      if (next === "[") {
-        // CSI: parameters, then a final byte in @..~
-        let cursor = index + 2;
-        while (
-          cursor < stream.length &&
-          /[0-9;?<>!]/.test(stream[cursor] ?? "")
-        ) {
-          cursor += 1;
+  /** Apply the next piece of the stream. */
+  write(chunk: string): void {
+    const stream = this.leftover + chunk;
+    this.leftover = "";
+
+    let index = 0;
+    let pending = "";
+    const flush = (): void => {
+      if (pending === "") return;
+      this.active().write(pending);
+      pending = "";
+    };
+
+    while (index < stream.length) {
+      const code = stream.charCodeAt(index);
+
+      if (code === ESC) {
+        flush();
+        if (index + 1 >= stream.length) {
+          // A lone ESC at the boundary: hold it for the next frame.
+          this.leftover = stream.slice(index);
+          return;
         }
-        const final = stream[cursor] ?? "";
-        const raw = stream.slice(index + 2, cursor).replace(/^[?<>!]/, "");
-        const private_ = /^[?<>!]/.test(stream.slice(index + 2, cursor));
-        applyCsi(final, raw, private_);
-        index = cursor + 1;
-        continue;
-      }
-      if (next === "]") {
-        // OSC runs to BEL or ST; it sets titles and never paints cells.
-        let cursor = index + 2;
-        while (cursor < stream.length) {
-          if (stream.charCodeAt(cursor) === BEL) break;
-          if (
-            stream.charCodeAt(cursor) === ESC &&
-            stream[cursor + 1] === "\\"
+        const next = stream[index + 1];
+        if (next === "[") {
+          // CSI: parameters, then a final byte in @..~
+          let cursor = index + 2;
+          while (
+            cursor < stream.length &&
+            /[0-9;?<>!]/.test(stream[cursor] ?? "")
           ) {
             cursor += 1;
-            break;
           }
-          cursor += 1;
+          if (cursor >= stream.length) {
+            this.leftover = stream.slice(index);
+            return;
+          }
+          const final = stream[cursor] ?? "";
+          const raw = stream.slice(index + 2, cursor).replace(/^[?<>!]/, "");
+          const private_ = /^[?<>!]/.test(stream.slice(index + 2, cursor));
+          this.applyCsi(final, raw, private_);
+          index = cursor + 1;
+          continue;
         }
-        index = cursor + 1;
-        continue;
-      }
-      if (next === "(" || next === ")" || next === "#") {
-        index += 3;
-        continue;
-      }
-      if (next === "M") {
-        // Reverse index: scroll down at the top of the screen.
-        const screen = active();
-        if (screen.cursorRow > 0) screen.cursorRow -= 1;
+        if (next === "]") {
+          // OSC runs to BEL or ST; it sets titles and never paints cells.
+          let cursor = index + 2;
+          let terminated = false;
+          while (cursor < stream.length) {
+            if (stream.charCodeAt(cursor) === BEL) {
+              terminated = true;
+              break;
+            }
+            if (stream.charCodeAt(cursor) === ESC) {
+              if (cursor + 1 >= stream.length) break;
+              if (stream[cursor + 1] === "\\") {
+                cursor += 1;
+                terminated = true;
+                break;
+              }
+            }
+            cursor += 1;
+          }
+          if (!terminated) {
+            this.leftover = stream.slice(index);
+            return;
+          }
+          index = cursor + 1;
+          continue;
+        }
+        if (next === "(" || next === ")" || next === "#") {
+          if (index + 2 >= stream.length) {
+            this.leftover = stream.slice(index);
+            return;
+          }
+          index += 3;
+          continue;
+        }
+        if (next === "M") {
+          // Reverse index: scroll down at the top of the screen.
+          const screen = this.active();
+          if (screen.cursorRow > 0) screen.cursorRow -= 1;
+          index += 2;
+          continue;
+        }
+        // Two-byte escapes we do not model (=, >, 7, 8, …) paint nothing.
         index += 2;
         continue;
       }
-      // Two-byte escapes we do not model (=, >, 7, 8, …) paint nothing.
-      index += 2;
-      continue;
-    }
 
-    const character = stream[index] ?? "";
-    if (character === "\n") {
-      flush();
-      active().newline();
+      const character = stream[index] ?? "";
+      if (character === "\n") {
+        flush();
+        this.active().newline();
+        index += 1;
+        continue;
+      }
+      if (character === "\r") {
+        flush();
+        this.active().cursorColumn = 0;
+        index += 1;
+        continue;
+      }
+      if (character === "\b") {
+        flush();
+        const screen = this.active();
+        screen.cursorColumn = Math.max(0, screen.cursorColumn - 1);
+        index += 1;
+        continue;
+      }
+      if (character === "\t") {
+        flush();
+        const screen = this.active();
+        screen.cursorColumn = Math.min(
+          screen.columns - 1,
+          (Math.floor(screen.cursorColumn / 8) + 1) * 8,
+        );
+        index += 1;
+        continue;
+      }
+      if (code < 0x20 && character !== "") {
+        // Any other C0 control paints nothing.
+        flush();
+        index += 1;
+        continue;
+      }
+      pending += character;
       index += 1;
-      continue;
     }
-    if (character === "\r") {
-      flush();
-      active().cursorColumn = 0;
-      index += 1;
-      continue;
-    }
-    if (character === "\b") {
-      flush();
-      const screen = active();
-      screen.cursorColumn = Math.max(0, screen.cursorColumn - 1);
-      index += 1;
-      continue;
-    }
-    if (character === "\t") {
-      flush();
-      const screen = active();
-      screen.cursorColumn = Math.min(
-        screen.columns - 1,
-        (Math.floor(screen.cursorColumn / 8) + 1) * 8,
-      );
-      index += 1;
-      continue;
-    }
-    if (code < 0x20 && character !== "") {
-      // Any other C0 control paints nothing.
-      flush();
-      index += 1;
-      continue;
-    }
-    pending += character;
-    index += 1;
+    flush();
   }
-  flush();
-  return active().text();
 
-  function applyCsi(final: string, raw: string, private_: boolean): void {
-    const screen = active();
+  /** What the screen is showing now. */
+  text(): string {
+    return this.active().text();
+  }
+
+  private applyCsi(final: string, raw: string, private_: boolean): void {
+    const screen = this.active();
+    const width = this.width;
+    const height = this.height;
     switch (final) {
       case "H":
       case "f": {
@@ -288,8 +335,8 @@ export function renderVisibleScreen(
         // 1049/47/1047 are the alternate screen. Entering gives a blank buffer
         // and hides the primary; leaving throws the alternate away.
         if (mode === 1049 || mode === 47 || mode === 1047) {
-          if (final === "h") alternate = new Screen(width, height);
-          else alternate = null;
+          if (final === "h") this.alternate = new Screen(width, height);
+          else this.alternate = null;
         }
         return;
       }
@@ -305,24 +352,18 @@ export function renderVisibleScreen(
 }
 
 /**
- * The last `maxRows` non-empty lines of a byte stream, escape sequences
- * stripped.
+ * Render `stream` as the screen a terminal of this size would be showing.
  *
- * Kept because it is the right answer for a stream that only ever appends, and
- * exported so `prototypes/terminal/screen-reconstruction.ts` can demonstrate
- * precisely where it is the WRONG answer: it reports text a repainting TUI has
- * already overwritten.
+ * The stream may begin mid-session — a viewer attaches to a pane that has been
+ * running — so an unmatched "leave alternate screen" is normal and simply means
+ * the capture started inside one.
  */
-const ESCAPE_SEQUENCES = new RegExp(
-  `${String.fromCharCode(27)}\\[[0-9;?]*[a-zA-Z]|${String.fromCharCode(27)}[()][A-Z0-9]|${String.fromCharCode(27)}[=>]|${String.fromCharCode(27)}\\][^\\u0007]*\\u0007`,
-  "g",
-);
-
-export function lastVisibleRows(text: string, maxRows: number): string {
-  const rows = text
-    .replaceAll(ESCAPE_SEQUENCES, "")
-    .split(/\r?\n/)
-    .map((row) => row.replace(/\s+$/, ""))
-    .filter((row, index, all) => row.length > 0 || all[index - 1] !== "");
-  return rows.slice(-maxRows).join("\n");
+export function renderVisibleScreen(
+  stream: string,
+  columns: number,
+  rows: number,
+): string {
+  const screen = new TerminalScreen(columns, rows);
+  screen.write(stream);
+  return screen.text();
 }

@@ -128,8 +128,10 @@ function errorPayload(): Uint8Array {
 type FakeHostOptions = Readonly<{
   claim?: "granted" | "denied";
   errorOnInput?: boolean;
-  /** Bytes to stream as one OUTPUT frame after HOST_ATTACH, at streamSeq 0. */
+  /** Bytes to stream as one OUTPUT frame after HOST_ATTACH. */
   streamOutput?: Uint8Array;
+  /** Absolute offset of that frame; nonzero models a checkpoint-bridged replay. */
+  streamSeqBase?: bigint;
 }>;
 
 type FakeHost = Readonly<{
@@ -206,7 +208,7 @@ function respond(
             type: "OUTPUT",
             flags: 0,
             requestId: 1000n,
-            streamSeq: 0n,
+            streamSeq: options.streamSeqBase ?? 0n,
             payload: options.streamOutput,
           }),
         );
@@ -309,7 +311,7 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   expect(submitBody.claimToken).toBe("claim-token-1");
 });
 
-test("reads a bounded ordered OUTPUT tail from the checkpoint cursor", async () => {
+test("reads the screen from the start of the retained journal", async () => {
   const bytes = textEncoder.encode("first\nsecond\n");
   const host = await startFakeHost({ streamOutput: bytes });
   hosts.push(host);
@@ -324,9 +326,11 @@ test("reads a bounded ordered OUTPUT tail from the checkpoint cursor", async () 
   });
   await settle();
 
+  // A bare LF moves down a row without returning the carriage, so "second"
+  // lands under the end of "first" — the screen, not the byte stream.
   expect(observed).toEqual({
     outputThrough: String(bytes.byteLength),
-    text: "first\nsecond\n",
+    screen: "first\n     second",
     completeness: "complete",
   });
   const attach = required(
@@ -344,7 +348,11 @@ test("reads a bounded ordered OUTPUT tail from the checkpoint cursor", async () 
   ).toBeTrue();
 });
 
-test("labels local OUTPUT tail overflow as a gap", async () => {
+test("a stream far larger than the window still reports a whole screen", async () => {
+  // The screen is bounded by its own geometry, so there is nothing to truncate
+  // and no head of the stream to lose. This replaced a 32KiB cap on the raw
+  // bytes, which discarded the OPENING PAINT of any pane that had produced more
+  // than that — and then reported the remainder as `complete`.
   const bytes = new Uint8Array(40 * 1024).fill("x".charCodeAt(0));
   const host = await startFakeHost({ streamOutput: bytes });
   hosts.push(host);
@@ -359,7 +367,33 @@ test("labels local OUTPUT tail overflow as a gap", async () => {
   });
 
   expect(observed.outputThrough).toBe(String(bytes.byteLength));
-  expect(Buffer.byteLength(observed.text)).toBe(32 * 1024);
+  const lines = observed.screen.split("\n");
+  expect(lines.length).toBeLessThanOrEqual(geometry.rows);
+  expect(lines.every((line) => line.length <= geometry.columns)).toBeTrue();
+  expect(observed.completeness).toBe("complete");
+});
+
+test("a replay that does not start where we asked is reported as a gap", async () => {
+  // sessiond bridges a cursor below its retained start by sending the newest
+  // checkpoint and replaying from there. This viewer does not decode HVTCP001,
+  // so the screen it builds has no base underneath it. The one thing it must
+  // not do is present that delta as a whole screen.
+  const bytes = textEncoder.encode("late fragment");
+  const host = await startFakeHost({
+    streamOutput: bytes,
+    streamSeqBase: 4096n,
+  });
+  hosts.push(host);
+  const observed = await SessiondViewerAttachClient.observeOutput({
+    locator,
+    grant: {
+      ...grantFor(host.endpoint),
+      outputSeq: String(4096 + bytes.byteLength),
+    },
+    geometry,
+    viewerId: "hive-daemon:activity",
+  });
+
   expect(observed.completeness).toBe("gap");
 });
 

@@ -95,7 +95,7 @@ function fallbackSummary(
     report !== null && typeof report.data.nextCheckpoint === "string"
       ? report.data.nextCheckpoint
       : null;
-  const tail = redactTerminalEvidence(output?.text ?? "")
+  const tail = redactTerminalEvidence(output?.screen ?? "")
     .trim()
     .slice(-FALLBACK_TAIL_BYTES);
   return {
@@ -255,8 +255,8 @@ export async function buildHandoffBundle(
               {
                 terminal: input.output.locator,
                 through: input.output.outputThrough,
-                digest: digest(input.output.text),
-                bytes: Buffer.byteLength(input.output.text),
+                digest: digest(input.output.screen),
+                bytes: Buffer.byteLength(input.output.screen),
                 completeness: input.output.completeness,
               },
             ],

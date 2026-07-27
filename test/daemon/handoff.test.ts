@@ -215,7 +215,7 @@ describe("handoff bundle", () => {
       output: {
         locator: terminal,
         outputThrough: "42",
-        text: "last useful line\nBearer secret-token-value",
+        screen: "last useful line\nBearer secret-token-value",
         completeness: "gap",
       },
       memory: [memory],
@@ -329,7 +329,7 @@ describe("handoff bundle", () => {
       output: {
         locator: terminal,
         outputThrough: "51",
-        text: "last retained provider output",
+        screen: "last retained provider output",
         completeness: "complete",
       },
       memory: [],

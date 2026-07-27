@@ -31,10 +31,10 @@ import type {
   InputReceipt,
   SessionRef,
 } from "./terminal-host-contract";
+import { TerminalScreen } from "./terminal-screen";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
-const OUTPUT_TAIL_BYTES = 32 * 1024;
 const OUTPUT_REPLAY_TIMEOUT_MS = 1_000;
 /** No frame for this long means the host has finished replaying. */
 const OUTPUT_QUIET_MS = 120;
@@ -185,7 +185,18 @@ export class SessiondViewerAttachClient {
   /** When the last OUTPUT frame landed, for the replay-settled wait. */
   private lastOutputAt = 0;
   private attachRequestId: bigint | null = null;
-  private outputTail = new Uint8Array();
+  /**
+   * The pane's screen, maintained as frames arrive, or null when this
+   * connection exists only to inject input.
+   *
+   * Feeding the emulator incrementally is what lets the whole replay be
+   * consumed without bounding it: the screen occupies rows x columns no matter
+   * how many bytes pass through, so there is nothing to truncate and no head of
+   * the stream to lose.
+   */
+  private screen: TerminalScreen | null = null;
+  /** Streaming so a multi-byte character split across frames still decodes. */
+  private readonly outputDecoder = new TextDecoder("utf-8");
   private outputComplete = true;
   private outputWaiter: Readonly<{
     target: bigint;
@@ -219,22 +230,39 @@ export class SessiondViewerAttachClient {
     return SessiondViewerAttachClient.connect(deps, deps.grant.outputSeq);
   }
 
+  /**
+   * Read what the pane is currently showing, without taking input from it.
+   *
+   * The cursor is 0 — everything the host still retains — and not the grant's
+   * `checkpointSeq`. That field names the newest checkpoint, so attaching at it
+   * asks sessiond to replay only what FOLLOWS the base state
+   * (session_host.zig:601). A viewer that persisted between calls could add
+   * that delta to a screen it already held; this one is opened per observation
+   * and holds nothing, and it discards the SNAPSHOT_BYTES the host offers as
+   * the base. Asking to skip the base and then dropping the copy of it we are
+   * handed is how a queen came to hold 30KB of a Claude pane, report
+   * `complete`, and find none of the agent's words in it.
+   *
+   * Zero is also the one cursor sessiond will never refuse: above `output_seq`
+   * the host fails the attach outright rather than clamping
+   * (host_core.zig:1472).
+   */
   static async observeOutput(deps: ViewerAttachDependencies): Promise<
     Readonly<{
       outputThrough: string;
-      text: string;
+      screen: string;
       completeness: "complete" | "gap";
     }>
   > {
-    const client = await SessiondViewerAttachClient.connect(
-      deps,
-      deps.grant.checkpointSeq,
-    );
+    const client = await SessiondViewerAttachClient.connect(deps, "0", {
+      columns: deps.geometry.columns,
+      rows: deps.geometry.rows,
+    });
     try {
       await client.settleReplay(deps.grant.outputSeq);
       return {
         outputThrough: client.outputHighWater.toString(),
-        text: new TextDecoder().decode(client.outputTail),
+        screen: client.screen?.text() ?? "",
         completeness: client.outputComplete ? "complete" : "gap",
       };
     } finally {
@@ -282,10 +310,14 @@ export class SessiondViewerAttachClient {
   private static async connect(
     deps: ViewerAttachDependencies,
     afterSeq: string,
+    render?: Readonly<{ columns: number; rows: number }>,
   ): Promise<SessiondViewerAttachClient> {
     const open = deps.connect ?? defaultConnect;
     const socket = await open(deps.grant.endpoint);
     const client = new SessiondViewerAttachClient(socket, deps, afterSeq);
+    if (render !== undefined) {
+      client.screen = new TerminalScreen(render.columns, render.rows);
+    }
     try {
       await client.handshake();
       return client;
@@ -630,18 +662,13 @@ export class SessiondViewerAttachClient {
   private acknowledgeOutput(frame: SessiondFrame): void {
     const throughSeq = frame.streamSeq + BigInt(frame.payload.byteLength);
     if (throughSeq <= this.outputHighWater) return;
+    // A frame that does not begin where the last one ended means the host could
+    // not bridge our cursor — it replayed from a checkpoint we did not decode —
+    // so the screen has no base under it and the reader must be told.
     if (frame.streamSeq !== this.outputHighWater) this.outputComplete = false;
-    const combined = new Uint8Array(
-      this.outputTail.byteLength + frame.payload.byteLength,
+    this.screen?.write(
+      this.outputDecoder.decode(frame.payload, { stream: true }),
     );
-    combined.set(this.outputTail);
-    combined.set(frame.payload, this.outputTail.byteLength);
-    if (combined.byteLength > OUTPUT_TAIL_BYTES) {
-      this.outputComplete = false;
-      this.outputTail = combined.slice(combined.byteLength - OUTPUT_TAIL_BYTES);
-    } else {
-      this.outputTail = combined;
-    }
     this.outputHighWater = throughSeq;
     this.lastOutputAt = Date.now();
     if (

@@ -41,7 +41,6 @@ import { createHash as nodeCreateHash } from "node:crypto";
 import { type DaemonHandshake, expectedDaemonHandshake } from "../handshake";
 import { resolveHiveHome } from "../instance-identity";
 import { observeSessiondOutput } from "./sessiond-output-observer";
-import { renderVisibleScreen } from "./terminal-screen";
 import type {
   AttachGrant,
   AttachRequest,
@@ -910,13 +909,10 @@ export class SessiondHost implements LandedTerminalHost {
       geometry,
       `hive-daemon:capture:${locator.sessionId}`,
     );
-    // Render the SCREEN, not the tail of the stream. A vendor that repaints —
-    // Claude drives an alternate screen with cursor addressing — sends bytes
-    // whose most recent slice is a pile of redraw fragments, so a tail reports
-    // text the terminal has already replaced. `renderVisibleScreen` replays the
-    // stream through a terminal and reads the cells back.
-    const raw = observed?.text ?? "";
-    const rendered = renderVisibleScreen(raw, geometry.columns, geometry.rows);
+    // The observer reconstructs the screen as the replay streams in, at the
+    // geometry the attach declared, so what arrives here is already the cells a
+    // terminal would be showing rather than the bytes that painted them.
+    const rendered = observed?.screen ?? "";
     return {
       locator,
       outputSeq: observed?.outputThrough ?? "0",

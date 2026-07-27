@@ -102,8 +102,9 @@ function phase(status: FusedAgentStatus | null): ActivitySnapshot["phase"] {
 function terminalSummary(
   output: SessiondOutputObservation | null,
 ): string | null {
-  const lines = (output?.text ?? "")
-    .replaceAll(ANSI, "")
+  // The screen the pane is showing; `renderVisibleScreen` has already resolved
+  // the escape sequences into cells, so there are none left to strip here.
+  const lines = (output?.screen ?? "")
     .split("\n")
     .map((line) => line.replaceAll(/\s+/g, " ").trim())
     .filter((line, index, all) => line.length > 0 && line !== all[index - 1]);
