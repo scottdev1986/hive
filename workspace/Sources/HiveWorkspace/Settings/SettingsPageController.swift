@@ -337,36 +337,6 @@ final class TasksSettingsController: SettingsPageController {
         popup.setAccessibilityLabel("Who picks the model for a task")
         popup.isEnabled = dataSource.canEditSelection
 
-        let overrides = NSPopUpButton(frame: .zero, pullsDown: true)
-        overrides.controlSize = .small
-        overrides.font = NSFont.systemFont(ofSize: 11)
-        overrides.addItem(withTitle: "Category override…")
-        overrides.isEnabled = dataSource.canEditSelection
-        for category in TaskCategory.allCases {
-            let item = NSMenuItem(title: category.label, action: nil, keyEquivalent: "")
-            let submenu = NSMenu(title: category.label)
-            for mode in SelectionMode.userChoices {
-                let modeItem = NSMenuItem(
-                    title: MCCCopy.selectionTitle(mode),
-                    action: #selector(categoryOverridePicked(_:)),
-                    keyEquivalent: "")
-                modeItem.target = self
-                modeItem.representedObject = [category.rawValue, mode.rawValue]
-                modeItem.state = dataSource.selectionOverride(category) == mode ? .on : .off
-                submenu.addItem(modeItem)
-            }
-            submenu.addItem(.separator())
-            let clearItem = NSMenuItem(
-                title: MCCCopy.selectionUseGlobal,
-                action: #selector(categoryOverridePicked(_:)), keyEquivalent: "")
-            clearItem.target = self
-            clearItem.representedObject = [category.rawValue]
-            clearItem.state = dataSource.selectionOverride(category) == nil ? .on : .off
-            submenu.addItem(clearItem)
-            item.submenu = submenu
-            overrides.menu?.addItem(item)
-        }
-
         var rowViews: [NSView] = [label]
         if dataSource.canEditSelection,
            dataSource.globalSelection == .neverConfigured {
@@ -374,7 +344,7 @@ final class TasksSettingsController: SettingsPageController {
                 text: MCCCopy.selectionUnconfigured,
                 symbol: "exclamationmark.triangle.fill", style: .warning))
         }
-        rowViews.append(contentsOf: [popup, overrides, NSView.spacer()])
+        rowViews.append(contentsOf: [popup, NSView.spacer()])
         let row = NSStackView(views: rowViews)
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -402,13 +372,6 @@ final class TasksSettingsController: SettingsPageController {
             SelectionMode.userChoices[sender.indexOfSelectedItem])
     }
 
-    @objc private func categoryOverridePicked(_ sender: NSMenuItem) {
-        guard let payload = sender.representedObject as? [String],
-              let rawCategory = payload.first,
-              let category = TaskCategory(rawValue: rawCategory) else { return }
-        let mode = payload.count > 1 ? SelectionMode(rawValue: payload[1]) : nil
-        dataSource.setCategorySelection(category, mode)
-    }
 }
 
 /// MODELS — the inventory and the consent surface: every provider, every

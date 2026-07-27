@@ -94,7 +94,7 @@ const policy: RoutingPolicy = {
       },
     ],
   },
-  selection: { global: "auto", categories: {} },
+  selection: { global: "auto" },
 };
 
 describe("model inventory", () => {

@@ -28,85 +28,72 @@ describe("ordinary Workspace selection preference", () => {
     expect(() => preferences.read()).toThrow();
   });
 
-  test("global, category override, and clearing round-trip", async () => {
+  test("the global round-trips", async () => {
     const preferences = store();
     await preferences.apply(
       { op: "set-selection", expectedRevision: 4, mode: "choice" },
-      { global: "choice", categories: {} },
+      { global: "choice" },
     );
-    await preferences.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 5,
-        category: "debugging",
-        mode: "auto",
-      },
-      { global: "choice", categories: { debugging: "auto" } },
-    );
-    expect(preferences.read()).toEqual({
-      global: "choice",
-      categories: { debugging: "auto" },
-    });
+    expect(preferences.read()).toEqual({ global: "choice" });
 
     await preferences.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 6,
-        category: "debugging",
-        mode: "unset",
-      },
-      { global: "choice", categories: {} },
+      { op: "set-selection", expectedRevision: 5, mode: "auto" },
+      { global: "auto" },
     );
-    expect(preferences.read()).toEqual({ global: "choice", categories: {} });
+    expect(preferences.read()).toEqual({ global: "auto" });
   });
 
-  test("simultaneous Workspaces serialize mutations without losing disjoint overrides", async () => {
+  test("a file written before per-category overrides were removed still reads, minus the overrides", () => {
+    const preferences = store();
+    writeFileSync(
+      preferences.path,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        selection: {
+          global: "choice",
+          categories: { debugging: "auto", planning: "choice" },
+        },
+      })}\n`,
+    );
+    // Dropped, not refused: the retired map is a known shape, so it must not
+    // read as a corrupt preference the daemon then reports and never guesses.
+    expect(preferences.read()).toEqual({ global: "choice" });
+  });
+
+  test("simultaneous Workspaces serialize mutations and leave one document behind", async () => {
     const first = store();
     const second = new SelectionPreferenceStore(first.path);
     await first.apply(
       { op: "set-selection", expectedRevision: 0, mode: "choice" },
-      { global: "choice", categories: {} },
+      { global: "choice" },
     );
 
     await Promise.all([
       first.apply(
-        {
-          op: "set-selection",
-          expectedRevision: 1,
-          category: "debugging",
-          mode: "auto",
-        },
-        { global: "choice", categories: { debugging: "auto" } },
+        { op: "set-selection", expectedRevision: 1, mode: "auto" },
+        { global: "auto" },
       ),
       second.apply(
-        {
-          op: "set-selection",
-          expectedRevision: 1,
-          category: "planning",
-          mode: "auto",
-        },
-        { global: "choice", categories: { planning: "auto" } },
+        { op: "set-selection", expectedRevision: 1, mode: "auto" },
+        { global: "auto" },
       ),
     ]);
 
-    expect(first.read()).toEqual({
-      global: "choice",
-      categories: { debugging: "auto", planning: "auto" },
-    });
+    expect(first.read()).toEqual({ global: "auto" });
     expect(readdirSync(join(first.path, ".."))).toEqual([
       "routing-selection.json",
     ]);
   });
 
-  test("the last successfully committed mutation to one key wins", async () => {
+  test("the last successfully committed mutation wins", async () => {
     const preferences = store();
     await preferences.apply(
       { op: "set-selection", expectedRevision: 0, mode: "auto" },
-      { global: "auto", categories: {} },
+      { global: "auto" },
     );
     await preferences.apply(
       { op: "set-selection", expectedRevision: 1, mode: "choice" },
-      { global: "choice", categories: {} },
+      { global: "choice" },
     );
     expect(preferences.read()?.global).toBe("choice");
   });

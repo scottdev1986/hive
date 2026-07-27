@@ -221,26 +221,18 @@ export async function setModelEffort(
 
 export async function setSelectionMode(
   mode: string,
-  options: { category?: string; port?: number },
+  options: { port?: number },
   expectRevision: string,
 ): Promise<void> {
-  if (
-    mode !== "never-configured" &&
-    mode !== "auto" &&
-    mode !== "choice" &&
-    mode !== "unset"
-  ) {
+  if (mode !== "never-configured" && mode !== "auto" && mode !== "choice") {
     throw new Error(
-      `selection mode must be never-configured, auto, choice, or unset; got ${JSON.stringify(mode)}`,
+      `selection mode must be never-configured, auto, or choice; got ${JSON.stringify(mode)}`,
     );
   }
   printPolicy(
     await applyPolicyMutation(requireDaemonPort(options.port), {
       op: "set-selection",
       expectedRevision: parseExpectedRevision(expectRevision),
-      ...(options.category === undefined
-        ? {}
-        : { category: parseCategory(options.category) }),
       mode,
     }),
   );

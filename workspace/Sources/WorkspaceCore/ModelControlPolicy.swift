@@ -123,17 +123,13 @@ public enum SelectionMode: String, Codable, Sendable {
 public struct CategoryPolicy: Equatable, Codable, Sendable {
     public var chain: [ChainEntry]
     public var exhaustionBehavior: ExhaustionBehavior
-    /// Per-category override of the global selection; nil = use global.
-    public var selectionOverride: SelectionMode?
 
     public init(
         chain: [ChainEntry] = [],
-        exhaustionBehavior: ExhaustionBehavior = .refuse,
-        selectionOverride: SelectionMode? = nil
+        exhaustionBehavior: ExhaustionBehavior = .refuse
     ) {
         self.chain = chain
         self.exhaustionBehavior = exhaustionBehavior
-        self.selectionOverride = selectionOverride
     }
 }
 
@@ -218,22 +214,8 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
         self.globalSelection = globalSelection
     }
 
-    public func effectiveSelection(_ category: TaskCategory) -> SelectionMode {
-        categoryPolicy(category).selectionOverride ?? globalSelection
-    }
-
     public mutating func setGlobalSelection(_ mode: SelectionMode) {
         globalSelection = mode
-        provisional = false
-    }
-
-    /// nil clears the override — the category falls back to the global mode.
-    public mutating func setCategorySelection(
-        _ category: TaskCategory, _ mode: SelectionMode?
-    ) {
-        var policy = categories[category.rawValue] ?? CategoryPolicy()
-        policy.selectionOverride = mode
-        categories[category.rawValue] = policy
         provisional = false
     }
 

@@ -52,7 +52,7 @@ For a temporary acceptance instance outside the user registry, set a test-owned 
 |---|---|---|
 | Instance | `hive.db`, config, local control-plane capability files, project registry and derived project state, runtime files, instance memory | Located below `HIVE_HOME`; each named instance keeps its own project state for the same Git project |
 | Preference bootstrap | Model Control chains, enablement consent, selection, and effort | One-time copy from the default policy into an empty/untouched policy; never overwrites a named-instance edit |
-| Machine preference | Ordinary-Workspace global selection and category overrides only | Locked `~/.hive/routing-selection.json`; atomically published mutations, overlaid after copy/seed in every fresh `run-*` policy |
+| Machine preference | Ordinary-Workspace global selection only | Locked `~/.hive/routing-selection.json`; atomically published mutations, overlaid after copy/seed in every fresh `run-*` policy |
 | Instance | daemon lock/PID/port, tmux sessions, provider session sockets | Instance suffix plus handshake identity |
 | Repository | `.hive/worktrees/*`, `hive/*` branches, Git common directory, repository memory and generated config | Ownership refs and file/landing locks |
 | Machine | `~/.hive/quota.db` | SQLite WAL plus transactional admission and instance-owned reservations |

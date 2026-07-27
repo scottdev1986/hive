@@ -137,27 +137,13 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
         sourceHome: defaultHome,
       }),
     ).toBeTrue();
-    let selected = first.apply(
+    const selected = first.apply(
       { op: "set-selection", expectedRevision: 1, mode: "choice" },
-      "human",
-    );
-    selected = first.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 2,
-        category: "debugging",
-        mode: "auto",
-      },
       "human",
     );
     const preferences = new SelectionPreferenceStore(preferencePath);
     await preferences.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 2,
-        category: "debugging",
-        mode: "auto",
-      },
+      { op: "set-selection", expectedRevision: 1, mode: "choice" },
       selected.selection,
     );
 
@@ -174,10 +160,7 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
         preferences,
       }),
     ).toBeTrue();
-    expect(second.read().selection).toEqual({
-      global: "choice",
-      categories: { debugging: "auto" },
-    });
+    expect(second.read().selection).toEqual({ global: "choice" });
     expect(second.read().providers).toEqual({ codex: "enabled" });
     expect(second.read().chains.debugging?.[0]?.model).toBe("gpt-5.6-sol");
     expect(second.read().models[0]?.effort).toEqual({
@@ -185,25 +168,15 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
       value: "high",
     });
 
-    const cleared = first.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 3,
-        category: "debugging",
-        mode: "unset",
-      },
+    const changed = first.apply(
+      { op: "set-selection", expectedRevision: 2, mode: "auto" },
       "human",
     );
     await preferences.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 3,
-        category: "debugging",
-        mode: "unset",
-      },
-      cleared.selection,
+      { op: "set-selection", expectedRevision: 2, mode: "auto" },
+      changed.selection,
     );
-    expect(preferences.read()).toEqual({ global: "choice", categories: {} });
+    expect(preferences.read()).toEqual({ global: "auto" });
 
     const third = new RoutingPolicyStore(thirdDb);
     expect(
@@ -218,10 +191,7 @@ test("selection written in one ordinary runtime overlays a later fresh runtime",
         preferences,
       }),
     ).toBeTrue();
-    expect(third.read().selection).toEqual({
-      global: "choice",
-      categories: {},
-    });
+    expect(third.read().selection).toEqual({ global: "auto" });
   } finally {
     thirdDb.close();
     secondDb.close();
@@ -252,7 +222,7 @@ test("missing/corrupt shared selection never overwrites named or default policy"
     expect(
       inheritOrdinaryWorkspaceSelection(target, {
         ordinaryWorkspace: false,
-        preferences: { read: () => ({ global: "auto", categories: {} }) },
+        preferences: { read: () => ({ global: "auto" }) },
       }),
     ).toBeFalse();
     expect(target.read().selection.global).toBe("choice");

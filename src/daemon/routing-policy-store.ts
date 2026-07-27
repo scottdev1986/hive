@@ -82,21 +82,27 @@ export class RoutingPolicyStore {
         after TEXT NOT NULL
       );
     `);
-    // Strip retired categories before any schema-strict parse: an unknown
-    // category key makes RoutingPolicySchema.safeParse throw on load.
-    this.migrateStoredStripProfilingCategory();
+    // Strip retired keys before any schema-strict parse: an unknown category
+    // key — or a retired selection.categories map — makes
+    // RoutingPolicySchema.safeParse throw on load.
+    this.migrateStoredStripRetiredKeys();
     this.migrateStoredV1();
   }
 
   /**
-   * The `profiling` routing category was removed (product decision). A
-   * persisted policy may still carry a `profiling` chain or selection row from
-   * an older baseline seed. RoutingPolicySchema rejects unknown categories —
-   * it does not drop them — so load would throw RoutingPolicyCorruptError.
-   * Strip the retired key(s) and rewrite, same defensive style as v1 migrate:
-   * unparseable JSON is left alone for the corrupt-row path to surface.
+   * Two retired shapes, stripped the same way. The `profiling` routing
+   * category was removed (product decision), and per-category selection
+   * overrides were removed on 2026-07-27 (user directive) — a stored policy
+   * may still carry either. RoutingPolicySchema rejects unknown keys — it does
+   * not drop them — so load would throw RoutingPolicyCorruptError. Strip and
+   * rewrite, same defensive style as v1 migrate: unparseable JSON is left
+   * alone for the corrupt-row path to surface.
+   *
+   * Dropping an override never changes what a category resolves to by more
+   * than the global already says: the mode it falls back to is the one the
+   * user set on the control that governs everything.
    */
-  private migrateStoredStripProfilingCategory(now: Date = new Date()): void {
+  private migrateStoredStripRetiredKeys(now: Date = new Date()): void {
     const row = this.db.database
       .query("SELECT document FROM routing_policy WHERE id = 1")
       .get() as { document: string } | null;
@@ -134,21 +140,15 @@ export class RoutingPolicyStore {
     if (
       typeof doc.selection === "object" &&
       doc.selection !== null &&
-      !Array.isArray(doc.selection)
+      !Array.isArray(doc.selection) &&
+      Object.hasOwn(doc.selection, "categories")
     ) {
-      const selection = { ...(doc.selection as Record<string, unknown>) };
-      if (
-        typeof selection.categories === "object" &&
-        selection.categories !== null &&
-        !Array.isArray(selection.categories) &&
-        Object.hasOwn(selection.categories, "profiling")
-      ) {
-        const { profiling: _removed, ...categories } =
-          selection.categories as Record<string, unknown>;
-        selection.categories = categories;
-        doc.selection = selection;
-        changed = true;
-      }
+      const { categories: _removed, ...selection } = doc.selection as Record<
+        string,
+        unknown
+      >;
+      doc.selection = selection;
+      changed = true;
     }
 
     if (!changed) return;
@@ -184,7 +184,7 @@ export class RoutingPolicyStore {
         this.db.database.run(
           `INSERT INTO routing_policy_events
            (at, actor, operation, revision, before, after)
-         VALUES (?, 'hive', 'migrate-strip-profiling-category', ?, ?, ?)`,
+         VALUES (?, 'hive', 'migrate-strip-retired-keys', ?, ?, ?)`,
           [now.toISOString(), revision, row.document, after],
         );
       })
@@ -194,9 +194,10 @@ export class RoutingPolicyStore {
   /**
    * Version 1 represented preference as spread/strict and let missing model
    * rows inherit provider enablement. The migration writes the three-state
-   * answer explicitly: every existing exact chain is CHOICE, every category
-   * without one is NEVER_CONFIGURED, and only exact targets from a
-   * non-provisional user policy become model consent. Nothing becomes AUTO.
+   * answer explicitly: selection lands on NEVER_CONFIGURED — the user has not
+   * answered the one control that governs routing, and an authored chain is
+   * not that answer — and only exact targets from a non-provisional user
+   * policy become model consent. Nothing becomes AUTO.
    */
   private migrateStoredV1(now: Date = new Date()): void {
     const row = this.db.database
@@ -228,10 +229,6 @@ export class RoutingPolicyStore {
       .safeParse(decoded);
     if (!legacy.success) return;
 
-    const categories: Record<string, "choice"> = {};
-    for (const [category, entries] of Object.entries(legacy.data.chains)) {
-      if (entries.length > 0) categories[category] = "choice";
-    }
     const models: Record<string, unknown>[] = legacy.data.models.map(
       (model) => ({
         ...(model as object),
@@ -280,7 +277,7 @@ export class RoutingPolicyStore {
       revision: legacy.data.revision + 1,
       updatedAt: now.toISOString(),
       models,
-      selection: { global: "never-configured", categories },
+      selection: { global: "never-configured" },
     });
     if (!next.success) return;
     const after = canonicalRoutingPolicyJson(next.data);
@@ -464,7 +461,7 @@ export class RoutingPolicyStore {
     return this.db.database.transaction(() => {
       const current = this.read(now);
       const parsed = SelectionPolicySchema.parse(selection);
-      if (sameSelection(current.selection, parsed)) {
+      if (current.selection.global === parsed.global) {
         return { imported: false, policy: current };
       }
       const next = RoutingPolicySchema.parse({
@@ -509,15 +506,6 @@ export class RoutingPolicyStore {
       ],
     );
   }
-}
-
-function sameSelection(left: SelectionPolicy, right: SelectionPolicy): boolean {
-  return (
-    left.global === right.global &&
-    ROUTING_CATEGORIES.every(
-      (category) => left.categories[category] === right.categories[category],
-    )
-  );
 }
 
 /** Read without constructing a store, so a named daemon can inspect the live
@@ -638,33 +626,14 @@ function applyMutation(
           effort: existing?.effort ?? entry.effort,
         });
       }
-      return {
-        ...policy,
-        chains,
-        models,
-        selection: {
-          ...policy.selection,
-          categories: {
-            ...policy.selection.categories,
-            [mutation.category]: "choice",
-          },
-        },
-      };
+      // Authoring a chain says which models may do this work, in what order.
+      // It deliberately says NOTHING about selection: writing one here is how
+      // a preference the user never expressed used to outrank the control they
+      // did set (user directive 2026-07-27).
+      return { ...policy, chains, models };
     }
-    case "set-selection": {
-      if (mutation.category === undefined) {
-        return mutation.mode === "unset"
-          ? policy
-          : {
-              ...policy,
-              selection: { ...policy.selection, global: mutation.mode },
-            };
-      }
-      const categories = { ...policy.selection.categories };
-      if (mutation.mode === "unset") delete categories[mutation.category];
-      else categories[mutation.category] = mutation.mode;
-      return { ...policy, selection: { ...policy.selection, categories } };
-    }
+    case "set-selection":
+      return { ...policy, selection: { global: mutation.mode } };
   }
 }
 
@@ -767,21 +736,13 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
     const chain = policy.chains[category];
     if (chain !== undefined) chains[category] = chain;
   }
-  const selectionCategories: Record<string, string> = {};
-  for (const category of ROUTING_CATEGORIES) {
-    const mode = policy.selection.categories[category];
-    if (mode !== undefined) selectionCategories[category] = mode;
-  }
   return `${JSON.stringify(
     {
       schemaVersion: policy.schemaVersion,
       revision: policy.revision,
       updatedAt: policy.updatedAt,
       provisional: policy.provisional,
-      selection: {
-        global: policy.selection.global,
-        categories: selectionCategories,
-      },
+      selection: { global: policy.selection.global },
       providers,
       models,
       chains,

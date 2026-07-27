@@ -15,9 +15,18 @@ type SelectionMutation = Extract<
   { op: "set-selection" }
 >;
 
+/** Per-category overrides were removed on 2026-07-27; a file written before
+ * that still carries the map. Accept it by name and drop it — the global is
+ * the only selection intent now — while anything else stays a loud parse
+ * failure rather than a silently tolerated key. */
 const StoredSelectionPreferenceSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  selection: SelectionPolicySchema,
+  selection: z
+    .strictObject({
+      global: SelectionPolicySchema.shape.global,
+      categories: z.unknown().optional(),
+    })
+    .transform(({ global }) => ({ global })),
 });
 
 export interface SelectionPreferenceControl {
@@ -60,16 +69,7 @@ function applySelectionMutation(
   selection: SelectionPolicy,
   mutation: SelectionMutation,
 ): SelectionPolicy {
-  if (mutation.category === undefined) {
-    return SelectionPolicySchema.parse({
-      ...selection,
-      global: mutation.mode,
-    });
-  }
-  const categories = { ...selection.categories };
-  if (mutation.mode === "unset") delete categories[mutation.category];
-  else categories[mutation.category] = mutation.mode;
-  return SelectionPolicySchema.parse({ ...selection, categories });
+  return SelectionPolicySchema.parse({ ...selection, global: mutation.mode });
 }
 
 /** Machine preference used only by ordinary fresh Workspace runtimes. */

@@ -60,8 +60,8 @@ models. Every write path in the store is therefore a safety surface.
 
 ## Selection: never-configured | auto | choice
 
-`SelectionModeSchema` (:115-119) is three-valued, per-category with a global
-default (`selectionModeFor`, :183-189):
+`SelectionModeSchema` is three-valued, and there is exactly **one** of them —
+`selection.global` governs every category:
 
 - **`never-configured`** — the user has not answered. The spawn **refuses**
   (`src/daemon/spawner-impl.ts:1734-1741`). Absence does not acquire an automatic meaning.
@@ -69,6 +69,16 @@ default (`selectionModeFor`, :183-189):
   walked in rank order.
 - **`auto`** — Hive considers every explicitly enabled model whose *policy-authored*
   fit clears the category, then distributes across the capable providers.
+
+**Per-category overrides were removed on 2026-07-27** (user directive). They
+were not merely unused: `set-chain` wrote `selection.categories[category] =
+"choice"` as a side effect of authoring a chain, and resolution was
+override-first, so every category the user had ever edited silently outranked
+the global control — which then read as broken, because nothing was left for it
+to govern. A preference the user never expressed must never outrank the one they
+did. Stored documents and machine preference files are migrated by dropping the
+retired map (`migrateStoredStripRetiredKeys`); the global they fall back to is
+the answer the user gave.
 
 This corrects two earlier claims. The governing doc said "quota may only veto or
 reserve in user order; it never reorders" — true only under `choice`. Under `auto`,

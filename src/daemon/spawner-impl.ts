@@ -38,7 +38,6 @@ import {
   ORCHESTRATOR_NAME,
   type RoutingCategory,
   type RoutingPolicy,
-  selectionModeFor,
   splitVariant,
   unknownVendor,
 } from "../schemas";
@@ -2507,10 +2506,10 @@ export class HiveSpawner implements Spawner {
       // only when those also refuse does the spawn REFUSE with every reason.
       const policy = readPolicy();
       const category = request.category;
-      const selection = selectionModeFor(policy, category);
+      const selection = policy.selection.global;
       if (selection === "never-configured") {
         throw new Error(
-          `Cannot spawn ${name}: preference for ${category} is never-configured. ` +
+          `Cannot spawn ${name}: model selection is never-configured. ` +
             "Choose Hive decides or an exact chain in the Model Control Center.",
         );
       }

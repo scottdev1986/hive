@@ -115,7 +115,6 @@ enum MCCCopy {
     static let selectionControlLabel = "Model selection:"
     static let selectionPreference = "Preference (choice)"
     static let selectionNoPreference = "No preference (auto)"
-    static let selectionUseGlobal = "Use global selection"
     static let selectionUnconfigured = "Unconfigured — choose one"
     static let selectionUnreadable =
         "This version of Hive cannot read the daemon's model selection — update Hive to "

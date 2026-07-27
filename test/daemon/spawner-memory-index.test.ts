@@ -56,7 +56,7 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
         },
       ],
     },
-    selection: { global: "choice", categories: {} },
+    selection: { global: "choice" },
   };
   const admission = {
     engineBuildId: "engine-test",

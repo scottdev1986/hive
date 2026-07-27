@@ -176,7 +176,9 @@ The truth is `RoutingPolicySchema` (`src/schemas/routing-policy.ts:133-152`):
   state, `unconfigured`, and it is not permission.
 - `models` is a **flat array** of `ModelPolicy` rows, not a nested map under providers.
 - `chains` is a partial record of category → ordered `ChainEntry[]`.
-- `selection` carries the `never-configured | auto | choice` intent, global and per-category.
+- `selection` carries the `never-configured | auto | choice` intent as one global mode.
+  Per-category overrides were removed on 2026-07-27; a document that still carries the
+  retired map decodes, and the map is dropped.
 - `revision` + `provisional` at the top; writers present the revision they read (CAS).
 
 Also contra the spec: an absent model row does **not** inherit provider enablement
@@ -197,12 +199,12 @@ is the sole writer.
   `src/cli.ts:357-501`).
 
 `set-selection` still CAS-writes the current daemon's policy first. In an ordinary
-fresh Workspace, the daemon then commits that explicit global/category mutation to
-the machine selection preference before returning success; a stale CAS never reaches
-the shared writer. The shared writer is locked and atomically renamed, so simultaneous
-Workspace writes have a serialized commit order: last successful commit wins for one
-key, while disjoint category edits merge. `hive`, `hive claude`, `hive codex`, and
-`hive grok` all use the same preference—the root vendor is not a key.
+fresh Workspace, the daemon then commits that explicit global mutation to the machine
+selection preference before returning success; a stale CAS never reaches the shared
+writer. The shared writer is locked and atomically renamed, so simultaneous Workspace
+writes have a serialized commit order: the last successful commit wins. `hive`,
+`hive claude`, `hive codex`, and `hive grok` all use the same preference—the root
+vendor is not a key.
 
 The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`workspace/Sources/HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
 
@@ -213,9 +215,7 @@ Opening `hive --instance <name>` creates an independent daemon and database, but
 The import never overwrites a policy the named instance has edited, never imports a provisional source policy, and never synchronizes later edits. Agents, messages, credentials, ports, process namespaces, and every other runtime resource remain isolated. See `src/daemon/instance-settings.ts` and `RoutingPolicyStore.importDefaultPolicy`.
 
 Ordinary `run-*` Workspaces add one narrower rule: after the normal copy/seed step,
-each fresh runtime overlays only the machine global selection and category overrides.
-Clearing an override removes it from that preference, so later sessions again use the
-persisted global mode. Explicit named/default homes keep later edits local. Consent,
+each fresh runtime overlays only the machine global selection. Explicit named/default homes keep later edits local. Consent,
 chains, effort, and runtime state are not in the shared document and remain untouched.
 
 ## Status: partly built, not "not started"

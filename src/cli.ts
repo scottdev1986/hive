@@ -498,28 +498,20 @@ export function createProgram(): Command {
   routing
     .command("set-selection <mode>")
     .description(
-      "Preference intent: auto lets Hive fairly dispatch among capable, enabled " +
-        "models; choice follows the exact chain; never-configured refuses. " +
-        "Global unless --category names an " +
-        "override; unset (with --category) removes the override.",
+      "Preference intent, for every category at once: auto lets Hive fairly " +
+        "dispatch among capable, enabled models; choice follows the exact " +
+        "chain; never-configured refuses.",
     )
-    .option("--category <category>", "override for one category only")
     .option("--port <number>", "daemon port")
     .requiredOption(
       "--expect-revision <revision>",
       "the policy revision you read (compare-and-set; stale writes are rejected)",
     )
     .action(
-      (
-        mode: string,
-        options: { category?: string; expectRevision: string; port?: string },
-      ) =>
+      (mode: string, options: { expectRevision: string; port?: string }) =>
         setSelectionMode(
           mode,
           {
-            ...(options.category === undefined
-              ? {}
-              : { category: options.category }),
             ...(options.port === undefined
               ? {}
               : { port: parsePort(options.port) }),

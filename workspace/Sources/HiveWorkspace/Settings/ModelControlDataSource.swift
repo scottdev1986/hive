@@ -174,18 +174,6 @@ final class ModelControlDataSource {
         }
     }
 
-    func selectionOverride(_ category: TaskCategory) -> SelectionMode? {
-        switch backend {
-        case .daemon(let document): return document.selectionOverride(for: category)
-        case .placeholder(let policy, _): return policy.categoryPolicy(category).selectionOverride
-        case nil: return nil
-        }
-    }
-
-    func effectiveSelection(_ category: TaskCategory) -> SelectionMode? {
-        selectionOverride(category) ?? globalSelection
-    }
-
     /// Whether the backend can PERSIST selection modes. A daemon that never
     /// sent the field — or one speaking a selection vocabulary this build
     /// cannot write — would reject the mutation, so the control disables with
@@ -304,18 +292,6 @@ final class ModelControlDataSource {
         }, applyToPlaceholder: { policy in
             policy.setGlobalSelection(mode)
         }, persist: ["routing", "set-selection", mode.rawValue])
-    }
-
-    /// nil clears the override — back to the global mode ("unset" on the wire).
-    func setCategorySelection(_ category: TaskCategory, _ mode: SelectionMode?) {
-        mutate(applyToDocument: { document in
-            document.selection.categories[category.rawValue] = mode?.rawValue
-        }, applyToPlaceholder: { policy in
-            policy.setCategorySelection(category, mode)
-        }, persist: [
-            "routing", "set-selection", mode?.rawValue ?? "unset",
-            "--category", category.rawValue,
-        ])
     }
 
     func setExhaustionBehavior(_ category: TaskCategory, _ behavior: ExhaustionBehavior) {

@@ -96,7 +96,7 @@ test("Kimi turn zero is submitted after readiness with the measured foreground i
         },
       ],
     },
-    selection: { global: "choice", categories: {} },
+    selection: { global: "choice" },
   };
   let locator = terminal;
   const spawner = new HiveSpawner({

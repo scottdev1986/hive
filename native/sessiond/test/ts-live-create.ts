@@ -80,7 +80,7 @@ function codexRoutingPolicy(): RoutingPolicy {
         },
       ],
     },
-    selection: { global: "choice", categories: {} },
+    selection: { global: "choice" },
   };
 }
 

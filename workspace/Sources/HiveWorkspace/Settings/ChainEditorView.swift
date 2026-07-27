@@ -89,33 +89,6 @@ final class ChainSectionView: NSView {
             return
         }
 
-        // ── Selection override: visible only when this category DIFFERS from
-        // the global mode (creation lives beside the global control).
-        if let category, let override = dataSource.selectionOverride(category) {
-            let badge = CapsuleBadge(
-                text: MCCCopy.selectionTitle(override),
-                symbol: override == .neverConfigured
-                    ? "exclamationmark.triangle.fill" : "arrow.triangle.branch",
-                style: override == .neverConfigured ? .warning : .neutral)
-            let clear = NSButton(
-                title: MCCCopy.selectionUseGlobal, target: self,
-                action: #selector(clearSelectionOverride(_:)))
-            clear.controlSize = .small
-            clear.bezelStyle = .inline
-            let row = NSStackView(views: [badge, clear])
-            row.orientation = .horizontal
-            row.alignment = .centerY
-            row.spacing = Theme.Space.s
-            stack.addArrangedSubview(row)
-            let caption = NSTextField(
-                wrappingLabelWithString: MCCCopy.selectionCaption(override))
-            caption.font = Theme.Font.caption
-            caption.textColor = .tertiaryLabelColor
-            caption.compressHorizontally()
-            stack.addArrangedSubview(caption)
-            caption.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-
         // ── Empty chain
         if entries.isEmpty {
             switch kind {
@@ -229,11 +202,6 @@ final class ChainSectionView: NSView {
         guard let category else { return }
         dataSource.setExhaustionBehavior(
             category, sender.indexOfSelectedItem == 0 ? .refuse : .useGlobalFallback)
-    }
-
-    @objc private func clearSelectionOverride(_ sender: Any?) {
-        guard let category else { return }
-        dataSource.setCategorySelection(category, nil)
     }
 
     // MARK: Add

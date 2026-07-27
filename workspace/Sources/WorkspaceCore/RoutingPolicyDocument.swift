@@ -120,16 +120,18 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
     /// How Hive selects a model: never-configured / auto / choice, exactly as
     /// `SelectionModeSchema` spells them. Strings stay verbatim so a newer
     /// daemon's mode costs only this control, never the whole document.
+    /// One mode governs every category. Per-category overrides were removed on
+    /// 2026-07-27; a daemon old enough to still send them decodes fine, because
+    /// this type simply ignores the retired key.
     public struct Selection: Codable, Equatable, Sendable {
         public var global: String
-        public var categories: [String: String]
 
-        public init(
-            global: String = SelectionMode.neverConfigured.rawValue,
-            categories: [String: String] = [:]
-        ) {
+        public init(global: String = SelectionMode.neverConfigured.rawValue) {
             self.global = global
-            self.categories = categories
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case global
         }
     }
 
@@ -180,13 +182,6 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         SelectionMode(rawValue: selection.global)
     }
 
-    public func selectionOverride(for category: TaskCategory) -> SelectionMode? {
-        selection.categories[category.rawValue].flatMap(SelectionMode.init(rawValue:))
-    }
-
-    public func effectiveSelection(_ category: TaskCategory) -> SelectionMode? {
-        selectionOverride(for: category) ?? globalSelection
-    }
 
     // MARK: Fail-closed reading (mirrors providerPolicyState / modelPolicyState)
 
@@ -245,10 +240,7 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
     /// A newer daemon's unrecognised mode is preserved in `selection` but
     /// disables this control; the app never coerces it to a value it can write.
     public var selectionWritable: Bool {
-        guard selectionOnWire, SelectionMode(rawValue: selection.global) != nil else {
-            return false
-        }
-        return selection.categories.values.allSatisfy { SelectionMode(rawValue: $0) != nil }
+        selectionOnWire && SelectionMode(rawValue: selection.global) != nil
     }
 
     public func chain(for category: TaskCategory) -> [WireChainEntry] {

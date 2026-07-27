@@ -189,14 +189,29 @@ final class RoutingPolicyWireContractTests: XCTestCase {
         XCTAssertTrue(document.selectionOnWire)
         XCTAssertTrue(document.selectionWritable)
         XCTAssertEqual(document.globalSelection, .neverConfigured)
-        XCTAssertEqual(document.selectionOverride(for: .complexCoding), .choice)
-        XCTAssertEqual(document.selectionOverride(for: .lightResearch), .auto)
         XCTAssertEqual(SelectionMode.neverConfigured.rawValue, "never-configured")
         XCTAssertEqual(SelectionMode.auto.rawValue, "auto")
         XCTAssertEqual(SelectionMode.choice.rawValue, "choice")
         XCTAssertEqual(
             SelectionMode.userChoices, [.choice, .auto],
             "never-configured is legible state, not a third user choice")
+    }
+
+    /// A daemon old enough to still send per-category selection overrides must
+    /// decode, not throw: a decoder that rejects the whole document over one
+    /// retired key is how Settings silently fell back to an in-memory store.
+    func testRetiredCategoryOverridesDecodeAndAreIgnored() throws {
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
+        json["selection"] = ["global": "choice", "categories": ["planning": "auto"]]
+        let data = try JSONSerialization.data(withJSONObject: json)
+
+        let document = try RoutingPolicyDocument.decode(from: data)
+
+        XCTAssertEqual(document.globalSelection, .choice)
+        XCTAssertTrue(
+            document.selectionWritable,
+            "the retired key is dropped, so the control stays writable")
     }
 
     /// A future selection mode is preserved in the document without blanking

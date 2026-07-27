@@ -23,6 +23,7 @@ import {
   providerPolicyState,
   ROUTING_CATEGORIES,
   type RoutingPolicy,
+  type RoutingPolicyMutation,
 } from "../../src/schemas";
 import { required } from "../required";
 
@@ -62,13 +63,10 @@ describe("fail-closed reading", () => {
       [NOW.toISOString(), JSON.stringify(legacy)],
     );
     const migrated = new RoutingPolicyStore(db).read(NOW);
-    expect(migrated.selection).toEqual({
-      global: "never-configured",
-      categories: {},
-    });
+    expect(migrated.selection).toEqual({ global: "never-configured" });
   });
 
-  test("a stored policy with a retired profiling chain is migrated away rather than throwing", () => {
+  test("a stored policy with retired keys — a profiling chain, per-category selection — is migrated away rather than throwing", () => {
     const current = store.read(NOW);
     const defaultChain = [
       {
@@ -102,9 +100,10 @@ describe("fail-closed reading", () => {
     const migrated = new RoutingPolicyStore(db).read(NOW);
 
     expect(migrated.chains).not.toHaveProperty("profiling");
-    expect(migrated.selection.categories).not.toHaveProperty("profiling");
     expect(migrated.chains.default).toEqual(defaultChain);
-    expect(migrated.selection.categories.default).toBe("choice");
+    // The retired override map goes with it: the global is the whole answer,
+    // and it survives the strip unchanged.
+    expect(migrated.selection).toEqual({ global: "never-configured" });
     expect(migrated.revision).toBe(4);
     // Durable: re-open on the same DB does not re-bump, and still has no profiling.
     const again = new RoutingPolicyStore(db).read(NOW);
@@ -219,39 +218,59 @@ describe("capability fit evidence", () => {
 });
 
 describe("mutations and compare-and-set", () => {
-  test("selection mutations set global and category modes and unset only the override", () => {
+  test("the selection mutation sets the one global mode, and authoring a chain never writes selection", () => {
     let policy = store.apply(
       { op: "set-selection", expectedRevision: 0, mode: "choice" },
       "test",
       NOW,
     );
-    expect(policy.selection).toEqual({ global: "choice", categories: {} });
+    expect(policy.selection).toEqual({ global: "choice" });
+
+    // THE REGRESSION this guards: set-chain used to write
+    // selection.categories[category] = "choice", so a category the user had
+    // never ruled on outranked the control they had set, and switching the
+    // global afterwards changed nothing at all.
     policy = store.apply(
       {
-        op: "set-selection",
+        op: "set-chain",
         expectedRevision: 1,
         category: "complex_coding",
-        mode: "auto",
+        entries: [
+          {
+            provider: "claude",
+            model: "claude-opus-5",
+            effort: { mode: "exact", value: "max" },
+          },
+        ],
       },
       "test",
       NOW,
     );
-    expect(policy.selection).toEqual({
-      global: "choice",
-      categories: { complex_coding: "auto" },
-    });
+    expect(policy.selection).toEqual({ global: "choice" });
+
     policy = store.apply(
-      {
-        op: "set-selection",
-        expectedRevision: 2,
-        category: "complex_coding",
-        mode: "unset",
-      },
+      { op: "set-selection", expectedRevision: 2, mode: "auto" },
       "test",
       NOW,
     );
-    expect(policy.selection).toEqual({ global: "choice", categories: {} });
+    expect(policy.selection).toEqual({ global: "auto" });
     expect(policy.revision).toBe(3);
+  });
+
+  test("the retired per-category selection mutation is refused on the wire, not ignored", () => {
+    expect(() =>
+      store.apply(
+        {
+          op: "set-selection",
+          expectedRevision: 0,
+          category: "complex_coding",
+          mode: "auto",
+        } as unknown as RoutingPolicyMutation,
+        "test",
+        NOW,
+      ),
+    ).toThrow();
+    expect(store.read(NOW).revision).toBe(0);
   });
 
   test("every accepted write increments the revision and clears the provisional flag", () => {
@@ -770,18 +789,9 @@ describe("ordinary Workspace selection overlay", () => {
       NOW,
     );
 
-    const result = store.importSelectionPreference(
-      {
-        global: "auto",
-        categories: { planning: "choice" },
-      },
-      NOW,
-    );
+    const result = store.importSelectionPreference({ global: "auto" }, NOW);
     expect(result.imported).toBeTrue();
-    expect(result.policy.selection).toEqual({
-      global: "auto",
-      categories: { planning: "choice" },
-    });
+    expect(result.policy.selection).toEqual({ global: "auto" });
     expect(result.policy.providers).toEqual(before.providers);
     expect(result.policy.models).toEqual(before.models);
     expect(result.policy.chains).toEqual(before.chains);

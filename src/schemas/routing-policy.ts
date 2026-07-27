@@ -109,7 +109,7 @@ export const ModelPolicySchema = z.strictObject({
 export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
 
 /**
- * How a category picks among its chain's ELIGIBLE links (every link still
+ * How every category picks among its chain's ELIGIBLE links (every link still
  * passes the full launch gate first — selection never bypasses a gate):
  *
  * - `never-configured`: the user has not answered; automatic routing refuses.
@@ -124,9 +124,15 @@ export const SelectionModeSchema = z.enum([
 ]);
 export type SelectionMode = z.infer<typeof SelectionModeSchema>;
 
+/**
+ * One selection mode governs every category. Per-category overrides were
+ * removed on 2026-07-27 (user directive): `set-chain` wrote one as a side
+ * effect of authoring a chain, so a category the user had never ruled on
+ * silently outranked the control they had — and the global switch read as
+ * broken because nothing was left for it to govern.
+ */
 export const SelectionPolicySchema = z.strictObject({
   global: SelectionModeSchema,
-  categories: z.partialRecord(RoutingCategorySchema, SelectionModeSchema),
 });
 export type SelectionPolicy = z.infer<typeof SelectionPolicySchema>;
 
@@ -182,16 +188,8 @@ export function emptyRoutingPolicy(updatedAt: string): RoutingPolicy {
     providers: {},
     models: [],
     chains: {},
-    selection: { global: "never-configured", categories: {} },
+    selection: { global: "never-configured" },
   };
-}
-
-/** The mode governing one category: its override, else the global setting. */
-export function selectionModeFor(
-  policy: RoutingPolicy,
-  category: RoutingCategory,
-): SelectionMode {
-  return policy.selection.categories[category] ?? policy.selection.global;
 }
 
 export interface CategoryFitDecision {
@@ -282,23 +280,13 @@ export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
     category: RoutingCategorySchema,
     entries: RoutingChainSchema,
   }),
-  z
-    .strictObject({
-      op: z.literal("set-selection"),
-      expectedRevision: z.number().int().nonnegative(),
-      /** Absent category sets the global mode; "unset" (category only) removes
-       * the override so the category follows the global setting again. */
-      category: RoutingCategorySchema.optional(),
-      mode: z.union([SelectionModeSchema, z.literal("unset")]),
-    })
-    .refine(
-      (mutation) =>
-        !(mutation.category === undefined && mutation.mode === "unset"),
-      {
-        message:
-          'the global selection mode is always explicit; choose "never-configured", "auto", or "choice"',
-      },
-    ),
+  z.strictObject({
+    op: z.literal("set-selection"),
+    expectedRevision: z.number().int().nonnegative(),
+    /** The one selection mode, and it is always explicit: there is no "unset"
+     * and no per-category form to fall back from. */
+    mode: SelectionModeSchema,
+  }),
 ]);
 export type RoutingPolicyMutation = z.infer<typeof RoutingPolicyMutationSchema>;
 

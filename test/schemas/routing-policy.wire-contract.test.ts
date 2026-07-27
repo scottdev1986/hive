@@ -84,19 +84,24 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     expect(fixtureCategories).toEqual(schemaCategories);
   });
 
-  test("the fixture exercises EVERY selection mode the daemon can emit", () => {
-    const schemaModes = [...SelectionModeSchema.options].sort();
+  /**
+   * Selection is ONE mode for the whole document since per-category overrides
+   * were removed, so no single fixture can exercise all three the way the
+   * effort and category guards above do. The vocabulary is pinned literally
+   * instead: add a mode to the schema and this fails, which is the prompt to
+   * add it to the Swift `SelectionMode` enum — the decoder that would
+   * otherwise throw on the whole document, exactly as "never-configured" did.
+   */
+  test("the selection vocabulary is pinned, so a new mode must reach the Swift decoder", () => {
+    expect([...SelectionModeSchema.options].sort()).toEqual([
+      "auto",
+      "choice",
+      "never-configured",
+    ]);
 
     const policy = RoutingPolicySchema.parse(fixture);
-    const fixtureModes = [
-      ...new Set([
-        policy.selection.global as string,
-        ...Object.values(policy.selection.categories).map(
-          (mode) => mode as string,
-        ),
-      ]),
-    ].sort();
-
-    expect(fixtureModes).toEqual(schemaModes);
+    expect(SelectionModeSchema.options as readonly string[]).toContain(
+      policy.selection.global,
+    );
   });
 });

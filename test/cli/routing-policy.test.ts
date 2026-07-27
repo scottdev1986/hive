@@ -96,7 +96,7 @@ describe("Model Control Center daemon pinning", () => {
           },
         ],
       },
-      selection: { global: "auto", categories: {} },
+      selection: { global: "auto" },
     };
     let requestedUrl = "";
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
@@ -121,7 +121,7 @@ describe("Model Control Center daemon pinning", () => {
     }
   });
 
-  test("selection CLI sends global, category override, and override clearing through CAS", async () => {
+  test("selection CLI sends the one global mode through CAS, and refuses a retired one", async () => {
     const home = mkdtempSync(join(tmpdir(), "hive-routing-selection-"));
     const previousHome = process.env.HIVE_HOME;
     process.env.HIVE_HOME = home;
@@ -129,23 +129,14 @@ describe("Model Control Center daemon pinning", () => {
     writeCredential(OPERATOR_SUBJECT, "operator-test-token");
     const bodies: unknown[] = [];
     let revision = 0;
-    const selection = {
-      global: "never-configured",
-      categories: {} as Record<string, string>,
-    };
+    const selection = { global: "never-configured" };
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
       _input,
       init,
     ) => {
-      const mutation = JSON.parse(String(init?.body)) as {
-        mode: string;
-        category?: string;
-      };
+      const mutation = JSON.parse(String(init?.body)) as { mode: string };
       bodies.push(mutation);
-      if (mutation.category === undefined) selection.global = mutation.mode;
-      else if (mutation.mode === "unset")
-        delete selection.categories[mutation.category];
-      else selection.categories[mutation.category] = mutation.mode;
+      selection.global = mutation.mode;
       revision += 1;
       return new Response(
         JSON.stringify({
@@ -164,32 +155,17 @@ describe("Model Control Center daemon pinning", () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     try {
       await setSelectionMode("choice", { port: 4483 }, "0");
-      await setSelectionMode(
-        "auto",
-        { port: 4483, category: "debugging" },
-        "1",
-      );
-      await setSelectionMode(
-        "unset",
-        { port: 4483, category: "debugging" },
-        "2",
-      );
+      await setSelectionMode("auto", { port: 4483 }, "1");
+      // "unset" was only ever a spelling for clearing a per-category override.
+      // With those gone it must fail locally rather than reach the daemon.
+      await expect(
+        setSelectionMode("unset", { port: 4483 }, "2"),
+      ).rejects.toThrow(/never-configured, auto, or choice/);
       expect(bodies).toEqual([
         { op: "set-selection", expectedRevision: 0, mode: "choice" },
-        {
-          op: "set-selection",
-          expectedRevision: 1,
-          category: "debugging",
-          mode: "auto",
-        },
-        {
-          op: "set-selection",
-          expectedRevision: 2,
-          category: "debugging",
-          mode: "unset",
-        },
+        { op: "set-selection", expectedRevision: 1, mode: "auto" },
       ]);
-      expect(selection).toEqual({ global: "choice", categories: {} });
+      expect(selection).toEqual({ global: "auto" });
     } finally {
       fetchSpy.mockRestore();
       logSpy.mockRestore();

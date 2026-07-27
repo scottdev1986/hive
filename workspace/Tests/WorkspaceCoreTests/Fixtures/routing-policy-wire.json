@@ -117,10 +117,6 @@
     ]
   },
   "selection": {
-    "global": "never-configured",
-    "categories": {
-      "complex_coding": "choice",
-      "light_research": "auto"
-    }
+    "global": "never-configured"
   }
 }
