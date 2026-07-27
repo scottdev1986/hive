@@ -76,16 +76,27 @@ export function resolveHandshakeProject(directory: string) {
   };
 }
 
+/**
+ * The path an atomic registry write must land on. A dev home symlinks the
+ * registry into `~/.hive`; renaming onto the link itself would replace it and
+ * fork dev's identity from the later installed release, so the link is
+ * resolved first. A missing file (first boot) resolves to the path itself.
+ *
+ * Exported so the symlink-survival behaviour can be exercised directly rather
+ * than re-implemented by a caller that could drift from it.
+ */
+export function registryWritePath(target = path()): string {
+  try {
+    return realpathSync.native(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return target;
+    throw error;
+  }
+}
+
 function persistRegistry(registry: ProjectRegistry): void {
   mkdirSync(getHiveHome(), { recursive: true });
-  const registryPath = (() => {
-    try {
-      return realpathSync.native(path());
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return path();
-      throw error;
-    }
-  })();
+  const registryPath = registryWritePath();
   // Write-then-rename so a crash mid-write cannot leave a half-written file
   // for the next boot's corruption path to quarantine. The temp name carries the
   // pid: a fixed one is not a private staging file at all, and two processes
