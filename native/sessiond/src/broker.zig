@@ -2613,17 +2613,20 @@ const DaemonWireHarness = struct {
     observed: *const ObservedPeer,
     timer: *std.time.Timer,
     build_id: []const u8 = "test-build",
+    /// When set, the connection shares this cache (the production serve()
+    /// shape); otherwise it gets a private one (the single-shot test shape).
+    handshake_cache: ?*DaemonHandshakeCache = null,
     // Read only after joining the thread; the join is the synchronization.
     failure: ?anyerror = null,
 
     fn run(self: *DaemonWireHarness) void {
         defer self.stream.close();
         var backend: StartupBackend = .{};
-        var handshake_cache: DaemonHandshakeCache = .{
+        var local_cache: DaemonHandshakeCache = .{
             .allocator = std.heap.page_allocator,
             .canonical_home = self.runtime.canonical_home,
         };
-        defer handshake_cache.deinit();
+        defer local_cache.deinit();
         serveDaemonConnection(
             std.heap.page_allocator,
             self.runtime,
@@ -2632,10 +2635,49 @@ const DaemonWireHarness = struct {
             self.build_id,
             self.timer,
             backend.backend(),
-            &handshake_cache,
+            self.handshake_cache orelse &local_cache,
         ) catch |err| {
             self.failure = err;
         };
+    }
+};
+
+/// HTTP /handshake stub that serves until stopped. Poll-bounded accept: a
+/// blocking accept never wakes on macOS when the listener closes, which
+/// wedged the suite on this helper's first version.
+const LoopHandshakeServer = struct {
+    listener: std.net.Server,
+    body: []const u8,
+    fetches: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+    stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    fn run(self: *LoopHandshakeServer) void {
+        while (!self.stop.load(.acquire)) {
+            var poll_fds = [_]std.posix.pollfd{.{
+                .fd = self.listener.stream.handle,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            }};
+            _ = std.posix.poll(&poll_fds, 50) catch return;
+            if (poll_fds[0].revents & std.posix.POLL.IN == 0) continue;
+            var connection = self.listener.accept() catch continue;
+            defer connection.stream.close();
+            _ = self.fetches.fetchAdd(1, .acq_rel);
+            var request_storage: [1024]u8 = undefined;
+            _ = connection.stream.read(&request_storage) catch continue;
+            const response = std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
+                .{ self.body.len, self.body },
+            ) catch continue;
+            defer std.heap.page_allocator.free(response);
+            connection.stream.writeAll(response) catch continue;
+        }
+    }
+
+    fn shutdown(self: *LoopHandshakeServer, thread: std.Thread) void {
+        self.stop.store(true, .release);
+        thread.join();
     }
 };
 
@@ -2880,47 +2922,15 @@ test "daemon handshake is fetched once per instance and re-fetched on instance c
     const home = try tmp.dir.realpathAlloc(allocator, ".");
     defer allocator.free(home);
 
-    const CountingServer = struct {
-        listener: std.net.Server,
-        fetches: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
-        stop: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-
-        fn run(self: *@This()) void {
-            // Poll-bounded accept: a blocking accept never wakes on macOS when
-            // the listener closes, which wedged this thread (and the suite)
-            // on its first version.
-            while (!self.stop.load(.acquire)) {
-                var poll_fds = [_]std.posix.pollfd{.{
-                    .fd = self.listener.stream.handle,
-                    .events = std.posix.POLL.IN,
-                    .revents = 0,
-                }};
-                _ = std.posix.poll(&poll_fds, 50) catch return;
-                if (poll_fds[0].revents & std.posix.POLL.IN == 0) continue;
-                var connection = self.listener.accept() catch continue;
-                defer connection.stream.close();
-                _ = self.fetches.fetchAdd(1, .acq_rel);
-                var request_storage: [1024]u8 = undefined;
-                _ = connection.stream.read(&request_storage) catch continue;
-                const response = std.fmt.allocPrint(
-                    std.heap.page_allocator,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
-                    .{ test_daemon_handshake_json.len, test_daemon_handshake_json },
-                ) catch continue;
-                defer std.heap.page_allocator.free(response);
-                connection.stream.writeAll(response) catch continue;
-            }
-        }
-    };
     const address = try std.net.Address.parseIp("127.0.0.1", 0);
-    var server: CountingServer = .{ .listener = try address.listen(.{}) };
+    var server: LoopHandshakeServer = .{
+        .listener = try address.listen(.{}),
+        .body = test_daemon_handshake_json,
+    };
     defer server.listener.deinit();
     try writeDaemonEvidenceFixture(tmp.dir, test_daemon_lock_json, server.listener.listen_address.in.getPort());
-    const server_thread = try std.Thread.spawn(.{}, CountingServer.run, .{&server});
-    defer {
-        server.stop.store(true, .release);
-        server_thread.join();
-    }
+    const server_thread = try std.Thread.spawn(.{}, LoopHandshakeServer.run, .{&server});
+    defer server.shutdown(server_thread);
 
     var cache: DaemonHandshakeCache = .{
         .allocator = allocator,
@@ -2941,6 +2951,131 @@ test "daemon handshake is fetched once per instance and re-fetched on instance c
     try std.testing.expectEqual(@as(u32, 2), server.fetches.load(.acquire));
     _ = try cache.getForInstance("instance-a");
     try std.testing.expectEqual(@as(u32, 2), server.fetches.load(.acquire));
+}
+
+test "stale handshake evidence rejects the connection, never authenticates it" {
+    // The cache's failure direction is the security boundary: whatever it
+    // serves, a connection whose evidence does not line up must end in a
+    // typed rejection, never a WELCOME. Here the daemon has "restarted" as
+    // instance-b (fresh daemon.lock) while the handshake endpoint still
+    // serves instance-a evidence: the cache re-fetches, the mismatch is
+    // detected, and the connection dies with instance_mismatch.
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(home);
+
+    const lock_json =
+        \\{"pid":42,"instanceId":"instance-b","startedAt":"2026-07-18T00:00:00Z","startToken":"10:2","executablePath":"/opt/hive/bin/hive"}
+    ;
+    const hello_json =
+        \\{"schemaVersion":1,"buildId":"daemon-build","instanceId":"instance-b","protocol":{"major":1,"minMinor":0,"maxMinor":0},"clientRole":"daemon","daemonControl":{"productVersion":"0.0.0-dev","buildHash":"daemon-build","wireProtocol":{"min":1,"max":1},"schemaEpoch":1,"instanceId":"instance-b","hiveUuid":"hive-a","identityKey":"project-a","repoFamilyKey":"family-a"}}
+    ;
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var server: LoopHandshakeServer = .{
+        .listener = try address.listen(.{}),
+        .body = test_daemon_handshake_json,
+    };
+    defer server.listener.deinit();
+    try writeDaemonEvidenceFixture(tmp.dir, lock_json, server.listener.listen_address.in.getPort());
+    const server_thread = try std.Thread.spawn(.{}, LoopHandshakeServer.run, .{&server});
+    defer server.shutdown(server_thread);
+
+    var cache: DaemonHandshakeCache = .{
+        .allocator = allocator,
+        .canonical_home = home,
+    };
+    defer cache.deinit();
+    // Warm the cache with the stale instance-a evidence.
+    _ = try cache.getForInstance("instance-a");
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed = testObservedDaemonPeer();
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+        .handshake_cache = &cache,
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+    writeTestDaemonHelloPayload(client, 86, hello_json) catch |err| {
+        thread.join();
+        return err;
+    };
+    thread.join();
+    try std.testing.expectEqual(@as(?anyerror, error.DaemonEvidenceMismatch), harness.failure);
+    try expectTypedErrorFrame(client, 86, .instance_mismatch);
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+}
+
+test "a wrong kernel peer never authenticates against a warm cache" {
+    // The per-connection daemon.lock kernel check (pid + start token +
+    // executable) is the authentication; a warm handshake cache must never
+    // carry a peer past it. The handshake evidence is valid and cached, the
+    // HELLO is well-formed — and the peer pid is wrong, so the answer is
+    // unauthenticated, not WELCOME.
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(home);
+
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var server: LoopHandshakeServer = .{
+        .listener = try address.listen(.{}),
+        .body = test_daemon_handshake_json,
+    };
+    defer server.listener.deinit();
+    try writeDaemonEvidenceFixture(tmp.dir, test_daemon_lock_json, server.listener.listen_address.in.getPort());
+    const server_thread = try std.Thread.spawn(.{}, LoopHandshakeServer.run, .{&server});
+    defer server.shutdown(server_thread);
+
+    var cache: DaemonHandshakeCache = .{
+        .allocator = std.testing.allocator,
+        .canonical_home = home,
+    };
+    defer cache.deinit();
+    _ = try cache.getForInstance("instance-a");
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed = testObservedDaemonPeer();
+    observed.pid = 999;
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+        .handshake_cache = &cache,
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+    writeTestDaemonHello(client, 87) catch |err| {
+        thread.join();
+        return err;
+    };
+    thread.join();
+    try std.testing.expectEqual(@as(?anyerror, null), harness.failure);
+    try expectTypedErrorFrame(client, 87, .unauthenticated);
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+    // Authentication failed before any handshake evidence was needed beyond
+    // the warm cache: exactly one fetch happened, at warm-up.
+    try std.testing.expectEqual(@as(u32, 1), server.fetches.load(.acquire));
 }
 
 test "WELCOME validation failure sends a typed ERROR with no WELCOME bytes" {
