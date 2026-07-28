@@ -312,6 +312,10 @@ final class InputEncodingTests: XCTestCase {
     func testEventlessTextInputIsAnIntentionalDivergenceAndSendsExactlyOnce() {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)
+        var userInputs: [String] = []
+        terminal.onUserInput = { characters, command, control in
+            userInputs.append("\(characters):\(command):\(control)")
+        }
 
         terminal.insertText(
             "文",
@@ -321,6 +325,7 @@ final class InputEncodingTests: XCTestCase {
 
         XCTAssertEqual(engine.textSent, ["文"])
         XCTAssertTrue(engine.keysSentDetail.isEmpty, "an eventless commit has no physical key to encode")
+        XCTAssertEqual(userInputs, ["文:false:false"])
     }
 
     func testControlCharacterUsesGhosttysUncontrolledCharacterText() {
@@ -384,6 +389,10 @@ final class InputEncodingTests: XCTestCase {
         engine.fakeSelection = (offset: 0, length: 4)
         engine.fakeSelectedText = "copy"
         let terminal = makeTerminal(engine)
+        var userInputs: [String] = []
+        terminal.onUserInput = { characters, command, control in
+            userInputs.append("\(characters):\(command):\(control)")
+        }
 
         terminal.copy(nil)
         terminal.paste(nil)
@@ -402,6 +411,7 @@ final class InputEncodingTests: XCTestCase {
             "navigate_search:previous",
             "end_search",
         ])
+        XCTAssertEqual(userInputs, ["v:true:false"], "paste must protect the human composer")
     }
 
     func testShiftNavigationKeysScrollLocallyAndUnmodifiedKeysStayWithProvider() {

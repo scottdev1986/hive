@@ -39,6 +39,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public var onBell: (() -> Void)?
     public var onRendererHealthChange: ((RendererHealth) -> Void)?
     public var onInputSubmissionStateChange: ((InputSubmissionState) -> Void)?
+    public var onUserInput: ((_ characters: String, _ command: Bool, _ control: Bool) -> Void)?
 
     public private(set) var focusStealAttempts = 0
     var testingAllowFocusSteal = false

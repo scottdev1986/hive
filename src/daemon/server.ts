@@ -4867,7 +4867,6 @@ export class HiveDaemon {
       graphifyCalls: this.graphifyCalls,
       sessionHost: this.sessionHost,
       statusIncarnationGenerationSource: this.statusIncarnationGenerationSource,
-      observeTerminalOutput: this.observeTerminalOutput,
       resolveSessionLocator: this.resolveSessionLocator,
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),

@@ -156,6 +156,11 @@ extension HiveTerminalView {
     }
 
     public override func keyDown(with event: NSEvent) {
+        onUserInput?(
+            event.charactersIgnoringModifiers ?? event.characters ?? "",
+            event.modifierFlags.contains(.command),
+            event.modifierFlags.contains(.control)
+        )
         if handleViewerScrollKey(event) { return }
         if activeClaimNeeded(for: event) {
             try? attachClient?.beginClaimAcquire()
@@ -373,6 +378,9 @@ extension HiveTerminalView {
             return
         }
 
+        if !text.isEmpty {
+            onUserInput?(text, false, false)
+        }
         ensureClaimForAuthoring()
         if hadMarkedText, !text.isEmpty {
             _ = committedPreeditTextAction(.press, text: text)
@@ -406,6 +414,9 @@ extension HiveTerminalView {
             markedText = NSMutableAttributedString(string: text)
         } else {
             return
+        }
+        if keyTextAccumulator == nil, markedText.length > 0 {
+            onUserInput?(markedText.string, false, false)
         }
         ensureClaimForAuthoring()
         if keyTextAccumulator == nil {
@@ -506,6 +517,7 @@ extension HiveTerminalView {
     }
 
     @IBAction public func paste(_ sender: Any?) {
+        onUserInput?("v", true, false)
         ensureClaimForAuthoring()
         _ = engine.performBindingAction("paste_from_clipboard")
     }

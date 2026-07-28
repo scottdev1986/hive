@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
+import {
+  encodeSubmittedText,
+  SessiondViewerAgentInput,
+} from "../../../src/daemon/session-host/sessiond-agent-input";
 import type {
   OrphanDiscardMode,
   OrphanDiscardResult,
@@ -23,6 +26,12 @@ import { required } from "../../required";
  */
 
 const timestamp = "2026-07-21T12:00:00.000Z";
+
+test("terminal submission encoding stays at the input transport boundary", () => {
+  expect(new TextDecoder().decode(encodeSubmittedText("hello"))).toBe(
+    "\x1b[200~hello\x1b[201~\r",
+  );
+});
 
 function agent(): AgentRecord {
   return {

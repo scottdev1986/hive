@@ -77,7 +77,7 @@ function event(kind: ProviderEvent["kind"], occurredAt: string): ProviderEvent {
 }
 
 describe("ActivitySnapshot", () => {
-  test("all providers fall back to bounded terminal, process, git, and status evidence", () => {
+  test("all providers use structured process, git, and status evidence", () => {
     for (const provider of CAPABILITY_PROVIDERS) {
       expect(getAgentAdapter(provider).communication.provider).toBe(provider);
       const value = agent(provider);
@@ -127,14 +127,6 @@ describe("ActivitySnapshot", () => {
           evidenceAt: observedAt,
           diagnosticIds: [],
         },
-        output: {
-          locator: active.terminal,
-          outputThrough: "9",
-          // Already the rendered screen: the emulator resolved the escape
-          // sequences into cells before this layer saw them.
-          screen: "working\nworking\nBearer secret-token",
-          completeness: "complete",
-        },
         gitPaths: ["src/a.ts"],
         events: [],
         status: null,
@@ -148,11 +140,10 @@ describe("ActivitySnapshot", () => {
         turnState: "unknown",
         outputThrough: "9",
         completeness: "complete",
-        summary: "inferred terminal: [REDACTED]",
+        summary: null,
       });
       expect(snapshot.evidence.map((item) => item.kind)).toEqual([
         "process",
-        "terminal-output",
         "git",
       ]);
     }
@@ -164,7 +155,6 @@ describe("ActivitySnapshot", () => {
       agent: value,
       run: null,
       inspection: null,
-      output: null,
       gitPaths: [],
       events: [],
       status: null,
@@ -186,7 +176,6 @@ describe("ActivitySnapshot", () => {
         agent: value,
         run: null,
         inspection: null,
-        output: null,
         gitPaths: [],
         events: [
           event("tool-finished", "2026-07-24T19:59:59.000Z"),
@@ -234,7 +223,6 @@ describe("ActivitySnapshot", () => {
         agent: value,
         run: null,
         inspection: null,
-        output: null,
         gitPaths: [],
         events: [],
         status,
@@ -265,7 +253,6 @@ describe("ActivitySnapshot", () => {
         agent: value,
         run: run(value),
         inspection: null,
-        output: null,
         gitPaths: [],
         events: [],
         status: null,

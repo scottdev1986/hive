@@ -19,6 +19,11 @@ const CLAIM_LEASE_MS = 60_000;
 /** The arbiter's own name for "a human's abandoned draft owns input". */
 const HUMAN_ORPHANED = "HumanOrphaned";
 
+/** Encode one terminal composer submission at the terminal transport boundary. */
+export function encodeSubmittedText(text: string): Uint8Array {
+  return new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`);
+}
+
 /**
  * Injects one automated message into an idle sessiond-hosted agent over the
  * Neutral-host viewer wire. Returns the frozen receipt on `INPUT_SUBMIT`

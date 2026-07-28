@@ -1,3 +1,4 @@
+import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import {
   type AgentMessage,
   AgentMessageSchema,
@@ -10,31 +11,7 @@ import {
   type OrchestratorMessageEnvelope,
   orchestratorRecipientNames,
   type ProviderRun,
-  unknownVendor,
 } from "../schemas";
-import type { InputReceipt } from "./session-host/contract";
-import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
-import type {
-  SessiondAgentInput,
-  SessiondInjectResult,
-} from "./session-host/sessiond-agent-input";
-
-/** Senders to probe for idempotency: root aliases during the rename window. */
-function idempotencySenders(from: string): readonly string[] {
-  return isOrchestratorName(from) ? orchestratorRecipientNames() : [from];
-}
-
-function agentSessionLockKey(agent: AgentRecord): string {
-  const locator = agent.sessionLocator;
-  if (locator === undefined) return `agent:${agent.id}`;
-  return [
-    locator.instanceId,
-    locator.subject.kind === "root" ? "root" : locator.subject.agentId,
-    locator.generation,
-    locator.sessionId,
-  ].join(":");
-}
-
 import { isComposerLeased } from "./composer-lease";
 import {
   buildNormalMessageBatchProjection,
@@ -53,6 +30,29 @@ import {
   orchestratorSessionKey,
 } from "./orchestrator-lifecycle";
 import type { PaneProcessState } from "./resources";
+import type { InputReceipt } from "./session-host/contract";
+import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
+import {
+  encodeSubmittedText,
+  type SessiondAgentInput,
+  type SessiondInjectResult,
+} from "./session-host/sessiond-agent-input";
+
+/** Senders to probe for idempotency: root aliases during the rename window. */
+function idempotencySenders(from: string): readonly string[] {
+  return isOrchestratorName(from) ? orchestratorRecipientNames() : [from];
+}
+
+function agentSessionLockKey(agent: AgentRecord): string {
+  const locator = agent.sessionLocator;
+  if (locator === undefined) return `agent:${agent.id}`;
+  return [
+    locator.instanceId,
+    locator.subject.kind === "root" ? "root" : locator.subject.agentId,
+    locator.generation,
+    locator.sessionId,
+  ].join(":");
+}
 
 export interface SessionSender {
   sendSessionMessage(
@@ -255,37 +255,8 @@ const SUBMIT_POLL_MS = 100;
  */
 const STUCK_DELIVERY_MS = 5 * 60_000;
 
-/**
- * Does this vendor tell Hive when its turns begin and end?
- *
- * Every redelivery trigger Hive has hangs off that hook stream: flushQueued
- * fires on session-start and turn-end, flushUrgent on a tool boundary. Claude
- * and Codex always post those events. Grok now has project hooks too, but this
- * vendor-only predicate cannot prove that the user trusted the worktree. It
- * therefore stays conservative for Grok: hook events are ingested when
- * present, while delivery timing continues to work from updates.jsonl,
- * terminal, and process evidence when they are absent.
- *
- * Kimi and opencode post nothing, for a different reason: their CLIs
- * have hook/plugin systems, but they are declared only in the operator's
- * global config, which Hive never writes — so no Hive-wired hook stream
- * exists for them.
- *
- * Grok's transcript remains mandatory for interrupted turns and its terminal
- * remains mandatory for approval-waiting, neither of which Grok hooks expose.
- */
 export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
-  switch (tool) {
-    case "claude":
-    case "codex":
-      return true;
-    case "grok":
-    case "kimi":
-    case "opencode":
-      return false;
-    default:
-      return unknownVendor(tool, "reportsTurnEvents");
-  }
+  return getAgentAdapter(tool).communication.turnBoundaryEvents;
 }
 
 export class MessageDelivery {
@@ -1167,7 +1138,7 @@ export class MessageDelivery {
             startToken: activeRun.startToken,
             processGroupId: activeRun.foregroundProcessGroupId,
           },
-          bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
+          bytes: encodeSubmittedText(text),
           idempotencyKey: projection.projectionId,
         });
       } catch (error) {
@@ -1320,7 +1291,7 @@ export class MessageDelivery {
             startToken: activeRun.startToken,
             processGroupId: activeRun.foregroundProcessGroupId,
           },
-          bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
+          bytes: encodeSubmittedText(text),
           idempotencyKey: attempt.attemptId,
         });
       } catch (error) {
@@ -1493,7 +1464,7 @@ export class MessageDelivery {
       ? `📨 message from ${message.from}: ${message.body}`
       : [
           `⚠️ ${message.priority.toUpperCase()} HIVE CONTROL ${message.id} from ${message.from}: ${message.body}`,
-          `Acknowledge with hive_ack_message agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
+          `Acknowledge this Hive message with agent=${JSON.stringify(message.to)} messageId=${JSON.stringify(message.id)}${
             message.capabilityEpoch === null
               ? ""
               : ` capabilityEpoch=${message.capabilityEpoch}`

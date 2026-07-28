@@ -28,7 +28,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// Panes built in the current main-queue turn; reset on every entry to the
     /// reducer's change loop and on every drain slice.
     private var admittedThisTurn = 0
-    private var composerKeyMonitor: Any?
     private var feedFailureWindow: NSWindow?
     private var isClosing = false
 
@@ -72,27 +71,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         window.onFirstResponderChange = { [weak self] in
             self?.refreshFocusIndicators()
         }
-        composerKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-            [weak self] event in
-            guard let self, event.window === self.window,
-                  let paneID = self.paneOwningFirstResponder(),
-                  let pane = self.state.panes[paneID]
-            else { return event }
-            let action = classifyComposerInput(
-                characters: event.charactersIgnoringModifiers ?? event.characters ?? "",
-                command: event.modifierFlags.contains(.command),
-                control: event.modifierFlags.contains(.control))
-            let recipient = pane.kind == .orchestrator
-                ? ProjectState.orchestratorRecipient : pane.title
-            if action == .editing {
-                self.onComposerInput?(recipient, action)
-            } else if action == .submitted || action == .cancelled {
-                DispatchQueue.main.async { [weak self] in
-                    self?.onComposerInput?(recipient, action)
-                }
-            }
-            return event
-        }
         attentionCenter.register(state: state)
 
         let background = NSVisualEffectView()
@@ -119,12 +97,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
-
-    deinit {
-        if let composerKeyMonitor {
-            NSEvent.removeMonitor(composerKeyMonitor)
-        }
-    }
 
     // MARK: Entry points
 
@@ -342,14 +314,42 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
               let view = paneViews[paneID],
               let locator = pane.sessionLocator,
               locator.hostKind == "sessiond" else { return }
+        let recipient = pane.kind == .orchestrator
+            ? ProjectState.orchestratorRecipient : pane.title
         view.installSessiondTerminal(
             SessiondPaneTerminal(
-                agentName: pane.kind == .orchestrator
-                    ? ProjectState.orchestratorRecipient : pane.title,
+                agentName: recipient,
                 locator: locator,
                 hivePath: hivePath,
                 daemonPort: daemonPort,
                 instanceHome: instanceHome))
+        view.sessiondTerminal?.view?.onUserInput = {
+            [weak self] characters, command, control in
+            self?.handleComposerInput(
+                recipient: recipient,
+                characters: characters,
+                command: command,
+                control: control)
+        }
+    }
+
+    private func handleComposerInput(
+        recipient: String,
+        characters: String,
+        command: Bool,
+        control: Bool
+    ) {
+        let action = classifyComposerInput(
+            characters: characters,
+            command: command,
+            control: control)
+        if action == .editing {
+            onComposerInput?(recipient, action)
+        } else if action == .submitted || action == .cancelled {
+            DispatchQueue.main.async { [weak self] in
+                self?.onComposerInput?(recipient, action)
+            }
+        }
     }
 
     /// A closed agent keeps its pane (final status border) for the grace

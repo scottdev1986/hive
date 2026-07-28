@@ -6,7 +6,6 @@ import type {
 } from "../schemas";
 import { ActivitySnapshotSchema } from "../schemas";
 import type { SessionInspection } from "./session-host/contract";
-import type { SessiondOutputObservation } from "./session-host/sessiond-output-observer";
 import type { FusedAgentStatus } from "./status-fusion";
 
 const ESC = String.fromCharCode(27);
@@ -26,7 +25,6 @@ export interface ActivitySnapshotInput {
   agent: AgentRecord;
   run: ProviderRun | null;
   inspection: SessionInspection | null;
-  output: SessiondOutputObservation | null;
   gitPaths: readonly string[];
   events: readonly ProviderEvent[];
   providerEventThrough?: string | null;
@@ -99,20 +97,6 @@ function phase(status: FusedAgentStatus | null): ActivitySnapshot["phase"] {
   }
 }
 
-function terminalSummary(
-  output: SessiondOutputObservation | null,
-): string | null {
-  // The screen the pane is showing; `renderVisibleScreen` has already resolved
-  // the escape sequences into cells, so there are none left to strip here.
-  const lines = (output?.screen ?? "")
-    .split("\n")
-    .map((line) => line.replaceAll(/\s+/g, " ").trim())
-    .filter((line, index, all) => line.length > 0 && line !== all[index - 1]);
-  const latest = lines.at(-1);
-  if (latest === undefined) return null;
-  return `inferred terminal: ${redactTerminalEvidence(latest).slice(0, 200)}`;
-}
-
 export function buildActivitySnapshot(
   input: ActivitySnapshotInput,
 ): ActivitySnapshot {
@@ -125,13 +109,6 @@ export function buildActivitySnapshot(
     evidence.push({
       kind: "process",
       ref: `provider-run:${input.run.runId}`,
-      observedAt: input.observedAt,
-    });
-  }
-  if (input.output !== null) {
-    evidence.push({
-      kind: "terminal-output",
-      ref: `terminal:${input.output.locator.sessionId}:${input.output.outputThrough}`,
       observedAt: input.observedAt,
     });
   }
@@ -170,16 +147,15 @@ export function buildActivitySnapshot(
     providerState: providerState(input),
     turnState: turnState(input.events),
     phase: phase(input.status),
-    summary: report?.summary ?? terminalSummary(input.output),
+    summary: report?.summary ?? null,
     evidence,
     providerEventThrough:
       input.providerEventThrough ?? latestEvent?.eventId ?? null,
-    outputThrough: input.output?.outputThrough ?? "0",
+    outputThrough: input.inspection?.outputSeq ?? "0",
     completeness:
-      input.inspection === null || input.output === null
+      input.inspection === null
         ? "unknown"
-        : input.output.completeness === "gap" ||
-            input.transcriptCompleteness === "gap"
+        : !input.inspection.complete || input.transcriptCompleteness === "gap"
           ? "gap"
           : "complete",
   });

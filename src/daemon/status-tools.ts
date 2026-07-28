@@ -1,36 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import {
-  type Action,
-  type Capability,
-  permitsTerminalObservation,
-} from "./capabilities";
-import type { HiveDatabase } from "./db";
-import type { MessageDelivery } from "./delivery";
-import type { GraphifyService } from "./graphify-service";
-import {
-  type HiveTerminalHostAdapter,
-  requireSessiondAgentLocator,
-  requireSessiondRootLocator,
-} from "./session-host/hive-terminal-host";
-import type { SessionHost, SessionLocator } from "./session-host/contract";
-import type { SessiondOutputObservation } from "./session-host/sessiond-output-observer";
-import { ROOT_VISIBILITY_ID } from "./session-host/workspace-visibility";
-import {
-  StatusIncarnationUnavailableError,
-  type StatusIncarnationGenerationSource,
-} from "./status-generation";
-import type { StatusStore } from "./status-store";
-import type { GraphifyCallCursor } from "./tool-telemetry";
-import { toolResult } from "./tool-result";
-import { buildActivitySnapshot } from "./activity-snapshot";
-import { compactActiveTeam } from "./orchestrator-lifecycle";
-import { fuseAgentStatus } from "./status-fusion";
-import { hiveInstanceSuffix } from "./instance-identity";
-import {
-  mintSessionRequestId,
-  sameSessionLocator,
-} from "./session-host/locators";
 import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
 import {
   markBranchPreserved,
@@ -43,8 +12,37 @@ import {
   HiveUpdateStatusAdvertisedSchema,
   isOrchestratorName,
   ORCHESTRATOR_NAME,
-  type TerminalGeometry,
 } from "../schemas";
+import { buildActivitySnapshot } from "./activity-snapshot";
+import {
+  type Action,
+  type Capability,
+  permitsTerminalObservation,
+} from "./capabilities";
+import type { HiveDatabase } from "./db";
+import type { MessageDelivery } from "./delivery";
+import type { GraphifyService } from "./graphify-service";
+import { hiveInstanceSuffix } from "./instance-identity";
+import { compactActiveTeam } from "./orchestrator-lifecycle";
+import type { SessionHost, SessionLocator } from "./session-host/contract";
+import {
+  type HiveTerminalHostAdapter,
+  requireSessiondAgentLocator,
+  requireSessiondRootLocator,
+} from "./session-host/hive-terminal-host";
+import {
+  mintSessionRequestId,
+  sameSessionLocator,
+} from "./session-host/locators";
+import { ROOT_VISIBILITY_ID } from "./session-host/workspace-visibility";
+import { fuseAgentStatus } from "./status-fusion";
+import {
+  type StatusIncarnationGenerationSource,
+  StatusIncarnationUnavailableError,
+} from "./status-generation";
+import type { StatusStore } from "./status-store";
+import { toolResult } from "./tool-result";
+import type { GraphifyCallCursor } from "./tool-telemetry";
 
 export const StatusRequestSchema = z.object({
   detail: z.enum(["full", "active"]).optional(),
@@ -79,12 +77,6 @@ export interface StatusToolDeps {
   graphifyCalls: Map<string, GraphifyCallCursor>;
   sessionHost: Pick<SessionHost, "capture"> | null;
   statusIncarnationGenerationSource: StatusIncarnationGenerationSource;
-  observeTerminalOutput:
-    | ((
-        locator: SessionLocator,
-        geometry: TerminalGeometry,
-      ) => Promise<SessiondOutputObservation | null>)
-    | null;
   resolveSessionLocator:
     | ((
         sessionId: string,
@@ -157,12 +149,10 @@ export function registerStatusTools(
         sessions = await deps.terminalHost
           .list(hiveInstanceSuffix())
           .catch((error: unknown) => {
-            // Losing this list costs every agent its inspection, and an absent
-            // inspection silently costs every agent its terminal output. One
-            // failure here reads downstream as a whole fleet producing nothing.
+            // Losing this list costs every agent its terminal inspection.
             console.warn(
               `Hive could not list terminal sessions; no agent will report ` +
-                `terminal activity this pass: ${
+                `terminal state this pass: ${
                   error instanceof Error ? error.message : "unknown failure"
                 }`,
             );
@@ -231,35 +221,14 @@ export function registerStatusTools(
             // would ever distinguish.
             console.warn(
               `Hive has no terminal session matching ${agent.name} ` +
-                `(${locator.sessionId}#${locator.generation}); its terminal ` +
-                `output cannot be observed. sessiond listed ${sessions.length}: ` +
+                `(${locator.sessionId}#${locator.generation}); its terminal state ` +
+                `cannot be inspected. sessiond listed ${sessions.length}: ` +
                 sessions
                   .map(
                     (session) =>
                       `${session.locator.sessionId}#${session.locator.generation}`,
                   )
                   .join(", "),
-            );
-          }
-          // A failed observation is REPORTED, not dropped. `.catch(() => null)`
-          // here rendered downstream as `outputThrough: "0"` and an empty
-          // summary, which reads to a queen as "the agent produced nothing"
-          // rather than "Hive could not look".
-          const output =
-            deps.observeTerminalOutput === null || inspection === null
-              ? null
-              : await deps
-                  .observeTerminalOutput(locator, inspection.geometry)
-                  .catch((error: unknown) => {
-                    console.warn(
-                      `Hive could not observe ${agent.name}'s terminal output: ` +
-                        `${error instanceof Error ? error.message : "unknown failure"}`,
-                    );
-                    return null;
-                  });
-          if (output?.failure !== undefined) {
-            console.warn(
-              `Hive observed no terminal output for ${agent.name}: ${output.failure}`,
             );
           }
           const run = deps.db.listProviderRunsForAgent(agent.id).at(-1) ?? null;
@@ -284,7 +253,6 @@ export function registerStatusTools(
               agent,
               run,
               inspection,
-              output,
               gitPaths: files,
               events: providerEvents,
               status: fuseAgentStatus(
