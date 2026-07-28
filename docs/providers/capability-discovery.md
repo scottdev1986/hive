@@ -8,7 +8,7 @@ Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architect
 
 Every vendor CLI Hive drives will tell you, for free and without buying an inference, which models the signed-in account can launch and which effort levels each accepts. None of them will tell you which model is *good*. This article records what the wire actually says, what it conspicuously does not, and the reading discipline that keeps an absent field from becoming a fabricated `false`.
 
-Catalog wire behavior was verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Codex compatibility/schema surface was verified 2026-07-16 against codex-cli 0.144.4; the Grok surface was most recently verified 2026-07-14 against grok 0.2.101. Model ids below are **examples observed on those dates**, never a shipped catalog: exact ids come from discovery. A legacy name-shape helper can recognize Claude- and Codex-shaped names but carries no concrete catalog (`src/adapters/tools/models.ts:1-15`). Observed ids rot. The mechanisms do not.
+Catalog wire behavior was verified 2026-07-11 against claude 2.1.207 and codex-cli 0.144.1; the Codex compatibility/schema surface was verified 2026-07-16 against codex-cli 0.144.4; the Grok surface was most recently verified 2026-07-14 against grok 0.2.101. Model ids below are **examples observed on those dates**, never a shipped catalog: exact ids and vendor ownership come from discovery. Hive carries no name-shape fallback. Observed ids rot. The mechanisms do not.
 
 ## The probe matrix
 

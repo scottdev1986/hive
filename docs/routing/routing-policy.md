@@ -222,10 +222,6 @@ are never promoted merely because selection changed.
 - **There is no coding-capability floor of any kind.** The only floor is
   `minContextTokens` (`src/daemon/spawner-impl.ts:1625-1634`), which fails closed on an unmeasured
   window. The invariant "a capability floor blocks even a pin" has nothing to enforce.
-- **Identity-from-name-shape survives, in one place.** When `identifyModelVendor`
-  returns `unreadable`, `src/daemon/spawner-impl.ts:1470-1487` falls back to the name-shape regex
-  `modelVendor()` — which (`src/adapters/tools/models.ts:3-15`) knows only `claude`
-  and `codex`, **not Grok**. This is exactly the inference the design forbids. Live hole.
 
 ## See Also
 

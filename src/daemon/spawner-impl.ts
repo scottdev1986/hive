@@ -7,7 +7,6 @@ import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import { resolveWorkingClaudeExecutable } from "../adapters/providers/claude-cli";
 import { probeGrokCliVersion } from "../adapters/providers/grok-cli";
 import { listInheritedCodexMcpServers } from "../adapters/providers/shared/mcp-scope";
-import { modelVendor } from "../adapters/providers/shared/models";
 import {
   assessStrandedWork,
   type CreatedWorktree,
@@ -2196,14 +2195,8 @@ export class HiveSpawner implements Spawner {
             "Name a model one of them publishes.",
         );
       }
-      // Unreadable is not permission, and with no routed tool left to fall
-      // back on it is not a route either: an explicit model whose vendor
-      // cannot be verified needs an explicit tool from the caller.
-      const vendor =
-        identified.state === "claimed"
-          ? identified.provider
-          : modelVendor(request.model);
-      if (vendor !== null) {
+      if (identified.state === "claimed") {
+        const vendor = identified.provider;
         if (request.tool !== undefined && request.tool !== vendor) {
           throw new Error(
             `Cannot spawn ${name}: model ${JSON.stringify(request.model)} is a ${vendor} model, ` +
@@ -2213,9 +2206,12 @@ export class HiveSpawner implements Spawner {
         }
         tool = vendor;
       } else if (request.tool !== undefined) {
+        // Unreadable is not permission, but the caller can explicitly name the
+        // CLI to use. Hive preserves that instruction while making the missing
+        // vendor evidence visible.
         console.warn(
           `Hive could not identify the vendor of model ${JSON.stringify(request.model)} ` +
-            `(${identified.state === "unreadable" ? identified.reason : "unclaimed"}); ` +
+            `(${identified.reason}); ` +
             `it launches on the explicitly requested ${request.tool}, unverified.`,
         );
         tool = request.tool;

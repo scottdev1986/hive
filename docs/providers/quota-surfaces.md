@@ -151,7 +151,7 @@ A spend belongs to the vendor whose model produced it. The ledger holds one row 
 - **unclaimed** — every vendor's catalog was read and *none* lists the model → **throw**. That is a measurement.
 - **missing or conflicting catalog evidence** → **throw** with the unread providers and a catalog-refresh remedy. A name-shaped guess is not billing authority.
 
-The predecessor asked a regex (`modelVendor()`) and treated its null — "I cannot place this name" — as **permission**. A compatibility fallback then still recorded the spend when no catalog had been read. Both paths are gone: unknown evidence refuses rather than inventing attribution or silently discarding the observation. The bad historical row stays visible; a misattributed past that can be seen is better than a smoothed one that cannot.
+The predecessor asked a model-name regex and treated its null — "I cannot place this name" — as **permission**. A compatibility fallback then still recorded the spend when no catalog had been read. Both paths are gone: unknown evidence refuses rather than inventing attribution or silently discarding the observation. The bad historical row stays visible; a misattributed past that can be seen is better than a smoothed one that cannot.
 
 ## Probing safely
 

@@ -8,7 +8,7 @@ Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architect
 
 Once a model id has been *discovered*, actually launching it is a per-CLI argv problem with sharp, measured edges: which flag carries effort, which knob grants autonomy without raising a dialog nobody can answer, and how to detach the human's inherited MCP servers without producing a config the CLI refuses to load. Every mechanic below was established by driving the binaries — claude 2.1.206/2.1.207, codex-cli 0.144.0/0.144.1/0.144.4, grok 0.2.93/0.2.99.
 
-Model ids named anywhere here are **examples observed on a date**, not a concrete catalog shipped in Hive. Routes resolve from runtime discovery; the only built-in model knowledge is a legacy Claude/Codex name-shape classifier used when no catalog can identify a vendor (`src/adapters/tools/models.ts:1-15`). The *mechanisms* are the durable content.
+Model ids named anywhere here are **examples observed on a date**, not a concrete catalog shipped in Hive. Routes and vendor identity resolve from runtime discovery; Hive carries no built-in model-name classifier. The *mechanisms* are the durable content.
 
 ## The three CLIs do not agree on anything
 

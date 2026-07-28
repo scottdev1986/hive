@@ -272,9 +272,9 @@ test("a model no catalog claims cannot be billed to any vendor's pool", () => {
     state: "unclaimed",
   });
 
-  // The defect: modelVendor("grok-4-fast") is null, null was read as "no
-  // provable contradiction", and the spend was billed as asked. Restore that
-  // and this reservation succeeds against the Claude pool.
+  // The defect: an unrecognized model name was read as "no provable
+  // contradiction", and the spend was billed as asked. Restore that and this
+  // reservation succeeds against the Claude pool.
   expect(() => reserve(ledger, "claude", "grok-4-fast")).toThrow(
     /Refusing to bill unidentifiable model "grok-4-fast" to the claude meter/,
   );
