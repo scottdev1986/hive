@@ -17,6 +17,16 @@ public struct TerminalScrollState: Equatable, Sendable {
     public fileprivate(set) var viewportOffset: UInt64 = 0
     public fileprivate(set) var viewportLength: UInt64 = 0
     public fileprivate(set) var hasUnseenOutput = false
+    /// Output applied since the last SCROLLBAR notification.
+    ///
+    /// The notification is delivered async on main while output applies on the
+    /// pane's terminal I/O thread, so between a user's scroll and the
+    /// notification that reports it this state still says "at the bottom" while
+    /// the terminal has already moved off it. Output arriving in that window is
+    /// unseen output, and remembering that it arrived is what lets the
+    /// notification credit it when it lands — without reading the engine on
+    /// every output frame to find out.
+    fileprivate var outputSinceScrollbarUpdate = false
 
     public var followsBottom: Bool {
         viewportOffset + viewportLength >= totalRows
@@ -83,15 +93,22 @@ extension HiveTerminalView {
         if restoreTerminalFocus { window?.makeFirstResponder(self) }
     }
 
+    /// Runs on the main thread once per applied OUTPUT frame, for every pane.
+    ///
+    /// It reads no engine state. It used to export the whole semantic viewport
+    /// here — the full visible text, a UTF-16 offset per cell, and a digest —
+    /// only to recover three integers, and that export takes the same renderer
+    /// mutex the pane's terminal I/O thread holds while parsing a chunk. With
+    /// several vendor TUIs streaming at once it was the largest non-rendering
+    /// consumer of the main queue, and the main queue is what a keystroke waits
+    /// behind. Measured with eight real vendor TUIs on real sessiond sessions
+    /// (`prototypes/input-lag`): 69% of all main-queue work with presentation
+    /// disabled, and the second-largest consumer after Metal draws with it on.
+    ///
+    /// The three integers arrive on their own from the SCROLLBAR action, which
+    /// is user-paced. All this needs to know is that output arrived.
     func noteOutputApplied() {
-        if let viewport = (engine as? ManualSurfaceSemanticSnapshotProviding)?
-            .semanticSnapshot()?
-            .viewport
-        {
-            scrollStateStorage.totalRows = viewport.total
-            scrollStateStorage.viewportOffset = viewport.offset
-            scrollStateStorage.viewportLength = viewport.length
-        }
+        scrollStateStorage.outputSinceScrollbarUpdate = true
         guard !scrollStateStorage.followsBottom else { return }
         scrollStateStorage.hasUnseenOutput = true
         updateNewOutputIndicator()
@@ -103,7 +120,13 @@ extension HiveTerminalView {
         scrollStateStorage.viewportLength = length
         if scrollStateStorage.followsBottom {
             scrollStateStorage.hasUnseenOutput = false
+        } else if scrollStateStorage.outputSinceScrollbarUpdate {
+            // This notification is the first news that the viewport had already
+            // left the bottom. Output applied while it was in flight was output
+            // the user could not see.
+            scrollStateStorage.hasUnseenOutput = true
         }
+        scrollStateStorage.outputSinceScrollbarUpdate = false
         updateNewOutputIndicator()
     }
 
@@ -139,6 +162,9 @@ extension HiveTerminalView {
     func performScrollToBottom() -> Bool {
         guard engine.performBindingAction("scroll_to_bottom") else { return false }
         scrollStateStorage.hasUnseenOutput = false
+        // Everything applied before this moment is now on screen; a SCROLLBAR
+        // notification still in flight must not resurrect the indicator for it.
+        scrollStateStorage.outputSinceScrollbarUpdate = false
         dismissNewOutputIndicator()
         return true
     }

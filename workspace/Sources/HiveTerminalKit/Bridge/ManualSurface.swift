@@ -228,7 +228,16 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
         self.callbackContext = callbackContext
     }
 
-    func semanticSnapshot() -> ManualSurfaceSemanticSnapshot? { fakeSemanticSnapshot }
+    /// Counted: the semantic export is the expensive main-thread read (whole
+    /// viewport, per-cell offsets, digest, under the renderer mutex), so "how
+    /// many times did this path take it" is a property tests assert on, not an
+    /// implementation detail.
+    private(set) var semanticSnapshotCount = 0
+
+    func semanticSnapshot() -> ManualSurfaceSemanticSnapshot? {
+        semanticSnapshotCount += 1
+        return fakeSemanticSnapshot
+    }
 
     /// Mirrors the real engine's contract: the feed runs on the caller's thread
     /// (the pane's terminal I/O thread in production), serialized by `feedLock`

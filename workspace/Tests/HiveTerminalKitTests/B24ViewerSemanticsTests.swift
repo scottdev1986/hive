@@ -412,7 +412,17 @@ final class B24ViewerSemanticsTests: XCTestCase {
         XCTAssertEqual(terminal.newOutputIndicatorForTesting?.title, "New output ↓")
     }
 
-    func testProductionHostFrameReadsAtomicViewportWhenScrollbarNotificationIsStale() throws {
+    /// Output that lands while the SCROLLBAR notification is still in flight is
+    /// unseen output, and the notification credits it when it arrives.
+    ///
+    /// The viewport leaves the bottom on the terminal I/O thread; the
+    /// notification saying so is delivered async on main. In that window this
+    /// state still reads "at the bottom", so the output frame cannot tell that
+    /// the user missed anything. It records only that output arrived — the
+    /// resolution is the notification's job, which is user-paced. The frame
+    /// path deliberately does NOT export the engine's viewport to find out; see
+    /// `testOutputFramesNeverExportTheSemanticViewport`.
+    func testLateScrollbarNotificationCreditsOutputAppliedWhileItWasStale() throws {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)
         let host = FakeHost(connectionId: "b24-production-snapshot")
@@ -434,16 +444,83 @@ final class B24ViewerSemanticsTests: XCTestCase {
         engine.callbackContext.enqueueActionNotification(.scrollbar(total: 100, offset: 80, len: 20))
         drainMain(until: { terminal.scrollState.totalRows == 100 })
         XCTAssertTrue(terminal.scrollState.followsBottom, "positive control: the notification is stale at bottom")
-        engine.fakeSemanticSnapshot = semanticSnapshot(total: 100, offset: 20, length: 20)
 
         terminal.pumpHostFrame(
             WireFrame(type: .output, streamSeq: 5, payload: Data("new".utf8)),
             frameBinding: try XCTUnwrap(terminal.binding)
         )
+        XCTAssertEqual(terminal.highWater, 8)
+        XCTAssertFalse(
+            terminal.scrollState.hasUnseenOutput,
+            "nothing yet says the viewport moved, so there is nothing to report"
+        )
 
-        XCTAssertFalse(terminal.scrollState.followsBottom)
+        engine.callbackContext.enqueueActionNotification(.scrollbar(total: 100, offset: 20, len: 20))
+        drainMain(until: { terminal.scrollState.followsBottom == false })
+
         XCTAssertTrue(terminal.scrollState.hasUnseenOutput)
         XCTAssertEqual(terminal.newOutputIndicatorForTesting?.title, "New output ↓")
+    }
+
+    /// A quiet viewport must not manufacture unseen output: the credit above is
+    /// for output that actually arrived, not for the act of scrolling.
+    func testScrollingWithoutOutputShowsNoNewOutputIndicator() throws {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        engine.callbackContext.enqueueActionNotification(.scrollbar(total: 100, offset: 20, len: 20))
+        drainMain(until: { terminal.scrollState.followsBottom == false })
+
+        XCTAssertFalse(terminal.scrollState.hasUnseenOutput)
+        XCTAssertNil(terminal.newOutputIndicatorForTesting)
+    }
+
+    /// The regression guard for the input lag this file's `noteOutputApplied`
+    /// used to cause.
+    ///
+    /// Every applied OUTPUT frame runs main-thread work, for every pane. The
+    /// semantic export takes the renderer mutex the pane's terminal I/O thread
+    /// holds while parsing, so doing it per frame puts a lock acquisition and a
+    /// whole-viewport copy on the main queue ahead of the next keystroke, once
+    /// per frame per pane — and that is precisely why typing got slower the
+    /// more TUI agents were open.
+    func testOutputFramesNeverExportTheSemanticViewport() throws {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+        let host = FakeHost(connectionId: "b24-no-export")
+        let locator = makeTestLocator()
+        try host.enqueueWelcome(
+            instanceId: locator.instanceId,
+            connectionId: host.hostTransport.connectionId
+        )
+        host.enqueueOutput(streamSeq: 0, bytes: Data("ready".utf8))
+        XCTAssertEqual(
+            try terminal.attach(
+                grant: host.makeGrant(locator: locator),
+                geometry: makeGeometry(),
+                transport: host.clientTransport
+            ),
+            .firstCorrectFrame(highWater: 5, connectionId: host.clientTransport.connectionId)
+        )
+        drainMain(for: 0.05)
+
+        let before = engine.semanticSnapshotCount
+        var streamSeq: UInt64 = 5
+        for index in 0 ..< 50 {
+            terminal.pumpHostFrame(
+                WireFrame(type: .output, streamSeq: streamSeq, payload: Data("row-\(index)\r\n".utf8)),
+                frameBinding: try XCTUnwrap(terminal.binding)
+            )
+            streamSeq = terminal.highWater
+        }
+        drainMain(for: 0.05)
+
+        XCTAssertGreaterThan(terminal.highWater, 5, "positive control: the frames were applied")
+        XCTAssertEqual(
+            engine.semanticSnapshotCount - before,
+            0,
+            "applying output must not export the semantic viewport on the main thread"
+        )
     }
 
     func testConfiguredHistoryPrunesOldestRowsButKeepsRecentRowsSearchable() throws {
