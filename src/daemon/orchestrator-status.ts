@@ -30,7 +30,7 @@
  * hypothetical. Measured in the live events table, the root posted 231
  * turn-ends and ZERO turn-starts between 2026-07-11T19:39Z and
  * 2026-07-12T10:58Z, because a daemon port change had re-pointed every hook
- * except turn-start (the incident recorded in adapters/tools/claude.ts). For
+ * except turn-start (the incident recorded in adapters/providers/claude-cli.ts). For
  * those 15 hours a naive "newest boundary is a turn-end, so it's idle" would
  * have rendered a confident yellow "idle" dot while the root worked
  * continuously. Returning null there means the field is omitted, and an absent

@@ -8,39 +8,39 @@ import {
   provisionQueenSkills,
   queenSkillDelivery,
 } from "../adapters/queen-skills";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/tools/capability-env";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../adapters/providers/shared/capability-env";
 import {
   buildClaudeSpawnCommand,
   type ResolvedClaudeExecutable,
   resolveWorkingClaudeExecutable,
   writeClaudeAgentConfig,
-} from "../adapters/tools/claude";
-import { resolveWorkingCodexExecutable } from "../adapters/tools/codex";
+} from "../adapters/providers/claude-cli";
+import { resolveWorkingCodexExecutable } from "../adapters/providers/codex-cli";
 import {
   buildGrokSpawnCommand,
   GROK_COMPATIBILITY_ENV,
   probeGrokDefaultModel,
   resolveWorkingGrokExecutable,
   writeGrokAgentConfig,
-} from "../adapters/tools/grok";
+} from "../adapters/providers/grok-cli";
 import {
   buildKimiSpawnCommand,
   probeKimiDefaultModel,
   resolveWorkingKimiExecutable,
   wrapKimiWithInstructionFile,
   writeKimiAgentConfig,
-} from "../adapters/tools/kimi";
+} from "../adapters/providers/kimi-cli";
 import {
   buildCodexMcpExclusionArgs,
   listInheritedCodexMcpServers,
-} from "../adapters/tools/mcp-scope";
+} from "../adapters/providers/shared/mcp-scope";
 import {
   buildOpencodeSpawnCommand,
   OPENCODE_HIVE_AGENT,
   probeOpencodeDefaultModel,
   resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
-} from "../adapters/tools/opencode";
+} from "../adapters/providers/opencode-cli";
 import { writeCredential } from "../daemon/credentials";
 import { getHiveHome } from "../daemon/db";
 import {

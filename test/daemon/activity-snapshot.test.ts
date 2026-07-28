@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getAgentAdapter } from "../../src/adapters/tools/agents/agent-factory";
+import { getAgentAdapter } from "../../src/adapters/providers/provider-registry";
 import { buildActivitySnapshot } from "../../src/daemon/activity-snapshot";
 import type { FusedAgentStatus } from "../../src/daemon/status-fusion";
 import type {

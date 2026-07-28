@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import {
   markBranchPreserved,
   observedWorktreeFiles,

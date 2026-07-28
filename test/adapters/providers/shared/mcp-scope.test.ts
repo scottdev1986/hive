@@ -9,7 +9,7 @@ import {
   isCodexAddressableServerName,
   listInheritedCodexMcpServers,
   parseCodexMcpServerNames,
-} from "../../../src/adapters/tools/mcp-scope";
+} from "../../../../src/adapters/providers/shared/mcp-scope";
 
 let tempRoot = "";
 

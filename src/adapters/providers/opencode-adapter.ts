@@ -1,9 +1,8 @@
 import {
   OpencodeCapabilityProbe,
   OpencodeCliCapabilityTransport,
-} from "../../../daemon/capability-discovery";
-import { shellJoin } from "../../../daemon/session-host/shell-session";
-import { wrapSpawnWithCapabilityEnv } from "../capability-env";
+} from "../../daemon/capability-discovery";
+import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
@@ -11,8 +10,9 @@ import {
   type OpencodeSpawnOptions,
   resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
-} from "../opencode";
-import type { AgentAdapter } from "./agent-adapter";
+} from "./opencode-cli";
+import type { AgentAdapter } from "./provider-adapter";
+import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const opencodeAgentAdapter: AgentAdapter = {
   id: "opencode",

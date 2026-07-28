@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writeGraphifyHook } from "../../../src/adapters/tools/graphify-hook";
+import { writeGraphifyHook } from "../../../../src/adapters/providers/shared/graphify-hook";
 
 let root: string;
 let server: ReturnType<typeof Bun.serve>;

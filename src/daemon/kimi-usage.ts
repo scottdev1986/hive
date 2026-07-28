@@ -1,7 +1,7 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { kimiHome } from "../adapters/tools/kimi";
+import { kimiHome } from "../adapters/providers/kimi-cli";
 
 /**
  * Kimi's usage surface: `GET {baseUrl}/usages`, the same endpoint the CLI's

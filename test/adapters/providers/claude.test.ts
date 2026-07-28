@@ -27,9 +27,9 @@ import {
   resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
-} from "../../../src/adapters/tools/claude";
-import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/tools/graphify-hook";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+} from "../../../src/adapters/providers/claude-cli";
+import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/providers/shared/graphify-hook";
+import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
 import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 
 let tempRoot = "";

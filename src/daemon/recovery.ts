@@ -1,13 +1,13 @@
 import { existsSync } from "node:fs";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import {
   discoverClaudeRecoverySessionId,
   resolveWorkingClaudeExecutable,
-} from "../adapters/tools/claude";
-import { discoverCodexRecoverySessionId } from "../adapters/tools/codex";
-import { discoverGrokRecoverySessionId } from "../adapters/tools/grok";
-import { discoverKimiRecoverySessionId } from "../adapters/tools/kimi";
-import { discoverOpencodeRecoverySessionId } from "../adapters/tools/opencode";
+} from "../adapters/providers/claude-cli";
+import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
+import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
+import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
+import { discoverOpencodeRecoverySessionId } from "../adapters/providers/opencode-cli";
 import {
   type AgentRecord,
   CapabilityProviderSchema,

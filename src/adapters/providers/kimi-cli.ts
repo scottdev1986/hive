@@ -3,16 +3,16 @@ import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { shellQuote } from "../../daemon/session-host/shell-session";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
-import { isRecord, readProjectConfig } from "./project-config";
-import { resolveProviderExecutable } from "./provider-executable";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import { isRecord, readProjectConfig } from "./shared/project-config";
+import { resolveProviderExecutable } from "./shared/provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
   type RecoverySessionArtifact,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-} from "./recovery-session";
+} from "./shared/recovery-session";
 
 export interface KimiSpawnOptions {
   model: string;

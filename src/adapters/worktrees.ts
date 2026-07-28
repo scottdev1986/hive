@@ -17,12 +17,12 @@ import {
   isLiveAgent,
 } from "../schemas";
 import { SHIPPED_SKILLS } from "../skills/shipped";
+import { grokHookFilename, ownsGrokHook } from "./providers/grok-cli";
 import {
   nativeSkillDirectory,
   provisionedSkillLinks,
   SKILL_LINK_MANIFEST,
 } from "./skills";
-import { grokHookFilename, ownsGrokHook } from "./tools/grok";
 
 interface GitResult {
   stdout: string;

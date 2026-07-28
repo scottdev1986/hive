@@ -10,9 +10,9 @@ import {
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { writeGrokAgentConfig } from "../../src/adapters/providers/grok-cli";
+import { getAgentAdapter } from "../../src/adapters/providers/provider-registry";
 import { provisionSkills } from "../../src/adapters/skills";
-import { getAgentAdapter } from "../../src/adapters/tools/agents/agent-factory";
-import { writeGrokAgentConfig } from "../../src/adapters/tools/grok";
 import {
   assessStrandedWork,
   createWorktree,

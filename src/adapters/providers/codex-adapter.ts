@@ -1,22 +1,22 @@
 import {
   CodexCapabilityProbe,
   CodexStdioCapabilityTransport,
-} from "../../../daemon/capability-discovery";
+} from "../../daemon/capability-discovery";
 import {
   codexInstructionProfileName,
   wrapCodexWithInstructionProfile,
   writeCodexInstructionProfile,
-} from "../../../daemon/launch-prompt";
-import { shellJoin } from "../../../daemon/session-host/shell-session";
-import { wrapSpawnWithCapabilityEnv } from "../capability-env";
+} from "../../daemon/launch-prompt";
+import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
   type CodexSpawnOptions,
   resolveWorkingCodexExecutable,
   writeCodexAgentConfig,
-} from "../codex";
-import type { AgentAdapter } from "./agent-adapter";
+} from "./codex-cli";
+import type { AgentAdapter } from "./provider-adapter";
+import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const codexAgentAdapter: AgentAdapter = {
   id: "codex",

@@ -1,12 +1,12 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { findLatestCodexRollout } from "../adapters/tools/codex";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { findLatestCodexRollout } from "../adapters/providers/codex-cli";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import {
   findLatestGrokSessionDirectory,
   findLatestGrokSessionId,
-} from "../adapters/tools/grok";
+} from "../adapters/providers/grok-cli";
 import { getHiveHome } from "../daemon/db";
 import type { TurnBoundaryKind } from "../daemon/orchestrator-status";
 import { readNativeTurnCompleted } from "../daemon/tool-telemetry";

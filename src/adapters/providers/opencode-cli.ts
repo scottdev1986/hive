@@ -2,11 +2,11 @@ import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
-import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./orchestrator-role";
-import { isRecord, readProjectConfig } from "./project-config";
-import { resolveProviderExecutable } from "./provider-executable";
-import { selectRecoverySessionId } from "./recovery-session";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./shared/orchestrator-role";
+import { isRecord, readProjectConfig } from "./shared/project-config";
+import { resolveProviderExecutable } from "./shared/provider-executable";
+import { selectRecoverySessionId } from "./shared/recovery-session";
 
 /** The agent Hive writes into the worktree's opencode.json: it carries the
  * launch brief as its {file:} system prompt and the read-only barrier as its

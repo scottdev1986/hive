@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import type { AgentRecord, HookEvent, ProviderEvent } from "../schemas";
 import type { HiveDatabase } from "./db";
 

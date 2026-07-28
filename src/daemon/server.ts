@@ -22,14 +22,14 @@ import {
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
-import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/tools/codex";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
+import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/providers/codex-cli";
 import {
   type CodexAppServerManager,
   type ReapOrphanDependencies,
   reapOrphanCodexHosts,
-} from "../adapters/tools/codex-app-server";
-import { readLiveGrokModel } from "../adapters/tools/grok";
+} from "../adapters/providers/codex-app-server";
+import { readLiveGrokModel } from "../adapters/providers/grok-cli";
 import {
   assessStrandedWork,
   listUnmergedHiveBranches,
@@ -3288,7 +3288,7 @@ export class HiveDaemon {
         id,
         agentName,
         // The description is the command Codex wants to run (`describeApproval`,
-        // src/adapters/tools/codex-app-server.ts) — the thing being decided.
+        // src/adapters/providers/codex-app-server.ts) — the thing being decided.
         // Never trimmed.
         kind: "tool-permission",
         description,

@@ -25,7 +25,7 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
     // Populated by exactly one producer: the Codex app-server driver
-    // (adapters/tools/codex-app-server.ts), which measures it from
+    // (adapters/providers/codex-app-server.ts), which measures it from
     // `thread/tokenUsage/updated` and constructs this event directly, never
     // through the `hive event` CLI. No hook command Hive writes for any
     // vendor can supply this field — Claude's Stop payload and Codex's notify

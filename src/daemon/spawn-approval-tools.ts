@@ -1,6 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
+import type { CodexAppServerManager } from "../adapters/providers/codex-app-server";
 import type { Action, Capability, CapabilityStore } from "./capabilities";
 import type { Approval, HiveDatabase } from "./db";
 import type { MessageDelivery } from "./delivery";

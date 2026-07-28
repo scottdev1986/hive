@@ -5,21 +5,24 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { shellToken } from "../../daemon/session-host/shell-session";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import {
   type GraphifyHookKind,
   graphifyHookPath,
   writeGraphifyHook,
-} from "./graphify-hook";
-import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
-import { resolveProviderExecutable } from "./provider-executable";
+} from "./shared/graphify-hook";
+import {
+  buildCodexMcpExclusionArgs,
+  HIVE_MCP_SERVERS,
+} from "./shared/mcp-scope";
+import { resolveProviderExecutable } from "./shared/provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
   type RecoverySessionArtifact,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-} from "./recovery-session";
+} from "./shared/recovery-session";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */

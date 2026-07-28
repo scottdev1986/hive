@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { resolveProviderExecutable } from "../../../src/adapters/tools/provider-executable";
+import { resolveProviderExecutable } from "../../../../src/adapters/providers/shared/provider-executable";
 
 describe("provider executable resolution", () => {
   test("skips a broken earlier shim and accepts a later working installation", () => {

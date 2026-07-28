@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../../src/adapters/tools/capability-env";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../src/adapters/providers/shared/capability-env";
 import { credentialPath } from "../../src/daemon/credentials";
 import { HiveDatabase } from "../../src/daemon/db";
 import { CrashRecovery } from "../../src/daemon/recovery";

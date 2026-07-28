@@ -2,13 +2,13 @@ import { buildScopedBrief } from "../adapters/brief";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
 import { provisionSkills } from "../adapters/skills";
-import type { PreparedAgentSpawn } from "../adapters/tools/agents/agent-adapter";
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
-import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
-import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
-import { probeGrokCliVersion } from "../adapters/tools/grok";
-import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
-import { modelVendor } from "../adapters/tools/models";
+import type { PreparedAgentSpawn } from "../adapters/providers/provider-adapter";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
+import { resolveWorkingClaudeExecutable } from "../adapters/providers/claude-cli";
+import type { CodexAppServerManager } from "../adapters/providers/codex-app-server";
+import { probeGrokCliVersion } from "../adapters/providers/grok-cli";
+import { listInheritedCodexMcpServers } from "../adapters/providers/shared/mcp-scope";
+import { modelVendor } from "../adapters/providers/shared/models";
 import {
   assessStrandedWork,
   type CreatedWorktree,

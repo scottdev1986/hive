@@ -15,15 +15,15 @@ import { dirname, join, resolve } from "node:path";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { shellQuote } from "../../daemon/session-host/shell-session";
 import { withFileLock } from "../file-lock";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
-import { resolveProviderExecutable } from "./provider-executable";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import { resolveProviderExecutable } from "./shared/provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
   type RecoverySessionArtifact,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-} from "./recovery-session";
+} from "./shared/recovery-session";
 
 export interface GrokSpawnOptions {
   model: string;

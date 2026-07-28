@@ -12,10 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  HIVE_CAPABILITY_TOKEN_ENV,
-  wrapSpawnWithCapabilityEnv,
-} from "../../../src/adapters/tools/capability-env";
-import {
   buildCodexResumeCommand,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
@@ -23,9 +19,13 @@ import {
   codexSessionsDirectory,
   discoverCodexRecoverySessionId,
   writeCodexAgentConfig,
-} from "../../../src/adapters/tools/codex";
-import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/tools/graphify-hook";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+} from "../../../src/adapters/providers/codex-cli";
+import {
+  HIVE_CAPABILITY_TOKEN_ENV,
+  wrapSpawnWithCapabilityEnv,
+} from "../../../src/adapters/providers/shared/capability-env";
+import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/providers/shared/graphify-hook";
+import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
 import { credentialPath } from "../../../src/daemon/credentials";
 
 let tempRoot = "";

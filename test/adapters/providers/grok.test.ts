@@ -11,8 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { grokAgentAdapter } from "../../../src/adapters/tools/agents/grok";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/tools/capability-env";
+import { grokAgentAdapter } from "../../../src/adapters/providers/grok-adapter";
 import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
@@ -28,8 +27,9 @@ import {
   seedGrokRepositoryTrust,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
-} from "../../../src/adapters/tools/grok";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+} from "../../../src/adapters/providers/grok-cli";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
+import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
 
 /** The path grok's trust store is keyed by: /tmp is a symlink on macOS. */
 const resolveReal = (path: string): Promise<string> =>

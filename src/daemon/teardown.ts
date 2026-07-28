@@ -14,7 +14,7 @@
  * than rounded down to success.
  */
 import { readFile } from "node:fs/promises";
-import { codexAgentHostPidfile } from "../adapters/tools/codex-app-server";
+import { codexAgentHostPidfile } from "../adapters/providers/codex-app-server";
 import type { AgentRecord } from "../schemas";
 import {
   type CommandOutput,

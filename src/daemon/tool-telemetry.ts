@@ -1,8 +1,8 @@
 import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { claudeProjectDirectory } from "../adapters/tools/claude";
-import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
-import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
+import { claudeProjectDirectory } from "../adapters/providers/claude-cli";
+import { findCodexRolloutBySessionId } from "../adapters/providers/codex-cli";
+import { findLatestGrokSessionDirectory } from "../adapters/providers/grok-cli";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
 /**

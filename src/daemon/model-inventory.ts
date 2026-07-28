@@ -1,4 +1,4 @@
-import { getAgentAdapter } from "../adapters/tools/agents/agent-factory";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import type {
   CapabilityProvider,
   CapabilityRecord,

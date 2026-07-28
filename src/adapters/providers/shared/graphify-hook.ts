@@ -1,6 +1,6 @@
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { shellToken } from "../../daemon/session-host/shell-session";
+import { shellToken } from "../../../daemon/session-host/shell-session";
 
 export const GRAPHIFY_HOOK_SCRIPT = "hive-graphify-hook.sh";
 

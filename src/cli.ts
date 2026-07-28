@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { Command, CommanderError } from "commander";
-import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
+import { runCodexAppServerHost } from "./adapters/providers/codex-app-server";
 import {
   attachGrantCli,
   autonomyCli,

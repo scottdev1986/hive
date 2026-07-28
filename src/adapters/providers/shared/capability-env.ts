@@ -1,5 +1,5 @@
-import { credentialPath } from "../../daemon/credentials";
-import { shellQuote } from "../../daemon/session-host/shell-session";
+import { credentialPath } from "../../../daemon/credentials";
+import { shellQuote } from "../../../daemon/session-host/shell-session";
 
 /**
  * The env var every provider except Claude reads its bearer from. Claude runs

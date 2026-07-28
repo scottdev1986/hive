@@ -6,7 +6,7 @@ import { agentFetch } from "./credential";
 
 // Claude Code invokes the configured statusLine command on every render and
 // pipes the session JSON to stdin. This command is that command
-// (adapters/tools/claude.ts writes it into every agent's settings), which makes
+// (adapters/providers/claude-cli.ts writes it into every agent's settings), which makes
 // it the one place per render where Claude Code hands Hive a set of facts about
 // a live session — and the only place several of them exist at all. So there is
 // exactly ONE parse of this payload, here, and everything downstream travels

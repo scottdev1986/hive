@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { getAgentAdapter } from "../../src/adapters/tools/agents/agent-factory";
+import { getAgentAdapter } from "../../src/adapters/providers/provider-registry";
 import { ROLE_GRANTS } from "../../src/daemon/capabilities";
 import {
   buildNormalMessageBatchProjection,

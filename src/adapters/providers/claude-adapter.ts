@@ -2,8 +2,8 @@ import { join } from "node:path";
 import {
   ClaudeCapabilityProbe,
   ClaudeStdioCapabilityTransport,
-} from "../../../daemon/capability-discovery";
-import { shellJoin } from "../../../daemon/session-host/shell-session";
+} from "../../daemon/capability-discovery";
+import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildClaudeResumeCommand,
   buildClaudeSpawnCommand,
@@ -11,8 +11,8 @@ import {
   resolveWorkingClaudeExecutable,
   seedClaudeWorktreeTrust,
   writeClaudeAgentConfig,
-} from "../claude";
-import type { AgentAdapter } from "./agent-adapter";
+} from "./claude-cli";
+import type { AgentAdapter } from "./provider-adapter";
 
 export const claudeAgentAdapter: AgentAdapter = {
   id: "claude",

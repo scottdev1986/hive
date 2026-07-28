@@ -17,19 +17,19 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../src/adapters/tools/capability-env";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../src/adapters/providers/shared/capability-env";
 import {
   buildClaudeSpawnCommand,
   writeClaudeAgentConfig,
-} from "../src/adapters/tools/claude";
+} from "../src/adapters/providers/claude-cli";
 import {
   buildCodexSpawnCommand,
   writeCodexAgentConfig,
-} from "../src/adapters/tools/codex";
+} from "../src/adapters/providers/codex-cli";
 import {
   buildGrokSpawnCommand,
   writeGrokAgentConfig,
-} from "../src/adapters/tools/grok";
+} from "../src/adapters/providers/grok-cli";
 import { ROLE_GRANTS } from "../src/daemon/capabilities";
 import { buildAgentPrompt } from "../src/daemon/spawner-impl";
 import type { CapabilityProvider } from "../src/schemas";

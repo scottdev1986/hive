@@ -20,13 +20,13 @@ import {
   type GraphifyHookKind,
   graphifyHookPath,
   writeGraphifyHook,
-} from "./graphify-hook";
-import { ORCHESTRATOR_CLAUDE_WRITE_RULES } from "./orchestrator-role";
+} from "./shared/graphify-hook";
+import { ORCHESTRATOR_CLAUDE_WRITE_RULES } from "./shared/orchestrator-role";
 import {
   probeProviderExecutable,
   providerExecutableCandidates,
   resolveProviderExecutable,
-} from "./provider-executable";
+} from "./shared/provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
@@ -34,7 +34,7 @@ import {
   RecoverySessionDiscoveryError,
   recoveryArtifactTimestamp,
   selectRecoverySessionId,
-} from "./recovery-session";
+} from "./shared/recovery-session";
 
 export interface ClaudeSpawnOptions {
   name: string;

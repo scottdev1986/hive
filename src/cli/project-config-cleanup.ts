@@ -1,6 +1,6 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { removeGrokAgentConfig } from "../adapters/tools/grok";
+import { removeGrokAgentConfig } from "../adapters/providers/grok-cli";
 import {
   hiveInstanceSuffix,
   isDefaultHiveHome,

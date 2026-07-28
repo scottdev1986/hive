@@ -4,9 +4,9 @@ import { open, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { claudeProjectDirectory } from "../adapters/tools/claude";
-import { findCodexRolloutBySessionId } from "../adapters/tools/codex";
-import { findLatestGrokSessionDirectory } from "../adapters/tools/grok";
+import { claudeProjectDirectory } from "../adapters/providers/claude-cli";
+import { findCodexRolloutBySessionId } from "../adapters/providers/codex-cli";
+import { findLatestGrokSessionDirectory } from "../adapters/providers/grok-cli";
 import {
   isLiveAgent,
   type TokenCounts,

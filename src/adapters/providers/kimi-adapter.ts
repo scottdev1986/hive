@@ -1,20 +1,20 @@
 import {
   KimiCapabilityProbe,
   KimiCliCapabilityTransport,
-} from "../../../daemon/capability-discovery";
-import { shellJoin } from "../../../daemon/session-host/shell-session";
-import { wrapSpawnWithCapabilityEnv } from "../capability-env";
+} from "../../daemon/capability-discovery";
+import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildKimiResumeCommand,
   buildKimiSpawnCommand,
-  kimiReadOnlyContainmentGap,
   type KimiSpawnOptions,
+  kimiReadOnlyContainmentGap,
   resolveWorkingKimiExecutable,
   wrapKimiSpawnWithEffort,
   wrapKimiWithInstructionFile,
   writeKimiAgentConfig,
-} from "../kimi";
-import type { AgentAdapter } from "./agent-adapter";
+} from "./kimi-cli";
+import type { AgentAdapter } from "./provider-adapter";
+import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const kimiAgentAdapter: AgentAdapter = {
   id: "kimi",
@@ -28,6 +28,17 @@ export const kimiAgentAdapter: AgentAdapter = {
     nativeCancel: false,
     conversationResume: true,
   },
+  /** Kimi's TUI takes no prompt from argv — it opens a composer and waits. Its
+   * first turn is therefore typed in, as a bracketed paste so the TUI reads it
+   * as one insertion, then Enter. This is Kimi's startup protocol and lives
+   * here; the spawner only supplies a way to write to the terminal. */
+  async startInitialTurn(input, kickoff) {
+    await input.write(
+      new TextEncoder().encode(`\x1b[200~${kickoff}\x1b[201~\r`),
+      "kimi-kickoff",
+    );
+  },
+
   async prepareSpawn(context) {
     await writeKimiAgentConfig(context.worktreePath, {
       daemonPort: context.daemonPort,

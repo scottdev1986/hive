@@ -38,7 +38,7 @@ import {
   buildCodexMcpExclusionArgs,
   HIVE_MCP_SERVERS,
   listInheritedCodexMcpServers,
-} from "./mcp-scope";
+} from "./shared/mcp-scope";
 
 type JsonObject = Record<string, unknown>;
 type RpcId = string | number;

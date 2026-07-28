@@ -10,8 +10,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { getAgentAdapter } from "../../../src/adapters/tools/agents/agent-factory";
-import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/tools/capability-env";
 import {
   buildOpencodeResumeCommand,
   buildOpencodeSpawnCommand,
@@ -19,8 +17,10 @@ import {
   OPENCODE_HIVE_AGENT,
   probeOpencodeDefaultModel,
   writeOpencodeAgentConfig,
-} from "../../../src/adapters/tools/opencode";
-import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
+} from "../../../src/adapters/providers/opencode-cli";
+import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
+import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
+import { RecoverySessionDiscoveryError } from "../../../src/adapters/providers/shared/recovery-session";
 import { credentialPath } from "../../../src/daemon/credentials";
 
 const roots: string[] = [];

@@ -1,10 +1,9 @@
 import {
   GrokCapabilityProbe,
   GrokCliCapabilityTransport,
-} from "../../../daemon/capability-discovery";
-import { wrapGrokWithRulesFile } from "../../../daemon/launch-prompt";
-import { shellJoin } from "../../../daemon/session-host/shell-session";
-import { wrapSpawnWithCapabilityEnv } from "../capability-env";
+} from "../../daemon/capability-discovery";
+import { wrapGrokWithRulesFile } from "../../daemon/launch-prompt";
+import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildGrokResumeCommand,
   buildGrokSpawnCommand,
@@ -16,8 +15,9 @@ import {
   seedGrokRepositoryTrust,
   wrapGrokSpawnWithCompatibilityEnv,
   writeGrokAgentConfig,
-} from "../grok";
-import type { AgentAdapter } from "./agent-adapter";
+} from "./grok-cli";
+import type { AgentAdapter } from "./provider-adapter";
+import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const grokAgentAdapter: AgentAdapter = {
   id: "grok",

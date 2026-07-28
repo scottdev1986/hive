@@ -28,7 +28,7 @@
  */
 import { open } from "node:fs/promises";
 import { join } from "node:path";
-import { claudeProjectDirectory } from "../adapters/tools/claude";
+import { claudeProjectDirectory } from "../adapters/providers/claude-cli";
 
 /** The last few turns are all we need, and a transcript can be hundreds of MB. */
 const TAIL_BYTES = 64 * 1024;

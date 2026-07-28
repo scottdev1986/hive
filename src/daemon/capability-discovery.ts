@@ -2,8 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { probeGrokCliVersion } from "../adapters/tools/grok";
-import { probeOpencodeDefaultModel } from "../adapters/tools/opencode";
+import { probeGrokCliVersion } from "../adapters/providers/grok-cli";
+import { probeOpencodeDefaultModel } from "../adapters/providers/opencode-cli";
 import {
   type CapabilityProvider,
   type CapabilityRecord,

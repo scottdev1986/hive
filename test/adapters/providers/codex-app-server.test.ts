@@ -11,7 +11,7 @@ import {
   hostPidfileAgentId,
   reapOrphanCodexHosts,
   renderCodexHostMessage,
-} from "../../../src/adapters/tools/codex-app-server";
+} from "../../../src/adapters/providers/codex-app-server";
 import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 import type { AgentRecord, HookEvent } from "../../../src/schemas";
 import { required } from "../../required";
