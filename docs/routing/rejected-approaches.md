@@ -186,28 +186,21 @@ advertised context variant — all
 about *how good it is*, and neither is Hive. Only the user is, and their chain
 placements are the record of it.
 
-## The measured token facts that justify the scoped brief
+## Stuffing whole design docs into a spawn is two orders of magnitude too expensive
 
-Measured 2026-07-10 (recorded in the retired token-efficiency research doc, by
-differencing two `claude -p` runs), preserved because they set the priority order for
-every future context optimization:
+Measured 2026-07-10 (differencing two `claude -p` runs). Preserved because it still
+sets the priority order for context work:
 
 | Approach | Input tokens |
 |---|---|
 | `SPEC.md` embedded whole | **18,726** |
-| A scoped brief naming a section (`SPEC §6`) | **1,882** |
-| An outline-only brief | **421** |
+| Section-only extract (`SPEC §6`) | **1,882** |
+| Outline-only | **421** |
 
-> **The document lever is two orders of magnitude bigger than the other three
-> combined.**
-
-A single naive `SPEC.md` read costs more than the entire spawn prompt, the entire MCP
-surface, and the memory index put together — roughly thirty times over — and it was
-paid by *every design-touching agent, on every spawn*. Everything else on the
-optimization list is worth doing because it is **free, not because it is large**.
-
-Read the table for its shape, not its digits. It is the whole reason the scoped brief
-exists — see [../agents/briefing.md](../agents/briefing.md).
+A single naive full-document read costs more than the entire spawn prompt, the entire
+MCP surface, and the memory index put together. Hive does not auto-extract or inject
+design docs; the cost of stuffing them is the reason agents must open only the
+sections they need.
 
 ## The rejected-alternatives principle
 
@@ -226,6 +219,5 @@ applies them."*
 - [routing-policy.md](routing-policy.md) — what replaced all of this
 - [quota-and-headroom.md](quota-and-headroom.md) — including the headroom-sort that also lost
 - [model-control-center.md](model-control-center.md) — the surface where the user does the ranking
-- [../agents/briefing.md](../agents/briefing.md) — the scoped brief the token table justifies
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — what a catalog can and cannot tell you
 - [../../SPEC.md](../../SPEC.md) §6 — the orchestrator classifies; discovered policy resolves

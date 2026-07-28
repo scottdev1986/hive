@@ -30,10 +30,6 @@ import { existsSync } from "node:fs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  type BriefableDocs,
-  discoverBriefableDocs,
-} from "../adapters/briefing-docs";
-import {
   listMemoryFacts,
   type MemoryWriteFileInput,
   writeMemoryFact,
@@ -86,9 +82,6 @@ export interface InitResult {
 }
 
 export interface InitDeps {
-  /** Discover the repo's briefable docs, so a scaffolded AGENTS.md can point at
-   * the primary design doc. The only surviving repo-detection init does. */
-  discoverBriefableDocs: (root: string) => Promise<BriefableDocs>;
   writeMemoryFact: (
     root: string,
     input: MemoryWriteFileInput,
@@ -116,7 +109,6 @@ export interface InitDeps {
 }
 
 export const defaultInitDeps: InitDeps = {
-  discoverBriefableDocs,
   writeMemoryFact,
   listMemoryFacts,
   fileExists: async (path) => {
@@ -262,11 +254,10 @@ export async function ensureHiveStateGitignored(
 
 /** A minimal starter `AGENTS.md` — a starting point a human refines (every
  * vendor's `/init` frames it that way), not a template pretending to be
- * authoritative. Hive does not detect this repo's commands or stack, so those
- * sections are prompts to fill in, never invented values. The one thing it can
- * name is the repo's primary design doc, discovered from the tree. */
-export function scaffoldAgentsMd(primaryDoc: string | null): string {
-  const lines = [
+ * authoritative. Hive does not detect this repo's commands, stack, or design
+ * docs, so those sections are prompts to fill in, never invented values. */
+export function scaffoldAgentsMd(): string {
+  return [
     "# Agent instructions",
     "",
     "Starter conventions scaffolded by `hive init`. Review and fill these in —",
@@ -280,16 +271,7 @@ export function scaffoldAgentsMd(primaryDoc: string | null): string {
     "",
     "Note the language, package manager, and anything an agent should assume.",
     "",
-  ];
-  if (primaryDoc !== null) {
-    lines.push(
-      "## Design",
-      "",
-      `The primary design doc is \`${primaryDoc}\`; read it by section.`,
-      "",
-    );
-  }
-  return lines.join("\n");
+  ].join("\n");
 }
 
 export async function runInit(
@@ -310,10 +292,7 @@ export async function runInit(
     if (hasAgents) {
       messages.push("AGENTS.md already exists; leaving it untouched.");
     } else {
-      // The one repo fact a starter can name without inventing anything: the
-      // primary design doc, discovered from the tree.
-      const docs = await deps.discoverBriefableDocs(cwd).catch(() => null);
-      await deps.writeFile(agentsPath, scaffoldAgentsMd(docs?.primary ?? null));
+      await deps.writeFile(agentsPath, scaffoldAgentsMd());
       agentsScaffolded = true;
       messages.push(
         hasClaude

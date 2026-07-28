@@ -18,10 +18,7 @@ import {
   prepareOrchestratorConfig,
   provisionCodexRootToken,
 } from "../../src/cli/orchestrator";
-import {
-  ORCHESTRATOR_BRIEF,
-  orchestratorDocGuidance,
-} from "../../src/cli/orchestrator-brief";
+import { ORCHESTRATOR_BRIEF } from "../../src/cli/orchestrator-brief";
 import {
   OPERATOR_SUBJECT,
   writeCredential,
@@ -73,7 +70,6 @@ describe("orchestrator launch", () => {
       "codex",
       4317,
       "",
-      "",
       "/opt/tools/codex",
       "",
       "",
@@ -90,14 +86,12 @@ describe("orchestrator launch", () => {
   test("silent instructions stay out of the visible command arguments", () => {
     const instruction = buildOrchestratorInstructions(
       "memory material",
-      "repository guidance",
       "recovery material",
     );
     const command = buildOrchestratorCommand(
       "codex",
       4317,
       "memory material",
-      "repository guidance",
       "/opt/tools/codex",
       "",
       "recovery material",
@@ -106,7 +100,6 @@ describe("orchestrator launch", () => {
 
     expect(instruction).toContain("memory material");
     expect(command.join("\n")).not.toContain("memory material");
-    expect(command.join("\n")).not.toContain("repository guidance");
     expect(command.join("\n")).not.toContain("recovery material");
   });
 
@@ -116,18 +109,6 @@ describe("orchestrator launch", () => {
     );
     expect(instructions).not.toContain("\0");
     expect(instructions).toContain("memory before\uFFFDmemory after");
-  });
-
-  test("repository document guidance is discovered data, not a compiled name", () => {
-    const guidance = orchestratorDocGuidance({
-      primary: "DESIGN.md",
-      loadBearing: ["DESIGN.md", "README.md"],
-    });
-    expect(guidance).toContain("DESIGN.md is the primary design doc");
-    expect(guidance).toContain("- README.md");
-    expect(orchestratorDocGuidance({ primary: null, loadBearing: [] })).toBe(
-      "",
-    );
   });
 
   test("Codex setup never modifies project configuration", async () => {
@@ -157,7 +138,6 @@ describe("orchestrator launch", () => {
       "codex",
       4317,
       "",
-      "",
       "/opt/tools/codex",
       required(path),
     );
@@ -171,7 +151,6 @@ describe("orchestrator launch", () => {
     const command = buildOrchestratorCommand(
       "codex",
       4317,
-      "",
       "",
       "/opt/tools/codex",
       "",
@@ -190,7 +169,7 @@ describe("orchestrator launch", () => {
       const grok = join(root, "grok");
       await writeFile(grok, "#!/bin/sh\nprintf '* grok-4 (default)\\n'\n");
       await chmod(grok, 0o755);
-      const command = buildOrchestratorCommand("grok", 4317, "", "", grok);
+      const command = buildOrchestratorCommand("grok", 4317, "", grok);
       const joined = command.join(" ");
       expect(joined).toContain("--always-approve");
       expect(joined).not.toContain("--deny");
@@ -211,7 +190,6 @@ describe("orchestrator launch", () => {
       const command = buildOrchestratorCommand(
         "kimi",
         4317,
-        "",
         "",
         "/opt/tools/kimi",
       );
@@ -245,7 +223,6 @@ describe("orchestrator launch", () => {
       const command = buildOrchestratorCommand(
         "opencode",
         4317,
-        "",
         "",
         "/opt/tools/opencode",
       );

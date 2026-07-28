@@ -68,7 +68,6 @@ test("the launch carries what the vendor needs to read her directory", () => {
     "claude",
     4000,
     "",
-    "",
     "claude",
     "",
     "",

@@ -145,22 +145,16 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
 
 describe("scaffoldAgentsMd", () => {
   test("is a generic starter with placeholders, never invented commands", () => {
-    const md = scaffoldAgentsMd("SPEC.md");
-    // Hive no longer detects commands or stack, so those sections are prompts to
-    // fill in — never a concrete command guessed from a manifest.
+    const md = scaffoldAgentsMd();
+    // Hive does not detect commands, stack, or design docs, so those sections
+    // are prompts to fill in — never a concrete command guessed from a manifest.
     expect(md).not.toContain("`bun test`");
     expect(md).toContain("## Commands");
     expect(md).toContain("## Stack");
-    // The one repo fact a starter can name: the discovered primary design doc.
-    expect(md).toContain("The primary design doc is `SPEC.md`");
+    expect(md).not.toContain("## Design");
+    expect(md).not.toContain("SPEC.md");
     // A starting point, explicitly framed as such (every vendor's /init does).
     expect(md).toContain("Review and fill these in");
-  });
-
-  test("omits the design section when there is no primary doc", () => {
-    const md = scaffoldAgentsMd(null);
-    expect(md).not.toContain("## Design");
-    expect(md).toContain("## Commands");
   });
 });
 

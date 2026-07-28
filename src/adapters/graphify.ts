@@ -412,7 +412,7 @@ const GRAPH_BRIEF_PREAMBLE =
   "verify anything load-bearing against the source before building on it.";
 
 /** Keeps the digest a hint-sized fraction of the prompt: ~1500 tokens with
- * the preamble, alongside a scoped brief of similar size. */
+ * the preamble. */
 const GRAPH_BRIEF_MAX_CHARS = 6_000;
 const GRAPH_BRIEF_TIMEOUT_MS = 3_000;
 

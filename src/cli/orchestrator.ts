@@ -1,7 +1,6 @@
 import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import { buildMemoryIndex } from "../adapters/memory";
 import {
   grokQueenHome,
@@ -59,10 +58,7 @@ import type { CapabilityProvider } from "../schemas";
 import { normalizeNulText, ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
 import { IS_RELEASE_BUILD } from "../version";
 import { operatorHeaders } from "./credential";
-import {
-  ORCHESTRATOR_BRIEF,
-  orchestratorDocGuidance,
-} from "./orchestrator-brief";
+import { ORCHESTRATOR_BRIEF } from "./orchestrator-brief";
 import {
   daemonOrchestratorSessiondControl,
   type OrchestratorSessiondControl,
@@ -170,27 +166,12 @@ export async function prepareOrchestratorConfig(
   }
 }
 
-/** Discover the repo's briefable docs and format the orchestrator's
- * repo-specific doc guidance. A repo whose docs cannot be walked contributes "",
- * leaving the generic brief untouched rather than teaching hive's own doc names. */
-export async function buildOrchestratorDocGuidance(
-  cwd: string,
-): Promise<string> {
-  const docs = await discoverBriefableDocs(cwd).catch(() => null);
-  if (docs === null) return "";
-  return orchestratorDocGuidance({
-    primary: docs.primary,
-    loadBearing: docs.briefable,
-  });
-}
-
 export function buildOrchestratorInstructions(
   memoryIndex = "",
-  docGuidance = "",
   recoveryBrief = "",
 ): string {
   return normalizeNulText(
-    [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
+    [ORCHESTRATOR_BRIEF, recoveryBrief, memoryIndex]
       .filter((part) => part !== "")
       .join("\n\n"),
   );
@@ -200,7 +181,6 @@ export function buildOrchestratorCommand(
   tool: OrchestratorTool,
   port: number,
   memoryIndex = "",
-  docGuidance = "",
   executable?: string,
   codexTokenFile = "",
   recoveryBrief = "",
@@ -211,11 +191,7 @@ export function buildOrchestratorCommand(
    * isolated directory at all. */
   queenSkillArgs: readonly string[] = [],
 ): string[] {
-  const _brief = buildOrchestratorInstructions(
-    memoryIndex,
-    docGuidance,
-    recoveryBrief,
-  );
+  const _brief = buildOrchestratorInstructions(memoryIndex, recoveryBrief);
   switch (tool) {
     case "claude": {
       const configRoot = orchestratorConfigRoot();
@@ -499,13 +475,9 @@ export async function launchOrchestrator(
       `Hive gave the ${tool} queen no skill directory of her own: ${queenSkills.degraded}`,
     );
   }
-  const [memoryIndex, docGuidance] = await Promise.all([
-    buildMemoryIndex(cwd).catch(() => ""),
-    buildOrchestratorDocGuidance(cwd).catch(() => ""),
-  ]);
+  const memoryIndex = await buildMemoryIndex(cwd).catch(() => "");
   const orchestratorBrief = buildOrchestratorInstructions(
     memoryIndex,
-    docGuidance,
     recoveryBrief,
   );
   await writeLaunchPrompt(orchestratorSessionKey(), orchestratorBrief);
@@ -519,7 +491,6 @@ export async function launchOrchestrator(
     tool,
     port,
     memoryIndex,
-    docGuidance,
     providerExecutable,
     codexTokenFile,
     recoveryBrief,

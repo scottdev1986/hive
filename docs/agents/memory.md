@@ -107,7 +107,6 @@ Carried forward verbatim, because a spec that cites a marketing figure as eviden
 
 ## See Also
 
-- [Agent briefing](briefing.md) — scoped doc briefing, and how it discovers a repo's docs rather than assuming their names
 - [Context degradation and agent recycling](context-and-recycling.md) — why a small injected surface is an accuracy budget, and the constraint-pinning result
 - [Rejected approaches](../routing/rejected-approaches.md) — measured token costs of what enters a spawn prompt
 - [Database resilience](../daemon/database-resilience.md) — the sibling invariant: absence is a finding, not a zero

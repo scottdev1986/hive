@@ -174,9 +174,8 @@ The sensing layer has already been fixed the right way: `src/daemon/tool-telemet
 
 ## See Also
 
-- [Agent briefing](briefing.md) — the scoped brief that a respawn re-pays, and what it costs
 - [Agent memory](memory.md) — the durable tier a recycled agent does not lose
-- [Rejected approaches](../routing/rejected-approaches.md) — the measured token facts behind the brief
+- [Rejected approaches](../routing/rejected-approaches.md) — measured token costs of what enters a spawn prompt
 - [Launch mechanics](../providers/launch-mechanics.md) — why per-worktree cache scope is unavoidable
 - [Database resilience](../daemon/database-resilience.md) — the sibling "absence is a finding" invariant
 - [SPEC.md decision 7](../../SPEC.md) — what happens when a context fills up
