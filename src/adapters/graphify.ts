@@ -1,12 +1,13 @@
 /**
  * Graphify: Hive's repo-local code knowledge graph.
- * Design: docs/graphify/integration.md — the hard rules live
- * there and are enforced here:
  *
- *   - Installed as a Hive-built frozen bundle (docs/graphify/bundling.md):
- *     fetched from Hive's signed runtime channel and unpacked only after its
- *     size and SHA-256 match the signed manifest. No uv, Python, or PyPI on a
- *     user's machine.
+ * Four rules hold this module together, and every one of them exists to keep
+ * a third-party tool from reaching the network, the user's global config, or
+ * their git history on Hive's behalf:
+ *
+ *   - Installed as a Hive-built frozen bundle: fetched from Hive's signed
+ *     runtime channel and unpacked only after its size and SHA-256 match the
+ *     signed manifest. No uv, Python, or PyPI on a user's machine.
  *   - Every graphify invocation runs keyless from a scrubbed allowlist
  *     environment with `--code-only`, so the LLM-enrichment paths fail
  *     closed instead of sending repo content anywhere.
@@ -183,6 +184,17 @@ async function probeBundle(
   return { ok: true, detail: `Graphify runtime in ${directory}` };
 }
 
+/**
+ * Point `current` at a bundle, atomically.
+ *
+ * `symlink` refuses to replace an existing name, so the switch is made by
+ * creating the link under a private name and renaming it over `current` —
+ * rename being the only swap the filesystem performs in one step. An agent
+ * resolving `current` during an upgrade therefore sees the old bundle or the
+ * new one, never a missing link, which is what unlink-then-symlink would give
+ * it. The private name carries this process's pid so two Hives upgrading at
+ * once do not stage over each other.
+ */
 async function activateBundle(tools: string, directory: string): Promise<void> {
   const temporary = join(tools, `.current-${process.pid}`);
   await rm(temporary, { force: true });

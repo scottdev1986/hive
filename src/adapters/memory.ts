@@ -1,3 +1,29 @@
+// Hive's durable memory on disk: what agents have learned about a repository,
+// kept as plain Markdown rather than rows in the database.
+//
+// The database is Hive's runtime state and is expected to be thrown away and
+// rebuilt. Memory is not — it has to survive that, be readable by a human who
+// has never run Hive, and be diffable in the repository it describes. Hence
+// files with frontmatter, and hence every index in here being derived: a lost
+// index is rebuilt from the articles, and an article is never rebuilt from an
+// index.
+//
+// Two scopes, chosen by the writer: `repo` under the checkout's own `.hive`,
+// travelling with the project; `global` under `~/.hive`, for what holds across
+// every repository on this machine.
+//
+// Two layers within a scope, and the distinction is the heart of the design:
+//
+//   - `raw/` — observations, append-only. One file per thing an agent claimed,
+//     never edited, never deleted.
+//   - `wiki/` — articles, one per subject, rewritten as understanding changes.
+//     Each carries `raw:` pointers back to the observations behind it.
+//
+// So an article can be corrected without destroying the evidence that produced
+// the earlier version, and a reader can always get from a current claim back
+// to who observed what. Superseding an article deletes the article and keeps
+// its raw files, which is why `supersedes` is required to change one.
+
 import type { Dirent } from "node:fs";
 import {
   appendFile,
@@ -7,6 +33,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -29,6 +56,16 @@ const isMissingFileError = (error: unknown): boolean =>
   error !== null &&
   "code" in error &&
   error.code === "ENOENT";
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isMissingFileError(error)) return false;
+    throw error;
+  }
+}
 
 const MEMORY_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -67,12 +104,15 @@ function wikiRoot(root: string, scope: MemoryScope): string {
   return join(scopeRoot(root, scope), "wiki");
 }
 
-// Dedup layer 1 (HiveMemory plan D1) matches on this, not on the raw title:
-// case-folded, every non-alphanumeric run collapsed to one dash, trimmed.
-// Unlike slugify it never truncates, so titles differing only past the slug
-// cutoff still collide. Exported for the WP5 pitfall harvester, which honors
-// the same dedup contract by re-issuing a normalized-title duplicate as an
-// update to the existing id instead of colliding with it.
+// The form two article titles are compared in to decide they are the same
+// article: case-folded, every non-alphanumeric run collapsed to one dash,
+// trimmed. Unlike slugify it never truncates, so two titles that differ only
+// past the slug cutoff still collide — which is the point, since the slug is
+// what the id was built from and is exactly where a near-duplicate hides.
+//
+// Exported so that callers writing memory on an agent's behalf can normalize
+// before they write, and re-issue a duplicate as an update to the existing id
+// rather than being rejected by the check in writeMemoryFact.
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
@@ -112,6 +152,15 @@ function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * One article as it appears on disk: frontmatter, then the body verbatim.
+ *
+ * The format is hand-rolled rather than YAML because it has to round-trip
+ * through `parseMemoryFile` and be edited by hand without a library present.
+ * Values are flattened to one line each on the way in for the same reason —
+ * a wrapped value would parse as a field named whatever the next line starts
+ * with.
+ */
 export function serializeMemoryFile(
   fact: Pick<
     MemoryFact,
@@ -154,6 +203,17 @@ export function serializeMemoryFile(
   return lines.join("\n");
 }
 
+/**
+ * Read one article back. Throws on anything it cannot make sense of.
+ *
+ * A human edits these files, so malformed input is expected — and it is an
+ * error rather than a skipped file on purpose. A memory article that silently
+ * stops loading is worse than one that fails loudly: the agent simply does not
+ * know the thing any more, and nothing says so.
+ *
+ * The id comes from the filename, not the frontmatter, so renaming the file is
+ * how an article is renamed and the two can never disagree.
+ */
 export function parseMemoryFile(
   id: string,
   scope: MemoryScope,
@@ -269,6 +329,15 @@ export async function readMemoryFact(
   return findMemoryFact(root, scope, id);
 }
 
+/**
+ * A free filename for one new observation, named `<date>-<article-id>` with a
+ * counter appended if that is taken.
+ *
+ * Raw files are append-only, so the name has to be new every time rather than
+ * merely stable — several observations about the same article on the same day
+ * are the ordinary case, not a collision to resolve. The caller writes with
+ * `wx`, which is what actually decides the race; this only picks a candidate.
+ */
 async function nextRawPath(
   root: string,
   input: MemoryWriteInput,
@@ -280,16 +349,11 @@ async function nextRawPath(
   const base = `${date}-${id}`;
   let path = join(directory, `${base}.md`);
   let suffix = 2;
-  while (true) {
-    try {
-      await readFile(path);
-      path = join(directory, `${base}-${suffix}.md`);
-      suffix += 1;
-    } catch (error) {
-      if (isMissingFileError(error)) return path;
-      throw error;
-    }
+  while (await pathExists(path)) {
+    path = join(directory, `${base}-${suffix}.md`);
+    suffix += 1;
   }
+  return path;
 }
 
 function serializeRawObservation(
@@ -373,6 +437,23 @@ export type MemoryWriteFileResult = MemoryFact & {
   supersededIds: string[];
 };
 
+/**
+ * Record an observation and compile it into an article, in that order.
+ *
+ * The raw file is written first and with `wx`, so it cannot overwrite an
+ * existing observation and so a failure part-way through leaves the evidence
+ * on disk without a claim built on it — the recoverable direction. The article
+ * follows, then the index is rebuilt from what is now on disk.
+ *
+ * Most of the length here is refusals, and they share one shape: this function
+ * would rather reject a write than silently lose an article someone else
+ * wrote. Changing an existing article's body demands `supersedes` naming it,
+ * moving one between topics is refused outright, and a title that normalizes
+ * onto an existing article is rejected with the id to update instead. None of
+ * these are validation for its own sake — each is a way an agent, working from
+ * an incomplete picture, would otherwise quietly overwrite what another agent
+ * had already established.
+ */
 export async function writeMemoryFact(
   root: string,
   input: MemoryWriteInput,
@@ -406,9 +487,10 @@ export async function writeMemoryFact(
   }
   validateMemoryId(id);
 
-  // Dedup layer 1 (HiveMemory plan D1): a normalized-title match under a
-  // different id is a duplicate fact, not a new article. Checked against
-  // on-disk articles, never the FTS index, which may be stale. A same-id
+  // A normalized-title match under a different id is a duplicate fact, not a
+  // new article. Checked against on-disk articles, never the FTS index, which
+  // may be stale — a dedup check that reads a stale index admits the
+  // duplicates it exists to stop. A same-id
   // match falls through to the normal update path below, and an id this
   // write supersedes away stops colliding the moment the write lands.
   const normalizedTitle = normalizeTitle(input.title);
@@ -530,9 +612,11 @@ export async function deleteMemoryFact(
 }
 
 /**
- * Retention stale-demotion (HiveMemory HM-2 WP3; S3.7 DoD 7): a `verified`
- * article whose verification has aged out becomes `stale` — visible in the
- * index, still readable, never deleted. This is a status update on the
+ * Age out a verification: a `verified` article whose check has grown old
+ * becomes `stale` — visible in the index, still readable, never deleted.
+ * Knowledge that has not been re-confirmed is not knowledge that has been
+ * disproved, and deleting it would throw away the only record of what was
+ * once true here. This is a status update on the
  * existing article, not a new observation, so unlike writeMemoryFact it
  * appends no raw file; the article file is rewritten through the same
  * serializer and the scope index and log stay consistent. Returns the demoted
@@ -971,7 +1055,7 @@ async function readIndexRows(
   }
 }
 
-// Brief-relevance matching (HiveMemory HM-3) keeps its stopword list tiny on
+// Deciding which memory is relevant to a task keeps its stopword list tiny on
 // purpose: the length floor does most of the filtering, and a bigger list is
 // more ways to silently drop a token that would have matched.
 const BRIEF_STOPWORDS = new Set([

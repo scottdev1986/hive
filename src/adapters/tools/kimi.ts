@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { shellQuote } from "../../daemon/session-host/shell-session";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
+import { isRecord, readProjectConfig } from "./project-config";
 import { resolveProviderExecutable } from "./provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
@@ -37,6 +38,25 @@ export function kimiHome(
 }
 
 /**
+ * The operator's global kimi config, or null if there is none to read.
+ *
+ * This file is the only surface kimi exposes for either of the two questions
+ * below, and Hive never writes it — it is the user's. Absent, unreadable, and
+ * malformed are one answer here on purpose: each callsite has its own safe
+ * reading of "Hive could not tell", and none of them should be guessing at
+ * which kind of nothing it got.
+ */
+function readKimiConfig(home: string): Record<string, unknown> | null {
+  try {
+    return Bun.TOML.parse(
+      readFileSync(join(home, "config.toml"), "utf8"),
+    ) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The effective default an unflagged launch runs: `default_model` from the
  * config file. Kimi has no CLI surface that reports it (`kimi provider list`
  * prints the catalog, not the default), so the file is the surface.
@@ -44,17 +64,8 @@ export function kimiHome(
 export function probeKimiDefaultModel(
   home: string = kimiHome(),
 ): string | null {
-  try {
-    const parsed = Bun.TOML.parse(
-      readFileSync(join(home, "config.toml"), "utf8"),
-    ) as { default_model?: unknown };
-    return typeof parsed.default_model === "string" &&
-      parsed.default_model.length > 0
-      ? parsed.default_model
-      : null;
-  } catch {
-    return null;
-  }
+  const model = readKimiConfig(home)?.default_model;
+  return typeof model === "string" && model.length > 0 ? model : null;
 }
 
 /**
@@ -74,16 +85,7 @@ export function probeKimiDefaultModel(
 export function kimiReadOnlyContainmentGap(
   home: string = kimiHome(),
 ): string | null {
-  let mode: unknown;
-  try {
-    mode = (
-      Bun.TOML.parse(readFileSync(join(home, "config.toml"), "utf8")) as {
-        default_permission_mode?: unknown;
-      }
-    ).default_permission_mode;
-  } catch {
-    return null;
-  }
+  const mode = readKimiConfig(home)?.default_permission_mode;
   if (mode !== "yolo" && mode !== "auto") return null;
   return (
     `Kimi read-only is NOT enforced: this operator's config.toml pins ` +
@@ -173,9 +175,6 @@ export function wrapKimiSpawnWithEffort(
   return `KIMI_MODEL_THINKING_EFFORT=${shellQuote(effort)} ${command}`;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /**
  * Write the worktree's `.kimi-code/mcp.json` — Kimi's project-level MCP
  * surface, the analog of claude's `.mcp.json`. Unrelated servers are
@@ -190,26 +189,7 @@ export async function writeKimiAgentConfig(
   const directory = join(worktreePath, ".kimi-code");
   const path = join(directory, "mcp.json");
   await mkdir(directory, { recursive: true });
-  const existing: Record<string, unknown> = await readFile(path, "utf8").then(
-    (source) => {
-      try {
-        const parsed: unknown = JSON.parse(source);
-        return isRecord(parsed) ? parsed : {};
-      } catch {
-        return {};
-      }
-    },
-    (error: unknown) => {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )
-        return {};
-      throw error;
-    },
-  );
+  const existing = await readProjectConfig(path);
   const servers = isRecord(existing.mcpServers) ? existing.mcpServers : {};
   servers.hive = {
     url: `http://127.0.0.1:${options.daemonPort}/mcp`,

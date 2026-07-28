@@ -1,5 +1,6 @@
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { shellToken } from "../../daemon/session-host/shell-session";
 
 export const GRAPHIFY_HOOK_SCRIPT = "hive-graphify-hook.sh";
 
@@ -64,10 +65,7 @@ export async function writeGraphifyHook(
   ].join("\n");
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, script, { mode: 0o755 });
+  // writeFile's mode only applies at creation, and this hook is rewritten at
+  // every spawn — including over a copy an earlier Hive left non-executable.
   await chmod(path, 0o755);
-}
-
-function shellToken(value: string): string {
-  if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) return value;
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }

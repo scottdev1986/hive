@@ -141,6 +141,19 @@ const SELECTOR_WINDOW = 80;
 const escapeRegExp = (value: string): string =>
   value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Every section number in a stretch of text. One match can carry up to three
+ * — "sections 6 and 7" is a single match with two numbers in it — so all the
+ * capture groups are collected, not just the first. */
+const sectionNumbers = (text: string): number[] => {
+  const numbers: number[] = [];
+  for (const match of text.matchAll(SECTION_SELECTOR)) {
+    for (const group of [match[1], match[2], match[3]]) {
+      if (group !== undefined) numbers.push(Number(group));
+    }
+  }
+  return numbers;
+};
+
 /** Read the doc references out of a task description. A doc named with no
  * section still counts: the agent gets its outline, never its full text. */
 export function findTaskDocReferences(
@@ -160,13 +173,7 @@ export function findTaskDocReferences(
     const to = match.index + path.length + SELECTOR_WINDOW;
     const window = task.slice(from, to);
     const sections = references.get(path) ?? [];
-    for (const selector of window.matchAll(SECTION_SELECTOR)) {
-      for (const group of [selector[1], selector[2], selector[3]]) {
-        if (group !== undefined) {
-          sections.push(Number(group));
-        }
-      }
-    }
+    sections.push(...sectionNumbers(window));
     for (const quoted of window.matchAll(QUOTED_HEADING)) {
       const heading = quoted[1];
       if (heading !== undefined) sections.push(heading.trim());
@@ -183,15 +190,9 @@ export function findTaskDocReferences(
       "i",
     );
     if (!references.has(config.primaryDoc) && bareRule.test(task)) {
-      const sections: (number | string)[] = [];
-      for (const selector of task.matchAll(SECTION_SELECTOR)) {
-        for (const group of [selector[1], selector[2], selector[3]]) {
-          if (group !== undefined) {
-            sections.push(Number(group));
-          }
-        }
-      }
-      references.set(config.primaryDoc, sections);
+      // The whole task, not a window: the bare name matched somewhere, and
+      // there is no `.md` mention to measure a window around.
+      references.set(config.primaryDoc, sectionNumbers(task));
     }
   }
   return [...references].map(([path, sections]) => ({

@@ -1,3 +1,17 @@
+// Shared rules for finding the vendor conversation a crashed agent was in, so
+// it can be resumed rather than restarted. Every provider stores its own
+// transcript in its own shape — claude a per-project .jsonl, codex a rollout —
+// and each adapter reads its own; what they share is the judgement below about
+// which artifact is allowed to count as evidence.
+//
+// The whole module fails closed, because the cost of the two answers is not
+// symmetric. Resuming the wrong conversation hands an agent someone else's
+// context and the mistake is invisible from the outside; resuming nothing
+// costs a fresh start, which is what the caller would have done anyway. So an
+// artifact that cannot be read, parsed, or dated is an error rather than a
+// skipped candidate, and two plausible artifacts are an error rather than a
+// guess between them.
+
 export type RecoverySessionDiscoveryFailure =
   | "invalid-evidence"
   | "ambiguous-artifacts";
@@ -57,6 +71,18 @@ export function recoveryArtifactTimestamp(
   );
 }
 
+/**
+ * The one session belonging to this agent, or null if it never started one.
+ *
+ * The agent's own creation time is the filter: a worktree gets reused, so the
+ * same directory can hold transcripts from agents that came before this one,
+ * and they are indistinguishable by anything except when they began.
+ *
+ * More than one survivor throws rather than picking the newest. Two artifacts
+ * dated after this agent was created means the assumption behind the whole
+ * lookup — one agent, one conversation — did not hold here, and a tiebreak
+ * would be inventing an answer that the caller could not tell from a real one.
+ */
 export function selectRecoverySessionId(
   provider: string,
   agentCreatedAt: string,
@@ -69,17 +95,15 @@ export function selectRecoverySessionId(
       `Invalid agent creation timestamp for ${provider} recovery`,
     );
   }
-  const eligible = artifacts.filter(
-    (artifact) => artifact.createdAtMs >= threshold,
+  const [artifact, ...ambiguous] = artifacts.filter(
+    (candidate) => candidate.createdAtMs >= threshold,
   );
-  if (eligible.length === 0) return null;
-  if (eligible.length > 1) {
+  if (artifact === undefined) return null;
+  if (ambiguous.length > 0) {
     throw new RecoverySessionDiscoveryError(
       "ambiguous-artifacts",
-      `Ambiguous ${provider} recovery artifacts: ${eligible.map((artifact) => artifact.path).join(", ")}`,
+      `Ambiguous ${provider} recovery artifacts: ${[artifact, ...ambiguous].map((candidate) => candidate.path).join(", ")}`,
     );
   }
-  const [artifact] = eligible;
-  if (artifact === undefined) return null;
   return artifact.sessionId;
 }

@@ -1,3 +1,17 @@
+// Where Hive learns which Graphify build to install, and the only place that
+// decides whether an answer from the network is allowed to be believed.
+//
+// This is a supply-chain boundary: what this module returns becomes a binary
+// that runs on the user's machine. Everything here is therefore arranged so
+// that a compromised or merely wrong GitHub response fails the install rather
+// than redirecting it. The manifest is signed and verified before it is
+// parsed, the download URLs are re-derived from the signed contents rather
+// than trusted as written, and the schemas are strict so an unrecognised field
+// is a rejection instead of something silently ignored.
+//
+// graphify.ts is the consumer: it takes the artifact named here and unpacks it
+// only after the size and hash match.
+
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { verifyManifest } from "../release/manifest";
@@ -62,6 +76,9 @@ const ChannelSchema = z.strictObject({
   signature: z.string().min(1),
 });
 
+/** Graphify publishes for two Macs. Anything that is not arm64 is treated as
+ * x64 — Rosetta runs the x64 build, so an unexpected arch is better served a
+ * binary that works than told there is nothing for it. */
 function platformKey(platform = process.platform, arch = process.arch): string {
   return `${platform}-${arch === "arm64" ? "arm64" : "x64"}`;
 }
@@ -83,6 +100,16 @@ export function parseGraphifyManifest(bytes: Uint8Array): GraphifyManifest {
   );
 }
 
+/**
+ * A manifest read straight off disk, for developing against an unpublished
+ * Graphify build.
+ *
+ * This path skips signature verification entirely, which is why the version
+ * gate is not a courtesy check: in a shipped build an environment variable
+ * that turns off signature checking is an attack, not a feature. Refusing
+ * outside 0.0.0 keeps it from being one. `signed: false` then travels with the
+ * result so nothing downstream can mistake this for a channel install.
+ */
 async function localRelease(path: string): Promise<GraphifyRelease> {
   if (HIVE_VERSION !== "0.0.0" && HIVE_VERSION !== "0.0.0-dev") {
     throw new Error(
@@ -98,6 +125,16 @@ async function localRelease(path: string): Promise<GraphifyRelease> {
   };
 }
 
+/**
+ * The Graphify build this Hive should install, having proved it is the one
+ * Hive published.
+ *
+ * The release body carries the manifest as text alongside its signature, and
+ * the signature covers those exact bytes — so verification happens on the raw
+ * text and the parse happens afterwards, on bytes already proven. Parsing
+ * first and verifying a re-serialised copy would be checking a signature
+ * against something other than what arrived.
+ */
 export async function fetchGraphifyRelease(
   fetcher: typeof fetch = fetch,
   repo = HIVE_UPDATE_REPO,
@@ -128,12 +165,19 @@ export async function fetchGraphifyRelease(
     throw new Error(`Graphify manifest is not trusted: ${trust.reason}`);
   }
   const manifest = parseGraphifyManifest(manifestBytes);
+  // A signature proves who wrote the manifest, not that what they wrote points
+  // somewhere reasonable. Each URL is rebuilt from the release tag and the
+  // artifact name and required to match, so a download can only ever come from
+  // this repository's own release assets — never from a host a manifest names.
   for (const artifact of manifest.artifacts) {
     const expected = `https://github.com/${repo}/releases/download/${manifest.tag}/${artifact.name}`;
     if (artifact.url !== expected) {
       throw new Error(`Graphify artifact URL must be ${expected}`);
     }
   }
+  // Graphify's output shape is a contract with graphify.ts, and a newer channel
+  // may have changed it. Refuse rather than install a build this Hive would
+  // read wrong.
   if (manifest.consumerApi !== GRAPHIFY_CONSUMER_API) {
     throw new Error(
       `Graphify consumer API ${manifest.consumerApi} is incompatible with Hive API ${GRAPHIFY_CONSUMER_API}`,

@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import { shellToken } from "../../daemon/session-host/shell-session";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import {
   type GraphifyHookKind,
@@ -44,9 +45,9 @@ export interface CodexSpawnOptions {
   /** Read the bearer from the launch environment. Only the variable name may
    * enter argv, and the override is absent when no token exists. */
   withCapabilityToken?: boolean;
-  /** The per-repo graphify MCP server, when the daemon has one up and healthy
-   * (docs/graphify/integration.md). Attached through the same
-   * config-override channel as `hive`; absent means no entry at all. */
+  /** The per-repo graphify MCP server, when the daemon has one up and healthy.
+   * Attached through the same config-override channel as `hive`; absent means
+   * no entry at all. */
   graphifyUrl?: string;
   /** Ephemeral Hive-owned profile containing developer_instructions. */
   profile?: string;
@@ -83,13 +84,6 @@ export const CODEX_TUI_APPROVAL_KEYS = {
   approve: "y",
   deny: "\u001b",
 } as const;
-
-const shellToken = (value: string): string => {
-  if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) {
-    return value;
-  }
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-};
 
 const tomlString = (value: string): string => JSON.stringify(value);
 
@@ -516,5 +510,7 @@ export async function writeCodexAgentConfig(
     // goes away.
     rm(join(codexDirectory, "capability-token"), { force: true }),
   ]);
+  // writeFile's mode only applies at creation, and both files are rewritten at
+  // every spawn — over whatever an earlier Hive, or the user, left behind.
   await Promise.all([chmod(configPath, 0o600), chmod(notifyPath, 0o755)]);
 }

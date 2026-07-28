@@ -1,9 +1,10 @@
 import { readFileSync, realpathSync } from "node:fs";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./orchestrator-role";
+import { isRecord, readProjectConfig } from "./project-config";
 import { resolveProviderExecutable } from "./provider-executable";
 import { selectRecoverySessionId } from "./recovery-session";
 
@@ -110,9 +111,6 @@ export function buildOpencodeResumeCommand(
   return argv;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
 /**
  * Write the worktree's `opencode.json` — opencode's project config, the
  * analog of claude's `.mcp.json` plus settings. Unrelated keys, servers, and
@@ -128,26 +126,7 @@ export async function writeOpencodeAgentConfig(
 ): Promise<void> {
   const path = join(worktreePath, "opencode.json");
   await mkdir(worktreePath, { recursive: true });
-  const existing: Record<string, unknown> = await readFile(path, "utf8").then(
-    (source) => {
-      try {
-        const parsed: unknown = JSON.parse(source);
-        return isRecord(parsed) ? parsed : {};
-      } catch {
-        return {};
-      }
-    },
-    (error: unknown) => {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      )
-        return {};
-      throw error;
-    },
-  );
+  const existing = await readProjectConfig(path);
   const mcp = isRecord(existing.mcp) ? existing.mcp : {};
   mcp.hive = {
     type: "remote",

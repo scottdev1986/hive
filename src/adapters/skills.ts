@@ -18,7 +18,6 @@ import {
   type RoutingCategory,
   SKILL_CATEGORY_BUCKETS,
   SKILL_ROLES,
-  type SkillRole,
   skillBucketNames,
   unknownRole,
   unknownVendor,

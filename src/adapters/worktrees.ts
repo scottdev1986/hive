@@ -179,6 +179,21 @@ export async function branchOwner(
   return owners[0];
 }
 
+/**
+ * Refuse to touch a branch this Hive did not create.
+ *
+ * Several Hive instances can share one repository, and branch deletion is not
+ * recoverable, so the owner ref is checked before every mutation rather than
+ * trusted from the caller.
+ *
+ * The ownerless case is the interesting one. Branches predating owner refs
+ * carry no marking at all, and there is no way to tell them from another
+ * instance's. The default instance adopts them — it is the one that would have
+ * made them — and every other instance leaves them alone. A non-default
+ * instance therefore cannot clean up legacy branches, which is the intended
+ * trade: the cost is manual cleanup, and the alternative cost is one instance
+ * deleting another's unlanded work.
+ */
 async function assertBranchMutationAllowed(
   repoRoot: string,
   branch: string | null,
@@ -247,16 +262,11 @@ async function reconcilePreservedRefs(
       continue;
     }
     const branch = ref.slice("refs/hive-preserved/".length);
-    const countResult = await runGit(repoRoot, [
-      "rev-list",
-      "--count",
-      `${mainBranch}..${tip}`,
-    ]);
-    assertGitSuccess(countResult, "rev-list");
-    const unmergedCommits = Number(countResult.stdout.trim());
-    if (!Number.isSafeInteger(unmergedCommits) || unmergedCommits < 0) {
-      throw new Error("git rev-list failed: invalid preserved-ref count");
-    }
+    const unmergedCommits = await countCommitsNotOnMain(
+      repoRoot,
+      mainBranch,
+      tip,
+    );
     if (unmergedCommits > 0) {
       report.kept.push({ branch, tip, unmergedCommits });
       continue;
@@ -315,6 +325,17 @@ export function slugify(task: string): string {
   return slug || "task";
 }
 
+/**
+ * The canonical form of a path that may not exist yet: resolve the deepest
+ * ancestor that does, then re-attach the missing tail.
+ *
+ * `realpath` fails outright on a missing path, but the comparison this feeds —
+ * matching a git registration against a worktree location — has to work for a
+ * worktree whose directory is already gone. Resolving only the surviving part
+ * is enough, because it is the prefix that holds the symlinks: on macOS `/tmp`
+ * is a link to `/private/tmp`, so two spellings of the same worktree compare
+ * unequal unless one side is canonicalised.
+ */
 async function canonicalizePotentialPath(path: string): Promise<string> {
   try {
     return await realpath(path);
@@ -588,11 +609,12 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
  * whatever the user wrote. They were once described as permanently unsweepable
  * for that reason; they are not. Hive knows which links it created, because
  * each worktree records them at spawn.
+ *
+ * The union over every agent audience, not one audience's set: a worktree may
+ * have been provisioned for any category, and reconciliation asks "could Hive
+ * have put this here", which a category filter would answer wrongly for a
+ * worktree spawned under a different one.
  */
-// The union over every agent audience, not one audience's set: a worktree may
-// have been provisioned for any category, and reconciliation asks "could Hive
-// have put this here", which a category filter would answer wrongly for a
-// worktree spawned under a different one.
 const HIVE_WORKTREE_SKILLS: readonly string[] = CAPABILITY_PROVIDERS.flatMap(
   (provider) =>
     SHIPPED_SKILLS.filter(
@@ -651,7 +673,9 @@ const isHiveWorktreeWiring = async (
 
 /** Commits reachable from `revision` but not from the main branch. Throws
  * rather than returning 0 when git cannot answer, so a caller that deletes on
- * zero cannot be told "nothing here" by a failed measurement. */
+ * zero cannot be told "nothing here" by a failed measurement. That is why the
+ * output is pattern-matched and not merely passed through `Number`, which
+ * turns empty output into a confident 0. */
 async function countCommitsNotOnMain(
   repoRoot: string,
   mainBranch: string,
@@ -779,6 +803,25 @@ export async function listUnmergedHiveBranches(
   return branches;
 }
 
+/**
+ * Delete the agent worktrees nothing is using any more, and say what happened
+ * to every one that was looked at.
+ *
+ * The ladder below is a sequence of reasons to KEEP, and only a worktree that
+ * clears all of them is removed. That asymmetry is the design: a worktree kept
+ * by mistake costs disk and shows up in the next report, while one deleted by
+ * mistake takes an agent's uncommitted work with it.
+ *
+ * So the order matters, and each rung is cheaper or more certain than the one
+ * after it — a live agent is decided from the record alone, a foreign instance
+ * from a ref, and only then is git asked to measure what is actually in the
+ * worktree. `assessment-failed` keeps as well, because a measurement that
+ * threw is not a measurement of nothing.
+ *
+ * Every outcome is reported, kept ones included. A worktree that silently
+ * survived and one that was never examined look identical from the outside,
+ * and the caller has to be able to tell them apart.
+ */
 export async function reconcileOrphanedWorktrees(
   repoRoot: string,
   agents: readonly AgentRecord[],
@@ -913,13 +956,11 @@ export async function reconcileOrphanedWorktrees(
 export async function removeWorktree(
   repoRoot: string,
   worktreePath: string,
-  options: RemoveWorktreeOptions | boolean = {},
+  options: RemoveWorktreeOptions = {},
 ): Promise<void> {
-  const normalizedOptions: RemoveWorktreeOptions =
-    typeof options === "boolean" ? { deleteBranch: options } : options;
-  const shouldDeleteBranch = normalizedOptions.deleteBranch ?? false;
-  const discardTracked = normalizedOptions.discardTracked ?? false;
-  const force = discardTracked || (normalizedOptions.force ?? true);
+  const shouldDeleteBranch = options.deleteBranch ?? false;
+  const discardTracked = options.discardTracked ?? false;
+  const force = discardTracked || (options.force ?? true);
   const requestedPath = await canonicalizePotentialPath(worktreePath);
   const worktrees = await listWorktrees(repoRoot);
 
@@ -935,10 +976,7 @@ export async function removeWorktree(
       (candidate) => candidate.path === requestedPath,
     );
     await assertBranchMutationAllowed(repoRoot, staleWorktree?.branch ?? null);
-    await assertBranchMutationAllowed(
-      repoRoot,
-      normalizedOptions.branch ?? null,
-    );
+    await assertBranchMutationAllowed(repoRoot, options.branch ?? null);
     const removedRegistration = await removeMissingWorktreeRegistration(
       repoRoot,
       requestedPath,
@@ -961,7 +999,7 @@ export async function removeWorktree(
     if (shouldDeleteBranch) {
       await deleteBranch(
         repoRoot,
-        normalizedOptions.branch ?? staleWorktree?.branch ?? null,
+        options.branch ?? staleWorktree?.branch ?? null,
       );
     }
     return;
@@ -971,7 +1009,7 @@ export async function removeWorktree(
     (candidate) =>
       candidate.path === canonicalPath || candidate.path === requestedPath,
   );
-  const branch = normalizedOptions.branch ?? worktree?.branch ?? null;
+  const branch = options.branch ?? worktree?.branch ?? null;
   await assertBranchMutationAllowed(repoRoot, worktree?.branch ?? null);
   await assertBranchMutationAllowed(repoRoot, branch);
 

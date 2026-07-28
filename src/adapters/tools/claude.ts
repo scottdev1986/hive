@@ -13,6 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { isDeepStrictEqual } from "node:util";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import { shellToken } from "../../daemon/session-host/shell-session";
 import { withFileLock } from "../file-lock";
 import {
   GRAPHIFY_HOOK_SCRIPT,
@@ -51,9 +52,9 @@ export interface ClaudeSpawnOptions {
   /** Suppress interactive permission prompts. Read-only authority remains
    * enforced independently by denied tools and server capabilities. */
   dangerous?: boolean;
-  /** The per-repo graphify MCP server, when the daemon has one up and healthy
-   * (docs/graphify/integration.md). Absent means no entry at all:
-   * a dead URL in the config would cost every agent a connect-timeout. */
+  /** The per-repo graphify MCP server, when the daemon has one up and healthy.
+   * Absent means no entry at all: a dead URL in the config would cost every
+   * agent a connect-timeout. */
   graphifyUrl?: string;
   /** Absolute path selected by the daemon. Terminal hosts can outlive the
    * daemon and retain a different PATH, so production launches must not ask
@@ -141,13 +142,6 @@ export function resolveWorkingClaudeExecutable(
     }
   );
 }
-
-const shellToken = (value: string): string => {
-  if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) {
-    return value;
-  }
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-};
 
 const hook = (
   command: string,

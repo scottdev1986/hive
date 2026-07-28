@@ -1,3 +1,28 @@
+// Codex's app-server: the one provider that talks to Hive over a live
+// connection instead of firing hooks at it.
+//
+// That difference is what shapes this file. A hook is a process that runs and
+// exits, so it costs nothing to be absent. A connection has to be established,
+// owned, and — the part that takes the most code here — cleaned up when the
+// thing at the other end dies, because a codex app-server left running holds
+// a model session open and answers nobody.
+//
+// Three layers, bottom-up:
+//
+//   - `CodexAppServerClient` / `SocketTransport` — JSON-RPC over a newline
+//     framed unix socket. Nothing Hive-specific; the protocol only.
+//   - `CodexAppServerManager` — one session per agent, translating codex's
+//     notifications into Hive events and its approval requests into Hive's
+//     approval queue. This is the daemon's side of the connection.
+//   - `runCodexAppServerHost` and `reapOrphanCodexHosts` — the process that
+//     owns an agent's app-server, and the sweep that kills one whose agent is
+//     gone. The sweep exists because the daemon that spawned a host is not
+//     necessarily the daemon that outlives it.
+//
+// A socket and a pidfile are the only durable trace a host leaves, so they are
+// named from the agent id (see `codexAgentSocketPath`) and the reaper reads
+// the name back to decide what it is looking at.
+
 import { chmod, unlink } from "node:fs/promises";
 import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -44,6 +69,15 @@ export interface CodexAppServerHandlers {
   request(message: RpcMessage): Promise<unknown>;
 }
 
+/**
+ * JSON-RPC in both directions: Hive calls codex, and codex calls Hive back
+ * (approvals, most importantly) over the same socket.
+ *
+ * Every outbound request carries a timeout, and the timer is unref'd so a
+ * pending call cannot by itself keep the daemon's event loop alive. A dropped
+ * connection rejects everything still outstanding rather than leaving those
+ * promises to time out one by one — the answer is already known.
+ */
 export class CodexAppServerClient {
   private requestId = 0;
   private readonly pending = new Map<
@@ -99,6 +133,11 @@ export class CodexAppServerClient {
     this.transport.close();
   }
 
+  // Which of the three JSON-RPC shapes arrived is decided by the presence of
+  // `id` and `method` together, not by either alone: id without method is a
+  // reply to something Hive sent, method without id is a notification nobody
+  // answers, and both together is codex asking Hive a question it is waiting
+  // on. Reading only `method` would route a reply into the request handler.
   private receive(message: RpcMessage): void {
     if (message.id !== undefined && message.method === undefined) {
       const pending = this.pending.get(message.id);
@@ -268,6 +307,17 @@ interface PendingApproval {
 const UUID_AGENT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/**
+ * An agent id squeezed into something that can appear in a socket filename.
+ *
+ * Length is the whole problem: AF_UNIX allows 104 bytes for the entire path
+ * (see `codexAgentSocketPath`), and a 36-character UUID inside a macOS temp
+ * directory does not fit. Hex-decoding the UUID and re-encoding it base64url
+ * spends 22 characters instead of 36 and is reversible, which matters because
+ * `hostPidfileAgentId` has to read the id back out of the filename to know
+ * whose orphaned host it found. The `~` prefix marks which of the two
+ * encodings was used.
+ */
 function socketAgentId(id: string): string {
   if (UUID_AGENT_ID.test(id)) {
     return `~${Buffer.from(id.replaceAll("-", ""), "hex").toString("base64url")}`;
@@ -1027,6 +1077,21 @@ async function removeVerifiedHostFile(
   }
 }
 
+/**
+ * Kill the app-server hosts whose agents are gone, and return the pids killed.
+ *
+ * Every step here refuses to act on "unknown". An agent whose status cannot be
+ * determined is not reaped; a pid whose command line cannot be read is not
+ * signalled unless the process is provably dead; and a file whose removal
+ * cannot be confirmed throws instead of being assumed gone. The reason is that
+ * this runs unattended against pids that the operating system is free to reuse
+ * — every uncertain answer treated as "yes" is a chance to kill something that
+ * belongs to somebody else.
+ *
+ * That is also why identity is checked from argv rather than a name match: an
+ * agent's own prompt can contain the words "codex app-server", so a loose
+ * match on the command line is a way to end up killing an agent's own work.
+ */
 export async function reapOrphanCodexHosts(
   agentIdStatus: (id: string) => "live" | "dead" | "unknown",
   dependencies: ReapOrphanDependencies,

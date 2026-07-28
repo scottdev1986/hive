@@ -474,7 +474,7 @@ export interface HiveDaemonOptions {
   removeWorktree?: (
     repoRoot: string,
     worktreePath: string,
-    options?: RemoveWorktreeOptions | boolean,
+    options?: RemoveWorktreeOptions,
   ) => Promise<void>;
   assessStrandedWork?: (
     repoRoot: string,

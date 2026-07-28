@@ -13,6 +13,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { hiveInstanceSuffix } from "../../daemon/instance-identity";
+import { shellQuote } from "../../daemon/session-host/shell-session";
 import { withFileLock } from "../file-lock";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./capability-env";
 import { resolveProviderExecutable } from "./provider-executable";
@@ -218,8 +219,6 @@ export function wrapGrokSpawnWithCompatibilityEnv(command: string): string {
 }
 
 const tomlString = (value: string): string => JSON.stringify(value);
-const shellToken = (value: string): string =>
-  `'${value.replaceAll("'", `'\\''`)}'`;
 
 const hook = (command: string) => [
   { hooks: [{ type: "command" as const, command }] },
@@ -231,7 +230,7 @@ export function ownsGrokHook(
 ): boolean {
   return (
     source.includes(" event ") &&
-    source.includes(`--instance-id ${shellToken(instanceId)}`) &&
+    source.includes(`--instance-id ${shellQuote(instanceId)}`) &&
     source.includes("--provider-run-id") &&
     [
       "SessionStart",
@@ -439,20 +438,20 @@ export async function writeGrokAgentConfig(
       throw new Error("Hive command must contain an executable");
     }
     const instanceId = hiveInstanceSuffix();
-    const invocation = hiveCommand.map(shellToken).join(" ");
+    const invocation = hiveCommand.map(shellQuote).join(" ");
     const eventCommand = (kind: string): string =>
       [
         invocation,
         "event",
         kind,
         "--agent",
-        shellToken(name),
+        shellQuote(name),
         "--port",
         String(options.daemonPort),
         "--instance-id",
-        shellToken(instanceId),
+        shellQuote(instanceId),
         "--provider-run-id",
-        shellToken(providerRunId),
+        shellQuote(providerRunId),
       ].join(" ");
     const hooks = {
       hooks: {
