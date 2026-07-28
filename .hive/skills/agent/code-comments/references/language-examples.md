@@ -186,8 +186,8 @@ private var heightCache: [IndexPath: CGFloat] = [:]
 """
 user_sync.py - Bidirectional sync between local DB and external identity provider.
 
-Runs on a schedule (see celery_config.py) and can be triggered manually via
-the admin panel. Handles conflicts by preferring the most recently modified
+Runs nightly and can be triggered manually via the admin panel. Handles
+conflicts by preferring the most recently modified
 record, except for security-sensitive fields which always come from the IdP.
 
 External dependencies:

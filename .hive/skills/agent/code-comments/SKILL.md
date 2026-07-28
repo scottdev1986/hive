@@ -43,7 +43,8 @@ Every file should open with a brief explanation of its purpose and how it fits i
 // when the server comes back online after an outage.
 //
 // Used by: APIClient, BackgroundSyncManager
-// See also: NetworkError.swift for error classification
+// Retries transport failures and server errors. Authentication failures
+// and other client errors fail immediately because retrying cannot fix them.
 ```
 
 **Include:**
@@ -76,7 +77,7 @@ def sync_user_preferences(user_id: str, prefs: dict) -> SyncResult:
     Pushes local preference changes to the server and pulls remote changes.
 
     Conflict resolution: server wins for security settings, local wins
-    for UI preferences. See PREFERENCES.md for the full conflict matrix.
+    for UI preferences, and all other settings keep the newest change.
 
     Called automatically on app foreground. Can also be triggered manually
     from Settings > Sync Now.
@@ -162,6 +163,18 @@ Make them actionable and traceable.
 // in-flight requests. Reproduced in issue #892.
 ```
 
+## Reviewing Existing Code
+
+Fix or delete comments that restate the code, have drifted out of sync,
+contain commented-out code, or point at documents. Deleting a bad comment
+is a complete, good outcome; do not replace every deletion with a new comment.
+
+Add a file header or function documentation only when its absence actively
+misleads the reader, not as a blanket pass. Make the smallest change that
+satisfies these rules, and add comments only when there is a demonstrated need.
+
+Never change code behavior while reviewing comments.
+
 ## Language-Specific Patterns
 
 See [references/language-examples.md](references/language-examples.md) for detailed examples in:
@@ -179,6 +192,8 @@ See [references/language-examples.md](references/language-examples.md) for detai
 **Be specific.** "Retries 3 times with 1s backoff" not "Handles retries."
 
 **Skip the obvious.** If the code says `user.isAdmin`, don't comment "checks if user is admin."
+
+**Never point comments at documents.** Documents move and drift, so a pointer decays into a dead end. Put the explanation in the comment instead. A URL to an external bug report is fine: it provides evidence rather than outsourcing the explanation.
 
 **Date things that expire.** Workarounds, version-specific code, and temporary solutions should note when they can be removed.
 
