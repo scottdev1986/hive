@@ -211,15 +211,14 @@ describe("is the launched process alive in this pane", () => {
     ).toBe(true);
   });
 
-  test("the app-server host is a `hive` process, and is found as one", () => {
-    // A check hardcoded to "codex" would report every app-server agent dead.
+  test("a launched wrapper is found by its own command", () => {
     const host = parseProcessTable(
       [
-        " 2001  6158   2416 zsh -c (hive codex-app-server-host --port 4317)",
-        " 2002  2001  90000 hive codex-app-server-host --port 4317",
+        " 2001  6158   2416 zsh -c (hive-terminal-runner codex)",
+        " 2002  2001  90000 hive-terminal-runner codex",
       ].join("\n"),
     );
-    expect(treeRunsCommand(host, [2001], "hive")).toBe(true);
+    expect(treeRunsCommand(host, [2001], "hive-terminal-runner")).toBe(true);
     expect(treeRunsCommand(host, [2001], "codex")).toBe(false);
   });
 });

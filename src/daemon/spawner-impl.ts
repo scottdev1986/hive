@@ -5,7 +5,6 @@ import { provisionSkills } from "../adapters/skills";
 import type { PreparedAgentSpawn } from "../adapters/providers/provider-adapter";
 import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import { resolveWorkingClaudeExecutable } from "../adapters/providers/claude-cli";
-import type { CodexAppServerManager } from "../adapters/providers/codex-app-server";
 import { probeGrokCliVersion } from "../adapters/providers/grok-cli";
 import { listInheritedCodexMcpServers } from "../adapters/providers/shared/mcp-scope";
 import { modelVendor } from "../adapters/providers/shared/models";
@@ -812,7 +811,6 @@ export interface HiveSpawnerDependencies {
     close(agentId: string, closedAt: string): FlatAssignment | null;
   }>;
   config: {
-    codex?: Pick<HiveConfig["codex"], "driver">;
     /** Agent autonomy. Absent (older callers, tests) fails safe to
      * "sandboxed"; the parsed HiveConfig always supplies a value. */
     autonomy?: HiveConfig["autonomy"];
@@ -899,10 +897,6 @@ export interface HiveSpawnerDependencies {
   /** Test seam for reading the user's global Codex MCP server names. */
   listCodexMcpServers?: () => Promise<string[]>;
   quota?: QuotaService;
-  codexAppServer?: Pick<
-    CodexAppServerManager,
-    "isAvailable" | "buildHostCommand" | "startAgent" | "disconnect"
-  >;
   /** Test seam for activity from the rollout owned by this spawn. */
   readCodexActivity?: (
     worktreePath: string,
@@ -1984,8 +1978,8 @@ export class HiveSpawner implements Spawner {
    * Null means we could not tell — no pane, or a `ps` we could not read — and
    * readiness treats that as no evidence rather than as life. The command is the
    * one hive actually launched, never a provider name inferred from the record:
-   * the Codex app-server path runs `hive codex-app-server-host`, so looking for
-   * a process called "codex" would report every app-server agent as dead.
+   * providers may wrap their CLI with launch-time setup, so looking for only
+   * the provider executable can reject the command Hive actually launched.
    */
   private async launchedProcessAlive(
     record: AgentRecord,
@@ -3062,9 +3056,9 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     launchedCommand: string,
   ): Promise<string | null> {
-    // Baseline from the live row, not the caller's copy: the app-server
-    // fallback re-inserts the record with a fresh lastEventAt, and comparing
-    // against a stale snapshot would count that write as a hook event.
+    // Baseline from the live row, not the caller's copy: launch admission may
+    // update lastEventAt, and comparing against a stale snapshot would count
+    // that write as a hook event.
     const baselineEventAt =
       this.dependencies.db.getAgentById(record.id)?.lastEventAt ??
       record.lastEventAt;

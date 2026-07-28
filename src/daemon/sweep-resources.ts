@@ -41,7 +41,6 @@ export interface SweepResourcesDeps {
   killProcess: (pid: number) => void;
   reapDependencies: ReapDependencies;
   setMemoryPressure: (value: boolean) => void;
-  reapCodexOrphans: () => Promise<void>;
 }
 
 export async function sweepResources(deps: SweepResourcesDeps): Promise<void> {
@@ -195,7 +194,6 @@ export async function sweepResources(deps: SweepResourcesDeps): Promise<void> {
         )
         .catch(logAlertDeliveryFailure);
     }
-    await deps.reapCodexOrphans();
   } catch (error) {
     console.error(
       `Hive resource sweep failed: ${

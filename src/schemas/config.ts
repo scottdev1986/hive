@@ -54,11 +54,6 @@ export const MemoryRetentionConfigSchema = z.strictObject({
 });
 
 export const HiveConfigSchema = z.strictObject({
-  codex: z
-    .strictObject({
-      driver: z.enum(["tui", "app-server"]).default("tui"),
-    })
-    .default({ driver: "tui" }),
   // Agent autonomy. "sandboxed" (the default) runs writers inside
   // their vendor sandboxes with decision 4's approval queue (acceptEdits
   // allowlist, workspace-write + on-request): a fresh install is safe out of

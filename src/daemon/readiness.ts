@@ -151,12 +151,11 @@ export interface ProofOfLifeDeps<Target = string> {
    * wrapper shell and the `codex` process is right there as its child. So the
    * question is whether the binary hive launched into this pane is still among
    * that pane's descendants. It is the launched command, not a hardcoded
-   * provider name, because the Codex app-server path launches `hive
-   * codex-app-server-host` and not `codex` at all — a check that looked for
-   * "codex" would kill every app-server agent it was meant to protect.
+   * provider name, because provider commands can be wrapped with launch-time
+   * environment and instruction setup.
    */
   readonly launchedProcessAlive: () => Promise<boolean | null>;
-  /** The command hive launched (`codex`, `claude`, `hive`), for the record and
+  /** The command hive launched (`codex`, `claude`, etc.), for the record and
    * for the reason string an operator has to read. */
   readonly launchedCommand: string;
   readonly wait: (ms: number) => Promise<void>;

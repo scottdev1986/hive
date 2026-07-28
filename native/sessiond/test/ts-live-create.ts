@@ -302,7 +302,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             db,
             repoRoot,
             port: handshakePort,
-            config: { codex: { driver: "app-server" } },
+            config: {},
             readRoutingPolicy: codexRoutingPolicy,
             discoverCapabilities: async () => ({
               status: "ok",
@@ -383,17 +383,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
                   resolveAgentWorking();
                 }
               }
-            },
-            codexAppServer: {
-              isAvailable: async () => true,
-              buildHostCommand: () => [
-                "/bin/sh",
-                "-c",
-                `test "$HIVE_HOME" = ${JSON.stringify(home)} && ` +
-                  "while IFS= read -r line; do :; done",
-              ],
-              startAgent: async () => {},
-              disconnect: () => undefined,
             },
           });
 

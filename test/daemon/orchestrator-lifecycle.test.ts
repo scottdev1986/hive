@@ -205,7 +205,6 @@ describe("event-driven orchestrator lifecycle", () => {
       new RecordingSender(),
       undefined,
       undefined,
-      undefined,
       {},
       undefined,
       () => false,
@@ -308,7 +307,6 @@ describe("event-driven orchestrator lifecycle", () => {
       new RecordingSender(),
       undefined,
       undefined,
-      undefined,
       {},
       undefined,
       () => false,
@@ -388,13 +386,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "wake.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      root,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, root);
     try {
       const message = await delivery.send(
         "maya",
@@ -426,13 +418,7 @@ describe("event-driven orchestrator lifecycle", () => {
         return { delivered: true };
       },
     };
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      rootProtocol,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, rootProtocol);
     try {
       const message = await delivery.send(
         "maya",
@@ -461,13 +447,7 @@ describe("event-driven orchestrator lifecycle", () => {
           "stale codex root socket: isLive says yes, delivery cannot confirm",
       }),
     };
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      rootProtocol,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, rootProtocol);
     try {
       const message = await delivery.send(
         "maya",
@@ -488,13 +468,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
     root.live = false;
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      root,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, root);
     try {
       const queued = await delivery.send(
         "maya",
@@ -516,13 +490,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
     root.live = false;
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      root,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, root);
     try {
       const queued = await delivery.send("maya", ORCHESTRATOR_NAME, "Ready.");
       expect(db.getMessage(queued.id)?.deliveredAt).toEqual(null);
@@ -571,13 +539,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "ordering.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      root,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, root);
     try {
       const delivered = await Promise.all([
         delivery.send("maya", ORCHESTRATOR_NAME, "first"),
@@ -606,13 +568,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "bounded.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
-    const delivery = new MessageDelivery(
-      db,
-      sender,
-      undefined,
-      undefined,
-      root,
-    );
+    const delivery = new MessageDelivery(db, sender, undefined, root);
     const body = `${'"\\n'.repeat(20_000)}${"🚀".repeat(20_000)}`;
     try {
       const stored = await delivery.send("maya", ORCHESTRATOR_NAME, body);

@@ -135,10 +135,8 @@ describe("proof of life", () => {
   });
 
   test("a launched process that is not the provider is still the launched process", async () => {
-    // The Codex app-server path runs `hive codex-app-server-host`, not `codex`.
-    // Readiness looks for the binary hive launched, so an app-server agent
-    // proves life exactly like a TUI one; a check hardcoded to "codex" would
-    // have killed every one of them.
+    // Readiness follows the exact wrapped command Hive launched rather than
+    // assuming the provider binary must be the process-tree root.
     const proof = await watchForProofOfLife(
       "s",
       BASELINE,

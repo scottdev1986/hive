@@ -22,12 +22,12 @@ export const codexAgentAdapter: AgentAdapter = {
   id: "codex",
   communication: {
     provider: "codex",
-    eventSource: "native",
-    nativeDelivery: true,
+    eventSource: "hooks",
+    nativeDelivery: false,
     toolBoundaryEvents: true,
     turnBoundaryEvents: true,
     transcriptReader: true,
-    nativeCancel: true,
+    nativeCancel: false,
     conversationResume: true,
   },
   writeInstructionCopy: async (sessionId, prompt) => {

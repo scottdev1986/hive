@@ -149,12 +149,12 @@ describe("C3 context economy", () => {
       },
       codex: {
         provider: "codex",
-        eventSource: "native",
-        nativeDelivery: true,
+        eventSource: "hooks",
+        nativeDelivery: false,
         toolBoundaryEvents: true,
         turnBoundaryEvents: true,
         transcriptReader: true,
-        nativeCancel: true,
+        nativeCancel: false,
         conversationResume: true,
       },
       grok: {

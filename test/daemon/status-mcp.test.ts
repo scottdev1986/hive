@@ -145,7 +145,6 @@ const harness = (
     ...(generationSource === null
       ? {}
       : { statusIncarnationGenerationSource: generationSource }),
-    resourceRunners: { orphans: null },
   });
   return { daemon, db, captureCalls: () => captureCalls };
 };
@@ -190,7 +189,6 @@ describe("WP7 MCP status tools", () => {
         },
       },
       repoRoot: "/tmp/hive-status-restart-test",
-      resourceRunners: { orphans: null },
     });
     expect(statusStore.currentAssignment(failed.id)).toBeNull();
   });
@@ -580,7 +578,6 @@ describe("WP7 MCP status tools", () => {
         sessionId === rootLocator().sessionId && generation === 1
           ? rootLocator()
           : null,
-      resourceRunners: { orphans: null },
     });
     const current = rootLocator();
     db.bindTerminalHostSession({
@@ -661,7 +658,6 @@ describe("WP7 MCP status tools", () => {
         },
       },
       resolveSessionLocator: async () => crossLocator(),
-      resourceRunners: { orphans: null },
     });
     const unscoped = scoped.capabilities.mint("operator", "operator").token;
     const args = {

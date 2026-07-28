@@ -43,7 +43,6 @@ function daemonWith(spawner: ReceiverDependentSpawner): HiveDaemon {
     db: new HiveDatabase(":memory:"),
     spawner,
     repoRoot: "/tmp/hive-recovery-wiring",
-    resourceRunners: { orphans: null },
   });
 }
 
@@ -86,7 +85,6 @@ describe("the daemon's recovery wiring", () => {
         },
       },
       repoRoot: "/tmp/hive-recovery-wiring-bare",
-      resourceRunners: { orphans: null },
     });
     expect(wiredCreateRecoverySession(daemon)).toBeUndefined();
   });

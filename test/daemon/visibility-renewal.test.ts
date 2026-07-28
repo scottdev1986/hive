@@ -122,7 +122,6 @@ function harness(db: HiveDatabase) {
       },
     },
     repoRoot: "/tmp/hive-visibility-noop",
-    resourceRunners: { orphans: null },
     terminalHost: landedHost,
     workspaceVisibility: new WorkspaceVisibilityAuthority({
       expectedInstanceId: instanceId,

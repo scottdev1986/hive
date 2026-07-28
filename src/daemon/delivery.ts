@@ -129,8 +129,8 @@ export function queuedDeliveryNote(
   const name = recipient.name;
   if (message.priority === "urgent") {
     return (
-      `NOT stopped: ${name}'s turn has not been cancelled; urgent delivery requires ` +
-      "a live Codex native cancel surface and remains queued without one."
+      `NOT stopped: ${name}'s terminal turn has not been cancelled; Hive has ` +
+      "no provider-native cancel surface in terminal-first mode."
     );
   }
   switch (recipient.status) {
@@ -184,15 +184,6 @@ export function queuedDeliveryNote(
 
 export interface CriticalControlRuntime {
   apply(agent: AgentRecord, message: AgentMessage): Promise<void>;
-}
-
-export interface NativeAgentControl {
-  hasAgent(agentName: string): boolean;
-  deliver(
-    agent: AgentRecord,
-    text: string,
-    options?: { interrupt?: boolean },
-  ): Promise<void>;
 }
 
 /**
@@ -266,7 +257,6 @@ export class MessageDelivery {
     private readonly db: HiveDatabase,
     private readonly sessions: SessionSender,
     private readonly controls?: CriticalControlRuntime,
-    private readonly nativeControl?: NativeAgentControl,
     private readonly rootProtocol?: RootProtocolDeliverer,
     private readonly timing: {
       sleep?: (ms: number) => Promise<void>;
@@ -349,13 +339,9 @@ export class MessageDelivery {
     if (["pause", "stop", "cancel", "restrict-writes"].includes(intent)) {
       priority = "critical";
     }
-    if (
-      priority === "urgent" &&
-      (recipient === null ||
-        this.nativeControl?.hasAgent(recipient.name) !== true)
-    ) {
+    if (priority === "urgent") {
       throw new Error(
-        `Urgent delivery requires a live native cancel surface for ${to}; no turn was cancelled and no message was queued`,
+        `Urgent delivery is unavailable in terminal-first mode for ${to}; use steer for guidance or critical pause/stop`,
       );
     }
     const now = new Date();
@@ -365,11 +351,7 @@ export class MessageDelivery {
         : null;
     const deadlineMs =
       options.deadlineMs ??
-      (priority === "critical"
-        ? DEFAULT_CRITICAL_DEADLINE_MS
-        : priority === "urgent"
-          ? DEFAULT_URGENT_DEADLINE_MS
-          : null);
+      (priority === "critical" ? DEFAULT_CRITICAL_DEADLINE_MS : null);
     let currentRecipient = recipient;
     let message: AgentMessage;
     try {
@@ -435,33 +417,6 @@ export class MessageDelivery {
 
     if (recipient === null) {
       return message;
-    }
-
-    if (this.nativeControl?.hasAgent(recipient.name)) {
-      return this.withSessionLock(agentSessionLockKey(recipient), async () => {
-        const current = this.getStoredMessage(message.id);
-        if (current.deliveredAt !== null || this.composerActive(to))
-          return current;
-        const currentRecipient = this.requireLiveRecipient(to);
-        try {
-          return await this.deliverNative(current, currentRecipient);
-        } catch {
-          // A native connection can disappear after liveness was checked. An
-          // idle TUI remains a safe compatibility target for ordinary traffic;
-          // a busy headless session keeps the durable message queued for
-          // recovery.
-          //
-          // URGENT NEVER TAKES THE PASTE PATH. Its whole contract is cancelling
-          // the in-flight turn, the paste path cannot cancel anything, and
-          // returning its "injected" state here would report a cancellation
-          // that did not happen — the exact false promise the guard on entry to
-          // send() refuses when no native surface exists at all. So it stays
-          // queued: honestly undelivered, and visible to the caller as such.
-          if (priority === "urgent") return current;
-          if (currentRecipient.status !== "idle") return current;
-          return this.deliver(current, currentRecipient);
-        }
-      });
     }
 
     const openingTurn =
@@ -571,12 +526,7 @@ export class MessageDelivery {
       const canOpenTurn =
         openingRun !== null &&
         !this.db.hasMessageAttemptForProviderRun(openingRun.runId);
-      if (
-        !hasCritical &&
-        currentRecipient.status !== "idle" &&
-        !this.nativeControl?.hasAgent(currentRecipient.name) &&
-        !canOpenTurn
-      ) {
+      if (!hasCritical && currentRecipient.status !== "idle" && !canOpenTurn) {
         return [];
       }
 
@@ -597,13 +547,12 @@ export class MessageDelivery {
             if (result.deliveredAt !== null) delivered.push(result);
             continue;
           }
-          if (
-            latestRecipient.status !== "idle" &&
-            !this.nativeControl?.hasAgent(latestRecipient.name) &&
-            !canOpenTurn
-          ) {
+          if (latestRecipient.status !== "idle" && !canOpenTurn) {
             continue;
           }
+          // Rows created by older builds stay queued: terminal-first Hive has
+          // no evidence that an urgent turn cancellation occurred.
+          if (message.priority === "urgent") continue;
           if (this.isBatchableNormal(message)) {
             const normal: AgentMessage[] = [];
             for (
@@ -641,15 +590,11 @@ export class MessageDelivery {
               continue;
             }
           }
-          if (this.nativeControl?.hasAgent(latestRecipient.name)) {
-            delivered.push(await this.deliverNative(message, latestRecipient));
-          } else {
-            // deliver() can honestly decline (sessiond recipients, #67);
-            // only a message whose delivery actually landed counts.
-            const result = await this.deliver(message, latestRecipient);
-            if (result.deliveredAt !== null) delivered.push(result);
-            if (canOpenTurn) break;
-          }
+          // deliver() can honestly decline (sessiond recipients, #67);
+          // only a message whose delivery actually landed counts.
+          const result = await this.deliver(message, latestRecipient);
+          if (result.deliveredAt !== null) delivered.push(result);
+          if (canOpenTurn) break;
         } catch (error) {
           // A failed pane must not prevent later queued messages from
           // delivery, but a systemic terminal connection failure
@@ -665,56 +610,9 @@ export class MessageDelivery {
     });
   }
 
-  /**
-   * Deliver queued urgent messages to a busy agent at a tool boundary.
-   *
-   * SPEC decision 1: urgent traffic injects at the nearest safe lifecycle
-   * boundary rather than waiting for the turn to end — a deep agent's turn
-   * can run for an hour, which is exactly how two urgent controls blew their
-   * acknowledgement deadlines in the field. Between tool calls the TUI's
-   * composer queues a paste as a steer message the model sees at its next
-   * step, so this skips the idle gate that ordinary traffic honours. Normal
-   * messages still wait for the turn boundary; critical ones have their own
-   * revoke-and-restart machinery and are never pasted.
-   */
-  async flushUrgent(agentName: string): Promise<AgentMessage[]> {
-    if (this.composerActive(agentName)) return [];
-    const recipient = this.db.getAgentByName(agentName);
-    if (!this.isDeliverable(recipient)) return [];
-    const queuedUrgent = this.db
-      .getUndeliveredMessages(agentName)
-      .filter((message) => message.priority === "urgent");
-    if (queuedUrgent.length === 0) return [];
-    return this.withSessionLock(agentSessionLockKey(recipient), async () => {
-      const currentRecipient = this.db.getAgentByName(agentName);
-      if (
-        !this.isDeliverable(currentRecipient) ||
-        this.composerActive(agentName)
-      ) {
-        return [];
-      }
-      const delivered: AgentMessage[] = [];
-      for (const queued of queuedUrgent) {
-        try {
-          const message = this.db.getMessage(queued.id);
-          if (message === null || message.deliveredAt !== null) continue;
-          if (this.composerActive(agentName)) break;
-          // A future Grok cancel does not require a new transport: send
-          // Esc/Ctrl-C through sessiond's foreground-verified atomic write,
-          // then require updates.jsonl turn_completed.stop_reason=cancelled.
-          // The terminal write alone is never proof that the turn stopped.
-          if (!this.nativeControl?.hasAgent(currentRecipient.name)) break;
-          delivered.push(await this.deliverNative(message, currentRecipient));
-        } catch (error) {
-          console.error(
-            `Hive failed to inject urgent message ${queued.id} to ${agentName} at a tool boundary: ${
-              error instanceof Error ? error.message : "unknown error"
-            }`,
-          );
-        }
-      }
-      return delivered;
-    });
+  /** Legacy urgent rows remain queued; terminal-first has no cancel proof. */
+  async flushUrgent(_agentName: string): Promise<AgentMessage[]> {
+    return [];
   }
 
   /** Deliver non-destructive guidance at a vendor-reported tool boundary. */
@@ -741,14 +639,10 @@ export class MessageDelivery {
         if (message === null || message.deliveredAt !== null) continue;
         if (this.composerActive(agentName)) break;
         try {
-          if (this.nativeControl?.hasAgent(currentRecipient.name)) {
-            delivered.push(await this.deliverNative(message, currentRecipient));
-          } else {
-            // The TUI queues for the next model step, which is the mid-turn
-            // surface this priority promises.
-            const result = await this.deliver(message, currentRecipient);
-            if (result.deliveredAt !== null) delivered.push(result);
-          }
+          // The TUI queues for the next model step, which is the mid-turn
+          // surface this priority promises.
+          const result = await this.deliver(message, currentRecipient);
+          if (result.deliveredAt !== null) delivered.push(result);
         } catch (error) {
           console.error(
             `Hive failed to inject steer message ${message.id} to ${agentName} at a tool boundary: ${
@@ -794,9 +688,8 @@ export class MessageDelivery {
    *
    * The daemon already knows both halves — this agent is idle, this message is
    * queued — so it stops waiting to be told and does the waking itself, on the
-   * maintenance tick. Each vendor is woken by the path that actually starts a
-   * turn for it, which is the one flushQueued already picks: the app-server
-   * turn for a native Codex session or paste-and-submit into the TUI pane.
+   * maintenance tick. Each vendor is woken through its terminal session, the
+   * same paste-and-submit path flushQueued uses.
    */
   async wakeIdleRecipients(): Promise<AgentMessage[]> {
     const woken: AgentMessage[] = [];
@@ -1197,13 +1090,6 @@ export class MessageDelivery {
       return delivered;
     }
 
-    if (this.nativeControl?.hasAgent(recipient.name)) {
-      await this.nativeControl.deliver(recipient, text);
-      const delivered = messages.map((message) => this.markInjected(message));
-      this.advanceWakeDelta(recipient, delta);
-      return delivered;
-    }
-
     const boundaryBefore = this.turnBoundaryAt(recipient.name);
     await this.sessions.sendSessionMessage(recipient, text, {
       messageId: projection.projectionId,
@@ -1347,17 +1233,8 @@ export class MessageDelivery {
       return injected;
     }
     const boundaryBefore = this.turnBoundaryAt(message.to);
-    // This is what makes priority mean anything. Until now every level did the
-    // same thing here — paste and press Enter — so "urgent interrupts at the
-    // next safe boundary" was a label on a database row, not a behaviour, and a
-    // critical order revoking write authority could sit unread in a composer
-    // while the agent kept writing. Normal traffic still waits for a turn
-    // boundary: routine coordination is not worth discarding a model's
-    // reasoning, and the cost of an interrupt is that the in-flight turn is
-    // cancelled and never resumed.
     await this.sessions.sendSessionMessage(recipient, text, {
       messageId: message.id,
-      interrupt: message.priority === "urgent",
     });
 
     // An idle TUI that accepts a paste submits it, and the model starts a turn
@@ -1429,34 +1306,6 @@ export class MessageDelivery {
       if (Date.now() >= deadline) return false;
       await this.sleep(SUBMIT_POLL_MS);
     }
-  }
-
-  private async deliverNative(
-    message: AgentMessage,
-    agent: AgentRecord,
-  ): Promise<AgentMessage> {
-    if (this.composerActive(message.to))
-      return this.getStoredMessage(message.id);
-    const replacement = await this.composeTriggerReplacement(message);
-    const base =
-      replacement === null ? this.formatAgentMessage(message) : replacement;
-    const delta = await this.composeWakeDelta(agent);
-    const text = delta === null ? base : `${base}\n\n${delta.block}`;
-    const nativeControl = this.nativeControl;
-    if (nativeControl === undefined) {
-      throw new Error(`Native delivery is unavailable for ${agent.name}`);
-    }
-    await nativeControl.deliver(agent, text, {
-      interrupt: message.priority === "urgent",
-    });
-    const delivered = this.markInjected(message);
-    if (delivered === null) {
-      throw new Error(
-        `Message disappeared during native delivery: ${message.id}`,
-      );
-    }
-    this.advanceWakeDelta(agent, delta);
-    return delivered;
   }
 
   private formatAgentMessage(message: AgentMessage): string {

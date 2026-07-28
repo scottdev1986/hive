@@ -166,7 +166,6 @@ describe("idle-agent reap sweep", () => {
       rootProtocol: offlineRootProtocol,
       repoRoot,
       lifecycle: { idleReap: true, idleReapMinutes: 10 },
-      resourceRunners: { orphans: null },
     });
     db.insertAgent(
       agent({

@@ -92,19 +92,6 @@ describe("reapProcessTree", () => {
     expect(alive.has(999)).toBe(true);
   });
 
-  test("reaps a codex host that is a child of the daemon, not of the pane", async () => {
-    // The host hangs off the DAEMON, so no pane signal reaches it. It is only
-    // reaped because it is passed as a root in its own right.
-    const { dependencies } = world([
-      { pid: 100, ppid: 1, command: "-zsh" },
-      { pid: 500, ppid: 7, command: "codex app-server --listen unix://..." },
-    ]);
-
-    const outcome = await reapProcessTree([100, 500], dependencies, 1);
-
-    expect(outcome.killed.map((p) => p.pid).sort()).toEqual([100, 500]);
-  });
-
   test("a process that survives SIGKILL is reported, not rounded down to success", async () => {
     const { dependencies } = world([
       { pid: 100, ppid: 1, command: "-zsh" },

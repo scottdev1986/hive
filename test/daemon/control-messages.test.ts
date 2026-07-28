@@ -55,7 +55,7 @@ class RecordingControlRuntime implements CriticalControlRuntime {
 }
 
 describe("priority control messages", () => {
-  test("urgent fails closed without a live native cancel surface", async () => {
+  test("urgent fails closed in terminal-first mode", async () => {
     const db = new HiveDatabase(join(root, "urgent-native-only.db"));
     const sender = new RecordingSender(db);
     const delivery = new MessageDelivery(db, sender);
@@ -65,7 +65,7 @@ describe("priority control messages", () => {
         delivery.send("queen", "maya", "Stop this turn.", {
           priority: "urgent",
         }),
-      ).rejects.toThrow(/native cancel/i);
+      ).rejects.toThrow(/terminal-first/i);
       expect(sender.calls).toEqual([]);
       expect(db.listMessages()).toEqual([]);
 
@@ -99,7 +99,7 @@ describe("priority control messages", () => {
     }
   });
 
-  test("normal remains backward compatible while native urgent requires acknowledgement", async () => {
+  test("normal messages remain backward compatible in terminal-first mode", async () => {
     const db = new HiveDatabase(join(root, "normal-urgent.db"));
     const sender = new RecordingSender(db);
     const delivery = new MessageDelivery(db, sender);
@@ -116,29 +116,6 @@ describe("priority control messages", () => {
 
       db.upsertAgent({ ...agent("working"), lastEventAt: timestamp });
       const queuedNormal = await delivery.send("sam", "maya", "ordinary later");
-      const nativeCalls: Array<{ text: string; interrupt?: boolean }> = [];
-      const nativeDelivery = new MessageDelivery(db, sender, undefined, {
-        hasAgent: () => true,
-        deliver: async (_agent, text, options) => {
-          nativeCalls.push({ text, interrupt: options?.interrupt });
-        },
-      });
-      const urgent = await nativeDelivery.send(
-        "orchestrator",
-        "maya",
-        "review now",
-        {
-          priority: "urgent",
-          deadlineMs: 60_000,
-        },
-      );
-      expect(urgent).toMatchObject({ state: "injected", priority: "urgent" });
-      expect(nativeCalls).toEqual([
-        {
-          text: expect.stringContaining("URGENT HIVE CONTROL"),
-          interrupt: true,
-        },
-      ]);
       expect(sender.calls).toHaveLength(1);
 
       db.upsertAgent({ ...agent("idle"), lastEventAt: timestamp });
@@ -147,15 +124,6 @@ describe("priority control messages", () => {
         "📨 message from sam: ordinary later",
       );
       expect(db.getMessage(queuedNormal.id)?.state).toEqual("injected");
-      const acknowledged = delivery.acknowledge(
-        "maya",
-        urgent.id,
-        undefined,
-        true,
-      );
-      expect(acknowledged.state).toEqual("applied");
-      expect(acknowledged.acknowledgedAt).not.toEqual(null);
-      expect(acknowledged.appliedAt).not.toEqual(null);
     } finally {
       db.close();
     }
@@ -264,32 +232,24 @@ describe("priority control messages", () => {
 
     db = new HiveDatabase(path);
     const recoveredRuntime = new RecordingControlRuntime();
-    const recoveredDelivery = new MessageDelivery(
-      db,
-      sender,
-      recoveredRuntime,
-      {
-        hasAgent: () => true,
-        deliver: async () => undefined,
-      },
-    );
+    const recoveredDelivery = new MessageDelivery(db, sender, recoveredRuntime);
     try {
       expect(await recoveredDelivery.recoverCriticalControls()).toEqual(1);
       expect(db.getMessage(first.id)?.state).toEqual("injected");
       expect(recoveredRuntime.calls).toHaveLength(1);
 
-      const urgent = await recoveredDelivery.send(
+      const deadlineControl = await recoveredDelivery.send(
         "orchestrator",
         "maya",
-        "Need acknowledgement",
-        { priority: "urgent", deadlineMs: 1 },
+        "Pause now.",
+        { priority: "critical", intent: "pause", deadlineMs: 1 },
       );
       const future = new Date(
-        Date.parse(required(urgent.deadlineAt)) + 1_000,
+        Date.parse(required(deadlineControl.deadlineAt)) + 1_000,
       ).toISOString();
       expect(await recoveredDelivery.alertExpiredControls(future)).toEqual(1);
       expect(await recoveredDelivery.alertExpiredControls(future)).toEqual(0);
-      expect(db.getMessage(urgent.id)?.alertAt).not.toEqual(null);
+      expect(db.getMessage(deadlineControl.id)?.alertAt).not.toEqual(null);
       expect(sender.calls).toEqual([]);
       expect(
         db

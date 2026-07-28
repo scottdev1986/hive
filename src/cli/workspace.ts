@@ -99,8 +99,7 @@ export function workspaceOpenArguments(
     // Workspace starts the root from an explicit environment rather than the
     // app's full inherited environment. Preserve macOS's private per-user temp
     // directory across both LaunchServices and that terminal boundary; without
-    // it Node falls back to the /tmp symlink and Codex app-server refuses the
-    // socket parent as "not a directory".
+    // it runtime sockets can land under a different temp root from the daemon.
     ...(temporaryDirectory === undefined
       ? []
       : ["--env", `TMPDIR=${temporaryDirectory}`]),

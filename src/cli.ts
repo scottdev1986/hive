@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
 import { Command, CommanderError } from "commander";
-import { runCodexAppServerHost } from "./adapters/providers/codex-app-server";
 import {
   attachGrantCli,
   autonomyCli,
@@ -99,15 +98,6 @@ interface QuotaReconcileOptions {
   observedAt?: string;
   fiveHourResetAt?: string;
   weeklyResetAt?: string;
-}
-
-interface CodexAppServerHostCliOptions {
-  socket: string;
-  worktree: string;
-  port: string;
-  agent: string;
-  instanceId: string;
-  graphifyUrl?: string;
 }
 
 function parseNonnegative(value: string, label: string): number {
@@ -977,27 +967,6 @@ export function createProgram(): Command {
         );
       },
     );
-
-  program
-    .command("codex-app-server-host", { hidden: true })
-    .requiredOption("--socket <path>")
-    .requiredOption("--worktree <path>")
-    .requiredOption("--port <number>")
-    .requiredOption("--agent <name>")
-    .requiredOption("--instance-id <id>")
-    .option("--graphify-url <url>")
-    .action(async (options: CodexAppServerHostCliOptions) => {
-      await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-      process.exitCode = await runCodexAppServerHost({
-        socket: options.socket,
-        worktree: options.worktree,
-        daemonPort: parsePort(options.port),
-        agentName: options.agent,
-        ...(options.graphifyUrl === undefined
-          ? {}
-          : { graphifyUrl: options.graphifyUrl }),
-      });
-    });
 
   return program;
 }

@@ -120,7 +120,6 @@ async function makeHarness(): Promise<TriggerHarness> {
     sender,
     undefined,
     undefined,
-    undefined,
     {},
     undefined,
     () => false,
@@ -493,7 +492,6 @@ describe("authority and failure isolation", () => {
       const delivery = new MessageDelivery(
         harness.db,
         sender,
-        undefined,
         undefined,
         undefined,
         {},

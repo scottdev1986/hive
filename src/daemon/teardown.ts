@@ -1,11 +1,10 @@
 /**
  * Killing an agent means positively terminating its entire process tree.
  * A terminal host may stop the shell while detached children survive:
- * the Codex app-server host (a child of the DAEMON, never of the pane, so no
- * pane signal can ever reach it), MCP stdio children the vendor CLI spawned,
- * and anything an agent backgrounded, `nohup`ed or `setsid`ed away from its
- * shell. Those processes hold model sessions open and cost real money, and the
- * only trace they leave is a pid nobody is looking at.
+ * MCP stdio children the vendor CLI spawned and anything an agent backgrounded,
+ * `nohup`ed or `setsid`ed away from its shell. Those processes hold model
+ * sessions open and cost real money, and the only trace they leave is a pid
+ * nobody is looking at.
  *
  * So the kill walks the real tree from real roots and SIGKILLs it, and then it
  * LOOKS AGAIN. A signal delivered is an act; a process gone is a state, and
@@ -13,8 +12,6 @@
  * is still standing after the second look is reported as a survivor rather
  * than rounded down to success.
  */
-import { readFile } from "node:fs/promises";
-import { codexAgentHostPidfile } from "../adapters/providers/codex-app-server";
 import type { AgentRecord } from "../schemas";
 import {
   type CommandOutput,
@@ -63,7 +60,7 @@ export interface ReapOutcome {
 export interface VerifiedSessiondStopDependencies {
   terminalHost: Pick<HiveTerminalHostAdapter, "terminate">;
   reap?: ReapDependencies;
-  readHostPid?: (agent: AgentRecord) => Promise<number | null>;
+  readHostPid: (agent: AgentRecord) => Promise<number | null>;
   selfPid?: number;
 }
 
@@ -180,20 +177,6 @@ export async function reapCapturedTree(
   return { killed, survivors };
 }
 
-async function defaultHostPid(agent: AgentRecord): Promise<number | null> {
-  const path = codexAgentHostPidfile(agent);
-  try {
-    const value = (await readFile(path, "utf8")).trim();
-    if (!/^\d+$/.test(value)) {
-      throw new Error(`Invalid Codex host pidfile for ${agent.name}: ${path}`);
-    }
-    return Number(value);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 export async function stopSessiondAgentSession(
   agent: AgentRecord,
   dependencies: VerifiedSessiondStopDependencies,
@@ -208,7 +191,7 @@ export async function stopSessiondAgentSession(
   // place that decides what an unreachable broker means.
   let hostPid: number | null = null;
   try {
-    hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+    hostPid = await dependencies.readHostPid(agent);
   } catch (error) {
     if (!(error instanceof SessiondBrokerUnavailableError)) throw error;
     terminalError = error;

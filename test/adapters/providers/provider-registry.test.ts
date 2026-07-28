@@ -47,12 +47,12 @@ describe("agent adapter factory", () => {
       },
       codex: {
         provider: "codex",
-        eventSource: "native",
-        nativeDelivery: true,
+        eventSource: "hooks",
+        nativeDelivery: false,
         toolBoundaryEvents: true,
         turnBoundaryEvents: true,
         transcriptReader: true,
-        nativeCancel: true,
+        nativeCancel: false,
         conversationResume: true,
       },
       grok: {

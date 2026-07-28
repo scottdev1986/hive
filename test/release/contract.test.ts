@@ -57,8 +57,7 @@ describe("the version has exactly one source", () => {
   });
 
   test("no module hardcodes a semver where the version belongs", () => {
-    // The four copies of "0.1.0" that used to drift: MCP clientInfo, the
-    // Codex app-server handshake and the daemon.
+    // Protocol clientInfo and daemon versions must share the release source.
     const offenders = sourceFiles(join(repoRoot, "src"))
       .filter((file) => !file.endsWith(".test.ts"))
       .filter((file) =>

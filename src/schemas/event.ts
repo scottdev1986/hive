@@ -24,15 +24,9 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   HookEventBaseSchema.extend({ kind: z.literal("turn-failure") }),
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
-    // Populated by exactly one producer: the Codex app-server driver
-    // (adapters/providers/codex-app-server.ts), which measures it from
-    // `thread/tokenUsage/updated` and constructs this event directly, never
-    // through the `hive event` CLI. No hook command Hive writes for any
-    // vendor can supply this field — Claude's Stop payload and Codex's notify
-    // payload both carry no usage data — so the CLI never parses or forwards
-    // it (cli.ts, cli/event.ts). Claude's contextPct lands on the agent row
-    // via POST /statusline and the telemetry sweep's transcript measurement
-    // (tool-telemetry.ts); it is never carried on an event.
+    // Retained for persisted events from older producers. Current terminal
+    // hooks carry no usage data; live context measurement lands on the agent
+    // row through statusline and telemetry instead.
     contextPct: z.number().min(0).max(100).optional(),
     usageUnits: z.number().nonnegative().optional(),
     usageSource: z.enum(["provider", "gateway", "estimated"]).optional(),

@@ -125,7 +125,6 @@ function deliveryWith(
     sender,
     undefined,
     undefined,
-    undefined,
     {},
     undefined,
     () => false,

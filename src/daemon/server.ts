@@ -1,13 +1,6 @@
 import { createHash } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rm,
-} from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport as StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -22,13 +15,7 @@ import {
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
-import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/providers/codex-cli";
-import {
-  type CodexAppServerManager,
-  type ReapOrphanDependencies,
-  reapOrphanCodexHosts,
-} from "../adapters/providers/codex-app-server";
 import { readLiveGrokModel } from "../adapters/providers/grok-cli";
 import {
   assessStrandedWork,
@@ -295,64 +282,6 @@ const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const WORKSPACE_VISIBILITY_RENEWAL_MS = 5_000;
 export const WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS = 15_000;
 
-// Codex app-server hosts drop their pidfiles beside their sockets; the daemon
-// reaps children whose host died without running its own cleanup.
-//
-// This is `tmpdir()`, NOT "/tmp". codexAgentSocketPath binds into the per-user
-// temp dir (0700 on macOS, `/var/folders/.../T`) precisely so no other local
-// user can pre-bind the name — and this constant said "/tmp", so the reaper
-// listed a directory the sockets were never in. It therefore found no pidfiles
-// to skip in the first place, which is why the broken agent-id lookup below it
-// went unnoticed: two independent bugs, both of which had to be fixed before a
-// single orphan could ever be reaped.
-const CODEX_SOCKET_DIR = tmpdir();
-
-// An agent in one of these statuses still owns its branch, so unlanded commits
-// on it are work in progress rather than stranded work. Every other status —
-// done, dead, failed — has closed, and anything it left unmerged is stranded.
-// Enumerated on the live side deliberately: a status added later reads as
-// closed and gets reported, because a false alert is cheap and silence is what
-// loses work.
-function defaultOrphanDependencies(): ReapOrphanDependencies {
-  return {
-    listSocketDir: () => readdir(CODEX_SOCKET_DIR),
-    readPidFile: (name) => readFile(join(CODEX_SOCKET_DIR, name), "utf8"),
-    removeFile: (name) => rm(join(CODEX_SOCKET_DIR, name), { force: true }),
-    fileState: async (name) => {
-      try {
-        await lstat(join(CODEX_SOCKET_DIR, name));
-        return "present";
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "ENOENT"
-          ? "absent"
-          : "unknown";
-      }
-    },
-    processCommand: async (pid) => {
-      const child = Bun.spawn(["ps", "-o", "command=", "-p", String(pid)], {
-        stdout: "pipe",
-        stderr: "ignore",
-      });
-      const [output, exitCode] = await Promise.all([
-        new Response(child.stdout).text(),
-        child.exited,
-      ]);
-      return exitCode === 0 && output.trim() !== "" ? output.trim() : null;
-    },
-    processState: async (pid) => {
-      try {
-        process.kill(pid, 0);
-        return "live";
-      } catch (error) {
-        return (error as NodeJS.ErrnoException).code === "ESRCH"
-          ? "dead"
-          : "unknown";
-      }
-    },
-    kill: (pid) => process.kill(pid, "SIGKILL"),
-  };
-}
-
 /**
  * A capability escalation is a typed claim with evidence, not a vibe: the
  * reason says why the task exceeds the model, and `failedApproaches` must name at least one
@@ -512,8 +441,7 @@ export interface HiveDaemonOptions {
   tokenUsage?: TokenUsageStore;
   /** Complete live model inventory for the read-only orchestrator surface. */
   modelInventory?: () => Promise<ModelInventory>;
-  /** Root wake transport override for tests; defaults to the lazy Codex
-   * root app-server deliverer, inert when no codex root socket exists. */
+  /** Root wake transport override for tests; defaults to terminal delivery. */
   rootProtocol?: RootProtocolDeliverer;
   /** Daemon→idle-sessiond-agent input override for tests; defaults to the
    * neutral viewer-attach wire over the landed terminal host (#68/#16). */
@@ -535,17 +463,6 @@ export interface HiveDaemonOptions {
       toolSessionId: string | undefined,
     ) => Promise<string | null>;
   };
-  codexControl?: Pick<
-    CodexAppServerManager,
-    | "hasAgent"
-    | "isTurnActive"
-    | "deliver"
-    | "interrupt"
-    | "denyAgentApprovals"
-    | "disconnect"
-    | "resolveApproval"
-    | "close"
-  >;
   /** Memory watchdog limits; the sweep stays off when omitted so embedded
    * daemons (tests, tooling) never sample or kill real processes. */
   resources?: ResourceLimits;
@@ -580,7 +497,6 @@ export interface HiveDaemonOptions {
     ps?: CommandOutput;
     vmStat?: CommandOutput;
     kill?: (pid: number) => void;
-    orphans?: ReapOrphanDependencies | null;
     /** Test seam for the kill path's process-tree reap. */
     reap?: ReapDependencies;
   };
@@ -658,7 +574,6 @@ export class HiveDaemon {
   private readonly tokenUsage: TokenUsageStore;
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
   private routingPolicy: RoutingPolicyStore | null = null;
-  private readonly codexControl: HiveDaemonOptions["codexControl"];
   /** The same daemon→session input wire delivery uses, kept here because an
    * approval decision for a TUI-hosted vendor session is a keystroke, not a
    * message (#102). */
@@ -706,7 +621,6 @@ export class HiveDaemon {
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
   private readonly killProcess: (pid: number) => void;
-  private readonly orphanDependencies: ReapOrphanDependencies | null;
   private readonly reapDependencies: ReapDependencies;
   private readonly stopAgentProcesses: (
     agent: AgentRecord,
@@ -827,7 +741,6 @@ export class HiveDaemon {
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
-    this.codexControl = options.codexControl;
     this.sessiondInput =
       options.sessiondInput ??
       new SessiondViewerAgentInput(
@@ -887,30 +800,9 @@ export class HiveDaemon {
             return;
           }
           if (message.intent === "cancel") {
-            if (!getAgentAdapter(agent.tool).communication.nativeCancel) {
-              throw new Error(
-                `${agent.tool} exposes no provider-specific native cancel evidence`,
-              );
-            }
-            if (this.codexControl?.hasAgent(agent.name) !== true) {
-              throw new Error(
-                `${agent.name}'s ${agent.tool} executor has no live native cancel surface`,
-              );
-            }
-            await this.codexControl.interrupt(agent);
-            for (
-              let attempt = 0;
-              attempt < 50 && this.codexControl.isTurnActive(agent.name);
-              attempt += 1
-            ) {
-              await Bun.sleep(100);
-            }
-            if (this.codexControl.isTurnActive(agent.name)) {
-              throw new Error(
-                `${agent.name}'s ${agent.tool} turn did not report cancellation`,
-              );
-            }
-            return;
+            throw new Error(
+              `${agent.tool} terminal sessions have no provider-native turn cancel surface; use pause or stop`,
+            );
           }
           const sameControlAttempt =
             agent.status === "control-paused" &&
@@ -924,14 +816,6 @@ export class HiveDaemon {
             return;
           }
           if (!sameControlAttempt) {
-            if (
-              agent.tool === "codex" &&
-              this.codexControl?.hasAgent(agent.name)
-            ) {
-              await this.codexControl.denyAgentApprovals(agent.name);
-              await this.codexControl.interrupt(agent).catch(() => undefined);
-              this.codexControl.disconnect(agent.name);
-            }
             const stopped = await this.stopAgentProcesses(agent);
             if (stopped.survivors.length > 0) {
               throw new Error(
@@ -977,7 +861,6 @@ export class HiveDaemon {
           }
         },
       },
-      this.codexControl,
       // All visible roots use their instance-scoped terminal. Delivery holds
       // the composer lease so a report cannot overwrite human input.
       options.rootProtocol ??
@@ -1049,10 +932,6 @@ export class HiveDaemon {
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.killProcess =
       options.resourceRunners?.kill ?? ((pid) => process.kill(pid, "SIGKILL"));
-    this.orphanDependencies =
-      options.resourceRunners?.orphans === undefined
-        ? defaultOrphanDependencies()
-        : options.resourceRunners.orphans;
     this.reapDependencies =
       options.resourceRunners?.reap ?? defaultReapDependencies();
     this.stopAgentProcesses = (agent, beforeKill) =>
@@ -2099,9 +1978,8 @@ export class HiveDaemon {
   /**
    * The memory watchdog (SPEC.md "Resource safety"): hard-kill any process
    * under a Hive-owned terminal session that exceeds the per-process ceiling,
-   * pause spawning while the system is low on reclaimable memory, and reap
-   * codex app-server children orphaned by a dead host. Every action lands as
-   * a durable orchestrator message, so degradation is visible, not silent.
+   * pause spawning while the system is low on reclaimable memory. Every action
+   * lands as a durable orchestrator message, so degradation is visible.
    */
   async sweepResources(): Promise<void> {
     return sweepResourcesCycle({
@@ -2117,31 +1995,7 @@ export class HiveDaemon {
       setMemoryPressure: (value) => {
         this.memoryPressure = value;
       },
-      reapCodexOrphans: () => this.reapCodexOrphans(),
     });
-  }
-
-  private async reapCodexOrphans(): Promise<void> {
-    if (this.orphanDependencies === null) return;
-    const reaped = await reapOrphanCodexHosts((id) => {
-      const agent = this.db.getAgentById(id);
-      if (agent === null) return "unknown";
-      return agent.status === "dead" ||
-        agent.status === "done" ||
-        agent.status === "failed"
-        ? "dead"
-        : "live";
-    }, this.orphanDependencies);
-    for (const pid of reaped) {
-      await this.delivery
-        .send(
-          "hive-resources",
-          ORCHESTRATOR_NAME,
-          `Hive reaped an orphaned codex app-server (pid ${pid}) left behind by a dead agent's host process.`,
-          { idempotencyKey: `resource-reap:${pid}` },
-        )
-        .catch(logAlertDeliveryFailure);
-    }
   }
 
   async recoverQuotaReservations(): Promise<number> {
@@ -2695,7 +2549,6 @@ export class HiveDaemon {
     }
     this.bunServer?.stop(true);
     this.bunServer = null;
-    this.codexControl?.close();
     await this.graphify?.stop();
     if (this.manageLifecycle) {
       cleanupLifecycleFiles();
@@ -3189,9 +3042,9 @@ export class HiveDaemon {
    * Deliver an approval decision to a vendor session that is parked on its own
    * TUI prompt, and report whether it actually landed.
    *
-   * A TUI-hosted codex agent has no app-server request to resolve: the vendor
-   * is sitting on its approval popup, and the only thing that advances it is
-   * the keystroke that popup advertises. Without this an approved request left
+   * Codex is sitting on its terminal approval popup, and the only thing that
+   * advances it is the keystroke that popup advertises. Without this an
+   * approved request left
    * the agent exactly as blocked as a denied one — #102, where the approval
    * queue, steer, urgent, and the pane were dead ends simultaneously and the
    * agent had to be killed with committed work stranded.
@@ -3221,11 +3074,6 @@ export class HiveDaemon {
     // awaiting-approval. Pressing a key after it would type into a composer
     // the model is using.
     if (agent.status !== "awaiting-approval") return { outcome: "stale" };
-    // The app-server driver answers over its own protocol; sending a keystroke
-    // as well would answer the NEXT prompt too.
-    if (this.codexControl?.hasAgent(agent.name) === true) {
-      return { outcome: "not-applicable" };
-    }
     if (agent.sessionLocator?.hostKind !== "sessiond") {
       return { outcome: "not-applicable" };
     }
@@ -3287,9 +3135,7 @@ export class HiveDaemon {
       this.db.insertApproval({
         id,
         agentName,
-        // The description is the command Codex wants to run (`describeApproval`,
-        // src/adapters/providers/codex-app-server.ts) — the thing being decided.
-        // Never trimmed.
+        // The description is the command Codex wants to run. Never trimmed.
         kind: "tool-permission",
         description,
         status: "pending",
@@ -4943,7 +4789,6 @@ export class HiveDaemon {
       db: this.db,
       delivery: this.delivery,
       capabilities: this.capabilities,
-      codexControl: this.codexControl,
       resolvingApprovals: this.resolvingApprovals,
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),

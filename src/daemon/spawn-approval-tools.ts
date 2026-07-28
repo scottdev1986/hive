@@ -1,6 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { CodexAppServerManager } from "../adapters/providers/codex-app-server";
 import type { Action, Capability, CapabilityStore } from "./capabilities";
 import type { Approval, HiveDatabase } from "./db";
 import type { MessageDelivery } from "./delivery";
@@ -39,19 +38,6 @@ export interface SpawnApprovalToolDeps {
   db: HiveDatabase;
   delivery: MessageDelivery;
   capabilities: CapabilityStore;
-  codexControl:
-    | Pick<
-        CodexAppServerManager,
-        | "hasAgent"
-        | "isTurnActive"
-        | "deliver"
-        | "interrupt"
-        | "denyAgentApprovals"
-        | "disconnect"
-        | "resolveApproval"
-        | "close"
-      >
-    | undefined;
   resolvingApprovals: Set<string>;
   authorizeTool: (
     capability: Capability,
@@ -205,12 +191,7 @@ export function registerSpawnApprovalTools(
       deps.resolvingApprovals.add(stored.id);
       try {
         const approved = decision === "approve";
-        const appServerAnswered =
-          (await deps.codexControl?.resolveApproval(stored.id, approved)) ??
-          false;
-        const vendorAnswer = appServerAnswered
-          ? { outcome: "not-applicable" as const }
-          : await deps.answerVendorPrompt(stored, approved);
+        const vendorAnswer = await deps.answerVendorPrompt(stored, approved);
 
         if (vendorAnswer.outcome === "stale") {
           const stale =
@@ -279,11 +260,7 @@ export function registerSpawnApprovalTools(
             // An answered vendor prompt hands the turn straight back to the
             // model, so the agent is working, not idle: calling it idle invites
             // the wake loop to paste queued mail into a busy pane.
-            status:
-              vendorAnswer.outcome === "answered" ||
-              deps.codexControl?.isTurnActive(approval.agentName)
-                ? "working"
-                : "idle",
+            status: vendorAnswer.outcome === "answered" ? "working" : "idle",
           });
           await deps.delivery.flushQueued(approval.agentName);
         }

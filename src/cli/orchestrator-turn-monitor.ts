@@ -2,7 +2,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { findLatestCodexRollout } from "../adapters/providers/codex-cli";
-import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import {
   findLatestGrokSessionDirectory,
   findLatestGrokSessionId,
@@ -151,10 +150,6 @@ export async function withNativeOrchestratorTurnMonitor<T>(
   cwd: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  const communication = getAgentAdapter(tool).communication;
-  if (communication.eventSource !== "native" && tool !== "grok") {
-    return run();
-  }
   if (tool !== "codex" && tool !== "grok") return run();
   const nativeTool = tool;
   if (!(await publishOrchestratorSessionId(null))) {

@@ -122,7 +122,6 @@ function harness(
       return { commit: "c0ffee".padEnd(40, "0") };
     },
     readLandReadiness: async () => readiness,
-    resourceRunners: { orphans: null },
   });
   return { daemon, db, spawner, landed, landFailures };
 }

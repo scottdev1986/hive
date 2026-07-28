@@ -43,7 +43,6 @@ function harness(options: { withControl?: boolean } = {}): {
     },
     repoRoot: "/tmp/hive-autonomy-noop",
     ...(options.withControl === false ? {} : { autonomy: control }),
-    resourceRunners: { orphans: null },
   });
   return { daemon, control };
 }

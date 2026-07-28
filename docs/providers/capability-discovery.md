@@ -45,33 +45,13 @@ a downgrade during setup cannot slip through. Crash recovery and critical restar
 re-enter the same full gate and preserve the recorded provider rather than
 switching it. Claude-only and Grok-only decisions do not invoke `codex --version`.
 
-The locally generated non-`--experimental` 0.144.4 schema contains
-`developerInstructions` in both `ThreadStartParams` and `ThreadResumeParams`; this
-is empirical installed-binary evidence, not public-prose evidence. No thread or
-turn was created to obtain it. See the linked raw record for the command boundary,
-field excerpts, and hashes.
-
 ### Reader compatibility is not writer permission
 
 The `>= 0.144.4` floor above answers exactly one question: can this build be
 bootstrapped with hidden developer instructions instead of a visible user
-prompt. It says nothing about whether a Codex writer is safe, and it must never
-be read that way. A `>=` comparison is a claim about the past — a newer build
-can regress the mutation broker, drop a field the gate reads, or change an
-approval's scope, and the comparison would keep saying yes.
-
-So writer admission takes **no version input at all**: no `codex --version`, no
-build hash, no schema hash, no allowlist. It gates on the *driver* only (see
-[launch-mechanics](./launch-mechanics.md)), and writer safety comes structurally
-from the runtime boundary — a read-only sandbox plus a per-mutation identity
-gate. On a build whose app-server cannot supply fresh applied identity or
-one-shot approvals, the writer is not refused at launch; its mutations are
-simply all denied at runtime. A useless writer is an acceptable outcome. An
-ungated one is not.
-
-That split is why the two compatibility questions live in different places: the
-version floor is a *bootstrap* gate checked before launch, and writer safety is
-a *runtime* gate checked before every single mutation.
+prompt in the terminal TUI. It says nothing about writer safety. Hive has no
+Codex writer execution path: writer requests are refused before launch
+regardless of version.
 
 ## `isDefault` is not the effective default
 
@@ -146,7 +126,11 @@ Hive records this honestly today: a discovered model carries `entitled: known(tr
 
 **Re-sending `initialize` to a live Claude session returns `pending_permission_requests`** — an array of the exact `control_request`s the session is still blocked on. That is the vendor's own answer to approval-replay-on-reconnect: reconnect, re-read, re-answer, without duplicating an approval. (It resolves the *approval* leg only; no vendor offers turn-level idempotency keys, so a turn interrupted mid-flight remains an honest `UNKNOWN_OUTCOME`.) **Hive does not consume this field yet** — recorded here as available vendor surface, not as shipped behavior.
 
-**The Codex app-server has no protocol-version field.** Its `initialize` carries `clientInfo` and capability flags and nothing to negotiate against (`src/adapters/tools/codex-app-server.ts:137-142` sends exactly that), so a version assumption **cannot be checked on the wire** — versioning is by build-pinned generated schemas, and `--help` calls the whole surface experimental. The contrast is instructive: Grok's ACP `initialize` *does* send `protocolVersion: 1` (`src/daemon/quota-sources.ts:1091`), and Claude sends a `capabilities[]` array. Codex, the surface most often treated as the protocol benchmark here, is the one that cannot tell you what protocol it speaks.
+**The Codex app-server capability probe has no protocol-version field.** Its
+`initialize` carries client information and capability flags but nothing to
+negotiate against, so Hive treats the probe as build-specific discovery rather
+than as an agent runtime contract. Grok's ACP `initialize` does send
+`protocolVersion: 1`, and Claude sends a `capabilities[]` array.
 
 ## The three-way unknown
 

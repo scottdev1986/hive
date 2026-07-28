@@ -23,19 +23,19 @@ describe("upsertAutonomy", () => {
       "# my hive config",
       'routingManifest = "off"',
       "",
-      "[codex]",
-      'driver = "app-server"',
+      "[resources]",
+      "enabled = false",
       "",
     ].join("\n");
     const result = upsertAutonomy(text, "dangerous");
     expect(result).toContain("# my hive config");
     expect(result).toContain('routingManifest = "off"');
-    expect(result).toContain('driver = "app-server"');
+    expect(result).toContain("enabled = false");
     expect(result.startsWith('autonomy = "dangerous"\n')).toEqual(true);
   });
 
   test("an autonomy key inside a table is not the top-level key", () => {
-    const text = ["[codex]", 'autonomy = "whatever"', ""].join("\n");
+    const text = ["[resources]", 'autonomy = "whatever"', ""].join("\n");
     const result = upsertAutonomy(text, "sandboxed");
     // Inserted at the top, above the table, so it parses as top-level.
     const parsed = Bun.TOML.parse(result) as Record<string, unknown>;

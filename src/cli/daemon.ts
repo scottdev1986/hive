@@ -4,7 +4,6 @@ import { buildGraphBrief } from "../adapters/graphify";
 import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import { resolveWorkingClaudeExecutable } from "../adapters/providers/claude-cli";
 import { resolveWorkingCodexExecutable } from "../adapters/providers/codex-cli";
-import { CodexAppServerManager } from "../adapters/providers/codex-app-server";
 import { resolveWorkingGrokExecutable } from "../adapters/providers/grok-cli";
 import { resolveWorkingKimiExecutable } from "../adapters/providers/kimi-cli";
 import { resolveWorkingOpencodeExecutable } from "../adapters/providers/opencode-cli";
@@ -331,13 +330,6 @@ export async function runDaemon(): Promise<void> {
   });
   const port = readConfiguredPort();
   let daemon: HiveDaemon;
-  const codexAppServer = new CodexAppServerManager({
-    onEvent: (event) => daemon.processEvent(event),
-    queueApproval: ({ agentName, description }) =>
-      daemon.queueCodexApproval(agentName, description),
-    observeRateLimits: (model, response, observedAt) =>
-      quota.observeCodexRateLimits(model, response, observedAt),
-  });
   // The per-repo graphify MCP server (docs/graphify/integration.md).
   // Constructed unconditionally — start() reads the repo's opt-in state and is
   // a no-op for the repos that never enabled it.
@@ -408,7 +400,6 @@ export async function runDaemon(): Promise<void> {
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,
-    codexAppServer,
     sessiond: {
       get terminalHost() {
         return daemon.sessiondTerminalHost;
@@ -474,7 +465,6 @@ export async function runDaemon(): Promise<void> {
         discover: discoverCapabilities,
         readPolicy: () => routingPolicy.read(),
       }),
-    codexControl: codexAppServer,
     resources: config.resources,
     lifecycle: config.lifecycle,
     retention: config.memory.retention,

@@ -1,7 +1,7 @@
 # Launch mechanics
 
-Updated: 2026-07-16
-Sources: Hive source tree, 2026-07-16; [current OpenAI Codex configuration manual](https://learn.chatgpt.com/docs/config-file/config-basic); [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+Updated: 2026-07-28
+Sources: Hive source tree, 2026-07-28; [current OpenAI Codex configuration manual](https://learn.chatgpt.com/docs/config-file/config-basic); [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md) · [Codex 0.144.4 hidden-bootstrap verification](../../raw/codex/codex-0.144.4-hidden-bootstrap-verification.txt)
 
 ## Summary
@@ -62,22 +62,11 @@ visible-bootstrap history. Critical replacement reuses the developer artifact an
 sends only the new control message as user input; a missing or invalid critical
 artifact fails closed.
 
-Fresh app-server readers pass `developerInstructions` on `thread/start`, then send
-the assignment on the first `turn/start`. The same artifacts already exist before
-the handshake so a failed handshake can fall back to the identically partitioned
-TUI command. Crash recovery remains TUI-only: Hive's current app-server manager
-does not own a durable thread/resume path.
-
-The public Codex manual documents configuration layering, project trust, one-run
-`-c` overrides, and `developer_instructions` in agent-role configuration. It does
-not name the app-server field or establish `baseInstructions` replacement
-semantics. The exact `thread/start.developerInstructions` field is instead
-version-local empirical evidence: the installed 0.144.4 generator, run without
-its optional `--experimental` flag, includes `developerInstructions` in both
-`ThreadStartParams` and `ThreadResumeParams`, while initialize defaults
-`experimentalApi` to false. The generator command is itself help-labeled
-experimental; the distinction and hashes are preserved in the linked raw evidence.
-Hive does not use `baseInstructions`.
+Hive is terminal-first: every Codex worker is the interactive CLI in a sessiond
+terminal. Lifecycle events come from Codex hooks, messages are injected through
+the foreground-verified terminal input path, and approvals are answered with the
+keys advertised by the visible Codex prompt. Hive does not host a long-lived
+Codex app-server session.
 
 Hive requires Codex CLI `>= 0.144.4` for every Codex process. This is Hive's
 compatibility floor for its hidden-bootstrap contract, not an OpenAI support-floor
@@ -85,8 +74,6 @@ claim. Readers remain the only Codex workers Hive will launch; the version gate
 does not weaken writer containment or enable Codex-internal multi-agent work.
 
 Only Codex readers reach this adapter; writer argv and config construction are refused at the adapter boundary as well as by the spawner and recovery paths. **Model** is `-m/--model <MODEL>` at the CLI, or the config-override form `-c model="…"`; Hive passes the override form (`src/adapters/tools/codex.ts`). **Effort is config-only** — `-c model_reasoning_effort=<level>`. There is no `--effort` flag on Codex. That asymmetry with Claude is the single most common launch bug in this area.
-
-The app-server boundary is independently reader-only. `CodexAppServerManager.buildHostCommand` and `startAgent` reject a writer before starting the host process or provider thread. The exact-holder reader bearer is read from its `0600` file by the launch shell, inherited by the host and Codex child as `HIVE_CAPABILITY_TOKEN`, and referenced through `bearer_token_env_var`; the token value never appears in argv. Once a reader is running, command execution, file changes, permission expansion, `execCommand`, `applyPatch`, workspace-write, and elevation requests are denied in the request handler and never queued; manager resolution, daemon queueing, and `hive_approve` also refuse a positive attempted approval. The app-server pane is an event feed, not an escape hatch from the read-only sandbox (`src/adapters/tools/codex-app-server.ts`, `src/daemon/server.ts`).
 
 With no flag the CLI reads `model` from the layered config, which is why the effective default must be read from `config/read` rather than guessed (see [capability-discovery.md](capability-discovery.md)).
 
@@ -128,7 +115,7 @@ Claude and Grok writers launch sandboxed by default; `autonomy = "dangerous"` la
 
 **Read-only** is its own posture on both: an attended Claude reader gets `--permission-mode default`, while an autonomous reader takes bypass mode plus a deny list from its worktree settings (`src/adapters/tools/claude.ts:282-291`, `:563-587`). Codex gets `--sandbox read-only` — or `-c sandbox_mode="read-only"` on the resume path, because `codex resume` documents no `--sandbox` flag (`src/adapters/tools/codex.ts:117-124`).
 
-The Codex root is a separate read-only case. Its job is to call Hive's local, capability-scoped orchestration MCP, so Hive sets `mcp_servers.hive.default_tools_approval_mode="approve"` on both the app-server authority and its remote TUI (`src/cli/orchestrator.ts`). Without that override, Codex 0.144.4 displayed a blocking approval for `hive_spawn` during live acceptance. The override applies only to Hive's server; inherited servers are disabled for the root and provider credentials remain outside Hive.
+The Codex root is a separate read-only case. Its job is to call Hive's local, capability-scoped orchestration MCP, so Hive sets `mcp_servers.hive.default_tools_approval_mode="approve"` on its TUI (`src/cli/orchestrator.ts`). Without that override, Codex 0.144.4 displayed a blocking approval for `hive_spawn` during live acceptance. The override applies only to Hive's server; inherited servers are disabled for the root and provider credentials remain outside Hive.
 
 ## Launch identity is immutable, and that is a design commitment
 
@@ -145,49 +132,15 @@ The launch identity is an **intent**; what a Codex process is actually running i
 - **Codex 0.144.4 rollouts carry running identity but not process identity.** Every turn writes a top-level `turn_context` record whose `payload` carries `model`, `effort`, `turn_id`, and `cwd` (verified against real on-disk rollouts, not vendor docs). But `session_meta` carries no PID, launch nonce, process handle, or provider datum independently tied to Hive's process incarnation. Exact cwd, `source=cli`, agent nickname, and timestamps can all match a child-first session as well as the productive parent, so earliest-after-launch chronology is not proof. `findCodexRolloutForProcess` and `discoverCodexRecoverySessionId` therefore return null instead of guessing. `readCodexObservedIdentity` may read the newest `turn_context` only when an exact session id was established independently; a lifecycle hook never establishes it (`src/adapters/tools/codex.ts`, `src/daemon/tool-telemetry.ts`).
 - **The productive parent can drift without a human `/model`.** A provider-native `thread_settings_applied`/settings change can flip the parent to a different model+effort mid-session (the incident: launched `gpt-5.6-sol/xhigh`, every later turn ran `gpt-5.6-luna/low`). Drift is not only the human-switch case the statusline covers.
 - **Absence or ambiguous parent association is `unknown`, never the launch model.** A missing exact session binding or unparseable `turn_context` fails closed; the launch identity is never copied into the observation slot. Automatic and manual Codex recovery likewise refuse to resume a rollout selected only by same-cwd chronology (`src/daemon/identity-attestation.ts`, `src/daemon/recovery.ts`).
-- **Codex-internal subagents are distinct execution identities.** `codex features list` reports `multi_agent` as a stable feature on by default; a worker that spawns internal children gives them identities Hive never authorized, reserved quota for, or attested (the incident's `/root/review` and `/root/review_grok` rollouts, which run at their own cwd). Hive disables them with `-c features.multi_agent=false` on every TUI spawn/resume (`src/adapters/tools/codex.ts`) and on the app-server host argv (`src/adapters/tools/codex-app-server.ts`). There is no SubagentStart/SubagentStop backstop in Hive. There is no fallback from observed identity to the launch intention for authority.
+- **Codex-internal subagents are distinct execution identities.** `codex features list` reports `multi_agent` as a stable feature on by default; a worker that spawns internal children gives them identities Hive never authorized, reserved quota for, or attested (the incident's `/root/review` and `/root/review_grok` rollouts, which run at their own cwd). Hive disables them with `-c features.multi_agent=false` on every TUI spawn/resume (`src/adapters/providers/codex-cli.ts`). There is no SubagentStart/SubagentStop backstop in Hive. There is no fallback from observed identity to the launch intention for authority.
 - **Fail-closed is non-destructive for legacy processes.** A still-running legacy Codex writer observed to have drifted (or unknown at turn-start) is paused, not killed: capability is revoked first, then SIGSTOP freezes the exact captured tree. `hive_resume` reattests readers (and any residual paused process) and only SIGCONTs after exact pause-capture validation; Codex writers remain contained and cannot reacquire write authority. A suspended process cannot acknowledge, so the pause is measured by process/daemon state, never an ACK.
 
-### A Codex writer is admissible only on the app-server driver
+### Codex workers are readers
 
-Codex writers are no longer refused outright. Admission asks exactly one
-question — **which driver will run this session** — and never asks the version
-(see [capability-discovery](./capability-discovery.md); a `>=` floor is
-bootstrap compatibility, not writer permission).
-
-- **app-server → admissible.** Every mutation is brokered through Hive.
-- **TUI → refused, always.** PreToolUse hooks fail open (command failure,
-  timeout, or invalid JSON is `should_block=false`) and the writer owns its own
-  worktree `.codex/` hook scripts, so its guard is editable by the thing it
-  guards.
-- **Unknown driver → refused.** Including recovery and resume: 0.144.4 has no
-  durable app-server resume, so there is no broker to reattach to and the work
-  is preserved rather than relaunched.
-- **No fallback.** A writer admitted for the app-server whose handshake fails
-  **fails the spawn**; it never degrades into a TUI writer. That fallback still
-  exists for readers, who cannot mutate.
-
-What makes the admitted writer safe is not the admission, it is the runtime
-boundary (`docs/daemon/authorization.md`):
-
-- **The writer's sandbox stays read-only**, exactly like a reader's. That is the
-  structural containment: an unasked mutation is impossible, so the only route
-  to the filesystem is an approval request Hive answers.
-- **Applied identity is not on the wire.** Verified against real codex-cli
-  0.144.4: the `Turn` object (`turn/started`, `turn/completed`) and
-  `thread/read`'s `Thread` carry **no** model or effort. `thread/start` echoes
-  the applied `model`/`reasoningEffort` once, at creation. The only *fresh*,
-  per-turn applied identity is the rollout's `turn_context`, which the gate
-  reaches through `thread/read` → `thread.path` — the app-server naming its own
-  thread's rollout over the same connection, which is what keeps a dead
-  predecessor's rollout from aliasing in.
-- **An app-server `turn_context` has no `source` field** (its `session_meta.source`
-  is the editor client, not `cli`), so the TUI reader — which requires
-  `source === "cli"` — reads every app-server turn as unknown. The app-server
-  has its own reader keyed on an exact `turn_id`: a tighter binding than
-  `source`, since the provider itself put that turn id on the approval request.
-- **`turn_context` is written at turn start**, before any mid-turn approval, so
-  the identity for the turn being gated is already on disk when it is needed.
+Hive has one Codex execution path: the terminal TUI. Codex workers are therefore
+read-only and writer requests fail before a worktree or provider process is
+created. Hooks report lifecycle boundaries but are not treated as a mutation
+security boundary.
 
 ## What the version probes are for
 
@@ -199,7 +152,7 @@ These are not model facts; they are the two ways adapter code most reliably manu
 
 **1. `Number.parseInt("12oops", 10)` yields `12` — a perfectly plausible PID.** External numerics must be parsed as *complete decimal strings*, then range-checked, never leniently. Pane-PID parsing therefore matches `/^[1-9][0-9]*$/` before converting and then requires `Number.isSafeInteger(pid) && pid > 0` (`src/adapters/tmux.ts:261-276`). The same discipline is applied to unmerged-commit counts in the worktree adapter. A malformed number that survives parsing is indistinguishable from a real one, and it anchors a process-tree walk.
 
-**2. Long-lived provider sessions must be excluded from probe-style timeouts.** Short hard deadlines are correct for *probes* — 10s on every tmux invocation (`src/adapters/tmux.ts:27`), 5s on the Claude version probe (`src/adapters/tools/claude.ts:88-101`), 5s on the Codex app-server availability probe (`src/adapters/tools/codex-app-server.ts:382-397`), and 5s on the Grok version probe (`src/adapters/tools/grok.ts:74`). They are *wrong* for the Codex app-server host and the agent TUIs, which are intentionally long-running. Their lifecycle belongs to daemon supervision, not a 5s deadline; applying probe timeouts to them breaks their contract. The line between "a subprocess I am asking a question" and "a process I am hosting" is the line the timeout policy follows.
+**2. Long-lived provider sessions must be excluded from probe-style timeouts.** Short hard deadlines are correct for *probes* — including the throwaway Codex app-server process used for model, config, and rate-limit discovery — but wrong for agent TUIs, which are intentionally long-running. Their lifecycle belongs to daemon supervision. The line between "a subprocess I am asking a question" and "a process I am hosting" is the line the timeout policy follows.
 
 **3. Installed lifecycle hooks must call the exact running Hive binary.** An isolated native acceptance install deliberately puts no `hive` on `PATH`. A generated Codex hook that used `exec hive event …` consequently returned 127 on every `PostToolUse` and `Stop`, leaving an idle agent recorded as working and blocking queued follow-ups. Spawn and recovery now pass `hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath)` into `writeCodexAgentConfig`, exactly as Claude already did; source mode still receives Bun plus the entry script (`src/adapters/tools/codex.ts`, `src/daemon/spawner-impl.ts`, `src/daemon/recovery.ts`). These hooks are lifecycle wake signals only; they do not bind Codex session identity.
 

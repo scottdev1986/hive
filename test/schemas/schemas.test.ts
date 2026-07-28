@@ -26,7 +26,6 @@ describe("HiveConfigSchema", () => {
   test("parses a valid round-trip", () => {
     const parsed = HiveConfigSchema.parse({});
     expect(HiveConfigSchema.parse(roundTrip(parsed))).toEqual({
-      codex: { driver: "tui" },
       autonomy: "sandboxed",
       routingManifest: "auto",
       router: "derived",
@@ -59,14 +58,9 @@ describe("HiveConfigSchema", () => {
     expect(() => HiveConfigSchema.parse({ terminal: "auto" })).toThrow();
     expect(() => HiveConfigSchema.parse({ headless: true })).toThrow();
     expect(() => HiveConfigSchema.parse({ layout: "auto" })).toThrow();
-    expect(() =>
-      HiveConfigSchema.parse({ codex: { driver: "exec" } }),
-    ).toThrow();
     expect(() => HiveConfigSchema.parse({ autonomy: "yolo" })).toThrow();
     expect(() => HiveConfigSchema.parse({ terminl: "auto" })).toThrow();
-    expect(() =>
-      HiveConfigSchema.parse({ codex: { driver: "tui", typo: true } }),
-    ).toThrow();
+    expect(() => HiveConfigSchema.parse({ codex: {} })).toThrow();
     expect(() =>
       HiveConfigSchema.parse({ resources: { typo: true } }),
     ).toThrow();
