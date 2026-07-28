@@ -301,7 +301,7 @@
     .app-titlebar {
       display: grid;
       height: 59px;
-      grid-template-columns: 205px 1fr auto;
+      grid-template-columns: 1fr auto;
       align-items: center;
       gap: 14px;
       padding: 0 14px;
@@ -313,10 +313,6 @@
     .app-identity strong, .app-identity span { display: block; }
     .app-identity strong { font-size: 11px; }
     .app-identity span { color: var(--app-muted); font: 7px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
-    .title-context { min-width: 0; text-align: center; }
-    .title-context strong, .title-context span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .title-context strong { font-size: 11px; }
-    .title-context span { margin-top: 2px; color: var(--app-muted); font: 7px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
     .title-actions { display: flex; align-items: center; justify-content: end; gap: 7px; }
     .app-button, .icon-button, .pill-button {
       border: 1px solid #3b4e58;
@@ -575,7 +571,7 @@
     .event-line b { color: var(--app-text); font-weight: 620; }
 
     .inspector { min-width: 0; border-left: 1px solid var(--app-line); background: #0f191e; }
-    .inspector-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 6px; border-bottom: 1px solid var(--app-line); }
+    .inspector-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 6px; border-bottom: 1px solid var(--app-line); }
     .inspector-tab {
       padding: 6px 2px;
       border: 0;
@@ -747,8 +743,10 @@
     .model-line strong { font-size: 8px; }
     .model-line span { color: var(--app-muted); font-size: 6px; }
 
-    .queen-current { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; margin-bottom: 10px; padding: 14px; border: 1px solid #496a58; border-radius: 10px; background: #12231c; }
-    .queen-mark { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid #5b7c69; border-radius: 11px; color: var(--app-green); background: #183027; font: 800 15px var(--mono); }
+    .queen-current { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; margin-bottom: 10px; padding: 14px; border: 1px solid #496a58; border-radius: 10px; background: #12231c; }
+    .queen-mark { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid #5b7c69; border-radius: 11px; background: #183027; }
+    .queen-mark img { width: 25px; height: 25px; object-fit: contain; }
+    .queen-mark img.monochrome { filter: invert(1); opacity: .9; }
     .queen-current strong, .queen-current span { display: block; }
     .queen-current strong { font-size: 12px; }
     .queen-current span { color: var(--app-muted); font-size: 7px; }
@@ -765,17 +763,13 @@
     }
     .queen-option:hover { border-color: #506973; }
     .queen-option.selected { border-color: var(--app-accent); color: var(--app-text); background: #152a33; box-shadow: inset 0 0 0 1px var(--app-accent); }
-    .queen-option.unavailable { opacity: .52; cursor: not-allowed; }
     .queen-option strong, .queen-option span { display: block; }
-    .queen-option strong { margin-top: 14px; font-size: 10px; }
+    .queen-option strong { margin-top: 8px; font-size: 10px; }
     .queen-option span { margin-top: 4px; color: var(--app-muted); font-size: 6px; }
     .queen-option .radio { display: grid; width: 14px; height: 14px; place-items: center; border: 1px solid #607580; border-radius: 50%; }
     .queen-option.selected .radio::after { width: 7px; height: 7px; border-radius: 50%; background: var(--app-accent); content: ""; }
-    .succession-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
-    .succession-step { padding: 8px; border: 1px solid var(--app-line); border-radius: 6px; background: #111e24; }
-    .succession-step strong { display: block; color: var(--app-accent); font: 7px var(--mono); }
-    .succession-step span { display: block; margin-top: 3px; color: var(--app-muted); font-size: 6px; }
-
+    .queen-provider-logo { width: 30px; height: 30px; margin-top: 11px; object-fit: contain; }
+    .queen-provider-logo.monochrome { filter: invert(1); opacity: .9; }
     .token-row { display: grid; grid-template-columns: 95px 1fr 1fr 70px; gap: 9px; align-items: center; padding: 9px 0; border-top: 1px solid var(--app-line); font-size: 7px; }
     .token-row strong { font-size: 8px; }
     .token-bar { height: 7px; overflow: hidden; border-radius: 999px; background: #273840; }
@@ -942,9 +936,6 @@
     .mini-row:last-child { border-bottom: 0; }
     .mini-row.active { color: #eaf3f5; background: #192b34; }
     .mini-split { display: grid; grid-template-columns: .8fr 1.2fr; gap: 5px; }
-    .mini-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 8px; }
-    .mini-step { padding: 6px 3px; border: 1px solid #263a45; border-radius: 3px; color: #91a1b2; text-align: center; }
-    .mini-step.active { border-color: #efb161; color: #efb161; background: #211d16; }
     .mini-queen { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
     .mini-queen div { min-height: 84px; padding: 5px; border: 1px solid #263a45; border-radius: 4px; background: #101b22; }
     .mini-queen div.active { border-color: #73d8e8; background: #152a33; }
@@ -1002,7 +993,7 @@
           <p>The target remains the existing native AppKit Workspace with <code>HiveTerminalKit</code>. The UI does not introduce a browser runtime, a second daemon, a filesystem crawler, or a classic mode.</p>
         </article>
         <article class="banner-card gap">
-          <p><strong>The two largest new backend surfaces are explicit.</strong> HiveMemory currently has no management projection or UI, and Queen provider selection is currently a launch argument rather than a daemon-owned succession control. The mocks name those gaps instead of pretending buttons are contracts.</p>
+          <p><strong>The two largest new backend surfaces are explicit.</strong> HiveMemory currently has no management projection or UI, and changing the live Queen provider is currently a launch argument rather than a daemon-owned mutation. The mocks name those gaps instead of pretending buttons are contracts.</p>
           <p>Source basis: the original <a href="split-horizon.html">Split Horizon</a> plus the six completed or prerequisite maps linked in §01, as present in this repository on <code>2026-07-27</code>.</p>
         </article>
       </div>
@@ -1076,8 +1067,8 @@
               <tr>
                 <td><a href="agentic-hierarchy.html">Queen’s Hive</a></td>
                 <td><span class="status planned">PLANNED</span></td>
-                <td>Add topology, budgets, review state, contracts, artifacts, run pause/resume/abort, recovery, and Queen succession. Keep exact approval and promotion contracts contextual to Run commands rather than creating a dedicated Gates screen.</td>
-                <td>The Queen is a stable root identity with no agent row and no coding/landing right. Provider generation can change only through checkpointed succession.</td>
+                <td>Add topology, budgets, review state, contracts, artifacts, run pause/resume/abort, recovery, and daemon-owned live Queen swapping. The UI issues one provider-change command and observes its result; the internal succession protocol is not a user surface.</td>
+                <td>The Queen is a stable root identity with no agent row and no coding/landing right. Changing vendors preserves that identity, remains separate from worker routing, and exposes no generation, process, checkpoint, or handoff controls.</td>
               </tr>
               <tr>
                 <td><a href="split-horizon.html#contracts">Token attribution</a></td>
@@ -1106,7 +1097,7 @@
           </table>
         </div>
         <div class="callout warn"><strong>Status contract gap.</strong> The daemon’s <code>AgentRecord.status</code> now includes <code>held</code> for a quota-paused agent, but the current Workspace <code>FeedStatusMap</code> does not map it and therefore renders it as unknown. The cutover must add an explicit mapping and tests or deliberately retain unknown; this prototype never guesses that <code>held</code> means idle or needs user. The known hold reason and reset remain visible in Models &amp; Quota.</div>
-        <div class="callout warn"><strong>Sequencing rule.</strong> The UI cutover begins after Router R6 and Hierarchy H5 freeze their projections. Memory Manager and Queen control contracts may be implemented earlier, but no production screen may ship by scraping local files or translating a launch argument into fake runtime succession.</div>
+        <div class="callout warn"><strong>Sequencing rule.</strong> The UI cutover begins after Router R6 and Hierarchy H5 freeze their projections. Memory Manager and Queen control contracts may be implemented earlier, but no production screen may ship by scraping local files or translating a launch argument into fake active-provider state.</div>
       </div>
     </section>
 
@@ -1204,13 +1195,13 @@
                   <div class="menu-slot">
                     <button class="menu-trigger" data-menu-trigger>Queen</button>
                     <div class="menu-popover">
-                      <button class="menu-item" data-route-target="queen"><span class="menu-check">✓</span><span class="menu-label">Claude · current generation</span></button>
+                      <button class="menu-item" data-route-target="queen"><span class="menu-check">✓</span><span class="menu-label">Claude · Queen</span></button>
                       <button class="menu-item" data-select-queen="codex"><span class="menu-check"></span><span class="menu-label">Select Codex…</span></button>
                       <button class="menu-item" data-select-queen="grok"><span class="menu-check"></span><span class="menu-label">Select Grok…</span></button>
+                      <button class="menu-item" data-select-queen="kimi"><span class="menu-check"></span><span class="menu-label">Select Kimi Code…</span></button>
+                      <button class="menu-item" data-select-queen="opencode"><span class="menu-check"></span><span class="menu-label">Select OpenCode…</span></button>
                       <div class="menu-separator"></div>
                       <button class="menu-item" data-route-target="queen"><span class="menu-label">Queen Provider…</span><span class="menu-key">⇧⌘Q</span></button>
-                      <button class="menu-item" data-action="Checkpoint request created at the current semantic boundary."><span class="menu-label">Checkpoint Now…</span></button>
-                      <button class="menu-item" data-action="Succession history opened in the Queen provider screen."><span class="menu-label">Succession History</span></button>
                     </div>
                   </div>
                   <div class="menu-slot">
@@ -1231,10 +1222,9 @@
                   <img class="app-icon" src="../assets/hive-workspace-icon.png" alt="">
                   <div><strong>Hive</strong><span>Agentic Workspace</span></div>
                 </div>
-                <div class="title-context"><strong data-screen-title>Live Run · Run 047</strong><span>hive · review &amp; promotion · hierarchy r18 · run epoch 9</span></div>
                 <div class="title-actions">
                   <span class="status-pill">Sandboxed</span>
-                  <button class="app-button" data-route-target="queen">Queen · Claude</button>
+                  <button class="app-button" data-route-target="queen" data-queen-title>Queen · Claude</button>
                   <button class="app-button warn" data-toggle-attention>Attention 3</button>
                   <button class="icon-button" data-route-target="router" aria-label="Open settings">⚙</button>
                 </div>
@@ -1322,16 +1312,12 @@
                     <aside class="inspector">
                       <div class="inspector-tabs">
                         <button class="inspector-tab active" data-inspector-tab="task">Task</button>
-                        <button class="inspector-tab" data-inspector-tab="review">Review</button>
                         <button class="inspector-tab" data-inspector-tab="events">Events</button>
                         <button class="inspector-tab" data-inspector-tab="session">Session</button>
-                        <button class="inspector-tab" data-inspector-tab="artifacts">Files</button>
                       </div>
-                      <div class="inspector-pane active" data-inspector-pane="task"><span class="micro-label">TaskDetail r4</span><h3 data-selected-task>Cursor-safe attach and replay</h3><p>Acceptance is workflow state, never inferred from terminal output.</p><div class="check-row"><i class="check-box">✓</i><span>Stale locator fails explicitly</span></div><div class="check-row"><i class="check-box">✓</i><span>Snapshot carries lifecycle + ownership</span></div><div class="check-row"><i class="check-box"></i><span>Fault-inject cursor gap recovery</span></div><div class="check-row"><i class="check-box"></i><span>Return summary plus ArtifactRefs</span></div></div>
-                      <div class="inspector-pane" data-inspector-pane="review"><span class="micro-label">Review r9</span><h3>Exact candidate review</h3><div class="fact-row"><span>Author</span><strong>david · Codex</strong></div><div class="fact-row"><span>Reviewer</span><strong>sarah · Grok</strong></div><div class="fact-row"><span>Patch digest</span><strong>96 LOC · 2 files</strong></div><div class="fact-row"><span>Candidate</span><strong>7c31f2a · exact</strong></div><div class="fact-row"><span>Predicted SHA</span><strong>92ac0e1 · green</strong></div><div class="fact-row"><span>Verdict</span><strong style="color:var(--app-yellow)">pending</strong></div></div>
+                      <div class="inspector-pane active" data-inspector-pane="task"><span class="micro-label">TaskDetail r4</span><h3 data-selected-task>Cursor-safe attach and replay</h3><p>Acceptance is workflow state, never inferred from terminal output.</p><div class="check-row"><i class="check-box">✓</i><span>Stale locator fails explicitly</span></div><div class="check-row"><i class="check-box">✓</i><span>Snapshot carries lifecycle + ownership</span></div><div class="check-row"><i class="check-box"></i><span>Fault-inject cursor gap recovery</span></div><div class="check-row"><i class="check-box"></i><span>Return bounded completion summary</span></div></div>
                       <div class="inspector-pane" data-inspector-pane="events"><span class="micro-label">Typed history</span><h3>Events, not screen scraping</h3><div class="fact-row"><span>14:37</span><strong>turn-end</strong></div><div class="fact-row"><span>14:35</span><strong>resource.changed</strong></div><div class="fact-row"><span>14:28</span><strong>session.attached</strong></div><div class="fact-row"><span>14:02</span><strong>input.claimed</strong></div></div>
                       <div class="inspector-pane" data-inspector-pane="session"><span class="micro-label">Process and fused status reality</span><h3 data-session-heading>Codex · session generation 3</h3><div class="fact-row"><span>Agent feed</span><strong data-session-raw-status>idle</strong></div><div class="fact-row"><span>Activity</span><strong data-session-activity>idle · measured</strong></div><div class="fact-row"><span>Session / turn</span><strong data-session-state-turn>live · idle</strong></div><div class="fact-row"><span>Health</span><strong data-session-health>healthy · fresh</strong></div><div class="fact-row"><span>Attention</span><strong data-session-attention>none</strong></div><div class="fact-row"><span>Status source</span><strong data-session-source>provider app server · high confidence</strong></div><div class="fact-row"><span>Shell ancestry</span><strong>host → zsh → TUI</strong></div><div class="fact-row"><span>ProviderRun</span><strong data-session-provider>Codex · exact identity</strong></div><div class="fact-row"><span>Viewer</span><strong>1 selected attachment</strong></div><div class="fact-row"><span>Input</span><strong data-session-input>human · claimed</strong></div><div class="fact-row"><span>Unselected</span><strong>typed status only · no viewer</strong></div></div>
-                      <div class="inspector-pane" data-inspector-pane="artifacts"><span class="micro-label">Authorized refs only</span><h3>Task artifacts</h3><div class="fact-row"><span>Patch</span><strong>7c31f2a</strong></div><div class="fact-row"><span>Test report</span><strong>artifact:test:884</strong></div><div class="fact-row"><span>Manifest</span><strong>WorkManifest r8</strong></div><div class="callout warn" style="font-size:7px">No arbitrary filesystem explorer. Every open action consumes an ArtifactRef capability.</div></div>
                     </aside>
                   </section>
 
@@ -1464,20 +1450,17 @@
 
                   <section class="app-screen" data-screen="queen">
                     <div class="screen-pad">
-                      <div class="screen-head"><div><h2>Queen Provider</h2><p>The Queen is the durable root identity. This screen chooses the provider generation that carries that role; it does not add the Queen to worker routing and does not create an agent row.</p></div><button class="app-button" data-action="Succession history contains generation, provider, checkpoint, attestation, discrepancies, and exit reason.">Succession history</button></div>
-                      <div class="queen-current"><span class="queen-mark">Q</span><div><strong>Claude · current Queen generation 6</strong><span>root status working · provider PID verified · checkpoint 14:22 · no contradictions</span></div><span class="tag green">current</span></div>
-                      <div class="app-banner">Changing the default for the next run is configuration. Replacing the live Queen is a checkpointed succession and is unavailable until Hierarchy H4 supplies RunCheckpoint and QueenSuccession.</div>
+                      <div class="screen-head"><div><h2>Queen Provider</h2><p>Choose which vendor Hive uses for the live Queen. This setting is separate from worker routing.</p></div></div>
+                      <div class="queen-current"><span class="queen-mark"><img class="monochrome" data-queen-current-logo src="vendor-marks/anthropic.svg" alt="Anthropic logo"></span><div><strong data-queen-current-name>Claude · Queen</strong><span>root status working · no contradictions</span></div></div>
+                      <div class="app-banner">Claude Code, Codex, Grok, Kimi Code, and OpenCode are available. Applying the selection changes the live Queen.</div>
                       <div class="queen-grid">
-                        <button class="queen-option selected" data-queen-option="claude"><span class="radio"></span><strong>Claude</strong><span>Root hooks · conversation resume · current</span><span class="tag green" style="margin-top:10px">root capable</span></button>
-                        <button class="queen-option" data-queen-option="codex"><span class="radio"></span><strong>Codex</strong><span>Native app-server · exact turn boundaries</span><span class="tag green" style="margin-top:10px">root capable</span></button>
-                        <button class="queen-option" data-queen-option="grok"><span class="radio"></span><strong>Grok</strong><span>Updates stream · project trust visible</span><span class="tag green" style="margin-top:10px">root capable</span></button>
-                        <button class="queen-option unavailable" disabled><span class="radio"></span><strong>Kimi</strong><span>No root supervisor/event contract</span><span class="tag yellow" style="margin-top:10px">unavailable</span></button>
-                        <button class="queen-option unavailable" disabled><span class="radio"></span><strong>OpenCode</strong><span>No root plugin/transcript contract</span><span class="tag yellow" style="margin-top:10px">unavailable</span></button>
+                        <button class="queen-option selected" data-queen-option="claude"><span class="radio"></span><img class="queen-provider-logo monochrome" src="vendor-marks/anthropic.svg" alt="Anthropic logo"><strong>Claude</strong><span>Claude Code · available</span><span class="tag green" style="margin-top:10px">available</span></button>
+                        <button class="queen-option" data-queen-option="codex"><span class="radio"></span><img class="queen-provider-logo monochrome" src="vendor-marks/openai.svg" alt="OpenAI logo"><strong>Codex</strong><span>Codex CLI · available</span><span class="tag green" style="margin-top:10px">available</span></button>
+                        <button class="queen-option" data-queen-option="grok"><span class="radio"></span><img class="queen-provider-logo monochrome" src="vendor-marks/xai.svg" alt="xAI logo"><strong>Grok</strong><span>Grok CLI · available</span><span class="tag green" style="margin-top:10px">available</span></button>
+                        <button class="queen-option" data-queen-option="kimi"><span class="radio"></span><img class="queen-provider-logo" src="vendor-marks/kimi.svg" alt="Kimi logo"><strong>Kimi Code</strong><span>Kimi Code CLI · available</span><span class="tag green" style="margin-top:10px">available</span></button>
+                        <button class="queen-option" data-queen-option="opencode"><span class="radio"></span><img class="queen-provider-logo" src="vendor-marks/opencode.svg" alt="OpenCode logo"><strong>OpenCode</strong><span>OpenCode CLI · available</span><span class="tag green" style="margin-top:10px">available</span></button>
                       </div>
-                      <div class="grid-2" style="margin-top:10px">
-                        <div class="app-card"><h3>Apply selected provider</h3><p data-queen-selection-copy>Claude is already the current and next-run Queen provider.</p><div class="screen-actions"><button class="app-button" data-action="Next-run Queen preference saved through a mocked daemon CAS.">Use for next run</button><button class="app-button primary" data-dialog-title="Begin Queen succession?" data-dialog-body="Request a semantic checkpoint, stop new root work, launch the selected provider generation, verify replies, and require checkpoint attestation before authority resumes." data-dialog-action="Begin Succession">Replace live Queen…</button></div></div>
-                        <div class="app-card"><h3>Succession protocol</h3><div class="succession-track"><div class="succession-step"><strong>1 · Fence</strong><span>advance root generation intent</span></div><div class="succession-step"><strong>2 · Checkpoint</strong><span>digest or no-checkpoint proof</span></div><div class="succession-step"><strong>3 · Verify</strong><span>replies and discrepancies</span></div><div class="succession-step"><strong>4 · Attest</strong><span>resume durable authority</span></div></div></div>
-                      </div>
+                      <div class="app-card" style="margin-top:10px"><h3>Set live Queen vendor</h3><p data-queen-selection-copy>Claude is selected.</p><div class="screen-actions"><button class="app-button primary" data-save-queen>Set live Queen</button></div></div>
                     </div>
                   </section>
 
@@ -1603,7 +1586,7 @@
           <article class="screen-mock"><div class="screen-mock-head"><div><h3>02 · Task Router</h3><p>All ten task routes across all five vendors.</p></div><button class="open-mock" data-open-mock="router">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav active"></div><div class="mini-nav"></div></div><div class="mini-canvas"><div class="mini-card" style="min-height:30px;margin-bottom:5px"><strong>Actual policy r8 · auto → Hive equal</strong><span>Claude · Codex · Grok · Kimi · OpenCode enabled</span></div><div class="mini-grid" style="grid-template-columns:1fr 1fr"><div class="mini-list"><div class="mini-row"><span>Light research</span><span>5 / 5</span></div><div class="mini-row"><span>Heavy research</span><span>5 / 5</span></div><div class="mini-row"><span>Simple coding</span><span>5 / 5</span></div><div class="mini-row"><span>Standard coding</span><span>5 / 5</span></div><div class="mini-row"><span>Complex coding</span><span>5 / 5</span></div></div><div class="mini-list"><div class="mini-row"><span>Code review</span><span>5 / 5</span></div><div class="mini-row"><span>Planning</span><span>5 / 5</span></div><div class="mini-row"><span>Debugging</span><span>5 / 5</span></div><div class="mini-row"><span>Summarization</span><span>5 / 5</span></div><div class="mini-row"><span>Default</span><span>5 / 5</span></div></div></div></div></div><div class="screen-mock-foot"><code>Local policy r8 → Router V3 task/vendor matrix</code></div></article>
           <article class="screen-mock"><div class="screen-mock-head"><div><h3>03 · Models &amp; Quota</h3><p>Consent, catalog, provenance, holds.</p></div><button class="open-mock" data-open-mock="models">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav"></div><div class="mini-nav active"></div></div><div class="mini-canvas"><div class="mini-grid"><div class="mini-card"><strong>Claude</strong><span>reported · fresh · 39%</span><div class="mini-bar"><i style="width:61%"></i></div></div><div class="mini-card"><strong>Codex</strong><span>authoritative · 62%</span><div class="mini-bar"><i style="width:38%"></i></div></div><div class="mini-card"><strong>Grok</strong><span>drained · reset 16:42</span><div class="mini-bar"><i style="width:100%;background:#ec7770"></i></div></div></div><div class="mini-grid" style="margin-top:5px"><div class="mini-card"><strong>Kimi</strong><span>stale + unknown</span></div><div class="mini-card"><strong>OpenCode</strong><span>unmetered, not free</span></div><div class="mini-card"><strong>Hold</strong><span>felix · revalidate</span></div></div></div></div><div class="screen-mock-foot"><code>Model inventory + QuotaProjection</code></div></article>
           <article class="screen-mock"><div class="screen-mock-head"><div><h3>04 · Tokens</h3><p>Provider totals and Hive input attribution.</p></div><button class="open-mock" data-open-mock="tokens">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav"></div><div class="mini-nav active"></div></div><div class="mini-canvas"><div class="mini-grid"><div class="mini-card"><strong>35,240</strong><span>provider subtotal</span></div><div class="mini-card"><strong>4,080</strong><span>Hive input</span></div><div class="mini-card"><strong>620 + 240</strong><span>protocol + replay</span></div></div><div class="mini-card" style="margin-top:5px"><strong>Claude</strong><div class="mini-bar"><i style="width:73%"></i></div><span>Hive input 2,210 · measured</span><strong style="margin-top:6px">Codex</strong><div class="mini-bar"><i style="width:68%"></i></div><span>Hive input ≈1,870 · estimated</span></div></div></div><div class="screen-mock-foot"><code>TokenAttributionProjection — contract gap</code></div></article>
-          <article class="screen-mock"><div class="screen-mock-head"><div><h3>05 · Queen Provider</h3><p>Next-run choice and checkpointed succession.</p></div><button class="open-mock" data-open-mock="queen">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav active"></div><div class="mini-nav"></div></div><div class="mini-canvas"><div class="mini-title"></div><div class="mini-queen"><div class="active"><strong>Claude</strong><span>current</span></div><div><strong>Codex</strong><span>root capable</span></div><div><strong>Grok</strong><span>root capable</span></div><div><strong>Kimi</strong><span>unavailable</span></div><div><strong>OpenCode</strong><span>unavailable</span></div></div><div class="mini-flow"><div class="mini-step">fence</div><div class="mini-step">checkpoint</div><div class="mini-step">verify</div><div class="mini-step">attest</div></div></div></div><div class="screen-mock-foot"><code>QueenProviderProjection + QueenSuccession</code></div></article>
+          <article class="screen-mock"><div class="screen-mock-head"><div><h3>05 · Queen Provider</h3><p>Change the live Queen among five available vendors.</p></div><button class="open-mock" data-open-mock="queen">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav active"></div><div class="mini-nav"></div></div><div class="mini-canvas"><div class="mini-title"></div><div class="mini-queen"><div class="active"><strong>Claude</strong><span>selected</span></div><div><strong>Codex</strong><span>available</span></div><div><strong>Grok</strong><span>available</span></div><div><strong>Kimi</strong><span>available</span></div><div><strong>OpenCode</strong><span>available</span></div></div></div></div><div class="screen-mock-foot"><code>QueenProviderProjection + setLiveQueenProvider</code></div></article>
           <article class="screen-mock"><div class="screen-mock-head"><div><h3>06 · Autonomy</h3><p>Execution posture, separate authority bounds.</p></div><button class="open-mock" data-open-mock="autonomy">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav"></div><div class="mini-nav active"></div></div><div class="mini-canvas"><div class="mini-title"></div><div class="mini-grid" style="grid-template-columns:1fr 1fr"><div class="mini-card"><strong>Sandboxed</strong><span>approvals required · confirmed</span><div class="mini-bar"><i style="width:50%"></i></div></div><div class="mini-card"><strong>Still bounded</strong><span>G1/G2 · grants · promotions · effects</span></div></div></div></div><div class="screen-mock-foot"><code>Existing autonomy mutation + observed state</code></div></article>
           <article class="screen-mock"><div class="screen-mock-head"><div><h3>07 · Memory Overview</h3><p>Stores, counts, health, recent operations.</p></div><button class="open-mock" data-open-mock="memory-overview">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav active"></div><div class="mini-nav"></div><div class="mini-nav"></div></div><div class="mini-canvas"><div class="mini-grid"><div class="mini-card"><strong>42</strong><span>articles</span></div><div class="mini-card"><strong>8,412</strong><span>events</span></div><div class="mini-card"><strong>184</strong><span>facts</span></div></div><div class="mini-grid" style="margin-top:5px"><div class="mini-card"><strong>Wiki</strong><span>canonical</span></div><div class="mini-card"><strong>Episodic</strong><span>canonical</span></div><div class="mini-card"><strong>FTS + vectors</strong><span>projection</span></div></div></div></div><div class="screen-mock-foot"><code>MemoryOverviewProjection — contract gap</code></div></article>
           <article class="screen-mock"><div class="screen-mock-head"><div><h3>08 · Memory Library</h3><p>Articles, pitfalls, facts, digests, raw refs.</p></div><button class="open-mock" data-open-mock="memory-library">Open</button></div><div class="mini-app"><div class="mini-side"><div class="mini-nav"></div><div class="mini-nav active"></div><div class="mini-nav"></div></div><div class="mini-canvas"><div class="mini-split"><div class="mini-list"><div class="mini-row active">Cursor gap recovery</div><div class="mini-row">Review invalidation</div><div class="mini-row">Session digest</div><div class="mini-row">Foreground fact</div><div class="mini-row">Raw observation</div></div><div class="mini-card"><strong>Terminal cursor gap recovery</strong><span>Article · repo · verified</span><div class="mini-bar"><i style="width:100%"></i></div><span>3 evidence refs · indexed</span></div></div></div></div><div class="screen-mock-foot"><code>MemoryListPage + existing read/write tools</code></div></article>
@@ -1624,11 +1607,11 @@
           <table>
             <thead><tr><th>Surface</th><th>Required read</th><th>Required mutation</th><th>State and release gate</th></tr></thead>
             <tbody>
-              <tr><td>Live Run</td><td><code>WorkspaceSnapshot v2</code>, five-provider session summaries, semantic <code>AgentActivity</code>, selected <code>FusedAgentStatus</code>, exact SessionHost snapshot/events for the selection, <code>TaskDetail</code>, <code>ArtifactRef</code>, review/promotion/attention projections</td><td>Attach/detach, input claim/release, pause/resume/stop provider, terminate terminal, acknowledge, cascade preview/close, and contextual <code>approveG1</code>/<code>approveG2</code> commands with exact bound facts</td><td><span class="status planned">H5</span> <span class="status implemented">TERMINAL</span> Extend Workspace <code>ProviderID</code>/<code>ProviderMarkView</code> to Claude, Codex, Grok, Kimi, and OpenCode. Reuse the single status appearance table and explicitly resolve the current <code>held</code> mapping gap. Golden fixtures cover one selected TUI plus typed status for unselected agents, exact zsh ancestry, replaced generation, gaps, unknown, stale, unauthorized, held, pausing, and aborting. There is no terminal mosaic.</td></tr>
+              <tr><td>Live Run</td><td><code>WorkspaceSnapshot v2</code>, five-provider session summaries, semantic <code>AgentActivity</code>, selected <code>FusedAgentStatus</code>, exact SessionHost snapshot/events for the selection, <code>TaskDetail</code>, and attention projections</td><td>Attach/detach, input claim/release, pause/resume/stop provider, terminate terminal, acknowledge, cascade preview/close, and contextual <code>approveG1</code>/<code>approveG2</code> commands with exact bound facts</td><td><span class="status planned">H5</span> <span class="status implemented">TERMINAL</span> Extend Workspace <code>ProviderID</code>/<code>ProviderMarkView</code> to Claude, Codex, Grok, Kimi, and OpenCode. Reuse the single status appearance table and explicitly resolve the current <code>held</code> mapping gap. Golden fixtures cover one selected TUI plus typed status for unselected agents, exact zsh ancestry, replaced generation, gaps, unknown, stale, unauthorized, held, pausing, and aborting. There is no terminal mosaic.</td></tr>
               <tr><td>Task Router</td><td><code>RouterService.inspect</code>: revision, route digest, exact candidates, effective weights/shares, refusal, exclusion, balance</td><td>Policy V3 compare-and-set: route membership, mode, weight, effort, provider/model consent</td><td><span class="status planned">R1–R5</span> Remove ordered-chain editor, strict/spread, headroom ranking, and compatibility selector at R6.</td></tr>
               <tr><td>Models &amp; Quota</td><td>Catalog/entitlement/effort plus pool value, source, confidence, freshness, observedAt, reset, estimate, reservation, exclusion, hold</td><td>Provider/model enablement; explicit probe refresh; no quota preference write</td><td><span class="status implemented">CORE</span> Existing model snapshot can seed the client, but its wire must reconcile Router V3 and the full quota honesty fields.</td></tr>
               <tr><td>Tokens</td><td>Provider/model totals and Hive-delivered payload/protocol/replay with measured/estimated/unknown provenance</td><td>Read/filter only</td><td><span class="status gap-state">CONTRACT GAP</span> Freeze the missing attribution record/projection or cut the screen. Never migrate whole-Queen “Hive control.”</td></tr>
-              <tr><td>Queen Provider</td><td><code>QueenProviderProjection</code>: stable root, current/next provider, generation, capability, checkpoint, contradictions, succession history</td><td><code>setNextQueenProvider</code> CAS; <code>prepareQueenSuccession</code>; <code>commitQueenSuccession</code> with checkpoint/attestation</td><td><span class="status gap-state">NEW CONTROL</span> Current <code>--orchestrator</code> covers Claude/Codex/Grok only at launch. Live replacement waits for Hierarchy H4.</td></tr>
+              <tr><td>Queen Provider</td><td><code>QueenProviderProjection</code>: stable root, live provider, five-vendor capability, root health, contradictions, and one opaque change state = idle/pending/failed</td><td><code>setLiveQueenProvider</code> compare-and-set with one operation receipt and final readback</td><td><span class="status gap-state">NEW CONTROL</span> The UI offers Claude, Codex, Grok, Kimi Code, and OpenCode. Kimi/OpenCode root-supervisor adapters are required before release. Hierarchy H4 performs <code>QueenSuccession</code> internally; the client never receives or renders its fence, generation, checkpoint, handoff, verification, or attestation steps.</td></tr>
               <tr><td>Autonomy</td><td>Confirmed daemon posture and revision</td><td>Existing autonomy mutation with final readback</td><td><span class="status implemented">MIGRATE</span> One editing home; titlebar is read-only posture. No duplicate Agent menu mutation.</td></tr>
               <tr><td>Memory Overview</td><td><code>MemoryOverviewProjection</code>: explicit absent/empty/ok stores, counts, embedding/index state, config, last jobs, current gaps</td><td>None</td><td><span class="status gap-state">NEW PROJECTION</span> Must not assemble metrics client-side from files, status, benchmark scripts, and logs.</td></tr>
               <tr><td>Memory Library</td><td><code>MemoryListPage</code> discriminated by article/pitfall/fact/digest/raw-ref with cursor, scope, lifecycle, provenance, revision</td><td>Existing memory write/delete/promote/read operations behind typed UI adapter; reference guards and expected revision</td><td><span class="status gap-state">LIST GAP</span> Existing search/read are insufficient for stable pagination and an honest unified list.</td></tr>
@@ -1657,7 +1640,7 @@
               <tr><td>Agent</td><td>Attach/detach viewer, pause/resume/stop provider, terminate terminal, acknowledge, close with cascade</td><td>“Close Pane” no longer conflates detach, provider stop, hierarchy closure, and terminal termination.</td></tr>
               <tr><td>Run</td><td>G1/G2, pause/resume, redirect through Queen, abort</td><td>No generic provider approval command. G1/G2 bind exact workflow facts; provider prompts remain inside the selected live TUI.</td></tr>
               <tr><td>Memory</td><td>Overview, Library, Recall Lab, New Memory, Maintenance, Self-Test, Reindex</td><td><span class="status gap-state">NEW</span> All commands go through daemon memory contracts; no AppKit filesystem or SQLite adapter.</td></tr>
-              <tr><td>Queen</td><td>Current provider, root-capable selection, provider screen, checkpoint, succession history</td><td><span class="status gap-state">NEW</span> Separate from Task Router. Kimi/OpenCode stay visibly unavailable until root supervisor contracts exist.</td></tr>
+              <tr><td>Queen</td><td>Live provider and five-vendor selection screen</td><td><span class="status gap-state">NEW</span> Separate from Task Router. Saving invokes one live-provider mutation. The UI shows pending, success, or failure and the observed provider; internal recovery controls and history are not exposed.</td></tr>
               <tr><td>Window</td><td>Minimize, Zoom, window list</td><td>Native AppKit behavior remains.</td></tr>
             </tbody>
           </table>
@@ -1674,12 +1657,12 @@
 
         <div class="phase-grid">
           <article class="phase-card"><span class="phase-id">U0</span><h3>Prerequisite exit audit</h3><p>Require Router R6 and Hierarchy H5. Re-run the completed terminal, communication, memory, and quota acceptance evidence against the release basis.</p><ul><li>Freeze topology-neutral identity and exact gate records.</li><li>Freeze Router inspect/CAS and pool exclusion.</li><li>Record the token attribution discrepancy as a gap, not assumed completion.</li></ul><div class="exit"><strong>Exit · </strong>One versioned dependency manifest names every UI source, owner, freshness rule, and absent state.</div></article>
-          <article class="phase-card"><span class="phase-id">U1</span><h3>Freeze UI contracts and fixtures</h3><p>Define AppKit client types before production controllers.</p><ul><li>Workspace, artifact, review, quota, router, Queen, and memory projections.</li><li>Typed intent/result envelope with CAS, epochs, idempotency, and post-state.</li><li>Golden fixtures for current, unknown, stale, disconnected, unauthorized, conflicting, and replaced states.</li></ul><div class="exit"><strong>Exit · </strong>Every screen in §03 renders exclusively from an immutable fixture; no view reaches files, SQLite, HTTP, or a provider directly.</div></article>
-          <article class="phase-card"><span class="phase-id">U2</span><h3>Native shell and command dispatcher</h3><p>Build the menu bar, semantic sidebar, screen router, title context, Attention drawer, loading/error banners, and one intent dispatcher.</p><ul><li>Retain native AppKit window, release packaging, and appearance behavior.</li><li>Make project/instance context read-only.</li><li>Separate detach, provider control, terminal termination, node closure, and run control.</li></ul><div class="exit"><strong>Exit · </strong>Every menu/shortcut resolves to exactly one command or screen; no retired pane command remains reachable.</div></article>
+          <article class="phase-card"><span class="phase-id">U1</span><h3>Freeze UI contracts and fixtures</h3><p>Define AppKit client types before production controllers.</p><ul><li>Workspace, quota, router, Queen, and memory projections.</li><li>Typed intent/result envelope with CAS, epochs, idempotency, and post-state.</li><li>Golden fixtures for current, unknown, stale, disconnected, unauthorized, conflicting, and replaced states.</li></ul><div class="exit"><strong>Exit · </strong>Every screen in §03 renders exclusively from an immutable fixture; no view reaches files, SQLite, HTTP, or a provider directly.</div></article>
+          <article class="phase-card"><span class="phase-id">U2</span><h3>Native shell and command dispatcher</h3><p>Build the menu bar, semantic sidebar, screen router, Attention drawer, loading/error banners, and one intent dispatcher.</p><ul><li>Retain native AppKit window, release packaging, and appearance behavior.</li><li>Make project/instance context read-only.</li><li>Separate detach, provider control, terminal termination, node closure, and run control.</li></ul><div class="exit"><strong>Exit · </strong>Every menu/shortcut resolves to exactly one command or screen; no retired pane command remains reachable.</div></article>
           <article class="phase-card"><span class="phase-id">U3</span><h3>Control and management screens</h3><p>Ship screens that do not depend on terminal rendering.</p><ul><li>Router V3, Models &amp; Quota, Queen Provider, Autonomy.</li><li>Memory Overview, Library, Recall Lab, Maintenance.</li><li>Tokens only if its attribution projection passes; otherwise omit it.</li></ul><div class="exit"><strong>Exit · </strong>CAS conflicts preserve drafts, stale reads fence mutations, jobs stream bounded progress, and all final state is read back.</div></article>
-          <article class="phase-card"><span class="phase-id">U4</span><h3>Outer horizon and run control</h3><p>Render hierarchy, roles/assignments, phases, gates, budgets, attention, reviews, train state, incidents, and run control.</p><ul><li>Virtualize to the 19-agent target and global 32-session cap.</li><li>Restore semantic focus/expansion history across snapshots.</li><li>Show direct, flat, full-hive, lead loss, ownership transfer, and succession.</li></ul><div class="exit"><strong>Exit · </strong>No hierarchy fact is derived from a name, pane, terminal line, or provider conversation.</div></article>
+          <article class="phase-card"><span class="phase-id">U4</span><h3>Outer horizon and run control</h3><p>Render hierarchy, roles/assignments, phases, gates, budgets, attention, reviews, train state, incidents, and run control.</p><ul><li>Virtualize to the 19-agent target and global 32-session cap.</li><li>Restore semantic focus/expansion history across snapshots.</li><li>Show direct, flat, full-hive, lead loss, and ownership transfer.</li></ul><div class="exit"><strong>Exit · </strong>No hierarchy fact is derived from a name, pane, terminal line, or provider conversation.</div></article>
           <article class="phase-card"><span class="phase-id">U5</span><h3>Five-vendor terminal workbench</h3><p>Connect one <code>HiveTerminalKit</code> surface and make hierarchy-sidebar selection switch the vendor TUI in Live Run.</p><ul><li>Represent Claude Code, Codex, Grok, Kimi Code, and OpenCode with exact provider, agent, SessionLocator, generation, zsh, and ProviderRun identity.</li><li>Switch with snapshot/cursor attach, input claim, resize, replay/gap, detach, reconnect, and replacement; never kill the prior session merely because selection moved.</li><li>Provider stop returns the same PTY to interactive zsh; terminal termination ends the verified tree. Unselected sessions remain typed/event-observed—never fabricated terminal thumbnails.</li></ul><div class="exit"><strong>Exit · </strong>One live attachment switches across a real five-vendor matrix from the sole agent sidebar and stays bounded under 19 producers; viewer failure preserves every provider, retained zsh session, and human draft.</div></article>
-          <article class="phase-card"><span class="phase-id">U6</span><h3>Evidence inspector and contextual recovery</h3><p>Add Task, Review, Events, Session, and ArtifactRef panes without introducing Communications or Gates destinations.</p><ul><li>Exact revisions/digests and bounded content previews.</li><li>Communication delivery remains daemon-owned and appears only as contextual Attention when user action is required.</li><li>Stranded WorkManifest resolution and cascade previews open the affected Live Run context.</li></ul><div class="exit"><strong>Exit · </strong>No checklist, artifact, review, CI, or status is inferred from terminal text, and no internal message ledger is exposed as a user screen.</div></article>
+          <article class="phase-card"><span class="phase-id">U6</span><h3>Run inspector and contextual recovery</h3><p>Add Task, Events, and Session panes without introducing Communications, Gates, Review, or Files destinations.</p><ul><li>Exact task revisions and bounded event/session detail.</li><li>Communication delivery remains daemon-owned and appears only as contextual Attention when user action is required.</li><li>Stranded WorkManifest resolution and cascade previews open the affected Live Run context.</li></ul><div class="exit"><strong>Exit · </strong>No checklist or status is inferred from terminal text, and no internal message ledger is exposed as a user screen.</div></article>
           <article class="phase-card"><span class="phase-id">U7</span><h3>Hard cutover and deletion</h3><p>Ship one Workspace and remove the pane-era surface in the same release.</p><ul><li>Delete pane grid, master promotion, spatial focus, standalone Settings, old Usage attribution, floating Attention, ProjectSwitcher, old chain editor, strict/spread, and duplicate autonomy command.</li><li>Delete compatibility reducers, shortcuts, packaging, fixtures, and tests.</li><li>Keep the native product, terminal kit, CLI non-UI consumers, and daemon ownership.</li></ul><div class="exit"><strong>Exit · </strong>The removal ledger is empty, destructive actions read back final state, and no “classic” path launches on failure.</div></article>
         </div>
       </div>
@@ -1703,7 +1686,7 @@
               <tr><td>06</td><td>Communication delivery remains backend-only: no inbox route is registered, and contextual Attention never overstates queued/injected work as acknowledged/applied.</td><td>Route enumeration plus per-vendor communication fixtures and a live Codex interrupt-boundary capture.</td></tr>
               <tr><td>07</td><td>Router 60/25/15 preview and scheduler allocate 12/5/3 over 20 decisions; Hive equal preserves stored weights.</td><td>Router acceptance suite plus UI share calculation fixture. Active exclusions alter effective share without editing weights.</td></tr>
               <tr><td>08</td><td>Quota unknown is striped/unknown, stale keeps its value and timestamp, unmetered is unconstrained but never called free.</td><td>Projection fixtures for authoritative, reported, stale, missing, unknown, drained, held, and unmetered.</td></tr>
-              <tr><td>09</td><td>Changing Queen for next run does not replace the live root. Live replacement cannot resume authority before checkpoint/no-checkpoint proof and attestation.</td><td>Queen control CAS tests plus Hierarchy H4 succession scenarios with contradictions retained.</td></tr>
+              <tr><td>09</td><td>Each of the five vendors can become the live Queen through one compare-and-set command. The UI exposes one pending state, then the observed provider or a clear failure; no internal swap stage is rendered.</td><td>Queen control CAS tests across Claude, Codex, Grok, Kimi Code, and OpenCode, including stale-revision conflict and internal H4 failure that preserves the prior live Queen.</td></tr>
               <tr><td>10</td><td>Memory Overview distinguishes absent, empty, and healthy stores; Library pagination remains project-isolated.</td><td>Two-daemon/two-project projection tests with positive controls and no direct AppKit file access.</td></tr>
               <tr><td>11</td><td>Recall preview is non-mutating, reports partitions/omissions, and cannot starve articles behind pitfalls.</td><td>High-water before/after assertion and pitfall-heavy anti-starvation fixture.</td></tr>
               <tr><td>12</td><td>Memory maintenance jobs show progress/failure/final readback; raw evidence survives article deletion.</td><td>Daemon job contract tests, reference guard, failure isolation, and physical raw-file survival check owned by the daemon suite.</td></tr>
@@ -1726,18 +1709,9 @@
 
   <script>
     const app = document.querySelector("[data-hive-app]");
-    const routeTitles = {
-      run: "Live Run · Run 047",
-      router: "Task Router · Policy r8 → V3 draft",
-      models: "Models & Quota",
-      tokens: "Tokens · Run 047",
-      queen: "Queen Provider · Generation 6",
-      autonomy: "Autonomy",
-      "memory-overview": "Memory Overview",
-      "memory-library": "Memory Library",
-      "memory-recall": "Memory Recall Lab",
-      "memory-maintenance": "Memory Maintenance",
-    };
+    const routes = new Set(
+      Array.from(app.querySelectorAll("[data-screen]"), (screen) => screen.dataset.screen),
+    );
     let currentRoute = "run";
     let toastTimer;
 
@@ -1754,7 +1728,7 @@
     };
 
     const showRoute = (route) => {
-      if (!routeTitles[route]) return;
+      if (!routes.has(route)) return;
       currentRoute = route;
       app.querySelectorAll("[data-screen]").forEach((screen) => {
         screen.classList.toggle("active", screen.dataset.screen === route);
@@ -1762,7 +1736,6 @@
       app.querySelectorAll(".side-nav-item[data-route-target]").forEach((item) => {
         item.classList.toggle("active", item.dataset.routeTarget === route);
       });
-      app.querySelector("[data-screen-title]").textContent = routeTitles[route];
       closeMenus();
     };
 
@@ -2045,10 +2018,10 @@
 
     const chooseQueen = (provider) => {
       const option = app.querySelector(`[data-queen-option="${provider}"]`);
-      if (!option || option.disabled) return;
+      if (!option) return;
       app.querySelectorAll("[data-queen-option]").forEach((item) => item.classList.toggle("selected", item === option));
-      const display = provider.charAt(0).toUpperCase() + provider.slice(1);
-      app.querySelector("[data-queen-selection-copy]").textContent = `${display} is selected for the next run. Replacing the live Claude generation requires succession.`;
+      const display = option.querySelector("strong").textContent;
+      app.querySelector("[data-queen-selection-copy]").textContent = `${display} is selected. Apply to change the live Queen.`;
       showRoute("queen");
     };
     app.querySelectorAll("[data-queen-option]").forEach((button) => {
@@ -2059,6 +2032,19 @@
         chooseQueen(button.dataset.selectQueen);
         closeMenus();
       });
+    });
+    app.querySelector("[data-save-queen]").addEventListener("click", () => {
+      const selected = app.querySelector("[data-queen-option].selected");
+      const selectedLogo = selected.querySelector(".queen-provider-logo");
+      const currentLogo = app.querySelector("[data-queen-current-logo]");
+      const display = selected.querySelector("strong").textContent;
+      currentLogo.src = selectedLogo.src;
+      currentLogo.alt = selectedLogo.alt;
+      currentLogo.classList.toggle("monochrome", selectedLogo.classList.contains("monochrome"));
+      app.querySelector("[data-queen-current-name]").textContent = `${display} · Queen`;
+      app.querySelector("[data-queen-title]").textContent = `Queen · ${display}`;
+      app.querySelector("[data-queen-selection-copy]").textContent = `${display} is the live Queen vendor.`;
+      showToast(`Live Queen changed · ${display}`);
     });
 
     const memoryRows = [...app.querySelectorAll("[data-memory-row]")];
@@ -2108,7 +2094,7 @@
     });
 
     const requestedScreen = new URLSearchParams(window.location.search).get("screen");
-    if (requestedScreen && routeTitles[requestedScreen]) showRoute(requestedScreen);
+    if (requestedScreen && routes.has(requestedScreen)) showRoute(requestedScreen);
   </script>
 </body>
 </html>

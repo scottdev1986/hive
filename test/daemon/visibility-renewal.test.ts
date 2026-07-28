@@ -190,6 +190,9 @@ describe("POST /workspace-visibility renewal target", () => {
         inventory([{ locator: gen1, state: "live" }]),
       );
       expect(response.status).toEqual(200);
+      // A publish makes the inventory current; the renewal pass is what renews
+      // it, on its own timer. Driving that pass here is what the timer does.
+      await daemon.renewWorkspaceVisibility();
       // The gen-1 pane still names the visible agent, but the session that
       // exists — and the one whose lease dies without this — is generation 2.
       expect(renewals).toHaveLength(1);
@@ -211,6 +214,7 @@ describe("POST /workspace-visibility renewal target", () => {
         inventory([{ locator: gen1, state: "live" }]),
       );
       expect(response.status).toEqual(200);
+      await daemon.renewWorkspaceVisibility();
       expect(renewals).toHaveLength(1);
       expect(renewals[0]?.locator).toEqual(gen1);
     } finally {

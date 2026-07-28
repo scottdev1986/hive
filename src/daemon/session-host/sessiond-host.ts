@@ -856,6 +856,34 @@ export class SessiondHost implements LandedTerminalHost {
     }
   }
 
+  /** One connection, reused across renewals and across passes.
+   *
+   * A renewal pass opens one connection PER TERMINAL, and each connection pays
+   * a full authenticated HELLO — daemon.lock read, kernel peer inspection,
+   * handshake comparison. At 31 terminals that is 31 handshakes every 5 s, and
+   * during a spawn burst they contend with the launches themselves: the first
+   * pass of a 31-agent burst measured 10.9 s, longer than the 15 s lease it
+   * defends leaves for the hosts created at the START of the burst. The same
+   * pass costs ~950 ms once the burst is over.
+   *
+   * The wire already supports this — the broker serves frames in a loop and
+   * the client multiplexes replies by request id, so the concurrent renewals
+   * of one pass share this connection rather than racing for accepts. */
+  private renewalBroker: Promise<SessiondBrokerClient> | null = null;
+
+  private async renewalConnection(): Promise<SessiondBrokerClient> {
+    const existing = this.renewalBroker;
+    if (existing !== null) return await existing;
+    const opening = this.connectBroker().catch((error: unknown) => {
+      // A failed connect must not be cached, or every later renewal inherits
+      // one bad moment forever.
+      this.renewalBroker = null;
+      throw error;
+    });
+    this.renewalBroker = opening;
+    return await opening;
+  }
+
   async renewVisibility(
     locator: Parameters<SessionHost["renewVisibility"]>[0],
     request: VisibilityRequest,
@@ -865,7 +893,7 @@ export class SessiondHost implements LandedTerminalHost {
       locator,
       ...request,
     });
-    const broker = await this.connectBroker();
+    const broker = await this.renewalConnection();
     try {
       const { schemaVersion: _, ...lease } = await broker.request({
         requestType: "VISIBILITY_RENEW",
@@ -874,8 +902,18 @@ export class SessiondHost implements LandedTerminalHost {
         responseSchema: RenewedPayloadSchema,
       });
       return lease;
-    } finally {
-      broker.close();
+    } catch (error) {
+      // A per-session refusal (NOT_FOUND for a host that already died) leaves
+      // the connection usable; a transport failure does not. Drop the cached
+      // connection only for the latter, so one dead session does not force 30
+      // reconnects behind it.
+      if (!(error instanceof SessiondWireError)) {
+        this.renewalBroker = null;
+        try {
+          broker.close();
+        } catch {}
+      }
+      throw error;
     }
   }
 

@@ -1145,6 +1145,7 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
         digest,
         1 * std.time.ns_per_s,
         launcher.launcher(),
+        null,
     );
     try std.testing.expect(launcher.called);
     try std.testing.expect(launched.failure == null);
@@ -1190,6 +1191,7 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
         digest,
         1 * std.time.ns_per_s,
         rejected_launcher.launcher(),
+        null,
     );
     try std.testing.expectEqual(
         broker.protocol.WireError.verification_unknown,

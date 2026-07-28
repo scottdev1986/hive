@@ -683,6 +683,7 @@ export class HiveDaemon {
   private readonly drainHandler: DrainHandler;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityRenewalTimer: ReturnType<typeof setInterval> | null = null;
+  private visibilityRenewalInFlight = false;
   private ownerRegistrationTimer: ReturnType<typeof setTimeout> | null = null;
   private maintenanceRunning = false;
   /** Wake-path faults already reported, so a persistent one alerts once. */
@@ -3880,18 +3881,23 @@ export class HiveDaemon {
       return json({ error: body.error.message }, { status: 400 });
     const result = this.workspaceVisibility.publish(body.data);
     if (result.state !== "accepted") return json(result, { status: 409 });
-    const renewals = await this.renewVisibleTerminals(body.data.terminals);
-    const failures = renewals.filter((renewal) => renewal?.state === "unknown");
-    return json(
-      {
-        ...result,
-        renewals:
-          failures.length === 0
-            ? { state: "complete", renewed: renewals.filter(Boolean).length }
-            : { state: "unknown", failures },
-      },
-      { status: failures.length === 0 ? 200 : 409 },
-    );
+    // A publish makes an inventory CURRENT. It does not keep it alive — the
+    // renewal timer on WORKSPACE_VISIBILITY_RENEWAL_MS renews whatever
+    // inventory is current, which is exactly why it was made independent of
+    // publishes after 2026-07-21.
+    //
+    // Renewing here as well was the 2026-07-27 collapse. The reply cost one
+    // broker round trip PER TERMINAL while the Workspace waited under a fixed
+    // 5 s timeout, so at a 31-agent burst it could not arrive in time; the
+    // Workspace abandoned the publish and retried, and no renewal landed
+    // inside the 15 s lease while the daemon itself stayed responsive
+    // (measured: 1.1 s worst loop lag through the same burst). It also
+    // answered 409 for an inventory it had just ACCEPTED, so the Workspace
+    // could not tell "your inventory was refused" from "a host you no longer
+    // own failed to renew". Renewing per publish AND per timer also stacks
+    // overlapping fan-outs of one connection per terminal, which is its own
+    // way to starve the broker.
+    return json(result, { status: 200 });
   }
 
   private async workspaceOwnerEndpoint(request: Request): Promise<Response> {
@@ -3986,6 +3992,7 @@ export class HiveDaemon {
           agentName: terminal.agentName,
         });
         if (admission === null) return null;
+
         try {
           await this.terminalHost.renewVisibility(
             binding.locator,
@@ -3995,11 +4002,17 @@ export class HiveDaemon {
             sessionId: binding.locator.sessionId,
             state: "renewed" as const,
           };
-        } catch {
+        } catch (error) {
+          // Keep the host's own refusal. Flattening every cause to one string
+          // cost the 2026-07-27 investigation two minutes of bare 409s that
+          // could not distinguish a queued RPC from a dead host from a
+          // generation mismatch — three failures with three different fixes.
           return {
             sessionId: binding.locator.sessionId,
             state: "unknown" as const,
-            diagnostic: "sessiond visibility renewal failed closed",
+            diagnostic: `sessiond visibility renewal failed closed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
           };
         }
       }),
@@ -4026,6 +4039,22 @@ export class HiveDaemon {
   async renewWorkspaceVisibility(): Promise<number> {
     const workspaceVisibility = this.workspaceVisibility;
     if (workspaceVisibility == null) return 0;
+    // One pass at a time. The interval fires on a fixed cadence whether or not
+    // the previous pass finished, and a pass costs one broker round trip per
+    // terminal; at fleet width those passes overlap and each one makes the
+    // next slower, which starves the very renewals they are trying to land.
+    if (this.visibilityRenewalInFlight) return 0;
+    this.visibilityRenewalInFlight = true;
+    try {
+      return await this.renewWorkspaceVisibilityPass(workspaceVisibility);
+    } finally {
+      this.visibilityRenewalInFlight = false;
+    }
+  }
+
+  private async renewWorkspaceVisibilityPass(
+    workspaceVisibility: NonNullable<HiveDaemon["workspaceVisibility"]>,
+  ): Promise<number> {
     if (!workspaceVisibility.sourceVerified()) {
       if (!workspaceVisibility.ownerRegistered()) return 0;
       if (!this.stopInProgress) {
@@ -4036,7 +4065,37 @@ export class HiveDaemon {
     }
     const snapshot = workspaceVisibility.currentSnapshot();
     if (snapshot === null) return 0;
+    const began = Date.now();
     const renewals = await this.renewVisibleTerminals(snapshot.terminals);
+    const elapsedMs = Date.now() - began;
+    const failures = renewals.filter((renewal) => renewal?.state === "unknown");
+    // A pass that outruns the lease it defends cannot keep anything alive, and
+    // until 2026-07-27 it left no trace at all: the fleet simply died and the
+    // only surviving evidence was sessiond's own VISIBILITY_EXPIRED records.
+    if (failures.length > 0 || elapsedMs >= WORKSPACE_VISIBILITY_RENEWAL_MS) {
+      // `skipped` is load-bearing and was the reading that explained the
+      // 2026-07-27 residue: a terminal with no binding, no create evidence or
+      // no admission is silently returned as null, so a pass over a fleet that
+      // is still being created renews NOTHING and still reports "0 failed".
+      const renewed = renewals.filter(
+        (renewal) => renewal?.state === "renewed",
+      ).length;
+      const skipped = renewals.filter((renewal) => renewal === null).length;
+      this.writeDaemonLog(
+        `Hive workspace visibility renewal pass: ${elapsedMs}ms for ` +
+          `${snapshot.terminals.length} terminal(s), ` +
+          `${renewed} renewed, ${skipped} not yet renewable, ` +
+          `${failures.length} failed` +
+          (failures.length === 0
+            ? ""
+            : ` — ${failures
+                .slice(0, 5)
+                .map(
+                  (failure) => `${failure?.sessionId}: ${failure?.diagnostic}`,
+                )
+                .join("; ")}`),
+      );
+    }
     await this.recordVisibilityExpiryAudits(snapshot);
     return renewals.filter((renewal) => renewal?.state === "renewed").length;
   }

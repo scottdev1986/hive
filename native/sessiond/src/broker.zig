@@ -1127,6 +1127,9 @@ pub fn launchHost(
     committed_sha256: [32]u8,
     now_ns: u64,
     launcher: HostLauncher,
+    /// Held by the caller across this whole call, and released by it around
+    /// the fork/exec below. Null when there is no concurrency to yield to.
+    state_gate: ?*std.Thread.Mutex,
 ) !LaunchHostResult {
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.create_begin_payload, spec_json))
         return .{ .failure = .{ .code = .malformed_frame, .close_connection = false }, .created_payload = null };
@@ -1171,6 +1174,17 @@ pub fn launchHost(
     if (!registry.hasCapacity())
         return .{ .failure = .{ .code = .capacity_exceeded, .close_connection = false }, .created_payload = null };
 
+    // From here to the relock below, nothing shared is touched. The session
+    // directory is claimed exclusively by session id, so two creates cannot
+    // collide on one; the adoption secret and the executable path are this
+    // create's own. Holding the gate across this filesystem work is what still
+    // cost a 31-wide burst its renewals after the launch itself was yielded:
+    // measured 10.3 s for a renewal pass during a burst against 0.2 s idle.
+    if (state_gate) |gate| gate.unlock();
+    var relocked = false;
+    defer if (state_gate) |gate| {
+        if (!relocked) gate.lock();
+    };
     var host_directory = runtime.openHostDirectory(session_id, true) catch |err| switch (err) {
         error.HostAlreadyExists => return .{ .failure = .{ .code = .already_exists, .close_connection = false }, .created_payload = null },
         else => return err,
@@ -1180,14 +1194,22 @@ pub fn launchHost(
     defer std.crypto.secureZero(u8, &adoption_secret);
     const executable = try std.fs.selfExePathAlloc(allocator);
     defer allocator.free(executable);
-    const readback = launcher.launch(
+    // The bulk of that cost is this call: fork/exec of the host, its READY
+    // handshake over fd 3, then connect + HOST_ADOPT. Capacity was checked
+    // before the unlock and is re-checked by registerCreatedHost after the
+    // relock, which refuses cleanly if another create took the last slot while
+    // this one was launching.
+    const launched = launcher.launch(
         allocator,
         executable,
         spec_json,
         initial_input,
         adoption_secret,
         now_ns,
-    ) orelse return .{
+    );
+    if (state_gate) |gate| gate.lock();
+    relocked = true;
+    const readback = launched orelse return .{
         .failure = .{ .code = .verification_unknown, .close_connection = false },
         .created_payload = null,
     };
@@ -1253,7 +1275,15 @@ pub fn launchHost(
         readback.pending,
         failure,
     );
-    if (!launcher.finalize(readback.pending, .admitted)) {
+    // finalize connects to the new host's own socket and runs HOST_ADOPT — IPC
+    // against this create's host, touching nothing shared. It is the last of
+    // the create's expensive phases, and leaving it under the gate kept a
+    // renewal pass at 10.4 s during a burst even after the launch itself was
+    // yielded.
+    if (state_gate) |gate| gate.unlock();
+    const finalized = launcher.finalize(readback.pending, .admitted);
+    if (state_gate) |gate| gate.lock();
+    if (!finalized) {
         registry.rollbackAdmission(admitted_record.locator);
         return .{
             .failure = .{ .code = .in_doubt, .close_connection = false },
@@ -1642,6 +1672,11 @@ pub const DaemonHandshakeCache = struct {
     allocator: std.mem.Allocator,
     canonical_home: []const u8,
     cached: ?std.json.Parsed(DaemonHandshake) = null,
+    /// getForInstance hands back a pointer INTO `cached`, which the next
+    /// instance-id miss frees. Callers hold this across both the get and every
+    /// use of the returned handshake, so a second connection cannot evict a
+    /// handshake the first one is still reading.
+    mutex: std.Thread.Mutex = .{},
 
     pub fn deinit(self: *DaemonHandshakeCache) void {
         if (self.cached) |*cached| cached.deinit();
@@ -1731,6 +1766,11 @@ fn serveDaemonConnection(
         return err;
     };
     defer daemon_lock.deinit();
+    // The cache lock spans every read of the returned handshake, and is
+    // released before the long-lived frame loop below.
+    handshake_cache.mutex.lock();
+    var handshake_lock_held = true;
+    defer if (handshake_lock_held) handshake_cache.mutex.unlock();
     const daemon_handshake = handshake_cache.getForInstance(daemon_lock.value.instanceId) catch |err| {
         writeFailure(allocator, stream, hello_frame.header, .{
             .code = .not_ready,
@@ -1785,6 +1825,11 @@ fn serveDaemonConnection(
         return err;
     };
     defer allocator.free(welcome.payload);
+    // Nothing below reads the cached handshake, and serveAuthenticatedFrames
+    // lives for the whole connection — holding the cache lock into it would
+    // serialize every connection on the broker again.
+    handshake_lock_held = false;
+    handshake_cache.mutex.unlock();
     if (builtin.is_test) BrokerWireTestProbe.welcome_write_pending.store(true, .release);
     try protocol.writeFrame(stream, welcome.header, welcome.payload);
     if (builtin.is_test) BrokerWireTestProbe.welcome_write_pending.store(false, .release);
@@ -1836,12 +1881,18 @@ pub const ProductionControlPlane = struct {
     }
 };
 
+/// One per CONNECTION, not one per broker. `create` is a three-frame
+/// transaction (BEGIN, INPUT, COMMIT) and a single shared slot would let two
+/// concurrent daemon connections overwrite each other's half-built create; the
+/// pointers below are the state that is genuinely shared, and `state_gate`
+/// serializes access to it.
 pub const ProductionBackend = struct {
     allocator: std.mem.Allocator,
     runtime: *Runtime,
     registry: *Registry,
     control_plane: *ProductionControlPlane,
     launcher: HostLauncher,
+    state_gate: ?*std.Thread.Mutex = null,
     create: ?CreateTransaction = null,
 
     pub fn init(
@@ -1881,6 +1932,12 @@ pub const ProductionBackend = struct {
         now_ns: u64,
     ) BackendResult {
         const self: *ProductionBackend = @ptrCast(@alignCast(context));
+        // Every backend operation reads or writes the shared registry, runtime
+        // and control plane, so one gate covers them all. It is coarse on
+        // purpose: the only operation long enough to matter is the create's
+        // fork/exec, and launchHost releases this gate across exactly that.
+        if (self.state_gate) |gate| gate.lock();
+        defer if (self.state_gate) |gate| gate.unlock();
         if (header.type_code == generated.frame_type.create_begin) return self.begin(payload);
         if (header.type_code == generated.frame_type.create_input) return self.input(header, payload);
         if (header.type_code == generated.frame_type.create_commit)
@@ -2245,6 +2302,7 @@ pub const ProductionBackend = struct {
             committed_sha256,
             now_ns,
             self.launcher,
+            self.state_gate,
         ) catch |err| return failure(switch (err) {
             error.OutOfMemory => .resource_exhausted,
             else => .in_doubt,
@@ -2329,23 +2387,29 @@ pub fn serve(
     var control_plane: ProductionControlPlane = undefined;
     try control_plane.init(allocator, hive_home);
     defer control_plane.deinit();
-    var production_backend = ProductionBackend.init(
-        allocator,
-        &runtime,
-        &recovered.registry,
-        &control_plane,
-        launcher,
-    );
-    defer production_backend.deinit();
-    const backend = production_backend.backend();
     var handshake_cache: DaemonHandshakeCache = .{
         .allocator = allocator,
         .canonical_home = runtime.canonical_home,
     };
     defer handshake_cache.deinit();
+    var shared: ConnectionShared = .{
+        .allocator = allocator,
+        .runtime = &runtime,
+        .registry = &recovered.registry,
+        .control_plane = &control_plane,
+        .launcher = launcher,
+        .handshake_cache = &handshake_cache,
+        .timer = &timer,
+        .build_id = build_id,
+    };
+    defer shared.drain();
     while (true) {
         if (!brokerOwnerIsLive(owner)) return;
-        _ = recovered.registry.reapExitedHosts();
+        {
+            shared.state_gate.lock();
+            defer shared.state_gate.unlock();
+            _ = recovered.registry.reapExitedHosts();
+        }
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = runtime.server.stream.handle,
             .events = std.posix.POLL.IN,
@@ -2355,10 +2419,14 @@ pub fn serve(
             &poll_fds,
             @intCast(generated.limits.visibility_renewal_ms),
         );
-        recovered.verifyDirectoryQuarantines(&runtime, timer.read());
+        {
+            shared.state_gate.lock();
+            defer shared.state_gate.unlock();
+            recovered.verifyDirectoryQuarantines(&runtime, timer.read());
+        }
         if (ready == 0) continue;
         if (poll_fds[0].revents & std.posix.POLL.IN == 0) return error.BrokerSocketUnavailable;
-        var accepted = runtime.acceptAuthenticatedPeer() catch |err| switch (err) {
+        const accepted = runtime.acceptAuthenticatedPeer() catch |err| switch (err) {
             error.SocketSubstitution => {
                 std.log.err("broker socket substitution detected; refusing further service", .{});
                 return err;
@@ -2368,25 +2436,120 @@ pub fn serve(
                 continue;
             },
         };
-        defer accepted.stream.close();
+        // Serving on this thread is what made a wide spawn burst unsurvivable:
+        // one CREATE_COMMIT holds the loop through a whole host launch, so the
+        // VISIBILITY_RENEW that would keep the already-launched hosts alive is
+        // not even accepted until the burst drains — long past the 15 s lease.
+        shared.serveDetached(accepted.stream, accepted.peer) catch |err| {
+            std.log.err("broker could not serve connection: {s}", .{@errorName(err)});
+            accepted.stream.close();
+        };
+    }
+}
+
+/// Broker state shared by every in-flight connection, and the gate that
+/// serializes it. One connection gets one thread, so a slow create cannot stop
+/// the accept loop; `state_gate` is what keeps the registry, runtime and
+/// control plane consistent while several connections run at once.
+const ConnectionShared = struct {
+    allocator: std.mem.Allocator,
+    runtime: *Runtime,
+    registry: *Registry,
+    control_plane: *ProductionControlPlane,
+    launcher: HostLauncher,
+    handshake_cache: *DaemonHandshakeCache,
+    timer: *std.time.Timer,
+    build_id: []const u8,
+    state_gate: std.Thread.Mutex = .{},
+    in_flight: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
+
+    /// Above the 31-agent target with room for the renewal and inspect traffic
+    /// that runs beside a burst. The bound exists so a peer that opens
+    /// connections without closing them cannot exhaust thread stacks; reaching
+    /// it serves the connection inline rather than refusing it.
+    const max_in_flight: usize = 96;
+
+    fn serveDetached(
+        self: *ConnectionShared,
+        stream: std.net.Stream,
+        peer: ObservedPeer,
+    ) !void {
+        if (self.in_flight.load(.acquire) >= max_in_flight) {
+            self.runOne(stream, peer);
+            return;
+        }
+        const worker = try self.allocator.create(Worker);
+        worker.* = .{ .shared = self, .stream = stream, .peer = peer };
+        _ = self.in_flight.fetchAdd(1, .acq_rel);
+        const thread = std.Thread.spawn(.{}, Worker.run, .{worker}) catch |err| {
+            _ = self.in_flight.fetchSub(1, .acq_rel);
+            self.allocator.destroy(worker);
+            return err;
+        };
+        thread.detach();
+    }
+
+    /// Serve one connection to completion on the calling thread. The backend is
+    /// built here, per connection: a create is a three-frame transaction and a
+    /// shared one would let two daemons interleave into the same half-built
+    /// create.
+    fn runOne(self: *ConnectionShared, stream: std.net.Stream, peer: ObservedPeer) void {
+        defer stream.close();
+        var backend_state = ProductionBackend.init(
+            self.allocator,
+            self.runtime,
+            self.registry,
+            self.control_plane,
+            self.launcher,
+        );
+        backend_state.state_gate = &self.state_gate;
+        defer {
+            self.state_gate.lock();
+            backend_state.deinit();
+            self.state_gate.unlock();
+        }
+        var observed = peer;
         serveDaemonConnection(
-            allocator,
-            &runtime,
-            accepted.stream,
-            &accepted.peer,
-            build_id,
-            &timer,
-            backend,
-            &handshake_cache,
+            self.allocator,
+            self.runtime,
+            stream,
+            &observed,
+            self.build_id,
+            self.timer,
+            backend_state.backend(),
+            self.handshake_cache,
         ) catch |err| {
             std.log.err(
                 "broker daemon connection failed closed during authentication/control: {s}",
                 .{@errorName(err)},
             );
-            continue;
         };
     }
-}
+
+    /// Let in-flight connections finish before the state they point at is torn
+    /// down. Bounded: a wedged peer must not keep the broker from exiting.
+    fn drain(self: *ConnectionShared) void {
+        var waited_ms: usize = 0;
+        while (self.in_flight.load(.acquire) > 0 and waited_ms < 5_000) : (waited_ms += 25) {
+            std.Thread.sleep(25 * std.time.ns_per_ms);
+        }
+    }
+
+    const Worker = struct {
+        shared: *ConnectionShared,
+        stream: std.net.Stream,
+        peer: ObservedPeer,
+
+        fn run(self: *Worker) void {
+            const shared = self.shared;
+            defer {
+                _ = shared.in_flight.fetchSub(1, .acq_rel);
+                shared.allocator.destroy(self);
+            }
+            shared.runOne(self.stream, self.peer);
+        }
+    };
+};
 
 fn adoptionMatches(record: HostRecord, readback: AdoptionReadback, now_ns: u64) bool {
     var executable_storage: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
