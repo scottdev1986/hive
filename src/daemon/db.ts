@@ -288,6 +288,16 @@ export function getDatabaseIdentityPath(): string {
   return join(getHiveHome(), "hive.db.identity");
 }
 
+export interface StrandedWorktree {
+  branch: string;
+  agentName: string;
+  worktreePath: string;
+  unmergedCommits: number;
+  dirtyFileCount: number;
+  firstSeenAt: string;
+  lastCheckedAt: string;
+}
+
 export class HiveDatabaseIdentityError extends Error {
   constructor(message: string) {
     super(message);
@@ -559,6 +569,21 @@ export class HiveDatabase {
       CREATE TABLE IF NOT EXISTS agent_name_reservations (
         name TEXT PRIMARY KEY,
         createdAt TEXT NOT NULL
+      );
+      -- A worktree whose agent is gone but whose work is not accounted for.
+      -- The row IS the hold on the name: the allocator refuses a name while one
+      -- exists, so work cannot be orphaned under a second agent of the same
+      -- name. Rows are re-checked and deleted once git says there is nothing
+      -- left, which is what keeps the queen's digest from becoming background
+      -- noise it learns to skip.
+      CREATE TABLE IF NOT EXISTS stranded_worktrees (
+        branch TEXT PRIMARY KEY,
+        agentName TEXT NOT NULL,
+        worktreePath TEXT NOT NULL,
+        unmergedCommits INTEGER NOT NULL,
+        dirtyFileCount INTEGER NOT NULL,
+        firstSeenAt TEXT NOT NULL,
+        lastCheckedAt TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1899,6 +1924,66 @@ export class HiveDatabase {
       DELETE FROM agent_name_reservations WHERE name = ?
     `)
         .run(name).changes === 1
+    );
+  }
+
+  /** Records a worktree left with work nobody has accounted for. */
+  recordStrandedWorktree(entry: {
+    branch: string;
+    agentName: string;
+    worktreePath: string;
+    unmergedCommits: number;
+    dirtyFileCount: number;
+    at?: string;
+  }): void {
+    const at = entry.at ?? new Date().toISOString();
+    this.database
+      .query(`
+      INSERT INTO stranded_worktrees
+        (branch, agentName, worktreePath, unmergedCommits, dirtyFileCount,
+         firstSeenAt, lastCheckedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(branch) DO UPDATE SET
+        unmergedCommits = excluded.unmergedCommits,
+        dirtyFileCount = excluded.dirtyFileCount,
+        lastCheckedAt = excluded.lastCheckedAt
+    `)
+      .run(
+        entry.branch,
+        entry.agentName,
+        entry.worktreePath,
+        entry.unmergedCommits,
+        entry.dirtyFileCount,
+        at,
+        at,
+      );
+  }
+
+  listStrandedWorktrees(): readonly StrandedWorktree[] {
+    return this.database
+      .query(`
+      SELECT branch, agentName, worktreePath, unmergedCommits, dirtyFileCount,
+             firstSeenAt, lastCheckedAt
+      FROM stranded_worktrees
+      ORDER BY firstSeenAt
+    `)
+      .all() as StrandedWorktree[];
+  }
+
+  /** Releases the hold once the work is accounted for. */
+  clearStrandedWorktree(branch: string): boolean {
+    return (
+      this.database
+        .query("DELETE FROM stranded_worktrees WHERE branch = ?")
+        .run(branch).changes === 1
+    );
+  }
+
+  isNameHeldByStrandedWork(name: string): boolean {
+    return (
+      this.database
+        .query("SELECT 1 FROM stranded_worktrees WHERE agentName = ?")
+        .get(name) !== null
     );
   }
 

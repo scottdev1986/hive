@@ -102,7 +102,6 @@ const setControlTimeout = host_process.setControlTimeout;
 const ConnectionDeadline = host_process.ConnectionDeadline;
 const readConnectionFrame = host_process.readConnectionFrame;
 const acceptedConnectionReady = host_process.acceptedConnectionReady;
-const leaseBoundControlTimeoutMs = host_process.leaseBoundControlTimeoutMs;
 pub const HostRuntime = host_process.HostRuntime;
 const executableBuildHash = host_process.executableBuildHash;
 const LaunchClient = host_process.LaunchClient;
@@ -285,7 +284,7 @@ pub fn authorizeViewerConnection(
     now_ns: u64,
 ) !ViewerAuthorization {
     var timer = try std.time.Timer.start();
-    const deadline = try ConnectionDeadline.init(&timer, core.lease, now_ns);
+    const deadline = try ConnectionDeadline.init(&timer);
     var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .viewer)) orelse
         return error.ViewerHandshakeRefused;
     defer hello.deinit();
@@ -319,6 +318,10 @@ fn serveBrokerRequest(
     }
     switch (request.header.type_code) {
         generated.frame_type.host_adopt => {
+            // Kernel-owned peer identity, read before the secret is checked so
+            // the supervisor this host watches from here on is the process the
+            // kernel says is on the other end of the socket, never a claim.
+            const adopting = broker.inspectPeer(stream.handle) catch null;
             const response = core.adopt(
                 request.payload,
                 hello_build_id,
@@ -333,6 +336,7 @@ fn serveBrokerRequest(
                 return;
             };
             defer core.allocator.free(response);
+            if (adopting) |peer| core.supervisorAdoptedBy(peer.pid);
             try protocol.writeFrame(
                 stream,
                 request.header.response(generated.frame_type.host_adopt, response.len),
@@ -427,9 +431,10 @@ pub fn serveHostConnection(
     stream: std.net.Stream,
     core: *HostCore,
     now_ns: u64,
+    budget_ms: u64,
 ) !void {
     var timer = try std.time.Timer.start();
-    const deadline = try ConnectionDeadline.init(&timer, core.lease, now_ns);
+    const deadline = try ConnectionDeadline.initWithBudget(&timer, budget_ms);
     var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .broker)) orelse return;
     defer hello.deinit();
     return serveBrokerRequest(allocator, stream, core, hello.build_id, &deadline, now_ns);
@@ -662,7 +667,7 @@ fn serveSessionConnection(
     timer: *std.time.Timer,
 ) !?AttachedViewer {
     const now_ns = timer.read();
-    const deadline = try ConnectionDeadline.init(timer, core.lease, now_ns);
+    const deadline = try ConnectionDeadline.init(timer);
     var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .either)) orelse return null;
     defer hello.deinit();
     switch (hello.role) {
@@ -786,7 +791,7 @@ fn pumpAttachedViewer(
 ) ?ViewerDetach {
     // One absolute budget per pump call: poll() proves only that SOME byte is
     // readable, so a dribbling viewer cannot stall the host loop.
-    const deadline = ConnectionDeadline.init(timer, core.lease, timer.read()) catch return null;
+    const deadline = ConnectionDeadline.init(timer) catch return null;
     // Journal pressure may evict past one lagging viewer. Detach only that
     // viewer; unrelated renderers continue from their own cursors.
     if (state.retainedOutputStart() > viewer.sent_seq) {
@@ -1349,28 +1354,19 @@ fn runHostLoop(
     while (!core.terminated) {
         refreshRegistration(core, state);
         const now_ns = timer.read();
-        if (core.lease.expired(now_ns)) {
-            try persistTerminalState(state, runtime.directory, persistence, .forced);
-            refreshRegistration(core, state);
-            _ = try core.enforceVisibilityExpiry(now_ns);
-            break;
-        }
+        // A live host holds its own lease open. Nothing has to arrive for a
+        // terminal to keep living, and nothing infers its death: the only thing
+        // that ends a terminal is an explicit termination. Self-terminating on
+        // a supervisor this host could no longer observe killed working agents
+        // whose vendor TUI was rendered and running.
+        core.lease.touch(now_ns);
 
         if (try runtime.accept()) |stream| {
-            const connection_now_ns = timer.read();
-            if (core.lease.expired(connection_now_ns)) {
-                stream.close();
-                try persistTerminalState(state, runtime.directory, persistence, .forced);
-                refreshRegistration(core, state);
-                _ = try core.enforceVisibilityExpiry(connection_now_ns);
-                break;
-            }
             // A per-connection setup failure — a peer that reset the socket
-            // before setsockopt ran, or a momentary lease-timeout race — drops
-            // THIS connection and keeps serving. It must never tear down the
-            // host (a single client cannot kill the terminal). A genuine lease
-            // expiry is caught by the top-of-loop and pre-accept checks above.
-            if (!acceptedConnectionReady(core.lease, stream.handle, connection_now_ns)) {
+            // before setsockopt ran — drops THIS connection and keeps serving.
+            // It must never tear down the host: a single client cannot kill
+            // the terminal.
+            if (!acceptedConnectionReady(stream.handle)) {
                 std.log.err("host connection setup refused; dropping connection", .{});
                 stream.close();
                 continue;
@@ -1419,7 +1415,7 @@ fn runHostLoop(
                 neutral_endpoint,
                 stream,
                 neutral_serving.handler(),
-                try leaseBoundControlTimeoutMs(core.lease, now_ns),
+                generated.limits.control_rpc_timeout_ms,
             ) catch |err| {
                 // A timeout after any partial frame is fatal to this stream;
                 // serveNeutralAccepted closes it; the next request is fresh.
@@ -1457,12 +1453,36 @@ fn runHostLoop(
     }
 }
 
+/// Environment variable naming the unix socket this host dials for its boot
+/// message. Absent means the launcher handed the control socket down as an
+/// inherited descriptor instead.
+pub const control_socket_env = "HIVE_HOST_CONTROL_SOCKET";
+
+/// The control stream carrying the HVB1 boot message.
+///
+/// A launcher that can hand a socketpair down as a descriptor passes nothing
+/// and this inherits fd 3. A launcher that cannot — anything that is not a
+/// forking C parent — names a socket it is already listening on, and the host
+/// dials it. Both produce the same private SOCK_STREAM, so everything after
+/// this point is identical; only who calls connect changes.
+///
+/// The path is per-host, so accepting one connection on it is unambiguous
+/// without a correlation token.
+fn openControlStream(allocator: std.mem.Allocator) !std.net.Stream {
+    const path = std.process.getEnvVarOwned(allocator, control_socket_env) catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return .{ .handle = inherited_control_fd },
+        else => return err,
+    };
+    defer allocator.free(path);
+    return std.net.connectUnixSocket(path);
+}
+
 /// Entry point for the same executable's `host` role.
 pub fn runHostRole(
     allocator: std.mem.Allocator,
     hive_home: []const u8,
 ) !void {
-    const control: std.net.Stream = .{ .handle = inherited_control_fd };
+    const control = try openControlStream(allocator);
     defer control.close();
     runHostRoleWithControl(allocator, hive_home, control) catch |err| {
         host_registration.sendStartupFailure(
@@ -1479,7 +1499,10 @@ fn runHostRoleWithControl(
     hive_home: []const u8,
     control: std.net.Stream,
 ) !void {
-    try setControlTimeout(control.handle);
+    // Both ends of the boot handshake share one bound: this host forks a login
+    // shell and a vendor CLI before it can answer READY, and under a wide burst
+    // that is seconds, not milliseconds.
+    try setControlTimeoutMs(control.handle, host_process.host_ready_timeout_ms);
     const control_file: std.fs.File = .{ .handle = control.handle };
     var boot = try readBootMessage(allocator, control_file.deprecatedReader());
     var boot_owned = true;
@@ -1595,6 +1618,7 @@ fn runHostRoleWithControl(
     };
     // Evidence the frozen create result does not carry, measured by the create.
     const launch_evidence = direct.launch_evidence orelse return error.ProviderExecFailed;
+
     var neutral_endpoint = try neutral_host.HostEndpoint.open(
         allocator,
         &neutral_runtime,
@@ -1721,6 +1745,13 @@ fn runHostRoleWithControl(
         .directory = runtime.directory,
         .arbiter = &arbiter,
     });
+    // The broker forked this process, so it is still the parent here. Watching
+    // it directly is what replaced the visibility lease: a host orphaned by a
+    // dead broker reparents to launchd and would otherwise keep a vendor
+    // running — and burning tokens — with nobody left to stop it. A restarting
+    // broker re-binds this watch when it proves the adoption secret.
+    core.bindSupervisor(host_core.SupervisorWatch.of(c.getppid()) orelse
+        return error.SupervisorUnobservable);
     var neutral_evidence: NeutralLiveEvidenceSource = .{
         .core = &core,
         .pty = &pty,
@@ -1872,21 +1903,19 @@ test "host registration confirms a future lease bounded by fifteen seconds" {
     );
 }
 
-test "accepted broker sockets cannot outlive the visibility deadline" {
+test "a running host holds its own lease open" {
     const start_ns: u64 = 1_000;
-    const lease = try VisibilityLease.initial("workspace-1", 7, start_ns);
-    try std.testing.expectEqual(
-        generated.limits.control_rpc_timeout_ms,
-        try leaseBoundControlTimeoutMs(lease, start_ns),
-    );
-    try std.testing.expectEqual(
-        @as(u64, 1),
-        try leaseBoundControlTimeoutMs(lease, lease.expires_mono_ns - 1),
-    );
-    try std.testing.expectError(
-        error.VisibilityExpired,
-        leaseBoundControlTimeoutMs(lease, lease.expires_mono_ns),
-    );
+    var lease = try VisibilityLease.initial("workspace-1", 7, start_ns);
+    const first = lease.expires_mono_ns;
+    try std.testing.expect(!lease.expired(first - 1));
+
+    // Past the old deadline with no renewal from anywhere: the host is still
+    // running, so it touches its own lease and the terminal lives. This is the
+    // 2026-07-27 collapse — every host expired waiting for a message that was
+    // queued behind the burst that created it.
+    lease.touch(first + 1);
+    try std.testing.expect(lease.expires_mono_ns > first);
+    try std.testing.expect(!lease.expired(first + 1));
 }
 
 test "spawn strings reject C ABI truncation with a valid control" {
@@ -3057,6 +3086,7 @@ const HostConnectionThread = struct {
     stream: std.net.Stream,
     core: *HostCore,
     now_ns: u64,
+    budget_ms: u64 = generated.limits.control_rpc_timeout_ms,
     failure: ?anyerror = null,
 
     fn run(self: *@This()) void {
@@ -3065,6 +3095,7 @@ const HostConnectionThread = struct {
             self.stream,
             self.core,
             self.now_ns,
+            self.budget_ms,
         ) catch |err| {
             self.failure = err;
         };
@@ -3373,8 +3404,7 @@ test "host.sock fails closed for privileged broker RPCs before adoption" {
 
 test "connection deadline fails closed once the absolute budget is spent" {
     var timer = try std.time.Timer.start();
-    const lease = try VisibilityLease.initial("ws-fixture", 1, 0);
-    var deadline = try ConnectionDeadline.init(&timer, lease, 1);
+    var deadline = try ConnectionDeadline.init(&timer);
     // Shrink the 10 s budget so the test does not wait on wall time.
     deadline.budget_ns = 50 * std.time.ns_per_ms;
     try deadline.check();
@@ -3395,17 +3425,17 @@ test "slow-dribble connection is dropped at the absolute service deadline" {
         1_000,
     );
     defer core.deinit();
-    // A ~250 ms residual lease shrinks the absolute budget; without the
-    // deadline this partial HELLO would stall the loop for the full per-syscall
-    // control_rpc_timeout_ms (and re-arm forever if dribbled).
-    core.lease.expires_mono_ns = 1_000 + 250 * std.time.ns_per_ms;
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
+    // A 250 ms budget stands in for the production 10 s one: without the
+    // absolute deadline this partial HELLO re-arms the per-syscall timeout
+    // forever and holds the single-threaded host loop with it.
     var server: HostConnectionThread = .{
         .stream = sockets[1],
         .core = &core,
         .now_ns = 2_000,
+        .budget_ms = 250,
     };
     const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
     var timer = try std.time.Timer.start();
@@ -3416,13 +3446,21 @@ test "slow-dribble connection is dropped at the absolute service deadline" {
     const elapsed = timer.read();
     try std.testing.expect(server.failure != null);
     try std.testing.expect(elapsed < generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms);
-    // The loop-side proof that renewal cannot be starved: the connection was
-    // dropped within roughly the lease-bound budget, not the 10 s default.
+    // Dropped at its own budget, so the loop always regains control: it still
+    // has a supervisor to observe and viewers to pump.
     try std.testing.expect(elapsed < 5 * std.time.ns_per_s);
     try std.testing.expect(!core.adopted);
 }
 
 fn inputSubmitPayload(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
+    return inputSubmitPayloadUnderClaim(allocator, key, "claim-token");
+}
+
+fn inputSubmitPayloadUnderClaim(
+    allocator: std.mem.Allocator,
+    key: []const u8,
+    claim_token: []const u8,
+) ![]u8 {
     const registration = fixtureRegistration();
     return std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -3430,11 +3468,51 @@ fn inputSubmitPayload(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
             .key = registration.record.locator.session_id,
             .incarnation = "1",
         },
-        .claimToken = "claim-token",
+        .claimToken = claim_token,
         .transactionId = key,
         .idempotencyKey = key,
         .operation = .{ .kind = "hangup" },
     }, .{});
+}
+
+const reuse_rejection = "idempotency key reused with different input";
+
+test "a resend under a fresh claim token replays instead of being called different input" {
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+
+    const first = try inputSubmitPayloadUnderClaim(std.testing.allocator, "msg-1", "claim_aaa");
+    defer std.testing.allocator.free(first);
+    const applied = try core.submitInput(first, "hive-daemon:inst", 2_000);
+    defer core.allocator.free(applied);
+    try std.testing.expectEqual(@as(usize, 1), core.input_replays.items.len);
+
+    // The daemon released its claim when that cycle closed, so the resend
+    // acquires a new one and CLAIM_ACQUIRE mints a fresh random token. Nothing
+    // about the INPUT itself changed: same key, same transaction, same bytes.
+    const resent = try inputSubmitPayloadUnderClaim(std.testing.allocator, "msg-1", "claim_bbb");
+    defer std.testing.allocator.free(resent);
+    const replayed = try core.submitInput(resent, "hive-daemon:inst", 3_000);
+    defer core.allocator.free(replayed);
+    try std.testing.expect(std.mem.indexOf(u8, replayed, reuse_rejection) == null);
+    // A replay hit, not a second reservation — the message is delivered once.
+    try std.testing.expectEqual(@as(usize, 1), core.input_replays.items.len);
+
+    // The writer is still what scopes the ledger: another viewer guessing the
+    // key does not get to read back this writer's receipt.
+    const stolen = try inputSubmitPayloadUnderClaim(std.testing.allocator, "msg-1", "claim_ccc");
+    defer std.testing.allocator.free(stolen);
+    const refused = try core.submitInput(stolen, "workspace-pane-nina", 4_000);
+    defer core.allocator.free(refused);
+    try std.testing.expect(std.mem.indexOf(u8, refused, reuse_rejection) != null);
 }
 
 test "replay ledgers evict the oldest entry beyond the retention cap" {
@@ -5389,7 +5467,7 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
     });
 }
 
-test "visibility expiry self-terminates without a broker and records failure code" {
+test "a host self-terminates only once its supervisor is observably gone" {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
@@ -5414,9 +5492,26 @@ test "visibility expiry self-terminates without a broker and records failure cod
     }
     try bindTestProvider(std.testing.allocator, &core, &pty, temporary.dir);
     const provider_pid = core.registration.record.process_root.pid;
-    const expiry = 1_000 + generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
-    try std.testing.expect(!try core.enforceVisibilityExpiry(expiry - 1));
-    try std.testing.expect(try core.enforceVisibilityExpiry(expiry));
+    // A live supervisor, long past the deadline the visibility lease used to
+    // impose: nothing dies. Under the lease every host in a wide burst expired
+    // here, waiting on a renewal queued behind the creates that made it
+    // necessary (2026-07-27).
+    core.bindSupervisor(host_core.SupervisorWatch.of(c.getpid()).?);
+    const past_old_lease = 1_000 + 10 * generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
+    try std.testing.expect(!try core.enforceSupervisorLoss(past_old_lease));
+    try std.testing.expect(!core.terminated);
+
+    // Same pid, different start token: whatever holds that pid now is not the
+    // process that supervised this host. Absence must be continuous through
+    // the grace window, which exists so a restarting broker can adopt.
+    core.supervisor.?.start_token.microseconds +%= 1;
+    try std.testing.expect(!try core.enforceSupervisorLoss(past_old_lease));
+    try std.testing.expect(!try core.enforceSupervisorLoss(
+        past_old_lease + host_core.supervisor_grace_ns - 1,
+    ));
+    try std.testing.expect(try core.enforceSupervisorLoss(
+        past_old_lease + host_core.supervisor_grace_ns,
+    ));
     try std.testing.expect(core.terminated);
     try std.testing.expect(switch (process_inspector.observeProcess(provider_pid)) {
         .absent => true,
@@ -5428,7 +5523,7 @@ test "visibility expiry self-terminates without a broker and records failure cod
         generated.limits.control_json_bytes,
     );
     defer std.testing.allocator.free(final);
-    try std.testing.expect(std.mem.indexOf(u8, final, "VISIBILITY_EXPIRED") != null);
+    try std.testing.expect(std.mem.indexOf(u8, final, "SUPERVISOR_GONE") != null);
 }
 
 comptime {

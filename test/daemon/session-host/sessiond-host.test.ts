@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { createServer, type Socket } from "node:net";
+import { mkdtemp, rm } from "node:fs/promises";
+import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../../src/daemon/db";
@@ -11,7 +11,6 @@ import { HiveTerminalHostAdapter } from "../../../src/daemon/session-host/hive-t
 import {
   encodeSessiondFrame,
   type SessiondBrokerClient,
-  SessiondBrokerUnavailableError,
   type SessiondControlRequest,
   SessiondCreateAdmissionDisabledError,
   type SessiondFrame,
@@ -39,7 +38,6 @@ import {
   FRAME_FLAGS,
   FRAME_HEADER,
   FRAME_TYPES,
-  HelloPayloadSchema,
   SessionSpecSchema,
 } from "../../../src/schemas/session-protocol";
 import { required } from "../../required";
@@ -49,7 +47,7 @@ const session: SessionRef = {
   incarnation: "neutral-incarnation-1",
 };
 
-const handshake: DaemonHandshake = {
+const _handshake: DaemonHandshake = {
   productVersion: "0.0.0-dev",
   buildHash: "daemon-build-hash",
   wireProtocol: { min: 1, max: 1 },
@@ -223,6 +221,79 @@ const createdPayload = CreatedPayloadSchema.parse({
     diagnosticIds: [],
   },
 });
+
+const launchedRecord = {
+  locator: brokerLocator,
+  hostPid: 4_000,
+  hostStartToken: "4000:123400",
+  processRoot: { pid: 4_100, startToken: "4100:123456", processGroupId: 4_100 },
+  expectedExecutable: "/bin/zsh",
+  executableBuildHash: "executable-build-hash",
+  engineBuildId: brokerLocator.engineBuildId,
+  protocol: { major: 1 as const, minor: 0 },
+  geometry: brokerGeometry,
+  state: "live" as const,
+  outputSeq: "0",
+  checkpointSeq: "0",
+  visibility: {
+    state: "attaching" as const,
+    workspaceSessionId: brokerVisibility.workspaceSessionId,
+    openTerminalRevision: brokerVisibility.openTerminalRevision,
+    expiresAt: "2026-07-18T01:00:15.000Z",
+  },
+};
+
+/** Records what Hive asked for, and answers as a booted host would. */
+function recordingLauncher(outcome: () => unknown = () => launchedRecord): {
+  launch: NonNullable<
+    ConstructorParameters<typeof SessiondHost>[0]
+  >["launchHost"];
+  requests: Array<{ specJson: string; initialInput: Uint8Array }>;
+} {
+  const requests: Array<{ specJson: string; initialInput: Uint8Array }> = [];
+  return {
+    requests,
+    launch: (async (request: {
+      specJson: string;
+      initialInput: Uint8Array;
+    }) => {
+      requests.push({
+        specJson: request.specJson,
+        initialInput: request.initialInput,
+      });
+      const record = outcome();
+      return {
+        record,
+        hostPid: launchedRecord.hostPid,
+        control: { destroy: () => {} },
+      };
+      // biome-ignore lint/suspicious/noExplicitAny: the seam only needs these fields.
+    }) as any,
+  };
+}
+
+/**
+ * Answers direct host operations: enumeration from the hosts' own published
+ * records, and INSPECT from the host itself. No broker is involved in either.
+ */
+function directInspect(
+  inspection: unknown,
+  sessions?: readonly unknown[],
+  terminationResult?: unknown,
+) {
+  return {
+    callHost: (async (request: { operation: string }) => {
+      const answer =
+        request.operation === "terminate"
+          ? (terminationResult ?? {})
+          : inspection;
+      return JSON.stringify({ schemaVersion: 1, ...(answer as object) });
+    }) as never,
+    readControlSecret: (async () => new Uint8Array(32)) as never,
+    listSessions: (async () => sessions ?? []) as never,
+    adoptHost: (async () => {}) as never,
+  };
+}
 
 const claim: ClaimResult = {
   state: "granted",
@@ -692,184 +763,40 @@ describe("sessiond wire framing", () => {
     await expect(first).rejects.toThrow("sessiond connection closed");
   });
 
-  test("handshakes and runs product create over the production Unix-socket path", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-host-test-"));
-    const runtime = join(directory, "runtime", "sessiond");
-    await mkdir(runtime, { recursive: true });
-    const socketPath = join(runtime, "broker.sock");
-    const received: ReturnType<SessiondFrameDecoder["push"]> = [];
-    const server = createServer((socket) => {
-      const decoder = new SessiondFrameDecoder();
-      let helloRequestId: bigint | null = null;
-      socket.on("data", (chunk) => {
-        const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
-        for (const frame of decoder.push(bytes)) {
-          received.push(frame);
-          if (frame.type === "HELLO") {
-            helloRequestId = frame.requestId;
-            socket.write(
-              encodeSessiondFrame({
-                type: "PING",
-                flags: 0,
-                requestId: 900n,
-                streamSeq: 0n,
-                payload: new TextEncoder().encode(
-                  '{"schemaVersion":1,"monoNanos":"7"}',
-                ),
-              }),
-            );
-          } else if (frame.type === "PONG") {
-            expect(frame.flags).toBe(FRAME_FLAGS.response | FRAME_FLAGS.final);
-            socket.write(
-              encodeSessiondFrame({
-                type: "WELCOME",
-                flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-                requestId: required(helloRequestId),
-                streamSeq: 0n,
-                payload: new TextEncoder().encode(
-                  JSON.stringify({
-                    schemaVersion: 1,
-                    protocol: { major: 1, minor: 0 },
-                    instanceId: handshake.instanceId,
-                    endpointRole: "broker",
-                    buildId: "sessiond-build-hash",
-                    engineBuildId: brokerLocator.engineBuildId,
-                    connectionId: "1",
-                    serverEpoch: "1",
-                    limits: {
-                      controlFrameMaxBytes: 262_144,
-                      maxInputTransactionBytes: 131_072,
-                      streamChunkMaxBytes: 65_536,
-                      automatedMessageMaxBytes: 1_048_576,
-                      viewerQueueMaxBytes: 8_388_608,
-                    },
-                  }),
-                ),
-              }),
-            );
-          } else if (frame.type === "CREATE_COMMIT") {
-            socket.write(
-              encodeSessiondFrame({
-                type: "CREATED",
-                flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
-                requestId: frame.requestId,
-                streamSeq: 0n,
-                payload: new TextEncoder().encode(
-                  JSON.stringify(createdPayload),
-                ),
-              }),
-            );
-          }
-        }
-      });
-    });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(socketPath, resolve);
-      });
-      const host = new SessiondHost({
-        hiveHome: directory,
-        handshake: async () => handshake,
-        pendingBindings,
-      });
-      await expect(host.create(sessionSpec, new Uint8Array())).resolves.toEqual(
-        {
-          locator: brokerLocator,
-          inspection: createdPayload.inspection,
-          created: true,
-        },
-      );
-      expect(received.map((frame) => frame.type)).toEqual([
-        "HELLO",
-        "PONG",
-        "CREATE_BEGIN",
-        "CREATE_COMMIT",
-      ]);
-      expect(
-        HelloPayloadSchema.parse(
-          JSON.parse(new TextDecoder().decode(received[0]?.payload)),
-        ),
-      ).toMatchObject({
-        buildId: handshake.buildHash,
-        instanceId: handshake.instanceId,
-        clientRole: "daemon",
-        daemonControl: {
-          productVersion: handshake.productVersion,
-          buildHash: handshake.buildHash,
-          wireProtocol: handshake.wireProtocol,
-          schemaEpoch: handshake.schemaEpoch,
-          instanceId: handshake.instanceId,
-          hiveUuid: handshake.hiveUuid,
-          identityKey: handshake.identityKey,
-          repoFamilyKey: handshake.repoFamilyKey,
-        },
-      });
-      expect(
-        JSON.parse(new TextDecoder().decode(received[2]?.payload)),
-      ).toEqual(createBeginPayload);
-    } finally {
-      await new Promise<void>((resolve, reject) =>
-        server.close((error) =>
-          error === undefined ? resolve() : reject(error),
-        ),
-      );
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("SessiondHost landed frozen operations", () => {
-  test("reports an absent production broker as explicit not-ready evidence", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-absent-"));
-    try {
-      const host = new SessiondHost({
-        hiveHome: directory,
-        handshake: async () => handshake,
-      });
-
-      const failure = host.list().catch((error) => error);
-      await expect(failure).resolves.toBeInstanceOf(
-        SessiondBrokerUnavailableError,
-      );
-      await expect(failure).resolves.toMatchObject({
-        socketPath: join(directory, "runtime", "sessiond", "broker.sock"),
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
   test("creates from a product spec and its pre-bound Workspace visibility", async () => {
-    const broker = new RecordingClient(
-      () => {
-        throw new Error("product create must use the transactional seam");
-      },
-      () => createdPayload,
-      brokerLocator.engineBuildId,
-    );
+    // Hive launches the host itself; the broker is not in this path at all.
+    const launcher = recordingLauncher();
     const host = new SessiondHost({
-      connectBroker: async () => broker,
+      launchHost: launcher.launch,
+      adoptHost: (async () => {}) as never,
       pendingBindings,
     });
     const initialInput = new TextEncoder().encode("initial input\n");
 
-    await expect(host.create(sessionSpec, initialInput)).resolves.toEqual({
-      locator: brokerLocator,
-      inspection: createdPayload.inspection,
-      created: true,
+    const result = await host.create(sessionSpec, initialInput);
+    expect(result.locator).toEqual(brokerLocator);
+    expect(result.created).toBe(true);
+    // A terminal that has only just registered has a shell and no provider, so
+    // the foreground is unknown rather than invented.
+    expect(result.inspection.foreground).toEqual({
+      state: "unknown",
+      runId: null,
     });
-    expect(broker.creates).toEqual([
-      {
-        beginPayload: createBeginPayload,
-        initialInput,
-      },
-    ]);
-    expect(broker.requests).toHaveLength(0);
-    expect(broker.closed).toBe(true);
+    expect(result.inspection.hostPid).toBe(launchedRecord.hostPid);
+    expect(result.inspection.shellRoot).toEqual({
+      pid: 4_100,
+      startToken: "4100:123456",
+      processGroupId: 4_100,
+    });
+    // The host receives exactly the negotiated CREATE_BEGIN document.
+    expect(launcher.requests).toHaveLength(1);
+    expect(JSON.parse(required(launcher.requests[0]).specJson)).toEqual(
+      createBeginPayload,
+    );
+    expect(required(launcher.requests[0]).initialInput).toEqual(initialInput);
   });
 
-  test("releases the pending binding only on a typed pre-launch capacity refusal", async () => {
+  test("releases the pending binding when the launch fails", async () => {
     const released: unknown[] = [];
     const bindings: TerminalHostBindingStore = {
       ...pendingBindings,
@@ -878,27 +805,19 @@ describe("SessiondHost landed frozen operations", () => {
         return true;
       },
     };
-    const broker = new RecordingClient(
-      () => createdPayload,
-      () => {
-        throw new SessiondWireError(
-          "CAPACITY_EXCEEDED",
-          "live session capacity exhausted",
-          null,
-        );
-      },
-      brokerLocator.engineBuildId,
-    );
     const host = new SessiondHost({
-      connectBroker: async () => broker,
+      launchHost: recordingLauncher(() => {
+        throw new Error("host never registered");
+      }).launch,
+      adoptHost: (async () => {}) as never,
       pendingBindings: bindings,
     });
 
-    await expect(
-      host.create(sessionSpec, new Uint8Array()),
-    ).rejects.toMatchObject({ code: "CAPACITY_EXCEEDED" });
+    await expect(host.create(sessionSpec, new Uint8Array())).rejects.toThrow(
+      /host never registered/,
+    );
+    // Nothing was created, so the pending binding must not survive as a pane.
     expect(released).toEqual([brokerLocator]);
-    expect(broker.closed).toBe(true);
   });
 
   test("composes negotiated create through the adapter and a real binding database", async () => {
@@ -917,37 +836,10 @@ describe("SessiondHost landed frozen operations", () => {
     const brokers: RecordingClient[] = [];
     const host = new SessiondHost({
       pendingBindings: db,
-      connectBroker: async () => {
-        const broker = new RecordingClient(
-          (request) => {
-            switch (request.requestType) {
-              case "LIST":
-                return { schemaVersion: 1, entries: [transportInspection] };
-              case "INSPECT":
-                return { schemaVersion: 1, ...transportInspection };
-              case "VISIBILITY_RENEW":
-                // Echo the requested revision: create now renews at
-                // create-return (revision "1") before the explicit renewal
-                // below (revision "2").
-                return {
-                  schemaVersion: 1,
-                  locator: brokerLocator,
-                  state: "active",
-                  expiresAt: "2026-07-18T01:00:30.000Z",
-                  openTerminalRevision: (
-                    request.payload as { openTerminalRevision: string }
-                  ).openTerminalRevision,
-                };
-              default:
-                throw new Error(`unexpected request: ${request.requestType}`);
-            }
-          },
-          () => createdPayload,
-          brokerLocator.engineBuildId,
-        );
-        brokers.push(broker);
-        return broker;
-      },
+      // Create launches the host directly; the broker seam below still serves
+      // the read and renewal RPCs this test exercises.
+      launchHost: recordingLauncher().launch,
+      ...directInspect(transportInspection, [transportSession]),
     });
     const adapter = new HiveTerminalHostAdapter(
       host,
@@ -957,11 +849,23 @@ describe("SessiondHost landed frozen operations", () => {
     );
 
     try {
-      await expect(
-        adapter.create(sessionSpec, new Uint8Array(), pendingBinding),
-      ).resolves.toEqual({
+      const created = await adapter.create(
+        sessionSpec,
+        new Uint8Array(),
+        pendingBinding,
+      );
+      // Evidence is stamped when it is taken, so it is checked as a fresh
+      // instant rather than pinned to a fixture's frozen one.
+      const evidenceAge =
+        Date.now() - Date.parse(created.inspection.evidenceAt);
+      expect(evidenceAge).toBeGreaterThanOrEqual(0);
+      expect(evidenceAge).toBeLessThan(60_000);
+      expect(created).toEqual({
         locator: brokerLocator,
-        inspection: createdPayload.inspection,
+        inspection: {
+          ...createdPayload.inspection,
+          evidenceAt: created.inspection.evidenceAt,
+        },
         created: true,
       });
       const createEvidence = {
@@ -972,10 +876,10 @@ describe("SessiondHost landed frozen operations", () => {
         // Renewed at create-return: the binding holds the lease's visibility,
         // not the launch record's.
         visibility: {
-          state: "visible" as const,
+          state: "attaching" as const,
           workspaceSessionId: brokerVisibility.workspaceSessionId,
           openTerminalRevision: "1",
-          expiresAt: "2026-07-18T01:00:30.000Z",
+          expiresAt: "2026-07-18T01:00:15.000Z",
         },
       };
       expect(db.getTerminalHostBindingByLocator(brokerLocator)).toEqual({
@@ -996,27 +900,6 @@ describe("SessiondHost landed frozen operations", () => {
           locatorGeneration: brokerLocator.generation,
         },
       ]);
-      await expect(
-        adapter.renewVisibility(brokerLocator, {
-          ...brokerVisibility,
-          openTerminalRevision: "2",
-        }),
-      ).resolves.toEqual({
-        locator: brokerLocator,
-        state: "active",
-        expiresAt: "2026-07-18T01:00:30.000Z",
-        openTerminalRevision: "2",
-      });
-      expect(db.getTerminalHostBindingByLocator(brokerLocator)).toMatchObject({
-        visibility: { openTerminalRevision: "2" },
-        createEvidence: {
-          visibility: {
-            state: "visible",
-            openTerminalRevision: "2",
-            expiresAt: "2026-07-18T01:00:30.000Z",
-          },
-        },
-      });
       await expect(adapter.inspect(brokerLocator)).resolves.toEqual({
         schemaVersion: 1,
         locator: brokerLocator,
@@ -1047,10 +930,10 @@ describe("SessiondHost landed frozen operations", () => {
         },
         resources: {},
         visibility: {
-          state: "visible",
+          state: "attaching",
           workspaceSessionId: brokerVisibility.workspaceSessionId,
-          openTerminalRevision: "2",
-          expiresAt: "2026-07-18T01:00:30.000Z",
+          openTerminalRevision: "1",
+          expiresAt: "2026-07-18T01:00:15.000Z",
         },
         exit: null,
         survivors: [],
@@ -1061,19 +944,19 @@ describe("SessiondHost landed frozen operations", () => {
           "SESSIOND_INPUT_STATE_UNAVAILABLE",
         ],
       });
-      expect(brokers.flatMap((broker) => broker.creates)).toEqual([
-        {
-          beginPayload: createBeginPayload,
-          initialInput: new Uint8Array(),
-        },
-      ]);
-      // Two renewals on the wire: the create-return renewal (revision "1")
-      // and the explicit one (revision "2").
+      // No create reaches a broker: Hive launches the host itself, and the
+      // broker seam here serves only the read and renewal RPCs above.
+      expect(brokers.flatMap((broker) => broker.creates)).toEqual([]);
+      // No renewals on the wire at all. A create binds a terminal and returns;
+      // keeping it alive is not something the daemon does, so nothing here may
+      // put a per-terminal message on the critical path again.
       expect(
         brokers
           .flatMap((broker) => broker.requests)
           .map((request) => request.requestType),
-      ).toEqual(["VISIBILITY_RENEW", "VISIBILITY_RENEW", "LIST", "INSPECT"]);
+        // Nothing reaches a broker: create launches the host, and list,
+        // inspect and terminate are asked of the terminal itself.
+      ).toEqual([]);
     } finally {
       db.close();
       await rm(directory, { recursive: true, force: true });
@@ -1081,122 +964,10 @@ describe("SessiondHost landed frozen operations", () => {
   });
 
   test("keeps production sessiond create admission explicitly disabled by default", async () => {
-    const host = new SessiondHost({
-      connectBroker: async () => new RecordingClient(() => createdPayload),
-    });
+    const host = new SessiondHost({});
     await expect(
       host.create(sessionSpec, new Uint8Array()),
     ).rejects.toBeInstanceOf(SessiondCreateAdmissionDisabledError);
-  });
-
-  test("discovers the broker engine without caching and closes the connection", async () => {
-    const first = new RecordingClient(
-      () => createdPayload,
-      () => createdPayload,
-      "engine-first",
-    );
-    const second = new RecordingClient(
-      () => createdPayload,
-      () => createdPayload,
-      "engine-second",
-    );
-    const brokers = [first, second];
-    const host = new SessiondHost({
-      connectBroker: async () => required(brokers.shift()),
-    });
-
-    await expect(host.discoverEngineBuildId()).resolves.toBe("engine-first");
-    await expect(host.discoverEngineBuildId()).resolves.toBe("engine-second");
-    expect(brokers).toEqual([]);
-    expect(first.closed).toBe(true);
-    expect(second.closed).toBe(true);
-  });
-
-  test("refuses an absent or changed broker engine before CREATE_BEGIN", async () => {
-    const absent = new RecordingClient(
-      () => createdPayload,
-      () => createdPayload,
-      null,
-    );
-    const discovered = new RecordingClient(
-      () => createdPayload,
-      () => createdPayload,
-      brokerLocator.engineBuildId,
-    );
-    const changed = new RecordingClient(
-      () => createdPayload,
-      () => createdPayload,
-      "replacement-engine",
-    );
-    const absentHost = new SessiondHost({
-      connectBroker: async () => absent,
-      pendingBindings,
-    });
-    const brokers = [discovered, changed];
-    const changedHost = new SessiondHost({
-      connectBroker: async () => required(brokers.shift()),
-      pendingBindings,
-    });
-
-    await expect(absentHost.discoverEngineBuildId()).rejects.toThrow(
-      "did not publish its engine build",
-    );
-    await expect(changedHost.discoverEngineBuildId()).resolves.toBe(
-      brokerLocator.engineBuildId,
-    );
-    await expect(
-      changedHost.create(sessionSpec, new Uint8Array()),
-    ).rejects.toThrow("engine build changed before create");
-    expect(absent.creates).toEqual([]);
-    expect(changed.creates).toEqual([]);
-    expect(brokers).toEqual([]);
-  });
-
-  test("bounds in-flight create transactions at the measured admission limit", async () => {
-    // The broker is serial and every create holds its accept loop for the
-    // whole launch; this bound is what keeps a 31-spawn burst inside the 10 s
-    // RPC budget (planning/2026-07-27-spawn-collapse-root-cause.md).
-    let inFlight = 0;
-    let maxInFlight = 0;
-    let completed = 0;
-    const gate: Array<() => void> = [];
-    const gatingClient = (): SessiondBrokerClient => ({
-      engineBuildId: brokerLocator.engineBuildId,
-      request: () => {
-        throw new Error("create issues no plain requests");
-      },
-      createTransaction: async () => {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        await new Promise<void>((resolve) => {
-          gate.push(resolve);
-        });
-        inFlight -= 1;
-        completed += 1;
-        return createdPayload;
-      },
-      close: () => undefined,
-    });
-    const host = new SessiondHost({
-      connectBroker: async () => gatingClient(),
-      pendingBindings,
-    });
-
-    const total = 12;
-    const creates = Array.from({ length: total }, () =>
-      host.create(sessionSpec, new Uint8Array()),
-    );
-    // Only the admitted eight may reach the broker; the rest queue locally.
-    while (completed === 0 && gate.length < 8) await Bun.sleep(1);
-    expect(gate).toHaveLength(8);
-    expect(maxInFlight).toBe(8);
-    while (completed < total) {
-      if (gate.length > 0) gate.shift()?.();
-      await Bun.sleep(1);
-    }
-    await Promise.all(creates);
-    expect(completed).toBe(total);
-    expect(maxInFlight).toBe(8);
   });
 
   test("projects claim, idempotent input, and resize onto an attached neutral host", async () => {
@@ -1214,7 +985,6 @@ describe("SessiondHost landed frozen operations", () => {
     };
     const directClients: RecordingClient[] = [];
     const host = new SessiondHost({
-      connectBroker: async () => new RecordingClient(() => createResult),
       connectDirect: async (requested) => {
         expect(requested).toEqual(session);
         const direct = new RecordingClient(respond);
@@ -1278,35 +1048,11 @@ describe("SessiondHost landed frozen operations", () => {
     expect(directClients.every((client) => client.closed)).toBe(true);
   });
 
-  test("projects frozen list, inspect, and terminate through the broker", async () => {
+  test("projects frozen list, inspect and terminate straight to the host", async () => {
     const brokers: RecordingClient[] = [];
     const host = new SessiondHost({
-      connectBroker: async () => {
-        const broker = new RecordingClient((request) => {
-          switch (request.requestType) {
-            case "LIST":
-              expect(request.payload).toEqual({ schemaVersion: 1 });
-              return { schemaVersion: 1, entries: [inspectionWire] };
-            case "INSPECT":
-              expect(request.payload).toEqual({ schemaVersion: 1, session });
-              return { schemaVersion: 1, ...inspectionWire };
-            case "TERMINATE":
-              expect(request.payload).toEqual({
-                schemaVersion: 1,
-                session,
-                mode: "immediate",
-                target: "process-tree",
-                deadline: "2026-07-18T01:00:02.000Z",
-                idempotencyKey: "terminate-idempotency-1",
-              });
-              return { schemaVersion: 1, ...termination };
-            default:
-              throw new Error(`unexpected request: ${request.requestType}`);
-          }
-        });
-        brokers.push(broker);
-        return broker;
-      },
+      // INSPECT no longer reaches the broker: it is asked of the host itself.
+      ...directInspect(inspectionWire, [session], termination),
     });
 
     await expect(host.list()).resolves.toEqual([inspection]);
@@ -1322,14 +1068,14 @@ describe("SessiondHost landed frozen operations", () => {
     });
     expect(terminated).toEqual(termination);
     expect(Object.hasOwn(terminated, "schemaVersion")).toBe(false);
-    expect(brokers).toHaveLength(3);
-    expect(brokers.every((broker) => broker.closed)).toBe(true);
+    // No broker connection at all. Each of these used to cost an authenticated
+    // HELLO through a relay; they are now asked of the terminal that owns the
+    // answer, which is what removes the single accept loop from the fleet path.
+    expect(brokers).toHaveLength(0);
   });
 
   test("fails direct operations at the frozen wire-3 boundary by default", async () => {
-    const host = new SessiondHost({
-      connectBroker: async () => new RecordingClient(() => createResult),
-    });
+    const host = new SessiondHost({});
     await expect(
       host.claimInput({
         session,

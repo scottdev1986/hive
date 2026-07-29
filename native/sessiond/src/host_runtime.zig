@@ -6,7 +6,6 @@ const host_record = @import("host_record");
 const host_registration = @import("host_registration");
 const host_wire = @import("host_wire");
 const protocol = @import("protocol");
-const VisibilityLease = @import("visibility_lease").VisibilityLease;
 
 const inherited_control_fd = boot_envelope.inherited_control_fd;
 const ParsedRegistration = host_registration.ParsedRegistration;
@@ -138,6 +137,17 @@ pub fn setControlTimeoutMs(fd: std.posix.fd_t, timeout_ms: u64) !void {
         return error.ControlTimeoutUnavailable;
 }
 
+/// How long the broker waits for a freshly launched host to report READY, and
+/// how long that host waits for the acknowledgement. Both ends must agree.
+///
+/// This is the create budget itself, not a fraction of it. Half was tried, on
+/// the reasoning that a host which will never report should fail fast and
+/// leave the create room to answer: it cost 27 of 31 hosts, because a boot
+/// that is merely slow under a wide burst is far more common than one that is
+/// broken. A create that ends at the ceiling is one lost agent; a bound that
+/// is too tight is most of them.
+pub const host_ready_timeout_ms: u64 = generated.limits.create_rpc_timeout_ms;
+
 pub fn setControlTimeout(fd: std.posix.fd_t) !void {
     return setControlTimeoutMs(fd, generated.limits.control_rpc_timeout_ms);
 }
@@ -145,21 +155,23 @@ pub fn setControlTimeout(fd: std.posix.fd_t) !void {
 /// Absolute monotonic bound on one accepted connection's cumulative service
 /// time. SO_RCVTIMEO bounds each individual syscall, but a peer dribbling one
 /// byte per syscall window would otherwise hold the single-threaded host loop
-/// — and starve the broker's VISIBILITY_RENEW until the §21 lease self-
-/// terminates the session. The budget is the same lease-bound window the
-/// accept path grants a single syscall; exhausting it drops the connection
-/// (fail closed) so the loop always regains control within a bounded time.
+/// indefinitely. Exhausting the budget drops the connection (fail closed) so
+/// the loop always regains control within a bounded time.
 pub const ConnectionDeadline = struct {
     timer: *std.time.Timer,
     start_ns: u64,
     budget_ns: u64,
 
-    pub fn init(timer: *std.time.Timer, lease: VisibilityLease, now_ns: u64) !ConnectionDeadline {
-        const timeout_ms = try leaseBoundControlTimeoutMs(lease, now_ns);
+    pub fn init(timer: *std.time.Timer) !ConnectionDeadline {
+        return initWithBudget(timer, generated.limits.control_rpc_timeout_ms);
+    }
+
+    pub fn initWithBudget(timer: *std.time.Timer, budget_ms: u64) !ConnectionDeadline {
+        if (budget_ms == 0) return error.InvalidControlTimeout;
         return .{
             .timer = timer,
             .start_ns = timer.read(),
-            .budget_ns = try std.math.mul(u64, timeout_ms, std.time.ns_per_ms),
+            .budget_ns = try std.math.mul(u64, budget_ms, std.time.ns_per_ms),
         };
     }
 
@@ -201,43 +213,27 @@ pub fn readConnectionFrame(
     return frame;
 }
 
-/// Applies the lease-bound control timeout to one accepted host connection.
-/// Returns false on any per-connection setup failure (lease-timeout race,
-/// setsockopt on a reset/invalid socket) so the caller drops that connection
-/// and keeps serving; it never surfaces a fatal error that would tear down
-/// the whole host on a single bad connection.
-pub fn acceptedConnectionReady(lease: VisibilityLease, handle: std.posix.fd_t, now_ns: u64) bool {
-    const timeout_ms = leaseBoundControlTimeoutMs(lease, now_ns) catch return false;
-    setControlTimeoutMs(handle, timeout_ms) catch return false;
+/// Applies the control timeout to one accepted host connection. Returns false
+/// on any per-connection setup failure (setsockopt on a reset/invalid socket)
+/// so the caller drops that connection and keeps serving; it never surfaces a
+/// fatal error that would tear down the whole host on a single bad connection.
+pub fn acceptedConnectionReady(handle: std.posix.fd_t) bool {
+    setControlTimeout(handle) catch return false;
     return true;
 }
 
 test "accepted-connection setup drops a bad socket without a fatal error" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
-    var timer = try std.time.Timer.start();
-    const now = timer.read();
-    const lease = try VisibilityLease.initial("ws-fixture", 1, now);
-
-    // A valid, un-expired lease + a real socket: the control timeout applies
-    // and the connection is ready to serve.
+    // A real socket: the control timeout applies and the connection is ready
+    // to serve.
     const good = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
-    try std.testing.expect(acceptedConnectionReady(lease, good, now));
+    try std.testing.expect(acceptedConnectionReady(good));
 
     // The same fd, now closed, makes setsockopt fail (EBADF). The setup must
     // report NOT ready (drop this one connection) rather than surfacing a
     // fatal error that the host loop would let tear the whole host down.
     std.posix.close(good);
-    try std.testing.expect(!acceptedConnectionReady(lease, good, now));
-}
-
-pub fn leaseBoundControlTimeoutMs(lease: VisibilityLease, now_ns: u64) !u64 {
-    if (now_ns >= lease.expires_mono_ns) return error.VisibilityExpired;
-    const remaining_ms = try std.math.divCeil(
-        u64,
-        lease.expires_mono_ns - now_ns,
-        std.time.ns_per_ms,
-    );
-    return @min(remaining_ms, generated.limits.control_rpc_timeout_ms);
+    try std.testing.expect(!acceptedConnectionReady(good));
 }
 
 fn socketEvidenceAt(directory: std.fs.Dir, name: []const u8) !broker.SocketEvidence {
@@ -435,7 +431,7 @@ pub const LaunchClient = struct {
             killAndWait(self.host_pid);
         }
         // Closing broker control must not kill a successfully registered host.
-        // The host's independent visibility lease owns broker-crash cleanup.
+        // The host's own supervisor watch owns broker-crash cleanup.
         self.wire.deinit();
         self.parsed.deinit(self.allocator);
         std.crypto.secureZero(u8, &self.adoption_secret);
@@ -447,6 +443,13 @@ pub const LaunchClient = struct {
     }
 };
 
+/// How many times to prove the adoption secret to a freshly admitted host, and
+/// how long to wait between attempts. The host reaches its accept loop within
+/// milliseconds of admission; this covers that gap without hiding a genuine
+/// refusal.
+const adopt_attempts: usize = 4;
+const adopt_retry_interval_ns: u64 = 50 * std.time.ns_per_ms;
+
 /// Production WP3 HostLauncher injection. It forks and execs the exact
 /// executable argument in `host` role and transfers all sensitive boot state
 /// only through fd 3. The launcher owns returned HostControl contexts.
@@ -455,6 +458,15 @@ pub const ProductionHostLauncher = struct {
     canonical_home: []u8,
     next_pending_id: broker.PendingRegistration = 1,
     clients: std.ArrayList(*LaunchClient) = .{},
+    /// The broker serves one connection per thread and deliberately releases
+    /// its own state gate around launch and around the admitted finalize,
+    /// because both are slow and touch nothing the broker shares. They do
+    /// touch this launcher, and so does a rejected finalize running under the
+    /// broker's gate while another thread is inside that released window: two
+    /// concurrent creates otherwise hand out the same pending id, append to
+    /// `clients` at once, or remove an entry from under another thread's
+    /// index. That is the `HOST_START_FAILED` in the 2026-07-28 16-wide run.
+    clients_gate: std.Thread.Mutex = .{},
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -542,7 +554,17 @@ pub const ProductionHostLauncher = struct {
         errdefer if (child_owned) killAndWait(child.pid);
         var stream_owned = true;
         errdefer if (stream_owned) child.stream.close();
-        try setControlTimeout(child.stream.handle);
+        // Everything the child does before READY — forkpty, a login shell
+        // sourcing the operator's whole profile, the vendor exec, the VT
+        // engine — happens inside this read, and at 31 wide that measured up
+        // to 14 s. The control-RPC timeout was far too tight for it.
+        //
+        // The whole create budget is too loose: a host that is never going to
+        // report would hold this read for all of it and the create would time
+        // out at the ceiling instead of failing as HOST_START_FAILED with time
+        // to spare. Half the budget is generous against the measurement and
+        // still leaves the create room to answer.
+        try setControlTimeoutMs(child.stream.handle, host_ready_timeout_ms);
         var ready = try launchFreshChild(
             allocator,
             child.stream,
@@ -599,6 +621,8 @@ pub const ProductionHostLauncher = struct {
         );
         errdefer allocator.free(created_payload);
 
+        self.clients_gate.lock();
+        defer self.clients_gate.unlock();
         const pending_id = self.next_pending_id;
         self.next_pending_id = std.math.add(
             broker.PendingRegistration,
@@ -640,29 +664,87 @@ pub const ProductionHostLauncher = struct {
         return self.finalizeOne(pending, decision) catch false;
     }
 
+    /// Claims the pending launch for this finalize. Under the gate so two
+    /// concurrent finalizes cannot both take the same client. Clearing the
+    /// pending id is what makes the claim exclusive: only the thread that took
+    /// it can go on to discard the client, so the caller's ack and adopt run
+    /// against a client no other thread will free underneath them.
+    fn claimPending(
+        self: *ProductionHostLauncher,
+        pending: broker.PendingRegistration,
+    ) ?struct { client: *LaunchClient, stream: std.net.Stream } {
+        self.clients_gate.lock();
+        defer self.clients_gate.unlock();
+        for (self.clients.items) |client| {
+            if (client.pending_id != pending) continue;
+            const stream = client.pending_stream orelse return null;
+            client.pending_id = null;
+            client.pending_stream = null;
+            return .{ .client = client, .stream = stream };
+        }
+        return null;
+    }
+
+    /// Finds the entry by identity rather than by an index the caller found
+    /// earlier: any such index goes stale the moment another thread's launch
+    /// appends or another finalize removes, and those threads are running by
+    /// design — the broker yields its gate across exactly this work.
+    fn discard(self: *ProductionHostLauncher, client: *LaunchClient) void {
+        // Reap outside the gate. waitpid blocks until the host is gone, and
+        // claimPending already made this client's disposal exclusive to this
+        // thread, so nothing is gained by holding the lock across it.
+        killAndWait(client.host_pid);
+        {
+            self.clients_gate.lock();
+            defer self.clients_gate.unlock();
+            for (self.clients.items, 0..) |candidate, index| {
+                if (candidate != client) continue;
+                _ = self.clients.orderedRemove(index);
+                break;
+            }
+        }
+        client.deinit();
+        self.allocator.destroy(client);
+    }
+
+    /// The host has just been told its admission is final; this connects to
+    /// the socket it serves and proves the 32-byte secret. Those two events are
+    /// microseconds apart, and the host still has to return from its boot
+    /// handshake and reach its accept loop in between — so a first attempt can
+    /// find the listener not yet accepting. Under a 31-wide burst that showed
+    /// up as `ConnectionRefused` and `InvalidHostResponse`, and the host was
+    /// then killed as an impostor: a working terminal destroyed by a race.
+    ///
+    /// A refusal that is real stays real, so a host that fails every attempt is
+    /// still discarded. Only the timing is forgiven.
+    fn adoptWithRetry(self: *ProductionHostLauncher, client: *LaunchClient) bool {
+        _ = self;
+        var attempt: usize = 0;
+        while (attempt < adopt_attempts) : (attempt += 1) {
+            if (attempt > 0) std.Thread.sleep(adopt_retry_interval_ns);
+            if (client.control().adopt(
+                client.parsed.registration.record.locator,
+                client.adoption_secret,
+                0,
+            ) != null) return true;
+        }
+        return false;
+    }
+
     pub fn finalizeOne(
         self: *ProductionHostLauncher,
         pending: broker.PendingRegistration,
         decision: broker.HostLaunchDecision,
     ) !bool {
-        var index: usize = 0;
-        while (index < self.clients.items.len) : (index += 1) {
-            if (self.clients.items[index].pending_id == pending) break;
-        }
-        if (index == self.clients.items.len) return false;
-        const client = self.clients.items[index];
-        const stream = client.pending_stream orelse return false;
-        client.pending_id = null;
-        client.pending_stream = null;
+        const claimed = self.claimPending(pending) orelse return false;
+        const client = claimed.client;
+        const stream = claimed.stream;
 
         switch (decision) {
             .admitted => {
                 acknowledgeFreshChild(stream, client.ready_header) catch {
                     stream.close();
-                    killAndWait(client.host_pid);
-                    _ = self.clients.orderedRemove(index);
-                    client.deinit();
-                    self.allocator.destroy(client);
+                    self.discard(client);
                     return false;
                 };
                 stream.close();
@@ -673,25 +755,15 @@ pub const ProductionHostLauncher = struct {
                 // working; a host that refuses adoption is not the host this
                 // broker launched and must not stay registered. The readback
                 // is discarded, so its now_ns input is irrelevant (0).
-                if (client.control().adopt(
-                    client.parsed.registration.record.locator,
-                    client.adoption_secret,
-                    0,
-                ) == null) {
-                    killAndWait(client.host_pid);
-                    _ = self.clients.orderedRemove(index);
-                    client.deinit();
-                    self.allocator.destroy(client);
+                if (!self.adoptWithRetry(client)) {
+                    self.discard(client);
                     return false;
                 }
                 return true;
             },
             .rejected => {
                 stream.close();
-                killAndWait(client.host_pid);
-                _ = self.clients.orderedRemove(index);
-                client.deinit();
-                self.allocator.destroy(client);
+                self.discard(client);
                 return true;
             },
         }

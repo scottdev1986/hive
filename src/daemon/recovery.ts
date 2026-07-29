@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import {
   discoverClaudeRecoverySessionId,
   resolveWorkingClaudeExecutable,
@@ -7,58 +6,23 @@ import {
 import { discoverCodexRecoverySessionId } from "../adapters/providers/codex-cli";
 import { discoverGrokRecoverySessionId } from "../adapters/providers/grok-cli";
 import { discoverKimiRecoverySessionId } from "../adapters/providers/kimi-cli";
-import { discoverOpencodeRecoverySessionId } from "../adapters/providers/opencode-cli";
 import {
   type AgentRecord,
-  CapabilityProviderSchema,
   type ExecutionIdentity,
-  type HiveConfig,
   ORCHESTRATOR_NAME,
-  unknownVendor,
 } from "../schemas";
-import { IS_RELEASE_BUILD } from "../version";
-import {
-  type AuthorizedLaunch,
-  requireAuthorizedLaunch,
-} from "./authorized-launch";
+import type { AuthorizedLaunch } from "./authorized-launch";
 import type { HiveDatabase } from "./db";
-import { classifyVendorDrainError } from "./drain-handler";
-import { launchPromptPath } from "./launch-prompt";
-import { hiveCliSpawnArgv } from "./lifecycle";
-import {
-  LAUNCH_FAILURE_PATTERNS,
-  waitForMcpReporting,
-  watchForProofOfLife,
-} from "./readiness";
-import { parseProcessTable, runPs, treeRunsCommand } from "./resources";
 import {
   type HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
   sessiondAgentProviderRunIsDead,
 } from "./session-host/hive-terminal-host";
-import {
-  mintSessionRequestId,
-  nextAgentSessionLocator,
-} from "./session-host/locators";
 import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
-import type { SessionLocator } from "./session-host/contract";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 
-// Three auto-resumes for one agent means the process is dying on its own,
-// not being killed by crashes; after that the sweep stops retrying and
-// surfaces the agent for an explicit decision.
-export const MAX_AUTO_RESUME_ATTEMPTS = 3;
-
-// A resume can fail in one way a spawn cannot: the conversation it was told to
-// restore is gone. Everything else a launch can do wrong is already covered.
-const RESUME_FAILURE_PATTERNS = [
-  ...LAUNCH_FAILURE_PATTERNS,
-  /No conversation found/i,
-];
-
 export type RecoveryOutcome =
-  | { agent: string; action: "resumed"; sessionId: string }
   | { agent: string; action: "marked-dead"; reason: string }
   | { agent: string; action: "skipped"; reason: string };
 
@@ -132,19 +96,11 @@ export interface CrashRecoveryDependencies {
   mcpClientSeen?: (subject: string, since: string) => boolean;
   /** Test seam to collapse the reachability wait's deadline. */
   mcpReportingTimeoutMs?: number;
-  /** §07: a resume that died of a vendor rate limit goes to the drain
-   * handler instead of being left dead on a healthy route. */
-  drainError?: (agent: AgentRecord, failure: string) => Promise<void>;
   claudeExecutable?: string;
   codexExecutable?: string;
   grokExecutable?: string;
   kimiExecutable?: string;
   opencodeExecutable?: string;
-  /** The current writer autonomy, read at resume time so a recovered agent
-   * matches the setting the user can see in the Workspace menu — a thunk
-   * because the user may flip the dial mid-session. Absent fails safe to the
-   * sandboxed approval queue. */
-  autonomy?: () => HiveConfig["autonomy"];
   /** Test seam for codex rollout activity during the resume watch. Native
    * SessionStart is the primary signal; a fresh rollout mtime remains an
    * independent fallback when hooks are disabled by policy or fail. Defaults
@@ -174,13 +130,7 @@ function boundedTask(task: string, limit = 500): string {
 }
 
 export class CrashRecovery {
-  private readonly resolveClaude: SessionResolver;
-  private readonly resolveCodex: SessionResolver;
-  private readonly resolveGrok: SessionResolver;
-  private readonly resolveKimi: SessionResolver;
-  private readonly resolveOpencode: SessionResolver;
   private readonly worktreeExists: (path: string) => boolean;
-  private readonly wait: Sleep;
   private readonly claudeExecutable: string;
   private readonly codexExecutable: string;
   private readonly grokExecutable: string;
@@ -207,32 +157,7 @@ export class CrashRecovery {
   private readonly deliberateKills = new Set<string>();
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
-    this.resolveClaude =
-      deps.resolveClaudeSessionId ??
-      ((worktreePath, agentCreatedAt) =>
-        discoverClaudeRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveCodex =
-      deps.resolveCodexSessionId ??
-      ((worktreePath, agentCreatedAt) =>
-        discoverCodexRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveGrok =
-      deps.resolveGrokSessionId ??
-      ((worktreePath, agentCreatedAt) =>
-        discoverGrokRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveKimi =
-      deps.resolveKimiSessionId ??
-      ((worktreePath, agentCreatedAt) =>
-        discoverKimiRecoverySessionId(worktreePath, agentCreatedAt));
-    this.resolveOpencode =
-      deps.resolveOpencodeSessionId ??
-      ((worktreePath, agentCreatedAt) =>
-        discoverOpencodeRecoverySessionId(
-          worktreePath,
-          agentCreatedAt,
-          this.opencodeExecutable,
-        ));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
-    this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable =
       deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
     this.codexExecutable = deps.codexExecutable ?? "codex";
@@ -279,15 +204,6 @@ export class CrashRecovery {
     return audit;
   }
 
-  private daemonPort(): number {
-    const configured = this.deps.port;
-    const port = typeof configured === "function" ? configured() : configured;
-    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
-      throw new Error(`Hive daemon has no listening port (resolved ${port})`);
-    }
-    return port;
-  }
-
   private async sessionContainerPresent(agent: AgentRecord): Promise<boolean> {
     if (this.deps.terminalHost === undefined) {
       throw new Error("session recovery inspection is not configured");
@@ -313,10 +229,6 @@ export class CrashRecovery {
 
   private runningSessionReason(_agent: AgentRecord): string {
     return "terminal host reports the session is running";
-  }
-
-  private async captureVisible(_agent: AgentRecord): Promise<string> {
-    throw new Error("visible terminal capture requires an attached viewer");
   }
 
   // The maintenance sweep: classify every agent whose terminal session is gone
@@ -492,11 +404,12 @@ export class CrashRecovery {
 
   private async recoverOneExclusive(
     agent: AgentRecord,
-    options: { manual: boolean },
+    _options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
-    // Callers checked hasSession before entering, but that check is stale by
-    // now if another recovery finished in between; resuming over a live
-    // session would fail the launch and mark a healthy agent dead.
+    // A terminal is alive or it is dead. There is no third state to restore it
+    // to, so recovery observes and records what it saw — it never relaunches a
+    // conversation. Resuming used to mint a new generation and kill the old
+    // one, which is how a healthy agent got killed by its own recovery.
     if (await this.sessionPresent(agent)) {
       return {
         agent: agent.name,
@@ -504,499 +417,7 @@ export class CrashRecovery {
         reason: this.runningSessionReason(agent),
       };
     }
-    if (!options.manual && agent.recoveryAttempts >= MAX_AUTO_RESUME_ATTEMPTS) {
-      return this.markDead(
-        agent,
-        `crash recovery gave up after ${agent.recoveryAttempts} resume attempts`,
-      );
-    }
-    if (
-      agent.worktreePath === null ||
-      !this.worktreeExists(agent.worktreePath)
-    ) {
-      return this.markDead(agent, "worktree is missing; session not resumable");
-    }
-    let sessionId: string | null;
-    try {
-      sessionId =
-        agent.toolSessionId ??
-        (await this.resolveSession(
-          agent.tool,
-          agent.worktreePath,
-          agent.createdAt,
-        ));
-    } catch (error) {
-      return this.preserveUnverifiedRecovery(
-        agent,
-        `session discovery refused: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    }
-    if (sessionId === null) {
-      return this.markDead(
-        agent,
-        "no resumable tool session was found for this worktree",
-      );
-    }
-    return this.resume(agent, sessionId);
-  }
-
-  /**
-   * The vendor's session resolver. Exhaustive: a new vendor is a compile error
-   * here, and one that slipped past the types throws rather than hunting a
-   * Codex rollout in a worktree that never held one — which would resolve
-   * nothing, or worse, a stale predecessor's id.
-   */
-  private resolveSession(
-    tool: AgentRecord["tool"],
-    worktreePath: string,
-    agentCreatedAt: string,
-  ): Promise<string | null> {
-    switch (tool) {
-      case "claude":
-        return this.resolveClaude(worktreePath, agentCreatedAt);
-      case "codex":
-        return this.resolveCodex(worktreePath, agentCreatedAt);
-      case "grok":
-        return this.resolveGrok(worktreePath, agentCreatedAt);
-      case "kimi":
-        return this.resolveKimi(worktreePath, agentCreatedAt);
-      case "opencode":
-        return this.resolveOpencode(worktreePath, agentCreatedAt);
-      default:
-        return unknownVendor(tool, "crash recovery session resolver");
-    }
-  }
-
-  private async resume(
-    agent: AgentRecord,
-    sessionId: string,
-  ): Promise<RecoveryOutcome> {
-    // Release the generation this resume supersedes, while the record still
-    // names it. Every teardown path — stopSession, killAgentTeardown, the MCP
-    // close — resolves the locator from the agent record, and the next
-    // statement replaces it with a brand-new generation and session id. The
-    // old one then exists nowhere: not in the record, not in any index, so
-    // nothing can address it again.
-    //
-    // A dead provider does not release it either. The host outlives its
-    // provider by design (terminal-stack-transition.html §02 — the shell stays
-    // at a prompt after the provider exits), so the host is still running and
-    // still holding its sessiond slot. Measured with real vendor TUIs on real
-    // PTYs (prototypes/resume-leak): four resumes of ONE agent left four live,
-    // unaddressable hosts and consumed four of eight slots, while the only
-    // terminate production could issue reached just the newest generation.
-    // That is the second half of the CAPACITY_EXCEEDED exhaustion in
-    // planning/2026-07-25-sessiond-capacity-exhaustion.md.
-    await this.releaseSupersededGeneration(agent);
-
-    // Persist the attempt before launching so a crash mid-launch still
-    // counts against the cap.
-    const nextLocator = nextAgentSessionLocator(agent);
-    let record = this.deps.db.upsertAgent({
-      ...agent,
-      sessionLocator: nextLocator,
-      toolSessionId: sessionId,
-      recoveryAttempts: agent.recoveryAttempts + 1,
-      lastEventAt: new Date().toISOString(),
-    });
-    this.denyPendingApprovals(record.name);
-
-    const identity = record.executionIdentity;
-    const model = identity?.model ?? record.model;
-    const worktreePath = record.worktreePath;
-    if (worktreePath === null) {
-      throw new Error(`Cannot recover ${record.name} without a worktree path`);
-    }
-    // A resumed writer takes the current autonomy setting — the same one the
-    // next spawn would get — or an unattended crash-recovered dangerous agent
-    // would silently stall on the first prompt.
-    const dangerous = this.deps.autonomy?.() === "dangerous";
-    try {
-      if (!CapabilityProviderSchema.safeParse(record.tool).success) {
-        return unknownVendor(record.tool as never, "crash recovery resume");
-      }
-      if (identity === undefined) {
-        throw new Error("no immutable execution identity is recorded");
-      }
-      const authorized =
-        (await this.deps.authorizeLaunch?.(identity, record.category)) ?? null;
-      if (authorized === null) {
-        throw new Error(
-          `${identity.model} enablement policy is unreadable; open the Model ` +
-            "Control Center and enable it before resuming",
-        );
-      }
-      requireAuthorizedLaunch(authorized);
-      const sessionKey = requireSessiondAgentLocator(record).sessionId;
-      const instructionPath = launchPromptPath(sessionKey);
-      const hasInstructions = existsSync(instructionPath);
-      const adapter = getAgentAdapter(record.tool);
-      await adapter.prepareWorktree?.(worktreePath).catch((error: unknown) => {
-        console.error(
-          `Hive could not re-prepare ${record.name}'s worktree: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
-      const providerRunId = crypto.randomUUID();
-      const prepared = await adapter.prepareSpawn({
-        daemonPort: this.daemonPort(),
-        model,
-        ...(identity.effort === undefined ? {} : { effort: identity.effort }),
-        name: record.name,
-        readOnly: record.readOnly,
-        dangerous,
-        worktreePath,
-        executable: {
-          claude: this.claudeExecutable,
-          codex: this.codexExecutable,
-          grok: this.grokExecutable,
-          kimi: this.kimiExecutable,
-          opencode: this.opencodeExecutable,
-        }[record.tool],
-        hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-        ...(hasInstructions ? { instructionPath } : {}),
-        sessionId: sessionKey,
-        providerRunId,
-        resumeSessionId: sessionId,
-        withCapability: true,
-      });
-      const { argv, command } = prepared;
-      const revalidated =
-        (await this.deps.authorizeLaunch?.(identity, record.category)) ?? null;
-      if (
-        revalidated === null ||
-        revalidated.tool !== authorized.tool ||
-        revalidated.model !== authorized.model ||
-        revalidated.effort !== authorized.effort
-      ) {
-        throw new Error(
-          "resume authorization changed before the process adapter",
-        );
-      }
-      requireAuthorizedLaunch(revalidated);
-      const launchGrantId = `recovery:${record.id}:${record.recoveryAttempts}`;
-      if (this.deps.createRecoverySession === undefined) {
-        throw new Error("recovery session creation is not configured");
-      }
-      // #57: anything the dead predecessor reported predates this line and
-      // must never count as this incarnation's reporting proof.
-      const launchBaseline = new Date().toISOString();
-      await this.deps.createRecoverySession(
-        record,
-        command,
-        argv[0] ?? record.tool,
-        launchGrantId,
-        providerRunId,
-      );
-      // A freshly resumed TUI sits at its prompt with the conversation
-      // restored: idle is the honest status until an event says otherwise.
-      record = this.deps.db.upsertAgent({
-        ...(this.deps.db.getAgentById(record.id) ?? record),
-        status: "idle",
-        lastEventAt: new Date().toISOString(),
-      });
-
-      // Wake it, and only then watch. This order is the fix, not a detail.
-      //
-      // A resume restores a conversation but issues no instruction, so the TUI
-      // comes back correctly idle at its prompt: it fires no hook, writes no
-      // rollout, and does not redraw. The continuation notice below is the only
-      // thing that gives it something to do. Watching first therefore waited
-      // for activity that nothing had asked for — the agent had to act to be
-      // judged alive, and was given nothing to act on until after it was
-      // judged. Measured on instance run-bc65ab00, that deadlock killed 11
-      // healthy agents in one night, 5 codex and 6 grok, every one of them
-      // sitting at a restored prompt with its work intact.
-      await this.wakeResumedAgent(record);
-
-      // Baselined *after* the wake so only the agent's own response counts:
-      // anything our own injection stirred up must not read as proof of life.
-      const failure = await this.monitorResume(
-        record,
-        argv[0] ?? record.tool,
-        this.deps.db.getAgentById(record.id)?.lastEventAt ?? record.lastEventAt,
-      );
-      if (failure !== null) {
-        return await this.failResume(
-          this.deps.db.getAgentById(record.id) ?? record,
-          failure,
-        );
-      }
-      // #57: alive is not reporting. The proof-of-life watch above measures
-      // acting — a redrawing pane, a held process — and a hive-MCP-less agent
-      // produces both while being permanently unable to hive_send or
-      // hive_land. Refuse the resume unless the agent's own credential has
-      // authenticated against the daemon's MCP surface since the launch.
-      if (this.deps.mcpClientSeen !== undefined) {
-        const reportingFailure = await waitForMcpReporting(
-          record.name,
-          launchBaseline,
-          this.deps.mcpClientSeen,
-          (ms) => this.wait(ms),
-          this.deps.mcpReportingTimeoutMs,
-        );
-        if (reportingFailure !== null) {
-          return await this.failResume(
-            this.deps.db.getAgentById(record.id) ?? record,
-            reportingFailure,
-          );
-        }
-      }
-    } catch (error) {
-      return await this.failResume(
-        this.deps.db.getAgentById(record.id) ?? record,
-        error instanceof Error ? error.message : "unknown error",
-      );
-    }
-
-    await this.deps
-      .send(
-        "hive-recovery",
-        ORCHESTRATOR_NAME,
-        `Resumed ${record.name} after a crash: relaunched ${record.tool} session ` +
-          `${sessionId} in ${worktreePath} with its conversation restored.`,
-        {
-          idempotencyKey: `crash-resume:${record.id}:${record.recoveryAttempts}`,
-        },
-      )
-      .catch(() => undefined);
-    return { agent: record.name, action: "resumed", sessionId };
-  }
-
-  /**
-   * Terminate the generation a resume is about to supersede.
-   *
-   * Never blocks the resume: an agent whose conversation can be restored must
-   * come back even if its predecessor's terminal cannot be reached. But a slot
-   * that could not be released is said out loud rather than silently consumed —
-   * the exhaustion this prevents was invisible for a whole session precisely
-   * because nothing reported it.
-   */
-  private async releaseSupersededGeneration(agent: AgentRecord): Promise<void> {
-    const terminalHost = this.deps.terminalHost;
-    if (terminalHost?.terminate === undefined) return;
-    let locator: SessionLocator;
-    try {
-      locator = requireSessiondAgentLocator(agent);
-    } catch {
-      return; // no sessiond generation to supersede
-    }
-    try {
-      const result = await terminalHost.terminate(locator, {
-        mode: "immediate",
-        reason: `superseded by crash resume of ${agent.name}`,
-        requestId: mintSessionRequestId(),
-      });
-      if (result.state === "terminated" && result.survivors.length === 0)
-        return;
-      console.error(
-        `Hive could not release ${agent.name}'s superseded terminal ` +
-          `(generation ${locator.generation}): ${result.state}` +
-          (result.survivors.length === 0
-            ? ""
-            : `, ${result.survivors.length} survivor(s)`) +
-          `. Its sessiond slot stays occupied until that host exits.`,
-      );
-    } catch (error) {
-      console.error(
-        `Hive could not release ${agent.name}'s superseded terminal ` +
-          `(generation ${locator.generation}): ${
-            error instanceof Error ? error.message : "unknown error"
-          }. Its sessiond slot stays occupied until that host exits.`,
-      );
-    }
-  }
-
-  private async failResume(
-    agent: AgentRecord,
-    failure: string,
-  ): Promise<RecoveryOutcome> {
-    const reason = `resume launch failed: ${failure}`;
-    if (this.deps.stopSession === undefined) {
-      return this.preserveUnverifiedRecovery(
-        agent,
-        `${reason}; verified teardown is unavailable`,
-      );
-    }
-    try {
-      const stopped = await this.deps.stopSession(agent);
-      if (stopped.survivors.length > 0) {
-        return this.preserveUnverifiedRecovery(
-          agent,
-          `${reason}; ${stopped.survivors.length} process(es) survived teardown`,
-        );
-      }
-    } catch (error) {
-      return this.preserveUnverifiedRecovery(
-        agent,
-        `${reason}; teardown could not be verified: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    }
-    const outcome = await this.markDead(agent, reason);
-    // §07: a resume that died of the vendor's rate limit is a drain, not a
-    // crash — the drain handler respawns the work elsewhere rather than
-    // leaving a healthy route blamed.
-    if (classifyVendorDrainError(agent.tool, failure)) {
-      const dead = this.deps.db.getAgentById(agent.id) ?? agent;
-      await this.deps.drainError?.(dead, failure);
-    }
-    return outcome;
-  }
-
-  /**
-   * Give a resumed agent something to be alive about.
-   *
-   * Called before the liveness watch, deliberately — see the call site. The
-   * notice reaches the TUI as injected keystrokes, so it is what turns a
-   * restored-but-idle prompt into a working agent, which is the only thing the
-   * watch can then observe.
-   *
-   * Failures stay swallowed, as they were when this ran after the watch: a
-   * notice that cannot be delivered is not itself a reason to kill a process we
-   * have not yet examined. The watch is what decides life, and an agent that
-   * never got the notice will fail it on the evidence.
-   */
-  private async wakeResumedAgent(record: AgentRecord): Promise<void> {
-    await this.deps
-      .send(
-        "hive-recovery",
-        record.name,
-        "Your previous process crashed and Hive resumed your tool session with " +
-          "its conversation restored. Check hive_inbox for queued messages, " +
-          "re-verify any in-flight edits in your worktree, and continue your task.",
-        {
-          idempotencyKey: `crash-resume-notice:${record.id}:${record.recoveryAttempts}`,
-        },
-      )
-      .catch(() => undefined);
-    await this.deps.flushQueued(record.name).catch(() => undefined);
-  }
-
-  /**
-   * Is the resumed process alive?
-   *
-   * This defers to the same watch the spawn path uses, and the reason is
-   * measured rather than tidy. The hand-rolled loop this replaces accepted only
-   * two positive signals — a hook event, or a fresh codex rollout — and bounded
-   * them with a 10-second stopwatch. On the night of instance run-bc65ab00 that
-   * probe killed 11 of 11 non-claude resumes and passed 3 of 3 claude ones,
-   * because:
-   *
-   *   claude  fires a session-start hook          → passed 3/3
-   *   codex   hook rides hive's MCP; rollout is
-   *           silent until the first tool call    → failed 5/5
-   *   grok    emitted 0 events all night, across
-   *           11 agents, and has no rollout       → failed 6/6
-   *
-   * Grok cannot bump `lastEventAt` at all, so of the two signals the old probe
-   * accepted, grok could produce neither — its resume was not unlucky, it was
-   * impossible. The pane is the only liveness signal grok has, which is exactly
-   * what `watchForProofOfLife` reads, and it corroborates every redraw against
-   * the process tree so a wrapper animating over a dead child still reads dead.
-   *
-   * It also drops the stopwatch. No wall-clock number was ever right: a
-   * high-effort model reasons past any of them, and readiness.ts measured 15s to
-   * first output on gpt-5.6-sol high — so even a woken codex resume would have
-   * died on a 10-second bound. Silence is the only honest deadline.
-   */
-  private async monitorResume(
-    record: AgentRecord,
-    launchedCommand: string,
-    baselineEventAt: string,
-  ): Promise<string | null> {
-    const proof = await watchForProofOfLife(record, baselineEventAt, {
-      hasSession: () => this.sessionPresent(record),
-      capturePane: () => this.captureVisible(record),
-      lastEventAt: () =>
-        this.deps.db.getAgentById(record.id)?.lastEventAt ?? null,
-      codexActivity: () => this.readCodexActivityFor(record),
-      launchedProcessAlive: () =>
-        this.launchedProcessAlive(record, launchedCommand),
-      launchedCommand,
-      failurePatterns: RESUME_FAILURE_PATTERNS,
-      wait: (ms) => this.wait(ms),
-    });
-    return proof.alive ? null : proof.reason;
-  }
-
-  /**
-   * Is the binary we relaunched still running inside that pane?
-   *
-   * Null means we could not tell — no pane, or an unreadable `ps` — and the
-   * watch treats unknown as no evidence rather than as life.
-   */
-  private async launchedProcessAlive(
-    record: AgentRecord,
-    command: string,
-  ): Promise<boolean | null> {
-    try {
-      const rootPids = [
-        (
-          await this.deps.terminalHost?.inspect(
-            requireSessiondAgentLocator(record),
-          )
-        )?.shellRoot?.pid,
-      ].filter((pid): pid is number => pid !== undefined && pid !== null);
-      if (rootPids.length === 0) return null;
-      const samples = parseProcessTable(await (this.deps.ps ?? runPs)());
-      if (samples.length === 0) return null;
-      return treeRunsCommand(samples, [...rootPids], command);
-    } catch {
-      return null;
-    }
-  }
-
-  /** The codex rollout mtime, or null when there is none to read. Still a real
-   * signal — it just cannot be the only one, since it stays silent through the
-   * whole reasoning phase. */
-  private async readCodexActivityFor(
-    record: AgentRecord,
-  ): Promise<string | null> {
-    const current = this.deps.db.getAgentById(record.id) ?? record;
-    if (current.tool !== "codex" || current.worktreePath === null) return null;
-    try {
-      return await this.readCodexActivity(
-        current.worktreePath,
-        current.toolSessionId,
-      );
-    } catch {
-      return null;
-    }
-  }
-
-  private async preserveUnverifiedRecovery(
-    agent: AgentRecord,
-    reason: string,
-  ): Promise<RecoveryOutcome> {
-    const now = new Date().toISOString();
-    const current = this.deps.db.getAgentById(agent.id) ?? agent;
-    this.deps.db.upsertAgent({
-      ...current,
-      status: "stuck",
-      writeRevoked: true,
-      failureReason: reason,
-      lastEventAt: now,
-    });
-    this.deps.revokeCapabilities?.(agent.name);
-    this.denyPendingApprovals(agent.name);
-    await this.deps
-      .send(
-        "hive-recovery",
-        ORCHESTRATOR_NAME,
-        `${agent.name} could not be recovered safely: ${reason}. Hive preserved ` +
-          "the agent record, worktree, quota reservation, and queued messages; " +
-          "retry cleanup or recovery explicitly after verifying process state.",
-        {
-          idempotencyKey: `crash-recovery-preserved:${agent.id}:${current.recoveryAttempts}`,
-        },
-      )
-      .catch(() => undefined);
-    return { agent: agent.name, action: "skipped", reason };
+    return this.markDead(agent, "its terminal is gone");
   }
 
   private async markDead(

@@ -367,11 +367,11 @@ describe("WorkspaceVisibilityAuthority", () => {
     });
 
     try {
-      expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+      daemon.checkWorkspaceOwnerAlive();
       expect(shutdowns).toBe(0);
       workspaceIsLive = false;
-      expect(await daemon.renewWorkspaceVisibility()).toBe(0);
-      expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+      daemon.checkWorkspaceOwnerAlive();
+      daemon.checkWorkspaceOwnerAlive();
       expect(shutdowns).toBe(1);
     } finally {
       db.close();

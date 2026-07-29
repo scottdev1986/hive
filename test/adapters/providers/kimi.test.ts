@@ -17,7 +17,9 @@ import {
   probeKimiDefaultModel,
   wrapKimiSpawnWithEffort,
   wrapKimiWithInstructionFile,
+  wrapKimiWithTurnHookContext,
   writeKimiAgentConfig,
+  writeKimiTurnHook,
 } from "../../../src/adapters/providers/kimi-cli";
 import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
@@ -99,6 +101,24 @@ describe("Kimi adapter", () => {
     expect(wrapKimiSpawnWithEffort("kimi -m model", "high")).toBe(
       "KIMI_MODEL_THINKING_EFFORT='high' kimi -m model",
     );
+  });
+
+  test("the shared Stop hook reports only a Hive-bound Kimi turn", async () => {
+    const root = await worktree();
+    await writeKimiTurnHook(["/opt/hive"], root);
+    const config = await readFile(join(root, "config.toml"), "utf8");
+    expect(config).toContain('event = "Stop"');
+    expect(config).toContain("HIVE_AGENT_NAME");
+    expect(config).toContain("'/opt/hive' event turn-end");
+
+    const wrapped = wrapKimiWithTurnHookContext("kimi -m model", {
+      name: "maya",
+      daemonPort: 4317,
+      instanceId: "hive-test",
+      providerRunId: "11111111-1111-4111-8111-111111111111",
+    });
+    expect(wrapped).toContain("HIVE_AGENT_NAME='maya'");
+    expect(wrapped).toContain("HIVE_PROVIDER_RUN_ID=");
   });
 
   test("reads the effective default only from the config file", async () => {
@@ -282,7 +302,7 @@ describe("read-only containment is reported, never faked", () => {
       if (expectGap) {
         // It must name the vendor gate and hand the fix to the user.
         expect(gap).toContain("NOT enforced");
-        expect(gap).toContain("Hive does not write vendor config");
+        expect(gap).toContain("Hive does not change these permission settings");
       }
     } finally {
       await rm(home, { recursive: true, force: true });

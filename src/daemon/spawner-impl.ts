@@ -105,7 +105,7 @@ import { type AccountBilling, poolAvailability } from "./usage-credits";
  * they still hold. Numeric suffixes are never appended to make a name unique;
  * see selectAgentName.
  */
-export const NAME_POOL = [
+const NAME_POOL = [
   "maya",
   "david",
   "sam",
@@ -714,8 +714,15 @@ type AgentStore = Pick<
   | "insertProviderRun"
   | "listAgents"
   | "releaseAgentName"
+  | "isNameHeldByStrandedWork"
   | "reserveAgentName"
 >;
+
+/** How long to wait for the provider's own process to appear beneath the
+ * shell a create just launched, and how often to look. */
+const FOREGROUND_IDENTITY_TIMEOUT_MS = 30_000;
+const FOREGROUND_IDENTITY_POLL_MS = 25;
+const FOREGROUND_IDENTITY_POLL_MAX_MS = 500;
 
 export class SpawnFailedError extends Error {
   readonly code: "SPAWN_FAILED" | "SPAWN_CLEANUP_UNVERIFIED";
@@ -1276,6 +1283,22 @@ export class HiveSpawner implements Spawner {
     }[tool];
   }
 
+  /**
+   * How long to wait for the provider's own process to appear beneath the
+   * shell this create just launched.
+   *
+   * This was forty polls of 25 ms — one second, fixed, and reached only after
+   * the create itself had already returned. One second is generous when a
+   * machine is idle and nowhere near enough when thirty-one vendor CLIs are
+   * starting at once: the spawn then reported "no new foreground process
+   * identity" and tore down a terminal whose provider was seconds from being
+   * observable. A budget that does not scale with load is the same defect as
+   * the visibility lease, and it fails the same way — under exactly the
+   * conditions it was supposed to cover.
+   *
+   * Nothing pays this cost when the provider is quick: the loop exits on the
+   * first observation.
+   */
   private async createSession(
     record: AgentRecord,
     command: string,
@@ -1298,62 +1321,87 @@ export class HiveSpawner implements Spawner {
         visibility: admission.visibility,
       },
     );
-    try {
-      let inspection: SessionInspection | null =
-        created.inspection.foreground.state === "unmanaged"
-          ? created.inspection
-          : null;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        if (inspection !== null) break;
-        const candidate = await this.requireSessiondHost(record).inspect(
-          created.locator,
-        );
-        if (candidate.foreground.state === "unmanaged") {
-          inspection = candidate;
-          break;
-        }
-        if (candidate.presence !== "present") break;
-        await this.wait(25);
+    let inspection: SessionInspection | null =
+      created.inspection.foreground.state === "unmanaged"
+        ? created.inspection
+        : null;
+    const deadline = Date.now() + FOREGROUND_IDENTITY_TIMEOUT_MS;
+    let interval = FOREGROUND_IDENTITY_POLL_MS;
+    while (inspection === null && Date.now() < deadline) {
+      const candidate = await this.requireSessiondHost(record).inspect(
+        created.locator,
+      );
+      if (candidate.foreground.state === "unmanaged") {
+        inspection = candidate;
+        break;
       }
-      if (inspection === null || inspection.foreground.state !== "unmanaged") {
-        throw new Error(
-          `Provider launch for ${record.name} has no new foreground process identity`,
-        );
-      }
-      const foreground = inspection.foreground;
-      this.dependencies.db.insertProviderRun({
-        runId: providerRunId,
-        agentId: record.id,
-        terminal: created.locator,
-        provider: record.tool,
-        model: record.model,
-        effort: record.executionIdentity?.effort ?? null,
-        conversationId: record.toolSessionId ?? null,
-        pid: foreground.pid,
-        startToken: foreground.startToken,
-        foregroundProcessGroupId: foreground.foregroundProcessGroupId,
-        capabilityEpoch: record.capabilityEpoch,
-        launchGrantId,
-        startedAt: inspection.evidenceAt,
-        endedAt: null,
-        state: "running",
-        exitReason: null,
-      });
-    } catch (error) {
-      try {
-        await this.requireSessiondHost(record).terminate(created.locator, {
-          mode: "immediate",
-          reason: "provider launch identity was not established",
-          requestId: launchGrantId,
-        });
-      } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
-          `Provider launch for ${record.name} failed and terminal cleanup was not confirmed`,
-        );
-      }
-      throw error;
+      // A terminal that is gone will not grow a foreground process. Only an
+      // absent one ends the wait early; a slow one is waited out.
+      if (candidate.presence !== "present") break;
+      await this.wait(interval);
+      interval = Math.min(interval * 2, FOREGROUND_IDENTITY_POLL_MAX_MS);
     }
+    // Not having SEEN the provider is not evidence that it failed, and it is
+    // never grounds to kill a terminal that is up. This used to terminate the
+    // session and throw; at 31 wide that killed agents whose vendor TUI was
+    // fully rendered and running, and the terminate itself failed often enough
+    // that the kill left no audit behind. The run is established later by
+    // reconciliation instead.
+    if (inspection === null || inspection.foreground.state !== "unmanaged") {
+      return;
+    }
+    const foreground = inspection.foreground;
+    this.dependencies.db.insertProviderRun({
+      runId: providerRunId,
+      agentId: record.id,
+      terminal: created.locator,
+      provider: record.tool,
+      model: record.model,
+      effort: record.executionIdentity?.effort ?? null,
+      conversationId: record.toolSessionId ?? null,
+      pid: foreground.pid,
+      startToken: foreground.startToken,
+      foregroundProcessGroupId: foreground.foregroundProcessGroupId,
+      capabilityEpoch: record.capabilityEpoch,
+      launchGrantId,
+      startedAt: inspection.evidenceAt,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    });
+  }
+
+  /**
+   * The terminal's foreground identity as it is right now.
+   *
+   * The run's recorded identity is measured the instant the vendor first
+   * appears; a vendor that then spawns its own child moves the terminal's
+   * foreground group, and a fence built from the older reading is refused. This
+   * is deliberately not written back to the run — the run identifies the
+   * provider generation, and one keystroke's fence is not evidence to rewrite
+   * it.
+   */
+  private async measuredForeground(
+    record: AgentRecord,
+  ): Promise<
+    | { pid: number; startToken: string; foregroundProcessGroupId: number }
+    | undefined
+  > {
+    const locator = requireSessiondAgentLocator(record);
+    const inspection = await this
+      .requireSessiondHost(record)
+      .inspect(locator)
+      .catch(() => null);
+    const foreground = inspection?.foreground;
+    if (foreground === undefined) return undefined;
+    if (foreground.state !== "unmanaged" && foreground.state !== "managed") {
+      return undefined;
+    }
+    return {
+      pid: foreground.pid,
+      startToken: foreground.startToken,
+      foregroundProcessGroupId: foreground.foregroundProcessGroupId,
+    };
   }
 
   /**
@@ -1365,6 +1413,11 @@ export class HiveSpawner implements Spawner {
   private agentTurnInput(
     record: AgentRecord,
     providerRunId: string,
+    measuredForeground?: {
+      pid: number;
+      startToken: string;
+      foregroundProcessGroupId: number;
+    },
   ): AgentTurnInput {
     return {
       write: async (bytes, idempotencyKey) => {
@@ -1386,9 +1439,11 @@ export class HiveSpawner implements Spawner {
           terminal,
           expectedForeground: {
             providerRunId,
-            pid: run.pid,
-            startToken: run.startToken,
-            processGroupId: run.foregroundProcessGroupId,
+            pid: measuredForeground?.pid ?? run.pid,
+            startToken: measuredForeground?.startToken ?? run.startToken,
+            processGroupId:
+              measuredForeground?.foregroundProcessGroupId ??
+              run.foregroundProcessGroupId,
           },
           bytes,
           idempotencyKey: `${idempotencyKey}:${providerRunId}`,
@@ -2144,6 +2199,15 @@ export class HiveSpawner implements Spawner {
     for (;;) {
       const candidate = selectAgentName(db.listAgents(), unavailable);
       if (!db.reserveAgentName(candidate)) {
+        unavailable.add(candidate);
+        continue;
+      }
+      // A name whose former agent left unaccounted work stays held: reusing it
+      // would put a second agent's branch and credentials under the same name
+      // as work still waiting on a decision, and make "there is work on maya"
+      // ambiguous across two mayas.
+      if (db.isNameHeldByStrandedWork(candidate)) {
+        db.releaseAgentName(candidate);
         unavailable.add(candidate);
         continue;
       }
@@ -2981,10 +3045,30 @@ export class HiveSpawner implements Spawner {
             return;
           }
         }
-        await adapter.startInitialTurn?.(
-          this.agentTurnInput(record, providerRunId),
-          kickoff,
-        );
+        // The provider run's foreground identity is measured the moment the
+        // vendor first appears, and a vendor that then spawns its own child
+        // moves the terminal's foreground group out from under it — the first
+        // keystroke is refused as `foreground-changed` through no fault of the
+        // terminal, which is alive and rendering. Re-measure once and type
+        // again rather than losing an agent to a race with its own startup.
+        try {
+          await adapter.startInitialTurn?.(
+            this.agentTurnInput(record, providerRunId),
+            kickoff,
+          );
+        } catch (error) {
+          const changed =
+            error instanceof Error && error.message.includes("foreground-changed");
+          if (!changed) throw error;
+          await adapter.startInitialTurn?.(
+            this.agentTurnInput(
+              record,
+              providerRunId,
+              await this.measuredForeground(record),
+            ),
+            kickoff,
+          );
+        }
         // Hook traffic normally performs this transition first. A live provider
         // can still prove itself through its process-backed screen heartbeat,
         // though, and leaving that positive result as `spawning` makes the UI
@@ -3158,20 +3242,13 @@ export class HiveSpawner implements Spawner {
     layer: LaunchFailureLayer,
     neverCreated: boolean,
   ): Promise<AgentRecord> {
-    const stopping = this.preserveStuck(
-      record,
-      `${failureReason}\nTeardown is pending verification.`,
-    );
-    if (!neverCreated) {
-      try {
-        await this.stopVerifiedSession(
-          stopping,
-          `Spawn failure for ${record.name}: ${failureReason}`,
-        );
-      } catch {
-        return this.dependencies.db.getAgentById(record.id) ?? stopping;
-      }
-    }
+    // The spawn's own verdict is recorded, and the terminal is left alone.
+    // This used to stop the session: a readiness probe that had not yet seen
+    // proof, or a vendor that had not called hive's MCP inside fifteen seconds,
+    // killed a terminal whose TUI was up and running. Under load those windows
+    // expire constantly, and a terminal is alive or dead on its own evidence —
+    // never on ours failing to arrive in time.
+    const stopping = this.preserveStuck(record, failureReason);
     // §07: a vendor rate-limit error is a drain, not a route failure — the
     // quarantine would punish a healthy route for an empty meter.
     const vendorDrain =

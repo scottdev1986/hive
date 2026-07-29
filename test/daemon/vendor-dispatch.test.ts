@@ -93,34 +93,6 @@ test("reading graphify calls for an unknown vendor throws instead of hunting a c
   ).rejects.toThrow(/unknown vendor "future-vendor"/);
 });
 
-test("crash recovery refuses to resolve an unknown vendor's session with the codex resolver", async () => {
-  const db = new HiveDatabase(join(home, "resolve.db"));
-  const sessions = new RecordingRecoverySessions();
-  let codexResolves = 0;
-  const recovery = new CrashRecovery({
-    authorizeLaunch: async (identity) =>
-      required((await authorizeForQuotaTest([identity]))[0]),
-    ...deps(db, sessions),
-    resolveClaudeSessionId: async () => "claude-session",
-    resolveCodexSessionId: async () => {
-      codexResolves += 1;
-      return "codex-session";
-    },
-  });
-
-  const outcomes = await unknownVendorSweep(db, recovery, {
-    toolSessionId: undefined,
-  });
-
-  expect(outcomes[0]?.action).toBe("skipped");
-  expect(outcomes[0]?.reason).toMatch(/unknown vendor "future-vendor"/);
-  // The discriminating assertion: a silent fallthrough would have resolved a
-  // Codex session id here and gone on to resume the agent.
-  expect(codexResolves).toBe(0);
-  expect(sessions.created).toEqual([]);
-  db.close();
-});
-
 test("every vendor Hive knows is read, so a new one cannot be silently skipped", async () => {
   const asked: CapabilityProvider[] = [];
   const read = await forEachProvider(async (provider) => {

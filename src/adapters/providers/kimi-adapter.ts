@@ -2,6 +2,7 @@ import {
   KimiCapabilityProbe,
   KimiCliCapabilityTransport,
 } from "../../daemon/capability-discovery";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildKimiResumeCommand,
@@ -11,7 +12,9 @@ import {
   resolveWorkingKimiExecutable,
   wrapKimiSpawnWithEffort,
   wrapKimiWithInstructionFile,
+  wrapKimiWithTurnHookContext,
   writeKimiAgentConfig,
+  writeKimiTurnHook,
 } from "./kimi-cli";
 import type { AgentAdapter } from "./provider-adapter";
 import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
@@ -20,10 +23,10 @@ export const kimiAgentAdapter: AgentAdapter = {
   id: "kimi",
   communication: {
     provider: "kimi",
-    eventSource: "none",
+    eventSource: "hooks",
     nativeDelivery: false,
     toolBoundaryEvents: false,
-    turnBoundaryEvents: false,
+    turnBoundaryEvents: true,
     transcriptReader: false,
     nativeCancel: false,
     conversationResume: true,
@@ -46,6 +49,9 @@ export const kimiAgentAdapter: AgentAdapter = {
         ? {}
         : { graphifyUrl: context.graphifyUrl }),
     });
+    if (context.providerRunId !== undefined) {
+      await writeKimiTurnHook(context.hiveCommand);
+    }
     // Read-only is a label Hive cannot enforce on this vendor. Say so at the
     // moment it stops being true, rather than letting the posture read as
     // contained on a launch that is not.
@@ -71,6 +77,14 @@ export const kimiAgentAdapter: AgentAdapter = {
     }
     if (context.withCapability === true) {
       command = wrapSpawnWithCapabilityEnv(command, context.name);
+    }
+    if (context.providerRunId !== undefined) {
+      command = wrapKimiWithTurnHookContext(command, {
+        name: context.name,
+        daemonPort: context.daemonPort,
+        instanceId: hiveInstanceSuffix(),
+        providerRunId: context.providerRunId,
+      });
     }
     // After the env prefixes, never before: the instruction wrapper leads with
     // its own `mkdir && install`, and an assignment placed in front of that

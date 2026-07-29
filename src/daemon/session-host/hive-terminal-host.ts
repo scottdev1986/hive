@@ -11,8 +11,6 @@ import type {
   SessionSpec,
   TerminationRequest,
   TerminationResult,
-  VisibilityLease,
-  VisibilityRequest,
 } from "./contract";
 import { sameSessionLocator } from "./locators";
 import { TERMINAL_SHELL } from "./shell-session";
@@ -105,7 +103,7 @@ type TerminalLifecycleHost = Pick<
   TerminalHost,
   "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
 > &
-  Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
+  Pick<SessionHost, "create" | "issueAttach">;
 
 export type HiveTerminalPolicy = Pick<
   HiveTerminalBinding,
@@ -416,14 +414,6 @@ export class HiveTerminalHostAdapter {
       geometry: spec.geometry,
       visibility: result.inspection.visibility,
     });
-    // Renew the lease before returning, on the same admission that admitted
-    // the create. A fresh host's first lease is 15 s of "attaching"; its next
-    // renewal otherwise waits for the Workspace's next publish AND the 5 s
-    // loop — the window that killed all sixteen spawns on 2026-07-27
-    // (planning/2026-07-27-spawn-collapse-root-cause.md). A create whose
-    // lease cannot be renewed even once, immediately, is on a broken path:
-    // fail it loudly here rather than let the host expire silently at +15 s.
-    await this.renewVisibility(policy.locator, policy.visibility);
     return result;
   }
 
@@ -501,26 +491,6 @@ export class HiveTerminalHostAdapter {
     return grant;
   }
 
-  async renewVisibility(
-    locator: HiveTerminalBinding["locator"],
-    request: VisibilityRequest,
-  ): Promise<VisibilityLease> {
-    const binding = this.requireBinding(locator);
-    if (binding.createEvidence === undefined) {
-      throw new TerminalHostBindingIncompleteError();
-    }
-    const lease = await this.host.renewVisibility(locator, request);
-    if (
-      !sameSessionLocator(lease.locator, locator) ||
-      lease.state !== "active" ||
-      lease.openTerminalRevision !== request.openTerminalRevision
-    ) {
-      throw new TerminalHostBindingMismatchError();
-    }
-    this.bindings.renewTerminalHostVisibility(locator, request, lease);
-    return lease;
-  }
-
   async inspect(
     locator: HiveTerminalBinding["locator"],
   ): Promise<SessionInspection> {
@@ -536,8 +506,48 @@ export class HiveTerminalHostAdapter {
     locator: HiveTerminalBinding["locator"],
     request: TerminationRequest,
   ): Promise<TerminationResult> {
-    const { session } = await this.requireTransportBinding(locator);
+    // A host this instance owns but can no longer see is already terminated,
+    // and saying so is the only answer that leaves a way out. Requiring a LIVE
+    // host to close a session made both close paths — hive_kill and
+    // hive_mark_dead — depend on the very thing whose absence they are called
+    // to clean up: once a host was gone, every close refused, the agent row
+    // stayed live forever, and it went on holding a quota reservation and
+    // collecting undeliverable messages. Fail-closed is right for a host that
+    // might still be running; absence is not that case. Ownership is still
+    // enforced, so another instance's locator is still refused.
+    this.requireBinding(locator);
+    const session = await this.findLiveSession(locator);
     const requestedAt = this.now();
+    if (session === null) {
+      this.bindings.recordTerminalHostTermination(locator, {
+        reason: request.reason,
+        requestId: request.requestId,
+        requestedAt: requestedAt.toISOString(),
+      });
+      const active = this.providerRuns.getActiveProviderRunByTerminal(locator);
+      if (active !== null) {
+        this.providerRuns.endProviderRun(
+          active.runId,
+          requestedAt.toISOString(),
+          "terminal-absent",
+        );
+      }
+      return {
+        locator,
+        state: "terminated",
+        // Absence is not an observed exit, and reporting one would be a
+        // fabrication: nobody watched this host leave.
+        exit: null,
+        survivors: [],
+        errors: [
+          {
+            phase: "neutral-control",
+            code: "UNKNOWN",
+            diagnosticId: "SESSIOND_HOST_ALREADY_ABSENT",
+          },
+        ],
+      };
+    }
     this.bindings.recordTerminalHostTermination(locator, {
       reason: request.reason,
       requestId: request.requestId,
@@ -765,14 +775,20 @@ export class HiveTerminalHostAdapter {
     locator: HiveTerminalBinding["locator"],
   ): Promise<Readonly<{ binding: HiveTerminalBinding; session: SessionRef }>> {
     const binding = this.requireBinding(locator);
+    const session = await this.findLiveSession(locator);
+    if (session === null) throw new TerminalHostBindingNotFoundError();
+    return { binding, session };
+  }
+
+  /** The session's ref if a host is still listed for it, else null. */
+  private async findLiveSession(
+    locator: HiveTerminalBinding["locator"],
+  ): Promise<SessionRef | null> {
     const matches = (await this.host.list()).filter(
       (inspection) => inspection.session.key === locator.sessionId,
     );
-    if (matches.length === 0) throw new TerminalHostBindingNotFoundError();
-    if (matches.length !== 1) throw new TerminalHostBindingMismatchError();
-    const [inspection] = matches;
-    if (inspection === undefined) throw new TerminalHostBindingNotFoundError();
-    return { binding, session: inspection.session };
+    if (matches.length > 1) throw new TerminalHostBindingMismatchError();
+    return matches[0]?.session ?? null;
   }
 
   private requireBinding(

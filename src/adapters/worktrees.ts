@@ -18,6 +18,7 @@ import {
 } from "../schemas";
 import { SHIPPED_SKILLS } from "../skills/shipped";
 import { grokHookFilename, ownsGrokHook } from "./providers/grok-cli";
+import { OPENCODE_TURN_PLUGIN_PATH } from "./providers/opencode-cli";
 import {
   nativeSkillDirectory,
   provisionedSkillLinks,
@@ -595,6 +596,7 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
   ".kimi-code/mcp.json",
   ".kimi-code/AGENTS.md",
   "opencode.json",
+  OPENCODE_TURN_PLUGIN_PATH,
   SKILL_LINK_MANIFEST,
 ];
 
@@ -671,11 +673,19 @@ const isHiveWorktreeWiring = async (
   return source !== null && ownsGrokHook(source);
 };
 
-/** Commits reachable from `revision` but not from the main branch. Throws
- * rather than returning 0 when git cannot answer, so a caller that deletes on
- * zero cannot be told "nothing here" by a failed measurement. That is why the
- * output is pattern-matched and not merely passed through `Number`, which
- * turns empty output into a confident 0. */
+/** Commits on `revision` whose CHANGE is not already on the main branch.
+ *
+ * Equivalence is by patch id, not by commit id. A cherry-picked commit keeps
+ * its change but takes a new sha, so `main..revision` still lists it and a
+ * plain count calls a fully-landed branch stranded — forever, since nothing
+ * about it will ever change. `--cherry-pick --right-only` over the symmetric
+ * difference drops commits with an equivalent on the other side, which is the
+ * question actually being asked: is there work here that main does not have?
+ *
+ * Throws rather than returning 0 when git cannot answer, so a caller that
+ * deletes on zero cannot be told "nothing here" by a failed measurement. That
+ * is why the output is pattern-matched and not merely passed through `Number`,
+ * which turns empty output into a confident 0. */
 async function countCommitsNotOnMain(
   repoRoot: string,
   mainBranch: string,
@@ -684,7 +694,9 @@ async function countCommitsNotOnMain(
   const result = await runGit(repoRoot, [
     "rev-list",
     "--count",
-    `${mainBranch}..${revision}`,
+    "--cherry-pick",
+    "--right-only",
+    `${mainBranch}...${revision}`,
   ]);
   assertGitSuccess(result, "rev-list");
   const count = result.stdout.trim();

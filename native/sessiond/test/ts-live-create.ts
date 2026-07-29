@@ -19,10 +19,7 @@ import {
   requireSessiondAgentLocator,
 } from "../../../src/daemon/session-host/hive-terminal-host";
 import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
-import {
-  SessiondHost,
-  SessiondWireError,
-} from "../../../src/daemon/session-host/sessiond-host";
+import { SessiondHost } from "../../../src/daemon/session-host/sessiond-host";
 import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
 import { WorkspaceVisibilityAuthority } from "../../../src/daemon/session-host/workspace-visibility";
 import { HiveSpawner } from "../../../src/daemon/spawner-impl";
@@ -481,66 +478,17 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           expect(neutralReadback.session).toEqual(neutralSession);
           expect(neutralReadback.lifecycle).toBe("running");
 
-          const wrongToken = adapter
-            .renewVisibility(sessiondLocator, {
-              ...visibility,
-              workspaceStartToken: "0:0",
-              openTerminalRevision: "2",
-            })
-            .catch((error) => error);
-          await expect(wrongToken).resolves.toBeInstanceOf(SessiondWireError);
-          await expect(wrongToken).resolves.toMatchObject({
-            code: "UNAUTHENTICATED",
-          });
+          // The daemon no longer renews anything: a terminal is alive because
+          // its process is alive, and it observes that for itself. What the
+          // create bound stays bound.
           expect(
             db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
           ).toEqual(visibility);
-
-          const stale = adapter
-            .renewVisibility(sessiondLocator, {
-              ...visibility,
-              openTerminalRevision: "0",
-            })
-            .catch((error) => error);
-          await expect(stale).resolves.toBeInstanceOf(SessiondWireError);
-          await expect(stale).resolves.toMatchObject({
-            code: "GENERATION_MISMATCH",
-          });
           expect(
-            db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
-          ).toEqual(visibility);
-
-          const renewedVisibility = {
-            ...visibility,
-            openTerminalRevision: "2",
-          };
-          const renewed = await adapter.renewVisibility(
-            sessiondLocator,
-            renewedVisibility,
-          );
-          expect(renewed).toMatchObject({
-            locator: sessiondLocator,
-            state: "active",
-            openTerminalRevision: "2",
-          });
-          expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.now());
-          expect(
-            db.getTerminalHostBindingByLocator(sessiondLocator),
+            (await adapter.inspect(sessiondLocator)).visibility,
           ).toMatchObject({
-            visibility: renewedVisibility,
-            createEvidence: {
-              visibility: {
-                state: "visible",
-                openTerminalRevision: "2",
-                expiresAt: renewed.expiresAt,
-              },
-            },
-          });
-          expect((await adapter.inspect(sessiondLocator)).visibility).toEqual({
-            state: "visible",
             workspaceSessionId: visibility.workspaceSessionId,
-            openTerminalRevision: "2",
-            expiresAt: renewed.expiresAt,
+            openTerminalRevision: visibility.openTerminalRevision,
           });
 
           // #68 real-engine inject: the daemon-side injector performs the

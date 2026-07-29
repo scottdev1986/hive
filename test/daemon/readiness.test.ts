@@ -201,6 +201,28 @@ describe("proof of life", () => {
     }
   });
 
+  test("an unreadable screen is reported as unread, not as a screen that held still", async () => {
+    const proof = await watchForProofOfLife(
+      "s",
+      BASELINE,
+      deps({
+        // The sessiond path: visible capture is unavailable, so every poll
+        // throws and the screen is never sampled once.
+        capturePane: async () => {
+          throw new Error("visible terminal capture is not available");
+        },
+        launchedProcessAlive: async () => false,
+      }),
+    );
+    expect(proof.alive).toBe(false);
+    if (!proof.alive) {
+      // Claiming a redraw was watched for and missed is a claim about an
+      // observation that never happened, and it misdirects whoever reads it.
+      expect(proof.reason).not.toContain("screen never redrew");
+      expect(proof.reason).toContain("screen was never readable");
+    }
+  });
+
   test("a dead launch is caught FASTER than the timer it replaces", async () => {
     let polls = 0;
     const proof = await watchForProofOfLife(

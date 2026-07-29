@@ -220,9 +220,6 @@ describe("OrchestratorSessiondController", () => {
           bindings.bindTerminalHostSession(policy);
           throw new Error("native host registration failed");
         },
-        renewVisibility: async () => {
-          throw new Error("not reached");
-        },
         inspect: async () => {
           throw new Error("not reached");
         },
@@ -241,7 +238,6 @@ describe("OrchestratorSessiondController", () => {
     const bindings = new MemoryBindings();
     let admissionAttempts = 0;
     let creates = 0;
-    let renewals = 0;
     const providerRuns = new MemoryProviderRuns();
     const controller = new OrchestratorSessiondController({
       bindings,
@@ -279,18 +275,6 @@ describe("OrchestratorSessiondController", () => {
             created: true,
           };
         },
-        renewVisibility: async (value) => {
-          expect(
-            bindings.getTerminalHostBindingByLocator(value)?.createEvidence,
-          ).toBeDefined();
-          renewals += 1;
-          return {
-            locator: value,
-            state: "active" as const,
-            expiresAt: "2026-07-22T12:00:15.000Z",
-            openTerminalRevision: "1",
-          };
-        },
         inspect: async (value) => inspection(value, "exited"),
       },
       sleep: async () => {},
@@ -303,7 +287,6 @@ describe("OrchestratorSessiondController", () => {
     await settle();
     expect(admissionAttempts).toBe(2);
     expect(creates).toBe(1);
-    expect(renewals).toBe(1);
     expect(providerRuns.values).toHaveLength(1);
     expect(providerRuns.values[0]).toMatchObject({
       agentId: null,
@@ -345,12 +328,6 @@ describe("OrchestratorSessiondController", () => {
             created: true,
           };
         },
-        renewVisibility: async (value) => ({
-          locator: value,
-          state: "active" as const,
-          expiresAt: "2026-07-22T12:00:15.000Z",
-          openTerminalRevision: "1",
-        }),
         inspect: async (value) => inspection(value, "exited", true),
       },
       sleep: async () => {},
@@ -375,9 +352,6 @@ describe("OrchestratorSessiondController", () => {
       terminalHost: {
         ...terminalTermination,
         create: async () => {
-          throw new Error("not reached");
-        },
-        renewVisibility: async () => {
           throw new Error("not reached");
         },
         inspect: async () => {
@@ -416,12 +390,6 @@ describe("OrchestratorSessiondController", () => {
             created: true,
           };
         },
-        renewVisibility: async (value) => ({
-          locator: value,
-          state: "active" as const,
-          expiresAt: "2026-07-22T12:00:15.000Z",
-          openTerminalRevision: "1",
-        }),
         inspect: async (value) => inspection(value, "present"),
       },
       sleep: async () => await new Promise<void>(() => {}),
@@ -453,12 +421,6 @@ describe("OrchestratorSessiondController", () => {
           `unexpected second create for ${spec.locator.sessionId}`,
         );
       },
-      renewVisibility: async (value: HiveTerminalBinding["locator"]) => ({
-        locator: value,
-        state: "active" as const,
-        expiresAt: "2026-07-22T12:00:15.000Z",
-        openTerminalRevision: "1",
-      }),
       inspect: async (value: HiveTerminalBinding["locator"]) =>
         inspection(value, "exited"),
     };

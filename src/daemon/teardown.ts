@@ -13,6 +13,7 @@
  * than rounded down to success.
  */
 import type { AgentRecord } from "../schemas";
+import { HostOperationError } from "./session-host/host-operations";
 import {
   type CommandOutput,
   descendantsOf,
@@ -27,7 +28,6 @@ import {
 } from "./session-host/hive-terminal-host";
 import { mintSessionRequestId } from "./session-host/locators";
 import {
-  SessiondBrokerUnavailableError,
   SessiondWireError,
 } from "./session-host/sessiond-host";
 
@@ -185,15 +185,15 @@ export async function stopSessiondAgentSession(
   const reap = dependencies.reap ?? defaultReapDependencies();
   const selfPid = dependencies.selfPid ?? process.pid;
   let terminalError: unknown;
-  // The host pid comes from the broker too, so an unreachable broker fails here
-  // FIRST — before the terminate below ever runs. There is no pid to capture and
-  // no broker to terminate through, so the failure is carried down to the one
-  // place that decides what an unreachable broker means.
+  // The host pid is read from the host itself, so a host that cannot be reached
+  // fails here FIRST — before the terminate below ever runs. There is no pid to
+  // capture and nothing to terminate through, so the failure is carried down to
+  // the one place that decides what an unreachable host means.
   let hostPid: number | null = null;
   try {
     hostPid = await dependencies.readHostPid(agent);
   } catch (error) {
-    if (!(error instanceof SessiondBrokerUnavailableError)) throw error;
+    if (!(error instanceof HostOperationError)) throw error;
     terminalError = error;
   }
   let rootAbsent = false;
@@ -274,16 +274,16 @@ export async function stopSessiondAgentSession(
       { cause: terminalError },
     );
   }
-  // An unreachable broker is not a failed teardown. sessiond OWNS the session,
-  // so a broker that cannot be connected to at all is not holding one open, and
-  // refusing shutdown here saves nothing — it only wedges the quit path that
-  // exists to stop orphaning work. That is the distinction: a broker that
-  // ANSWERS and reports the session still standing is a failed teardown and
-  // still refuses; a broker that never answers leaves the captured process tree
-  // as the only measurement of what is live. Survivors are live work, so they
-  // refuse exactly as before.
+  // An unreachable host is not a failed teardown. The host OWNS its session, so
+  // one whose socket cannot be connected to at all is not holding a session
+  // open, and refusing shutdown here saves nothing — it only wedges the quit
+  // path that exists to stop orphaning work. That is the distinction: a host
+  // that ANSWERS and reports the session still standing is a failed teardown
+  // and still refuses; a host that never answers leaves the captured process
+  // tree as the only measurement of what is live. Survivors are live work, so
+  // they refuse exactly as before.
   if (
-    terminalError instanceof SessiondBrokerUnavailableError &&
+    terminalError instanceof HostOperationError &&
     reaped.survivors.length === 0
   ) {
     return reaped;

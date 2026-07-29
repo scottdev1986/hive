@@ -1,7 +1,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./shared/orchestrator-role";
 import { isRecord, readProjectConfig } from "./shared/project-config";
@@ -39,6 +39,14 @@ export interface OpencodeAgentConfigOptions {
    * is the queen's channel: opencode offers no launch flag, and her skills are
    * provisioned outside the checkout (adapters/queen-skills.ts). */
   skillPaths?: readonly string[];
+}
+
+export interface OpencodeTurnPluginOptions {
+  name: string;
+  daemonPort: number;
+  instanceId: string;
+  providerRunId: string;
+  hiveCommand?: readonly string[];
 }
 
 export function resolveWorkingOpencodeExecutable() {
@@ -109,6 +117,52 @@ export function buildOpencodeResumeCommand(
   const argv = opencodeLaunchArgs(options);
   argv.splice(1, 0, "-s", sessionId);
   return argv;
+}
+
+/**
+ * Where the plugin lands, relative to the worktree. Exported because worktree
+ * reconciliation has to discount it: a file Hive writes into every opencode
+ * worktree is not the agent's work, and counting it as such made every such
+ * worktree look permanently dirty and therefore unsweepable.
+ */
+export const OPENCODE_TURN_PLUGIN_PATH = join(
+  ".opencode",
+  "plugins",
+  "hive-turn-events.ts",
+);
+
+/**
+ * OpenCode loads project plugins at startup. Its session.idle event is the
+ * provider-owned completion signal, so this plugin reports only that boundary
+ * instead of inferring state from terminal output or elapsed time.
+ */
+export async function writeOpencodeTurnPlugin(
+  worktreePath: string,
+  options: OpencodeTurnPluginOptions,
+): Promise<void> {
+  const hiveCommand = options.hiveCommand ?? ["hive"];
+  if (hiveCommand.length === 0 || hiveCommand[0] === undefined) {
+    throw new Error("Hive command must contain an executable");
+  }
+  const path = join(worktreePath, OPENCODE_TURN_PLUGIN_PATH);
+  const directory = dirname(path);
+  const args = [
+    ...hiveCommand,
+    "event",
+    "turn-end",
+    "--agent",
+    options.name,
+    "--port",
+    String(options.daemonPort),
+    "--instance-id",
+    options.instanceId,
+    "--provider-run-id",
+    options.providerRunId,
+  ];
+  const source = `// Written by Hive. OpenCode's session.idle event is the only completion signal.\nexport const HiveTurnEvents = async () => ({\n  event: async ({ event }: { event: { type: string; properties?: { sessionID?: string } } }) => {\n    if (event.type !== "session.idle") return;\n    const sessionID = event.properties?.sessionID;\n    const args = ${JSON.stringify(args)};\n    if (sessionID !== undefined) args.push("--payload", JSON.stringify({ sessionId: sessionID }));\n    const child = Bun.spawn(args, { stdin: "ignore", stdout: "ignore", stderr: "ignore" });\n    void child.exited;\n  },\n});\n`;
+  await mkdir(directory, { recursive: true });
+  await writeFile(path, source, { mode: 0o600 });
+  await chmod(path, 0o600);
 }
 
 /**

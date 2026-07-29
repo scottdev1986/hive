@@ -47,6 +47,23 @@ async function git(...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** Runs git inside a worktree rather than the repo root. */
+async function gitIn(cwd: string, ...args: string[]): Promise<string> {
+  const process = Bun.spawn(["git", "-C", cwd, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited,
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(stderr.trim());
+  }
+  return stdout.trim();
+}
+
 beforeAll(async () => {
   tempRoot = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-worktrees-"));
   repoRoot = join(tempRoot, "repo");
@@ -196,6 +213,50 @@ describe("git worktree manager", () => {
     ).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
 
     await removeWorktree(repoRoot, created.path, { deleteBranch: true });
+  });
+
+  test("work already cherry-picked onto main is not stranded", async () => {
+    // The measurement is by patch id, not commit id. A cherry-pick keeps the
+    // change and takes a new sha, so counting `main..branch` calls a branch
+    // whose work fully landed stranded — and nothing about it ever changes, so
+    // that worktree is kept forever and every reap needs a human to investigate.
+    const created = await createWorktree(repoRoot, "agent-cherry", "picked");
+    await writeFile(join(created.path, "landed.txt"), "the agent's work\n");
+    await gitIn(created.path, "add", "-A");
+    await gitIn(created.path, "commit", "-m", "the agent's work");
+    const agentCommit = (
+      await gitIn(created.path, "rev-parse", "HEAD")
+    ).trim();
+
+    // main moves on, then takes the agent's change as a NEW commit.
+    await writeFile(join(repoRoot, "unrelated.txt"), "main moved on\n");
+    await git("add", "-A");
+    await git("commit", "-m", "main moved on");
+    await git("cherry-pick", agentCommit);
+
+    const stranded = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(stranded).toEqual({ dirtyFiles: [], unmergedCommits: 0 });
+
+    // A commit whose change main does NOT have still counts, so the patch-id
+    // comparison cannot be used to wave work away.
+    await writeFile(join(created.path, "kept.txt"), "not landed anywhere\n");
+    await gitIn(created.path, "add", "-A");
+    await gitIn(created.path, "commit", "-m", "still unmerged");
+    const withUnmerged = await assessStrandedWork(
+      repoRoot,
+      created.path,
+      created.branch,
+    );
+    expect(withUnmerged.unmergedCommits).toBe(1);
+
+    await removeWorktree(repoRoot, created.path, {
+      deleteBranch: true,
+      discardTracked: true,
+    });
   });
 
   test("hive's own grok wiring is not the agent's work, and never blocks a reap", async () => {

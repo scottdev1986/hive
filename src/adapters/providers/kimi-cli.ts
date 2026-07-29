@@ -26,6 +26,16 @@ export interface KimiAgentConfigOptions {
   graphifyUrl?: string;
 }
 
+export interface KimiTurnHookContext {
+  name: string;
+  daemonPort: number;
+  instanceId: string;
+  providerRunId: string;
+}
+
+const KIMI_TURN_HOOK_START = "# Hive turn-status hook: begin";
+const KIMI_TURN_HOOK_END = "# Hive turn-status hook: end";
+
 export function resolveWorkingKimiExecutable() {
   return resolveProviderExecutable("kimi", [".kimi-code/bin/kimi"]);
 }
@@ -73,8 +83,9 @@ export function probeKimiDefaultModel(
  *
  * Kimi has no per-launch deny channel and no flag that forces `manual` back on;
  * its only permission surface is `[[permission.rules]]` and
- * `default_permission_mode` in the operator's global config.toml, which Hive
- * does not write (that gate belongs to the user). So when the operator has
+ * `default_permission_mode` in the operator's global config.toml. Hive manages
+ * only its marked lifecycle hook there; that permission gate belongs to the
+ * user. So when the operator has
  * pinned `yolo` or `auto`, a Hive "read-only" Kimi agent launches with write
  * authority and Hive cannot stop it — it can only refuse to pretend otherwise.
  *
@@ -91,7 +102,7 @@ export function kimiReadOnlyContainmentGap(
     `Kimi read-only is NOT enforced: this operator's config.toml pins ` +
     `default_permission_mode = "${mode}", and Kimi offers no per-launch flag ` +
     `or deny channel that can override it. The agent will hold write and shell ` +
-    `authority. Hive does not write vendor config — set ` +
+    `authority. Hive does not change these permission settings — set ` +
     `default_permission_mode = "manual" (or add [[permission.rules]]) in ` +
     `${join(home, "config.toml")} if this agent must be contained.`
   );
@@ -105,7 +116,7 @@ export function kimiReadOnlyContainmentGap(
  *   config.toml pins `default_permission_mode = "yolo"`/`"auto"` launches a
  *   Hive read-only agent under that mode instead; Kimi has no per-launch
  *   read-only or per-tool deny channel (its `[[permission.rules]]` live only
- *   in the global config.toml, which Hive does not write).
+ *   in the global config.toml, which Hive never changes).
  * - !readOnly maps to `--yolo`: auto-approve regular tool calls while static
  *   deny rules stay in force.
  * - dangerous maps to `--auto`: fully autonomous, the agent never asks.
@@ -173,6 +184,73 @@ export function wrapKimiSpawnWithEffort(
   effort: string,
 ): string {
   return `KIMI_MODEL_THINKING_EFFORT=${shellQuote(effort)} ${command}`;
+}
+
+/**
+ * Kimi reads hooks only from its user-level config. The one Hive-owned hook is
+ * therefore generic; per-agent identity stays in the launch environment so
+ * ordinary Kimi sessions cannot report a Hive lifecycle event.
+ */
+export function wrapKimiWithTurnHookContext(
+  command: string,
+  context: KimiTurnHookContext,
+): string {
+  return [
+    `HIVE_AGENT_NAME=${shellQuote(context.name)}`,
+    `HIVE_DAEMON_PORT=${shellQuote(String(context.daemonPort))}`,
+    `HIVE_INSTANCE_ID=${shellQuote(context.instanceId)}`,
+    `HIVE_PROVIDER_RUN_ID=${shellQuote(context.providerRunId)}`,
+    command,
+  ].join(" ");
+}
+
+/**
+ * Install the documented Kimi Stop hook once. Stop is emitted immediately
+ * before Kimi returns to its input box, which is the provider's authoritative
+ * turn-idle boundary.
+ */
+export async function writeKimiTurnHook(
+  hiveCommand: readonly string[] = ["hive"],
+  home = kimiHome(),
+): Promise<void> {
+  if (hiveCommand.length === 0 || hiveCommand[0] === undefined) {
+    throw new Error("Hive command must contain an executable");
+  }
+  const path = join(home, "config.toml");
+  const existing = await readFile(path, "utf8").catch(() => "");
+  const command = [
+    hiveCommand.map(shellQuote).join(" "),
+    "event turn-end",
+    '--agent "$HIVE_AGENT_NAME"',
+    '--port "$HIVE_DAEMON_PORT"',
+    '--instance-id "$HIVE_INSTANCE_ID"',
+    '--provider-run-id "$HIVE_PROVIDER_RUN_ID"',
+  ].join(" ");
+  const block = [
+    KIMI_TURN_HOOK_START,
+    "[[hooks]]",
+    'event = "Stop"',
+    `command = ${JSON.stringify(
+      `if [ -n "$HIVE_AGENT_NAME" ]; then ${command}; fi`,
+    )}`,
+    "timeout = 5",
+    KIMI_TURN_HOOK_END,
+  ].join("\n");
+  const withoutExisting = existing
+    .replace(
+      /\n?# Hive turn-status hook: begin[\s\S]*?# Hive turn-status hook: end\n?/g,
+      "\n",
+    )
+    .trimEnd();
+  await mkdir(home, { recursive: true });
+  await writeFile(
+    path,
+    `${withoutExisting}${withoutExisting ? "\n\n" : ""}${block}\n`,
+    {
+      mode: 0o600,
+    },
+  );
+  await chmod(path, 0o600);
 }
 
 /**

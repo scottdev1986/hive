@@ -1,15 +1,15 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildGraphBrief } from "../adapters/graphify";
-import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import { resolveWorkingClaudeExecutable } from "../adapters/providers/claude-cli";
 import { resolveWorkingCodexExecutable } from "../adapters/providers/codex-cli";
 import { resolveWorkingGrokExecutable } from "../adapters/providers/grok-cli";
 import { resolveWorkingKimiExecutable } from "../adapters/providers/kimi-cli";
 import { resolveWorkingOpencodeExecutable } from "../adapters/providers/opencode-cli";
+import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import { persistAutonomy } from "../config/autonomy";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
-import { getHiveHome, HiveDatabase } from "../daemon/db";
+import { HiveDatabase } from "../daemon/db";
 import { EpisodicStore } from "../daemon/episodic-store";
 import { GraphifyService } from "../daemon/graphify-service";
 import { currentBuildHash } from "../daemon/handshake";
@@ -61,10 +61,7 @@ import {
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import { observeSessiondOutput } from "../daemon/session-host/sessiond-output-observer";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
-import {
-  resolveSessiondBinary,
-  SessiondBrokerSupervisor,
-} from "../daemon/sessiond-broker";
+import { resolveSessiondBinary } from "../daemon/sessiond-broker";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { formatDaemonStartupAnnouncement } from "../daemon/startup-announcement";
 import { agentRecordStatusIncarnationGenerationSource } from "../daemon/status-generation";
@@ -218,19 +215,10 @@ export async function runDaemon(): Promise<void> {
         "or set HIVE_SESSIOND_BIN.",
     );
   }
-  // Construct the supervisor now; start() only after the daemon is listening.
-  // Ready-proof connects to broker.sock, checks LOCAL_PEERPID, and completes
-  // HELLO — which loads daemon.lock + GET /handshake from daemon.port.
-  const sessiondBroker = new SessiondBrokerSupervisor({
-    binary: sessiondBinary,
-    hiveHome: getHiveHome(),
-    repoRoot,
-    onFatal: (error) => {
-      console.error(
-        `sessiond broker supervision failed fatally: ${error.message}`,
-      );
-    },
-  });
+  // No broker process. Hive launches each terminal host itself and speaks to
+  // it on its own socket, so there is nothing left for a broker to mediate:
+  // it was never in the terminal data path, and one process relaying every
+  // launch and every inspect was the 31-wide ceiling.
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const claudeExecutable = resolveWorkingClaudeExecutable().path;
@@ -458,7 +446,6 @@ export async function runDaemon(): Promise<void> {
     episodicStore,
     port,
     manageLifecycle: true,
-    sessiondBroker,
     quota,
     modelInventory: () =>
       readModelInventory({
@@ -515,11 +502,11 @@ export async function runDaemon(): Promise<void> {
     );
   }
   const engineBuildId = await startBrokerAndDiscoverEngineBuildId({
-    startBroker: () => sessiondBroker.start(),
+    startBroker: async () => {},
     discoverEngineBuildId: () => sessiond.discoverEngineBuildId(),
     onFatalFailure: (stage, error) =>
       exitAfterDaemonStartupFailure(stage, error, {
-        stopBroker: () => sessiondBroker.stop(),
+        stopBroker: async () => {},
         stopDaemon: () => daemon.stop(),
         cleanupLifecycle: cleanupLifecycleFiles,
         // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
@@ -556,7 +543,6 @@ export async function runDaemon(): Promise<void> {
     } finally {
       // stop() owns the supervisor when wired; belt-and-braces if construction
       // failed after start or stop threw before the broker field was torn down.
-      await sessiondBroker.stop();
       clearTimeout(hardStop);
     }
     quotaDb.close();

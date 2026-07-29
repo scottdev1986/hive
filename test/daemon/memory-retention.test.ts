@@ -508,7 +508,6 @@ describe("daemon retention wiring", () => {
       .mockResolvedValue(null);
     jest.spyOn(daemon, "runMaintenance").mockResolvedValue(undefined);
     jest.spyOn(daemon, "checkWakePaths").mockResolvedValue([]);
-    jest.spyOn(daemon, "renewWorkspaceVisibility").mockResolvedValue(0);
     // start() kicks a real reindex; under fake timers its lock retry would
     // resolve after stop() and log a spurious closed-database error.
     jest.spyOn(daemon, "rebuildMemoryIndex").mockResolvedValue({

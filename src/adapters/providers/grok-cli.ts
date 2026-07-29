@@ -77,7 +77,7 @@ export interface GrokCliIdentity {
   channel: string | null;
 }
 
-const GROK_VERSION_PATTERN = /^grok (\S+) \(([0-9a-f]+)\)(?: \[(\w+)\])?$/;
+const GROK_VERSION_PATTERN = /^grok (\S+) \(([0-9a-f]+)\)(?: \[(\w+)])?$/;
 
 export function parseGrokCliVersion(output: string): GrokCliIdentity | null {
   const match = GROK_VERSION_PATTERN.exec(output.trim());
@@ -375,7 +375,7 @@ function stripHiveMcpTables(source: string): string {
   const kept: string[] = [];
   let skipping = false;
   for (const line of lines) {
-    const header = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/.exec(line)?.[1];
+    const header = /^\s*\[([^\]]+)]\s*(?:#.*)?$/.exec(line)?.[1];
     if (header !== undefined) {
       skipping =
         header === "mcp_servers.hive" ||

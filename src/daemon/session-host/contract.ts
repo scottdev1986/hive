@@ -49,10 +49,6 @@ export interface SessionHost {
     locator: SessionLocator,
     request: AttachRequest,
   ): Promise<AttachGrant>;
-  renewVisibility(
-    locator: SessionLocator,
-    request: VisibilityRequest,
-  ): Promise<VisibilityLease>;
   resize(
     locator: SessionLocator,
     geometry: TerminalGeometry,

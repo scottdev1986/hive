@@ -13295,6 +13295,7 @@
         "terminalActiveCellsMax": 250000,
         "kittyImageDecodedBytesPerGeneration": 16777216,
         "controlRpcTimeoutMilliseconds": 10000,
+        "createRpcTimeoutMilliseconds": 60000,
         "attachGrantTimeoutMilliseconds": 30000,
         "visibilityRenewalMilliseconds": 5000,
         "visibilityExpiryMilliseconds": 15000,

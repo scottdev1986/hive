@@ -1,6 +1,6 @@
 import type { CapabilityDiscoveryResult } from "../../daemon/capability-discovery";
-import type { CapabilityProvider } from "../../schemas/capability";
-import type { ProviderCommunicationCapabilities } from "../../schemas/provider-communication";
+import type { CapabilityProvider } from "../../schemas";
+import type { ProviderCommunicationCapabilities } from "../../schemas";
 
 /** Everything a launch needs that is not provider-specific. */
 export interface AgentSpawnContext {

@@ -17,6 +17,7 @@ import {
   OPENCODE_HIVE_AGENT,
   probeOpencodeDefaultModel,
   writeOpencodeAgentConfig,
+  writeOpencodeTurnPlugin,
 } from "../../../src/adapters/providers/opencode-cli";
 import { getAgentAdapter } from "../../../src/adapters/providers/provider-registry";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "../../../src/adapters/providers/shared/capability-env";
@@ -74,6 +75,24 @@ describe("opencode adapter", () => {
     expect(
       buildOpencodeSpawnCommand({ ...writer, agent: OPENCODE_HIVE_AGENT }),
     ).toEqual(["opencode", "-m", "openai/gpt-5.5", "--agent", "hive"]);
+  });
+
+  test("the project plugin reports only OpenCode's session.idle event", async () => {
+    const root = await worktree();
+    await writeOpencodeTurnPlugin(root, {
+      name: "maya",
+      daemonPort: 4317,
+      instanceId: "hive-test",
+      providerRunId: "11111111-1111-4111-8111-111111111111",
+      hiveCommand: ["/opt/hive"],
+    });
+    const source = await readFile(
+      join(root, ".opencode", "plugins", "hive-turn-events.ts"),
+      "utf8",
+    );
+    expect(source).toContain('event.type !== "session.idle"');
+    expect(source).toContain('"/opt/hive"');
+    expect(source).toContain('"--provider-run-id"');
   });
 
   test("resume uses -s and replays current process flags", () => {

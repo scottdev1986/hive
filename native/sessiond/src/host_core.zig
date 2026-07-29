@@ -383,7 +383,16 @@ pub const max_replay_entries: usize = 256;
 
 const InputReplay = struct {
     idempotency_key: []u8,
-    claim_token: []u8,
+    /// The WRITER, not the claim. A claim token is minted fresh by every
+    /// CLAIM_ACQUIRE that finds no live claim, and a writer releases its claim
+    /// at the end of each submit cycle — so a byte-identical resend always
+    /// arrives under a brand-new token. Matching on the token therefore called
+    /// every retry "different input", permanently: each further attempt minted
+    /// another token, so the key could never be replayed and the message could
+    /// never land. The writer id is stable across attach cycles, and keeping it
+    /// in the identity is what still stops one viewer from reading back another
+    /// viewer's receipt by guessing its key.
+    owner_viewer_id: []u8,
     transaction_id: []u8,
     operation_kind: InputOperationKind,
     operation_digest: [32]u8,
@@ -391,7 +400,7 @@ const InputReplay = struct {
 
     fn deinit(self: *InputReplay, allocator: std.mem.Allocator) void {
         allocator.free(self.idempotency_key);
-        allocator.free(self.claim_token);
+        allocator.free(self.owner_viewer_id);
         allocator.free(self.transaction_id);
         self.* = undefined;
     }
@@ -399,10 +408,11 @@ const InputReplay = struct {
     fn matches(
         self: *const InputReplay,
         request: WireInputSubmit,
+        viewer_id: []const u8,
         kind: InputOperationKind,
         digest: [32]u8,
     ) bool {
-        return std.mem.eql(u8, self.claim_token, request.claimToken) and
+        return std.mem.eql(u8, self.owner_viewer_id, viewer_id) and
             std.mem.eql(u8, self.transaction_id, request.transactionId) and
             self.operation_kind == kind and
             std.crypto.timing_safe.eql([32]u8, self.operation_digest, digest);
@@ -450,6 +460,81 @@ const ClaimResponse = union(enum) {
     unknown: []const u8,
 };
 
+/// A terminal is alive if and only if its process is alive, and its right to
+/// live is OBSERVED here rather than MAINTAINED by a message arriving on time.
+/// The message form is what a wide spawn burst starves: renewals queue behind
+/// the creates that made them necessary, and the fleet dies at its busiest
+/// moment. `kill(pid, 0)` cannot be starved.
+///
+/// The grace window exists for exactly one case: a daemon restart hands these
+/// hosts to a NEW broker, which adopts them off disk. Until that adoption
+/// lands the old supervisor is genuinely gone, and a host that died the
+/// instant it noticed could never be recovered.
+pub const SupervisorWatch = struct {
+    pid: i32,
+    start_token: process_inspector.StartToken,
+    /// First observation of absence; cleared by any later live observation.
+    lost_since_ns: ?u64 = null,
+
+    pub fn of(pid: i32) ?SupervisorWatch {
+        const identity = process_inspector.observeProcessPresent(pid) orelse return null;
+        return .{ .pid = pid, .start_token = identity.start_token };
+    }
+
+    /// A new broker proved the 32-byte adoption secret, so it is this host's
+    /// supervisor now. Clears any absence recorded against its predecessor.
+    pub fn adoptedBy(self: *SupervisorWatch, pid: i32) void {
+        const identity = process_inspector.observeProcessPresent(pid) orelse return;
+        self.pid = pid;
+        self.start_token = identity.start_token;
+        self.lost_since_ns = null;
+    }
+
+    /// True once the supervisor has been continuously absent for the whole
+    /// grace window. `unobservable` is NOT absence: an unreadable process is
+    /// unknown, and unknown must never be read as permission to kill an
+    /// agent's work.
+    pub fn lost(self: *SupervisorWatch, now_ns: u64) bool {
+        const observed = process_inspector.observeProcess(self.pid);
+        const present = switch (observed) {
+            .present => |identity| identity.start_token.eql(self.start_token),
+            // A pid reused by an unrelated process is the same as absence.
+            .absent => false,
+            .unobservable => {
+                self.lost_since_ns = null;
+                return false;
+            },
+        };
+        if (present) {
+            self.lost_since_ns = null;
+            return false;
+        }
+        const since = self.lost_since_ns orelse {
+            self.lost_since_ns = now_ns;
+            return false;
+        };
+        if (now_ns <= since) return false;
+        return now_ns - since >= supervisor_grace_ns;
+    }
+};
+
+/// How long a host outlives an observably dead supervisor.
+///
+/// This is the window a restarting broker has to recover this host off disk
+/// and prove the adoption secret. It began as the visibility lease's 15 s,
+/// inherited without thought — and 15 s is a number that does not scale with
+/// fleet width, which is the mistake this whole redesign is about. A broker
+/// that dies mid-burst must re-adopt every host it had, one IPC each; at 31
+/// that does not fit, so a single broker blip cost 25 agents (measured
+/// 2026-07-28: runs containing `broker exited 143` returned 4–6 of 31, runs
+/// without it returned 27).
+///
+/// The cost of being generous is only that a genuinely orphaned host lingers
+/// longer before reaping itself, and that is the backstop path — the daemon's
+/// explicit terminate and the broker's `terminateAll` on observed owner death
+/// both act immediately. Being ungenerous costs agents' work.
+pub const supervisor_grace_ns: u64 = 90 * std.time.ns_per_s;
+
 pub const HostCore = struct {
     allocator: std.mem.Allocator,
     registration: HostRegistration,
@@ -457,6 +542,10 @@ pub const HostCore = struct {
     host_executable: []const u8,
     broker_build_id: []const u8,
     lease: VisibilityLease,
+    /// Bound by the production host role once it knows which broker launched
+    /// it. Null in harnesses that drive a core directly: nothing observes a
+    /// supervisor there, so nothing may kill on its absence either.
+    supervisor: ?SupervisorWatch = null,
     grants: std.ArrayList(GrantEntry) = .{},
     active_claim: ?ActiveInputClaim = null,
     /// Last human claim orphaned by an unclean viewer drop (#40). Retained only
@@ -510,6 +599,18 @@ pub const HostCore = struct {
 
     pub fn bindTermination(self: *HostCore, binding: TerminationBinding) void {
         self.termination = binding;
+    }
+
+    pub fn bindSupervisor(self: *HostCore, watch: SupervisorWatch) void {
+        self.supervisor = watch;
+    }
+
+    /// The peer that just proved the adoption secret is this host's supervisor
+    /// from now on. Without this a recovered host would keep watching the dead
+    /// broker that launched it and terminate mid-recovery.
+    pub fn supervisorAdoptedBy(self: *HostCore, pid: i32) void {
+        if (self.supervisor == null) return;
+        self.supervisor.?.adoptedBy(pid);
     }
 
     fn terminalSessionMatches(self: *const HostCore, session: WireTerminalSessionRef) bool {
@@ -848,12 +949,13 @@ pub const HostCore = struct {
     fn reserveInputReplay(
         self: *HostCore,
         request: WireInputSubmit,
+        viewer_id: []const u8,
         kind: InputOperationKind,
         digest: [32]u8,
     ) !*InputReplay {
         var replay: InputReplay = .{
             .idempotency_key = try self.allocator.dupe(u8, request.idempotencyKey),
-            .claim_token = undefined,
+            .owner_viewer_id = undefined,
             .transaction_id = undefined,
             .operation_kind = kind,
             .operation_digest = digest,
@@ -861,10 +963,10 @@ pub const HostCore = struct {
         var initialized_fields: usize = 1;
         errdefer {
             if (initialized_fields >= 1) self.allocator.free(replay.idempotency_key);
-            if (initialized_fields >= 2) self.allocator.free(replay.claim_token);
+            if (initialized_fields >= 2) self.allocator.free(replay.owner_viewer_id);
             if (initialized_fields >= 3) self.allocator.free(replay.transaction_id);
         }
-        replay.claim_token = try self.allocator.dupe(u8, request.claimToken);
+        replay.owner_viewer_id = try self.allocator.dupe(u8, viewer_id);
         initialized_fields = 2;
         replay.transaction_id = try self.allocator.dupe(u8, request.transactionId);
         initialized_fields = 3;
@@ -944,7 +1046,7 @@ pub const HostCore = struct {
 
         for (self.input_replays.items) |*replay| {
             if (!std.mem.eql(u8, replay.idempotency_key, request.idempotencyKey)) continue;
-            if (!replay.matches(request, kind, operation_digest))
+            if (!replay.matches(request, viewer_id, kind, operation_digest))
                 return self.encodeInputApplied(rejectedInputReceipt(
                     request.transactionId,
                     "idempotency key reused with different input",
@@ -952,7 +1054,7 @@ pub const HostCore = struct {
             const receipt = replay.receipt orelse return error.InputReplayIncomplete;
             return self.encodeInputApplied(receipt);
         }
-        const replay = try self.reserveInputReplay(request, kind, operation_digest);
+        const replay = try self.reserveInputReplay(request, viewer_id, kind, operation_digest);
         const binding = self.termination orelse {
             replay.receipt = .{
                 .transaction_id = replay.transaction_id,
@@ -1273,7 +1375,6 @@ pub const HostCore = struct {
         hello_build_id: []const u8,
         now_ns: u64,
     ) ![]u8 {
-        if (self.lease.expired(now_ns)) return error.VisibilityExpired;
         if (!protocol.validateControlPayload(
             self.allocator,
             generated.wire_schema.host_adopt_payload,
@@ -1718,11 +1819,14 @@ pub const HostCore = struct {
     }
 
     /// Crash invariant enforcement. The caller invokes this from the host
-    /// lifecycle clock even when no broker transport is connected.
-    pub fn enforceVisibilityExpiry(self: *HostCore, now_ns: u64) !bool {
+    /// lifecycle clock even when no broker transport is connected: a host whose
+    /// supervisor is gone would otherwise reparent to launchd and keep burning
+    /// a vendor's tokens forever.
+    pub fn enforceSupervisorLoss(self: *HostCore, now_ns: u64) !bool {
         if (self.terminated) return true;
-        if (!self.lease.expired(now_ns)) return false;
-        const response = try self.terminateBound(.graceful, "VISIBILITY_EXPIRED");
+        if (self.supervisor == null) return false;
+        if (!self.supervisor.?.lost(now_ns)) return false;
+        const response = try self.terminateBound(.graceful, "SUPERVISOR_GONE");
         self.allocator.free(response);
         return true;
     }

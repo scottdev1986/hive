@@ -224,9 +224,6 @@ describe("C0 provider-run identity", () => {
         create: async () => {
           throw new Error("not used");
         },
-        renewVisibility: async () => {
-          throw new Error("not used");
-        },
         issueAttach: async () => {
           throw new Error("not used");
         },
@@ -359,7 +356,7 @@ describe("C0 provider-run identity", () => {
 
   test.todo("grok live launch: pending until its quota pool resets at 2026-07-26T17:18Z", () => {});
 
-  test("recovery launch waits for foreground identity before minting its run", async () => {
+  test("recovery launch mints a run, and a failed relaunch never kills the terminal", async () => {
     const db = new HiveDatabase(":memory:");
     const terminal = locator("codex");
     const record: AgentRecord = {
@@ -453,6 +450,10 @@ describe("C0 provider-run identity", () => {
       capabilityEpoch: 2,
     });
     inspections = 0;
+    // Not having observed the provider is not evidence that it failed. A
+    // terminal that is up is left up: this used to terminate the session and
+    // throw, which at 31 wide killed agents whose vendor TUI was rendered and
+    // running, and left no audit when the terminate itself failed.
     await expect(
       spawner.createRecoverySession(
         record,
@@ -462,7 +463,7 @@ describe("C0 provider-run identity", () => {
         "018f1e90-7b5a-7cc0-8000-000000000301",
       ),
     ).rejects.toThrow();
-    expect(terminations).toBe(1);
+    expect(terminations).toBe(0);
     db.close();
   });
 });

@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Lifecycle Ownership — Proposed Redesign</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090d12;
+      --panel: #101720;
+      --panel-2: #151e29;
+      --line: #2b3948;
+      --text: #d8e2ec;
+      --muted: #91a1b2;
+      --accent: #7dd3fc;
+      --process: #63e6be;
+      --vendor: #c9a7f5;
+      --live: #a3f7bf;
+      --unproven: #ffd166;
+      --absent: #ff7b8b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background:
+        linear-gradient(rgba(125, 211, 252, .035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(125, 211, 252, .035) 1px, transparent 1px),
+        var(--bg);
+      background-size: 32px 32px;
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+    a { color: var(--accent); }
+    code, pre { font-family: var(--mono); }
+    code { color: #b9e6ff; }
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    header { padding: 72px 0 34px; border-bottom: 1px solid var(--line); }
+    header h1 { margin: 8px 0 12px; font: 650 clamp(2rem, 5vw, 4.1rem)/1.02 var(--sans); letter-spacing: -.045em; }
+    header p { max-width: 880px; color: var(--muted); font-size: 1.05rem; }
+    .eyebrow, .section-label { color: var(--accent); font: 700 .72rem/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; }
+    .meta { margin-top: 20px; color: var(--muted); font-family: var(--mono); font-size: .8rem; }
+    nav { padding: 24px 0; border-bottom: 1px solid var(--line); }
+    nav ol { margin: 0; padding: 0; columns: 3; list-style-position: inside; }
+    nav li { margin: 5px 0; color: var(--muted); font-family: var(--mono); font-size: .82rem; }
+    section { padding: 52px 0; border-bottom: 1px solid var(--line); scroll-margin-top: 20px; }
+    h2 { margin: 6px 0 18px; font-size: clamp(1.6rem, 3vw, 2.4rem); letter-spacing: -.025em; }
+    h3 { margin: 34px 0 12px; font-size: 1.05rem; letter-spacing: .02em; }
+    p, li { max-width: 980px; }
+    .lede { color: var(--muted); font-size: 1.02rem; }
+    .diagram { margin: 26px 0; border: 1px solid var(--line); background: #0b1118; }
+    .diagram svg { display: block; width: 100%; height: auto; }
+    .diagram figcaption { padding: 11px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+    .diagram text { font-family: var(--mono); fill: var(--text); }
+    .diagram .muted { fill: var(--muted); }
+    .diagram .box { fill: #111b26; stroke: #34485c; }
+    .diagram .ok { stroke: var(--process); }
+    .diagram .vendor { stroke: var(--vendor); }
+    .diagram .warn { stroke: var(--unproven); }
+    .diagram .bad { stroke: var(--absent); }
+    .diagram .arrow { stroke: #72879b; stroke-width: 1.5; fill: none; }
+    .diagram .arrow.bad { stroke: var(--absent); }
+    .diagram .arrow.ok { stroke: var(--process); }
+    .diagram .dash { stroke-dasharray: 6 5; }
+    .diagram .panel-rule { stroke: var(--line); stroke-width: 1; }
+    table { width: 100%; border-collapse: collapse; margin: 22px 0; font-size: .92rem; }
+    th, td { padding: 10px 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { background: var(--panel-2); font-family: var(--mono); font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+    td.num { font-family: var(--mono); white-space: nowrap; }
+    .tag { display: inline-block; padding: .16rem .45rem; border: 1px solid currentColor; border-radius: 3px; font: 700 .68rem/1.35 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .t-keep { color: var(--process); }
+    .t-cut { color: var(--absent); }
+    .t-new { color: var(--accent); }
+    .t-open { color: var(--unproven); }
+    .callout { margin: 24px 0; padding: 18px 20px; border: 1px solid var(--line); border-left: 3px solid var(--accent); background: var(--panel); }
+    .callout.warn { border-left-color: var(--unproven); }
+    .callout.bad { border-left-color: var(--absent); }
+    .callout p:last-child { margin-bottom: 0; }
+    .callout p:first-child { margin-top: 0; }
+    pre { margin: 18px 0; padding: 14px 16px; border: 1px solid var(--line); background: var(--panel); overflow-x: auto; font-size: .85rem; line-height: 1.5; }
+    ol.steps { counter-reset: step; list-style: none; padding: 0; }
+    ol.steps > li { counter-increment: step; position: relative; margin: 14px 0; padding-left: 44px; }
+    ol.steps > li::before {
+      content: counter(step);
+      position: absolute; left: 0; top: 0;
+      width: 28px; height: 28px; border: 1px solid var(--accent); border-radius: 50%;
+      color: var(--accent); font: 700 .8rem/26px var(--mono); text-align: center;
+    }
+    footer { padding: 42px 0 80px; color: var(--muted); font-size: .85rem; }
+    @media (max-width: 720px) { nav ol { columns: 1; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+
+<header>
+  <div class="eyebrow">Design record</div>
+  <h1>Agent lifecycle ownership</h1>
+  <p class="lede">
+    Spawning an agent should be a process launch that returns a handle. Until 2026-07-28
+    it was a negotiation across four components in which a terminal was killed unless
+    something kept telling it to live, once every five seconds, per terminal. That
+    inversion caused three fleet collapses. This document records what was there, what
+    replaced it, what the replacement measured, and what is still open.
+  </p>
+  <div class="callout">
+    <p>
+      <strong>The invariant, stated once.</strong> A terminal is alive if and only if its
+      process is alive. Liveness is <em>observed</em>, never <em>maintained</em>. Failing
+      to attach, render, publish, or renew must never change whether an agent lives.
+    </p>
+  </div>
+  <div class="meta">
+    Status: implemented; broker removed; 31 wide holds &middot; Author: Claude &middot; 2026-07-28<br>
+    Evidence: <code>planning/2026-07-27-spawn-collapse-root-cause.md</code>, <code>prototypes/spawn31/</code>
+  </div>
+</header>
+
+<nav>
+  <ol>
+    <li><a href="#today">1. What was there</a></li>
+    <li><a href="#inversion">2. The lease inversion</a></li>
+    <li><a href="#evidence">3. Measured evidence</a></li>
+    <li><a href="#ownership">4. Ownership</a></li>
+    <li><a href="#implemented">5. What was implemented</a></li>
+    <li><a href="#deleted">6. What was deleted</a></li>
+    <li><a href="#open">7. What is not closed</a></li>
+    <li><a href="#reporting">7b. Why the terminal does not yet report</a></li>
+    <li><a href="#killers">7c. Hive was killing its own working agents</a></li>
+    <li><a href="#broker-removal">7d. The broker is gone</a></li>
+    <li><a href="#live-16">7e. The live 16-agent run</a></li>
+    <li><a href="#rejected">8. Rejected and deferred</a></li>
+  </ol>
+</nav>
+
+<section id="today">
+  <div class="section-label">History</div>
+  <h2>1. What was there</h2>
+  <p>
+    A single <code>hive_spawn</code> traverses six layers and ends in three processes: a
+    sessiond host, a login <code>zsh</code> on a PTY, and the vendor TUI running beneath
+    that shell. The orchestration lives in <code>spawnReserved</code>
+    (<code>src/daemon/spawner-impl.ts</code>). That part is unchanged.
+  </p>
+  <p>
+    What changed is the loop that ran <em>beside</em> it. Every five seconds the daemon
+    walked the Workspace's published inventory and sent one broker RPC per terminal to
+    renew a fifteen-second lease. A terminal that missed its renewals was terminated by
+    sessiond — so terminal liveness depended on message delivery, on the same loops the
+    spawn burst was saturating.
+  </p>
+
+<figure class="diagram">
+    <svg viewBox="0 0 1120 470" role="img" aria-labelledby="today-title today-desc">
+      <title id="today-title">Current spawn call chain and the lease loop that runs beside it</title>
+      <desc id="today-desc">A queen calls the MCP tool, which enters the spawner, which does gating, worktree creation and brief assembly before calling createSession. That opens a fresh authenticated broker connection per remote procedure call and runs a three-frame create transaction. The broker forks a host process which forks the vendor on a pseudoterminal. Separately and below, the Workspace publishes an inventory to the daemon, the daemon fans out one renewal per terminal to the broker, and the broker's hosts self-terminate if no renewal arrives within fifteen seconds.</desc>
+      <defs>
+        <marker id="a1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#72879b"/></marker>
+        <marker id="a1bad" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#ff7b8b"/></marker>
+      </defs>
+
+      <text class="muted" x="30" y="28" font-size="12">SPAWN PATH</text>
+
+      <rect class="box ok" x="30" y="44" width="176" height="86" rx="7"/>
+      <text x="48" y="74" font-size="15">queen / MCP</text>
+      <text class="muted" x="48" y="98" font-size="11">hive_spawn_many</text>
+      <text class="muted" x="48" y="116" font-size="11">max 32</text>
+
+      <rect class="box warn" x="246" y="44" width="212" height="86" rx="7"/>
+      <text x="264" y="74" font-size="15">spawner</text>
+      <text class="muted" x="264" y="98" font-size="11">3 gate passes, quota,</text>
+      <text class="muted" x="264" y="116" font-size="11">worktree, brief, graph</text>
+
+      <rect class="box warn" x="498" y="44" width="196" height="86" rx="7"/>
+      <text x="516" y="74" font-size="15">createSession</text>
+      <text class="muted" x="516" y="98" font-size="11">admission again, then</text>
+      <text class="muted" x="516" y="116" font-size="11">40 &times; 25 ms identity poll</text>
+
+      <rect class="box ok" x="734" y="44" width="196" height="86" rx="7"/>
+      <text x="752" y="74" font-size="15">SessiondHost</text>
+      <text class="muted" x="752" y="98" font-size="11">fresh connection +</text>
+      <text class="muted" x="752" y="116" font-size="11">full HELLO per RPC</text>
+
+      <rect class="box ok" x="734" y="182" width="196" height="86" rx="7"/>
+      <text x="752" y="212" font-size="15">broker</text>
+      <text class="muted" x="752" y="236" font-size="11">BEGIN / INPUT / COMMIT</text>
+      <text class="muted" x="752" y="254" font-size="11">fork + adopt secret</text>
+
+      <rect class="box ok" x="498" y="182" width="196" height="86" rx="7"/>
+      <text x="516" y="212" font-size="15">host process</text>
+      <text class="muted" x="516" y="236" font-size="11">sessiond re-exec</text>
+      <text class="muted" x="516" y="254" font-size="11">VT engine</text>
+
+      <rect class="box vendor" x="246" y="182" width="212" height="86" rx="7"/>
+      <text x="264" y="212" font-size="15">zsh -l -i on a PTY</text>
+      <text class="muted" x="264" y="236" font-size="11">session leader; vendor TUI</text>
+      <text class="muted" x="264" y="254" font-size="11">runs under it via eval</text>
+
+      <path class="arrow" d="M206,87 L242,87" marker-end="url(#a1)"/>
+      <path class="arrow" d="M458,87 L494,87" marker-end="url(#a1)"/>
+      <path class="arrow" d="M694,87 L730,87" marker-end="url(#a1)"/>
+      <path class="arrow" d="M832,130 L832,178" marker-end="url(#a1)"/>
+      <path class="arrow" d="M734,225 L698,225" marker-end="url(#a1)"/>
+      <path class="arrow" d="M498,225 L462,225" marker-end="url(#a1)"/>
+
+      <line class="panel-rule" x1="30" y1="306" x2="1090" y2="306"/>
+      <text class="muted" x="30" y="332" font-size="12">LIVENESS LOOP — runs beside the spawn, on the same loops</text>
+
+      <rect class="box bad" x="30" y="348" width="196" height="82" rx="7"/>
+      <text x="48" y="378" font-size="15">Workspace</text>
+      <text class="muted" x="48" y="402" font-size="11">publishes inventory</text>
+      <text class="muted" x="48" y="420" font-size="11">5 s timeout</text>
+
+      <rect class="box bad" x="290" y="348" width="220" height="82" rx="7"/>
+      <text x="308" y="378" font-size="15">daemon</text>
+      <text class="muted" x="308" y="402" font-size="11">renews per terminal</text>
+      <text class="muted" x="308" y="420" font-size="11">1 broker conn &times; N, every 5 s</text>
+
+      <rect class="box bad" x="574" y="348" width="220" height="82" rx="7"/>
+      <text x="592" y="378" font-size="15">broker</text>
+      <text class="muted" x="592" y="402" font-size="11">serves renewals behind</text>
+      <text class="muted" x="592" y="420" font-size="11">in-flight creates</text>
+
+      <rect class="box bad" x="858" y="348" width="232" height="82" rx="7"/>
+      <text x="876" y="378" font-size="15">host self-terminates</text>
+      <text class="muted" x="876" y="402" font-size="11">VISIBILITY_EXPIRED</text>
+      <text class="muted" x="876" y="420" font-size="11">at lease + 15 s</text>
+
+      <path class="arrow bad" d="M226,389 L286,389" marker-end="url(#a1bad)"/>
+      <path class="arrow bad" d="M510,389 L570,389" marker-end="url(#a1bad)"/>
+      <path class="arrow bad" d="M794,389 L854,389" marker-end="url(#a1bad)"/>
+    </svg>
+    <figcaption>
+      The spawn path (top) and the liveness loop (bottom) contend for the same two
+      single-threaded loops. The burst that creates terminals is what starves the loop
+      that keeps them alive.
+    </figcaption>
+  </figure>
+
+  <h3>Fixed budgets that did not scale with burst width</h3>
+  <p>All four are constants in <code>src/schemas/session-protocol.ts</code>.</p>
+  <table>
+    <thead><tr><th>Budget</th><th>Value</th><th>What it bounds</th><th>Now</th></tr></thead>
+    <tbody>
+      <tr><td class="num">controlRpcTimeoutMilliseconds</td><td class="num">10 s</td><td>Any single daemon&rarr;sessiond RPC</td><td>unchanged</td></tr>
+      <tr><td class="num">visibilityExpiryMilliseconds</td><td class="num">15 s</td><td>How long a host lived without a renewal</td><td>nothing expires (&sect;7c)</td></tr>
+      <tr><td class="num">visibilityRenewalMilliseconds</td><td class="num">5 s</td><td>Renewal cadence</td><td>nothing renews</td></tr>
+      <tr><td class="num">attachGrantTimeoutMilliseconds</td><td class="num">30 s</td><td>Viewer attach grant</td><td>unchanged</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Spawn cost scales with <em>N</em>. The lease did not. Past some width the pipeline
+    from &ldquo;host created&rdquo; to &ldquo;first renewal landed&rdquo; exceeded 15 s and the fleet died.
+  </p>
+</section>
+
+<section id="inversion">
+  <div class="section-label">Root cause</div>
+  <h2>2. The lease inversion</h2>
+  <div class="callout bad">
+    <p>
+      <strong>The conflation.</strong> One 15-second timer decided two completely
+      different things:
+    </p>
+    <p>
+      &ldquo;my supervisor is gone&rdquo; — rare, and it looked like it should be fatal.<br>
+      &ldquo;a renewal was late&rdquo; — common under load, entirely benign.
+    </p>
+    <p>
+      Every collapse was the second being treated as the first. &sect;7c goes further: the
+      first is not fatal either. Neither reading is evidence about the agent.
+    </p>
+  </div>
+
+  <h3>The signal already existed, one level up</h3>
+  <p>
+    <code>brokerOwnerIsLive</code> (<code>native/sessiond/src/broker.zig</code>) is a pid +
+    start-token comparison against the daemon, evaluated at the top of every iteration of
+    the serve loop. sessiond already knew, continuously and in O(1), whether the daemon
+    was alive — on a path nothing can starve.
+  </p>
+  <pre>fn brokerOwnerIsLive(owner: BrokerOwner) bool {
+    const observed = inspectProcess(owner.pid) catch return false;
+    return std.meta.eql(observed.start_token, owner.start_token);
+}</pre>
+  <p>
+    What the per-terminal lease actually added was only the <em>killing</em>: sessiond
+    noticed the daemon died and returned from <code>serve()</code>, but hosts are separate
+    forks that reparent to launchd and keep burning tokens. The lease was how they
+    eventually died. Real work — but answered per terminal, by message, when it could be
+    answered once, by observation.
+  </p>
+
+<figure class="diagram">
+    <svg viewBox="0 0 1120 400" role="img" aria-labelledby="inv-title inv-desc">
+      <title id="inv-title">Liveness authority today versus proposed</title>
+      <desc id="inv-desc">Today the Workspace drives renewals through the daemon and broker to every host, so N messages must arrive on time or hosts die. In the proposed model each host observes its supervisor's process directly and sessiond observes the daemon's process directly, so liveness is read locally and no message has to arrive.</desc>
+      <defs>
+        <marker id="a2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#ff7b8b"/></marker>
+        <marker id="a2ok" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#63e6be"/></marker>
+      </defs>
+
+      <text class="muted" x="30" y="26" font-size="12">TODAY — N messages must arrive on time</text>
+      <rect class="box bad" x="30" y="42" width="150" height="66" rx="7"/>
+      <text x="46" y="70" font-size="14">Workspace</text>
+      <text class="muted" x="46" y="92" font-size="11">authority</text>
+
+      <rect class="box bad" x="240" y="42" width="150" height="66" rx="7"/>
+      <text x="256" y="70" font-size="14">daemon</text>
+      <text class="muted" x="256" y="92" font-size="11">relay</text>
+
+      <rect class="box bad" x="450" y="42" width="150" height="66" rx="7"/>
+      <text x="466" y="70" font-size="14">broker</text>
+
+      <rect class="box bad" x="700" y="20" width="150" height="46" rx="7"/>
+      <text x="716" y="48" font-size="13">host 1</text>
+      <rect class="box bad" x="700" y="76" width="150" height="46" rx="7"/>
+      <text x="716" y="104" font-size="13">host 2</text>
+      <rect class="box bad" x="700" y="132" width="150" height="46" rx="7"/>
+      <text x="716" y="160" font-size="13">host N</text>
+
+      <path class="arrow bad" d="M180,75 L236,75" marker-end="url(#a2)"/>
+      <path class="arrow bad" d="M390,75 L446,75" marker-end="url(#a2)"/>
+      <path class="arrow bad" d="M600,70 L696,43" marker-end="url(#a2)"/>
+      <path class="arrow bad" d="M600,78 L696,99" marker-end="url(#a2)"/>
+      <path class="arrow bad" d="M600,86 L696,155" marker-end="url(#a2)"/>
+      <text class="muted" x="880" y="100" font-size="11">miss 15 s &rarr; die</text>
+
+      <line class="panel-rule" x1="30" y1="216" x2="1090" y2="216"/>
+
+      <text class="muted" x="30" y="248" font-size="12">PROPOSED — nothing has to arrive; liveness is observed</text>
+      <rect class="box ok" x="30" y="264" width="150" height="66" rx="7"/>
+      <text x="46" y="292" font-size="14">daemon</text>
+      <text class="muted" x="46" y="314" font-size="11">policy</text>
+
+      <rect class="box ok" x="290" y="264" width="170" height="66" rx="7"/>
+      <text x="306" y="292" font-size="14">sessiond</text>
+      <text class="muted" x="306" y="314" font-size="11">mechanism</text>
+
+      <rect class="box ok" x="700" y="248" width="150" height="46" rx="7"/>
+      <text x="716" y="276" font-size="13">host 1..N</text>
+      <rect class="box vendor" x="700" y="304" width="150" height="46" rx="7"/>
+      <text x="716" y="332" font-size="13">vendor PTY</text>
+
+      <path class="arrow ok dash" d="M290,282 L186,282" marker-end="url(#a2ok)"/>
+      <text class="muted" x="196" y="272" font-size="10">observes pid</text>
+      <path class="arrow ok dash" d="M700,272 L466,286" marker-end="url(#a2ok)"/>
+      <text class="muted" x="500" y="266" font-size="10">observes pid</text>
+      <path class="arrow ok" d="M460,300 L696,318" marker-end="url(#a2ok)"/>
+      <text class="muted" x="880" y="284" font-size="11">explicit kill only</text>
+
+      <text class="muted" x="30" y="366" font-size="11">Workspace is a pure viewer: attaches, renders, has no lifecycle authority.</text>
+    </svg>
+    <figcaption>
+      Replace a message-based liveness signal with an observation-based one. Messages can
+      be starved — exactly when the system is busiest. A <code>kill(pid, 0)</code> cannot.
+    </figcaption>
+  </figure>
+</section>
+
+<section id="evidence">
+  <div class="section-label">Evidence</div>
+  <h2>3. Measured evidence</h2>
+  <p>
+    Three collapses, and a rig that reproduces them on demand
+    (<code>prototypes/spawn31/</code>, real vendor agents against a real daemon).
+  </p>
+
+  <table>
+    <thead><tr><th>Event</th><th>Result</th><th>Recorded cause</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>2026-07-27 20:35, 16 agents</td>
+        <td class="num">16 / 16 dead</td>
+        <td>All <code>VISIBILITY_EXPIRED</code>, each at its own create + 15 s</td>
+      </tr>
+      <tr>
+        <td>2026-07-27 20:20, 16 agents (after the broker handshake fix)</td>
+        <td class="num">17 hosts dead</td>
+        <td>Creates were <em>fast</em> (15 in 4.2 s). Still all <code>VISIBILITY_EXPIRED</code></td>
+      </tr>
+      <tr>
+        <td>2026-07-28 13:28, 16 agents</td>
+        <td class="num">14 / 16 stuck</td>
+        <td>9 <code>VISIBILITY_EXPIRED</code>, 6 <code>HOST_START_FAILED</code></td>
+      </tr>
+      <tr>
+        <td>Rig, 31 agents, before this work</td>
+        <td class="num">6 / 31 alive</td>
+        <td>3 publish timeouts at 5 s, then <code>NOT_FOUND</code> on dead hosts</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <p>
+      <strong>The measurement that redirected this work.</strong> An out-of-process probe
+      of the daemon's HTTP surface recorded a worst-case latency of <strong>1.6 s</strong>
+      through the entire 31-agent burst. The daemon was never stalled. The standing
+      explanation — &ldquo;the daemon's event loop is saturated&rdquo; — was wrong. What timed out
+      was the publish endpoint specifically, because it awaited one broker round trip
+      <em>per terminal</em> before replying, under the Workspace's fixed 5 s timeout.
+    </p>
+  </div>
+
+  <h3>After the change</h3>
+  <p>
+    Same rig, clean home per run, daemon run from source
+    (<code>--source</code>; the rig defaults to the staged binary, which is how a first
+    run silently measured the old daemon against the new sessiond).
+  </p>
+  <table>
+    <thead><tr><th>Width</th><th>Agents alive</th><th>Host processes live</th><th><code>VISIBILITY_EXPIRED</code></th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td class="num">2</td><td class="num">2 / 2</td><td class="num">2 / 2</td><td class="num">0</td><td>PASS</td></tr>
+      <tr><td class="num">8</td><td class="num">8 / 8</td><td class="num">8 / 8</td><td class="num">0</td><td>PASS</td></tr>
+      <tr><td class="num">16</td><td class="num">16 / 16</td><td class="num">16 / 16</td><td class="num">0</td><td>PASS</td></tr>
+      <tr><td class="num">31</td><td class="num">31 / 31</td><td class="num">4&ndash;27 / 31</td><td class="num">0</td><td>FAIL — see §7</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Daemon loop lag stayed at 0.5&ndash;1.1 s and every visibility publish was accepted at
+    every width. <strong>The lease failure class is closed:</strong> across every run
+    since the change, at every width, not one host died of
+    <code>VISIBILITY_EXPIRED</code> — the code no longer exists.
+  </p>
+  <div class="callout">
+    <p>
+      <strong>What the rig measures now.</strong> It used to read renewal from the
+      binding's create evidence, because being renewed was what kept a terminal alive.
+      Nothing renews anything now, so it reads sessiond's own <code>record.json</code> plus
+      <code>kill(pid, 0)</code>, out of process — the whole invariant, passing through
+      neither the daemon under investigation nor any message that could be starved.
+    </p>
+  </div>
+</section>
+
+<section id="ownership">
+  <div class="section-label">Design</div>
+  <h2>4. Ownership</h2>
+  <p>
+    The organising principle is <strong>mechanism versus policy</strong>, and the second
+    rule the operator named: <strong>the terminal must not depend on spawning, and
+    spawning must not depend on the terminal.</strong> A terminal may make itself easy to
+    observe; nothing may make it wait.
+  </p>
+
+  <table>
+    <thead><tr><th>Component</th><th>Owns</th><th>Must not own</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>daemon</strong></td>
+        <td>Policy. Who exists and when they die. Agents, worktrees, quota, briefs, recovery decisions.</td>
+        <td>PTYs, file descriptors, process trees, keeping anything alive</td>
+      </tr>
+      <tr>
+        <td><strong>sessiond</strong></td>
+        <td>Mechanism. PTYs, process tree, durable records. Survives daemon restarts. Reaps on <em>observed</em> daemon death.</td>
+        <td>Whether an agent <em>should</em> exist</td>
+      </tr>
+      <tr>
+        <td><strong>host</strong></td>
+        <td>Its own dead-man switch: watches its supervisor's pid directly, and publishes its own liveness.</td>
+        <td>Anything about other hosts; anything about a spawn's progress</td>
+      </tr>
+      <tr>
+        <td><strong>Workspace</strong></td>
+        <td>Rendering and input. Attaches and detaches freely.</td>
+        <td><strong>Anything about lifecycle</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="implemented">
+  <div class="section-label">Record</div>
+  <h2>5. What was implemented</h2>
+  <p>
+    Four changes, in this order. Each is independently valuable and was measured against
+    the rig before the next landed.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <strong>A mutex in <code>ProductionHostLauncher</code></strong>
+      (<code>native/sessiond/src/host_runtime.zig</code>). The broker serves one connection
+      per thread and deliberately releases its state gate around launch and finalize,
+      because both are slow and touch nothing shared. They <em>did</em> touch the launcher:
+      two concurrent creates could hand out the same pending id, append to
+      <code>clients</code> at once, or remove an entry from under another thread's index.
+      Finalize now claims its client under the gate and removes by identity rather than by
+      a stale index, so the slow work still runs concurrently.
+      <br>
+      <em>Not</em> a revert of the concurrent accept loop. That loop is what stops one
+      <code>CREATE_COMMIT</code> from holding the accept loop through an entire host launch;
+      removing it would restore the head-of-line blocking it was added to fix.
+    </li>
+    <li>
+      <strong>Liveness by observation.</strong> The host records its supervisor at boot
+      (<code>getppid()</code> plus that process's start token) and re-binds it whenever a
+      broker proves the 32-byte adoption secret. Lease expiry kills nothing, and a running
+      host holds its own lease open.
+      <br>
+      <strong>Superseded (&sect;7c):</strong> the host originally terminated itself once its
+      supervisor had been continuously absent for a grace window, writing
+      <code>SUPERVISOR_GONE</code>. That path is now removed. A host that cannot observe its
+      supervisor is not evidence that the agent inside it is dead, and the reaping argument
+      that justified it &mdash; that not killing leaks N hosts per daemon crash &mdash;
+      turned out to cost more than the leak: it was one of six paths killing live, working
+      terminals. Orphan cleanup belongs to an explicit sweep, not to a host's guess about
+      its parent.
+    </li>
+    <li>
+      <strong>The broker reaps on observed daemon death.</strong>
+      <strong>Superseded (&sect;7c):</strong> <code>Registry.terminateAll</code> stopped every
+      registered host when the broker saw its daemon exit. Removed for the same reason: the
+      broker's daemon being gone says nothing about whether an agent's terminal is alive and
+      working. The broker now stops serving and leaves the hosts running.
+    </li>
+    <li>
+      <strong>The renewal fan-out is gone.</strong> No 5 s timer, no per-terminal RPC, no
+      create-time self-renew, no expiry audits, no <code>renewVisibility</code> on the
+      daemon at all. What remains of the Workspace loop is a watchdog that shuts the daemon
+      down when the Workspace it serves is gone — policy the daemon owns, and nothing a
+      terminal depends on.
+    </li>
+  </ol>
+
+  <h3>Two things the lease had been hiding</h3>
+  <p>
+    Removing it exposed a second bottleneck that had never been reached, because the fleet
+    used to die of the lease first.
+  </p>
+  <table>
+    <thead><tr><th></th><th>Found</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="tag t-new">fixed</span></td>
+        <td>
+          A connection storm. Every single-RPC control call opened a fresh connection and
+          paid a full authenticated HELLO, and the spawn path is not frugal with them:
+          establishing one provider's foreground identity polls <code>INSPECT</code> up to
+          forty times. At 16 simultaneous spawns that was hundreds of connections in a few
+          seconds — <code>PeerPidUnavailable</code> and <code>BrokenPipe</code> storms, HELLO
+          itself timing out, 1 of 16 hosts surviving.
+        </td>
+        <td>
+          One shared connection for single-RPC control calls; the wire already multiplexes
+          replies by request id. Creates keep their own connection — a create is a
+          three-frame transaction and two on one connection would interleave. Engine
+          discovery keeps its own too, because the engine id is negotiated at HELLO and a
+          cached connection would answer with a stale build. 16 wide went from 1/16 to
+          8&ndash;9/16 hosts surviving on this change alone.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag t-new">fixed</span></td>
+        <td>
+          One shared budget for &ldquo;read a record&rdquo; and &ldquo;fork a shell and a
+          vendor CLI&rdquo;. At 31 wide a create takes 12.3&ndash;14.3 s against a 10 s
+          control-RPC deadline, so 26 of 31 hosts were lost while every create was in fact
+          progressing normally — the same conflation the lease made, one layer down.
+        </td>
+        <td>
+          <code>createRpcTimeoutMilliseconds</code> (60 s), applied to
+          <code>CREATE_COMMIT</code> and to both ends of the broker&rarr;host READY
+          handshake, which otherwise turns a slow create into
+          <code>HOST_START_FAILED</code>. 31 wide went from 5/31 to 21&ndash;24/31.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag t-new">fixed</span></td>
+        <td>
+          A refusal the broker answers by closing the connection poisoned the shared one
+          for every later call.
+        </td>
+        <td>
+          Connection-fatal wire codes drop it; per-session refusals (a <code>NOT_FOUND</code>
+          for a host that already died) do not, so a common refusal still costs no
+          reconnect.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Separation of concerns, applied to the spawn spine</h3>
+  <p>
+    <code>submitKimiKickoff</code> is gone from the spawner. Kimi's TUI takes no prompt from
+    <code>argv</code> — it opens a composer and waits — so its first turn has to be typed
+    in as a bracketed paste. That is Kimi's startup protocol, and it now lives in Kimi's
+    adapter behind <code>startInitialTurn</code>. The spawner supplies only
+    <code>AgentTurnInput</code>: a way to write to one agent's terminal, fenced by the
+    foreground identity that launch established, carrying no vendor knowledge and no
+    <code>if (tool === …)</code>.
+  </p>
+</section>
+
+<section id="deleted">
+  <div class="section-label">Consequences</div>
+  <h2>6. What was deleted</h2>
+  <table>
+    <thead><tr><th></th><th>Item</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag t-cut">cut</span></td><td><code>VISIBILITY_EXPIRED</code> as a cause of death</td><td>Replaced by observed process liveness</td></tr>
+      <tr><td><span class="tag t-cut">cut</span></td><td>The 5 s renewal timer, <code>renewVisibleTerminals</code>, and the whole fan-out</td><td>Nothing to renew</td></tr>
+      <tr><td><span class="tag t-cut">cut</span></td><td><code>renewVisibility</code> from the <code>SessionHost</code> contract and both implementations</td><td>No caller left; the normative block in <code>terminal-stack-transition.html</code> was updated with it</td></tr>
+      <tr><td><span class="tag t-cut">cut</span></td><td>The create-time self-renew</td><td>Existed only to buy a fresh host one lease period</td></tr>
+      <tr><td><span class="tag t-cut">cut</span></td><td>Visibility-expiry termination audits</td><td>Nothing expires, so nothing needs the audit</td></tr>
+      <tr><td><span class="tag t-cut">cut</span></td><td>Lease-bound connection deadlines on the host</td><td>A connection budget is a connection budget; it was never the lease's business</td></tr>
+      <tr><td><span class="tag t-cut">cut</span></td><td><code>Registry.expireVisibility</code></td><td>Dead before this work; replaced by <code>terminateAll</code> on observed owner death</td></tr>
+      <tr><td><span class="tag t-keep">keep</span></td><td>Brief, memory index, graph, skills before the agent starts</td><td>An agent must never begin without them</td></tr>
+      <tr><td><span class="tag t-keep">keep</span></td><td>The <code>visibility</code> binding itself</td><td>Still the attach authorization: which Workspace session may attach, at which revision. It just no longer decides who lives</td></tr>
+      <tr><td><span class="tag t-keep">keep</span></td><td>Durable per-session record; pid + start-token identity</td><td>Needed to re-find terminals after a daemon restart, and to settle pid reuse cheaply</td></tr>
+      <tr><td><span class="tag t-new">new</span></td><td>A reconcile sweep for terminals no agent record refers to</td><td>The lease was the catch-all for a spawn that threw between <code>create</code> and the agent row. Deleting it deleted that safety net, so the daemon asks the question directly — and asks it the right way round: policy owns who should exist, the terminal reports what is alive</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="open">
+  <div class="section-label">Honesty</div>
+  <h2>7. What is not closed</h2>
+  <div class="callout">
+    <p>
+      <strong>31 wide holds.</strong> 1, 2, 4, 8, 16 and 31 all reach
+      <code>31/31 alive, 31/31 with a live host</code>, repeatably. Getting
+      there took three separate corrections, and the order matters because each
+      was hidden by the one before it: the six paths that killed terminals on an
+      inference (&sect;7c), the broker that stood between Hive and its terminals
+      (&sect;7d), and two more fixed budgets that did not scale with load. Note
+      the discipline the numbers still demand: an 8-wide run launched straight
+      after a 31-wide one returned 4/8, and the same width on a swept, idle
+      machine returned 8/8. Every figure here is worth only as much as the sweep
+      that preceded it — and only as much as the instrument, which reported zero
+      live hosts while four were provably running.
+    </p>
+  </div>
+  <p>
+    Two measurements bounded it while the broker still existed. Creates were healthy at
+    16 wide — 0.3&ndash;1.4 s in the broker against a 10 s budget — and took
+    12.3&ndash;14.3 s at 31, not because the broker got slower but because thirty-one vendor
+    CLIs starting at once is what each new host competes with for the machine. Raising the
+    create budget to 60 s took 31 wide from 5/31 to 21&ndash;24/31, and what remained was
+    <code>HELLO</code> timing out: the broker's accept loop was not reaching new connections
+    in time. A create is no longer a held RPC and there is no accept loop to reach
+    (&sect;7d), so neither budget governs anything now.
+  </p>
+  <div class="callout warn">
+    <p>
+      <strong>A hypothesis this rig disproved, recorded because the reasoning was
+      wrong.</strong> Bad runs all contained <code>sessiond broker exited 143</code> —
+      SIGTERM — and good ones did not, so the broker dying mid-burst looked like the
+      discriminator. The daemon was ruled out (its supervisor suppresses the restart path
+      for exits it initiated) and so was the memory watchdog (it walks descendants of each
+      terminal's shell root; the broker is their parent), which left an unexplained
+      external killer and a plausible story about hosts dying with it.
+    </p>
+    <p>
+      The kernel settles it. The broker now reports <code>si_pid</code> on the signal that
+      kills it, and the answer is the rig's own teardown: a pid lower than the daemon's,
+      firing at log line 44 of 53. <strong>The broker's death is an artifact of tearing the
+      run down, not a cause of anything.</strong> The correlation was real and the
+      inference from it was not.
+    </p>
+    <p>
+      The supervisor grace was raised from that inherited 15 s to 90 s on the strength of
+      that wrong story. It is now moot: the host no longer self-terminates when it cannot
+      observe its supervisor at all (&sect;7c). A host that cannot see its supervisor is not
+      evidence that the agent inside it is dead.
+    </p>
+  </div>
+  <p>
+    Two starvation sources were found and fixed after the create budget, and both moved
+    the number: the serve loop took the shared state gate <em>twice before it polled</em>,
+    so a worker busy with a create delayed accepting connections that were already
+    pending — that was the <code>HELLO</code> timeout, and moving both janitorial passes
+    onto a 250 ms cadence took spawn-path HELLO timeouts to zero. Then the spawn's own
+    wait for the provider's foreground process, a fixed forty polls of 25 ms, was scaled
+    and given a backoff: raising the window alone made things worse (7/31), because
+    thirty-one spawns asking every 25 ms for thirty seconds are themselves a large share
+    of the load they are waiting on. With the backoff the same run returned 28/31.
+  </p>
+  <p>
+    The lead that remains, named and unproven: the broker holds one global state gate across
+    operations that do IPC to a host, so a single loaded host can block every other broker
+    operation — including the accept loop's own bookkeeping. Making that bookkeeping skip
+    the gate when it is busy was tried and reverted: <code>reapExitedHosts</code> is the
+    only path that returns registry capacity, and skipping it under contention produced
+    <code>ALREADY_EXISTS</code> failures. The gate should instead be released around host
+    IPC, exactly as <code>launchHost</code> already releases it around launch and finalize.
+  </p>
+  <p>
+    The redesign is what makes any of this tractable: waves are free now. Under the lease,
+    an agent created in the first wave had 15 s to be renewed, so queueing later creates
+    behind it killed it. Nothing renews anything today, so an agent waiting its turn costs
+    latency and nothing else — create concurrency can be tuned for throughput rather than
+    against a deadline nobody can meet.
+  </p>
+  <div class="callout warn">
+    <p>
+      <strong>Measurement conditions.</strong> These runs share one laptop with an editor, a
+      browser, and other agents; <code>cmp</code> was killed by the OS during one build. The
+      31-wide spread is partly that. A quiet machine is the first thing the next
+      measurement needs, and leftover vendor processes from a previous run must be swept
+      before the next — they were, twice, and the numbers moved.
+    </p>
+  </div>
+  <table>
+    <thead><tr><th></th><th>Question</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="tag t-open">open</span></td>
+        <td>Where do the 12&ndash;14 s go inside a create at 31 wide: fork, profile load, vendor exec, VT engine, first checkpoint?</td>
+        <td>The create budget is now 60 s, which stops the timeouts but does not make creates fast. Whichever phase dominates is the one worth moving off the critical path</td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">open</span></td>
+        <td>Is 60 s the right create budget, and should the broker&rarr;host READY handshake share it?</td>
+        <td>Both were raised together, because a create that outlives the handshake bounding it becomes <code>HOST_START_FAILED</code> instead. The number is a measured floor plus margin, not a derived one</td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">open</span></td>
+        <td>Can the spawn stop polling <code>INSPECT</code> forty times to establish foreground identity?</td>
+        <td>The channel exists now: Hive holds each host's control stream open (&sect;7d), which is exactly what &sect;7b could not find. The spawn still polls; using that stream to report is the obvious next step</td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">open</span></td>
+        <td>Does <code>record.json</code> carry enough to re-adopt a host after a daemon restart?</td>
+        <td>Recovery correctness; the generation-mismatch defect lived here</td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">open</span></td>
+        <td>What threat model produced the 32-byte adoption secret, now that it also re-binds the supervisor watch?</td>
+        <td>It answers the same question as start-token far more expensively — but it now carries a second job, so the case for keeping it is stronger than it was</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="reporting">
+  <div class="section-label">Attempted and removed</div>
+  <h2>7b. Why the terminal does not yet report</h2>
+
+  <p>
+    The daemon establishes a provider's foreground identity by polling
+    <code>INSPECT</code> up to forty times per spawn, and every poll costs the
+    broker a fresh unix-socket connection to the host and an RPC — roughly twelve
+    hundred host RPCs for a thirty-one wide burst. The fact belongs to the host:
+    it owns the PTY master and measures the foreground process group with
+    <code>tcgetpgrp</code>. Asking forty times is the same inversion the lease had.
+  </p>
+
+  <p>
+    A push implementation was built on 2026-07-28 and then <strong>removed</strong>.
+    It is recorded here because the reasons it failed are the design constraints
+    for the next attempt.
+  </p>
+
+  <h3>What the attempt got right</h3>
+  <p>
+    Nothing needed to be added to the wire. <code>EVENT</code>
+    (<code>0x0209</code>) already exists and <code>protocol.zig</code> already
+    classifies it as <em>unsolicited</em>; <code>wire_schema.session_event</code>
+    is already generated from the frozen <code>SessionEvent</code>. The broker's
+    control socket already refuses any <code>clientRole</code> but
+    <code>daemon</code>, so HELLO <em>is</em> the subscription — no new frame, no
+    codegen, no fixture churn. Any future attempt should start from this.
+  </p>
+
+  <h3>Why it was removed</h3>
+  <p class="callout warn">
+    <strong>It replaced polling with polling.</strong> Because no host&rarr;broker
+    push channel exists, the broker had to <em>discover</em> the foreground itself:
+    a watcher thread calling <code>INSPECT</code> against every pending host four
+    times a second. That is the same inversion in a new place, and it carried a
+    thread, a ring buffer, per-connection cursors and a retention set purely to
+    compensate for the missing channel.
+  </p>
+
+  <p>
+    The producer half worked and was proven on the wire — 27&ndash;32 reports
+    published at 31 wide with real foreground pgids, frames written, and the
+    daemon's decoder accepting them. <strong>The spawn never once acted on a
+    report:</strong> instrumented at 31 wide the wait was reached 26&ndash;31 times
+    and returned <code>false</code> every time. Retaining reports for late
+    subscribers was the leading theory and did not move the number, so that is not
+    the explanation, and the gap was never found. It bought nothing and cost a
+    background poll, so it came out.
+  </p>
+
+  <h3>The constraint for the next attempt</h3>
+  <p class="callout warn">
+    <strong>Resolved by &sect;7d, and worth recording why it looked impossible.</strong>
+    Every reporting design here degenerated into polling for one reason: the host
+    had nowhere to speak to. Removing the broker inverted the connection — Hive
+    listens, the host dials — and holding that stream open after registration is
+    the channel, at no extra cost. The constraint below was real; it was a
+    property of the broker, not of terminals.
+  </p>
+  <p>
+    <strong>There was no host&rarr;broker channel.</strong> The neutral host RPC
+    (<code>neutral_runtime.zig</code> <code>Client.call</code>) opens a fresh unix
+    socket per call and closes it; the host's registration stream is closed after
+    READY; and the broker's control socket authenticates
+    <code>clientRole: "daemon"</code> only, so a host cannot connect to it. Until
+    the host can speak to the broker unprompted, every &ldquo;reporting&rdquo;
+    design degenerates into someone polling on the host's behalf.
+  </p>
+  <p>
+    Build that channel first. The report itself is then event-driven off PTY output
+    the host already reads — compare <code>tcgetpgrp</code> to the shell's group,
+    send one frame, once — and the broker becomes a relay rather than an observer.
+  </p>
+</section>
+
+<section id="killers">
+  <div class="section-label">Root cause</div>
+  <h2>7c. Hive was killing its own working agents</h2>
+
+  <p>
+    The 31-wide forensics found hosts SIGKILLed with <code>failureCode: null</code>,
+    panes showing <strong>fully rendered vendor TUIs</strong>, and
+    <strong>zero</strong> termination audits in the binding store. No lease, no
+    supervisor, and no crash explained it.
+  </p>
+
+  <p class="callout warn">
+    <strong>The spawn was the killer.</strong> When the daemon could not
+    <em>observe</em> a provider's foreground identity inside its window,
+    <code>createSession</code> called <code>terminate(mode: "immediate")</code> and
+    threw. Not having seen the provider was being treated as evidence the provider
+    had failed. It is not. The error text was literally <code>"terminal cleanup was
+    not confirmed"</code> &mdash; the terminate itself threw partway, so the kill
+    landed and the audit never got written. That is the missing-audit mystery,
+    start to finish.
+  </p>
+
+  <h3>Every inferred kill, removed</h3>
+  <table>
+    <thead><tr><th>Path</th><th>Killed a terminal because&hellip;</th></tr></thead>
+    <tbody>
+      <tr><td><code>spawner-impl.ts</code></td><td>the daemon had not observed the provider's foreground yet</td></tr>
+      <tr><td><code>orchestrator-sessiond.ts</code></td><td>the same, for the queen</td></tr>
+      <tr><td><code>server.ts</code> <code>reconcileOrphanTerminals</code></td><td>no agent row referred to it</td></tr>
+      <tr><td><code>recovery.ts</code> <code>releaseSupersededGeneration</code></td><td>a crash resume superseded it</td></tr>
+      <tr><td><code>broker.zig</code> <code>terminateAll</code></td><td>the broker observed its daemon exit &mdash; killed <em>every</em> host</td></tr>
+      <tr><td><code>session_host.zig</code> supervisor loss</td><td>the host could no longer observe its supervisor</td></tr>
+    </tbody>
+  </table>
+
+  <p>
+    Explicit termination stays: <code>hive_kill</code> and agent teardown are the
+    operator asking, not Hive inferring. What is gone is every path that decided a
+    terminal should die from indirect evidence.
+  </p>
+
+  <h3>Measured</h3>
+  <table>
+    <thead><tr><th></th><th>Before</th><th>After</th></tr></thead>
+    <tbody>
+      <tr><td>Agents alive at 31 wide</td><td class="num">21&ndash;24 / 31</td><td class="num">31 / 31</td></tr>
+      <tr><td>Agents killed by Hive</td><td class="num">~10</td><td class="num">0</td></tr>
+    </tbody>
+  </table>
+
+  <p class="callout warn">
+    <strong>This is the invariant in the header, finally true.</strong> Liveness is
+    observed, never maintained &mdash; and never <em>inferred</em>. The lease was
+    one instance of the inversion; these six were the rest of it.
+  </p>
+
+  <h3>What it exposed underneath</h3>
+  <p>
+    With the killing gone, the remaining 31-wide failure is a different problem
+    that the killing had been masking: <strong>only 15 host directories existed
+    for 31 admitted agents.</strong> Sixteen creates never happened at all, failing
+    with <code>sessiond HELLO request timed out</code> &mdash; the broker would not
+    accept connections during the burst. No agent dies there; half of them are
+    never created. That is accept-loop capacity, and it is the next thing to fix.
+  </p>
+</section>
+
+<section id="broker-removal">
+  <div class="section-label">Landed</div>
+  <h2>7d. The broker is gone; Hive owns its terminals</h2>
+
+  <p class="callout warn">
+    <strong>31 wide holds.</strong> 1, 2, 4, 8, 16 and 31 all reach
+    <code>31/31 alive, 31/31 with a live host</code>, repeatably, with no broker
+    process anywhere. The spread that ran 8&ndash;28 on identical binaries is
+    gone, because the thing producing it is gone.
+  </p>
+
+  <h3>What the broker actually was</h3>
+  <p>
+    One process per <code>HIVE_HOME</code>, standing between Hive and every
+    terminal, with one accept loop and one state gate. It was never in the
+    terminal data path — a viewer has always connected straight to
+    <code>host.sock</code> — so on the control path it was a relay: it handed a
+    socketpair to a forked child, and it proxied <code>INSPECT</code> by opening
+    that same socket itself. Under thirty-one simultaneous launches its
+    connection threads parked inside multi-second vendor boots and stopped
+    accepting, so sixteen of thirty-one creates died at <code>HELLO</code>
+    without ever starting.
+  </p>
+
+  <h3>The inversion</h3>
+  <p>
+    The host now <em>dials</em> a control socket named by
+    <code>HIVE_HOST_CONTROL_SOCKET</code> instead of only inheriting descriptor
+    3. That one change is what lets a launcher which is not a forking C parent
+    start a terminal, and it is backward compatible — an inherited descriptor
+    still works. Everything after the dial is the same private stream the broker
+    used, so every byte of the boot handshake is unchanged.
+  </p>
+  <table>
+    <thead><tr><th>Path</th><th>Now</th></tr></thead>
+    <tbody>
+      <tr><td>Launch</td><td><code>host-launcher.ts</code>: host directory, <code>adopt.cap</code>, per-host listener, spawn, HVB1 boot message, <code>HOST_REGISTER</code> readback, acknowledge. Create stopped being a held RPC</td></tr>
+      <tr><td><code>INSPECT</code> / <code>LIST</code> / <code>TERMINATE</code></td><td><code>host-operations.ts</code>: NHOP straight to the host's neutral socket</td></tr>
+      <tr><td>Adoption, viewer grants, orphaned claims</td><td><code>host-control.ts</code>: the host's own control wire, HELLO then one verb</td></tr>
+      <tr><td>Engine build id</td><td><code>hive-sessiond engine-build-id</code> — it belongs to the linked VT engine, so it is asked for rather than derived</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Four things the broker was silently doing</h3>
+  <p>
+    Each surfaced only as a failure once it stopped happening, which is the
+    argument for doing this against a live rig rather than by reading:
+  </p>
+  <table>
+    <thead><tr><th>Symptom</th><th>What was missing</th></tr></thead>
+    <tbody>
+      <tr><td><code>InvalidWorkspaceIdentity</code></td><td>The workspace start token must be the real process's</td></tr>
+      <tr><td><code>EngineMismatch</code></td><td>The engine id is the VT library's, not the executable's hash</td></tr>
+      <tr><td><code>FileNotFound</code></td><td>The runtime tree, the per-session host directory, and <code>adopt.cap</code> must all exist before the host runs</td></tr>
+      <tr><td><strong>Zero live hosts, while every host was alive</strong></td><td><code>record.json</code>. Only the broker ever wrote it, so nothing that enumerates terminals from disk could see them — including recovery after a daemon restart</td></tr>
+    </tbody>
+  </table>
+  <p class="callout warn">
+    <strong>That fourth one is worth dwelling on.</strong> Four hosts were
+    measured alive at eighty seconds by <code>pgrep</code> while the rig reported
+    <code>0/4</code>. The terminals were never unhealthy; the file that made them
+    visible was not being written. A measurement that disagrees with the process
+    table is wrong about the world, and this rig has now been wrong three times
+    in one day.
+  </p>
+
+  <h3>Budgets that did not scale</h3>
+  <p>
+    Two more copies of the lease's defect turned up once the terminals survived
+    long enough to hit them. The MCP reporting gate refused any agent whose
+    vendor had not authenticated within <strong>15 s</strong> of launch —
+    measured against one agent on an idle machine, and expiring constantly when
+    thirty-one vendors boot at once. And the kickoff fenced its first keystroke
+    to the foreground identity captured the instant the vendor appeared, which a
+    vendor that spawns its own child immediately invalidates. Both now scale or
+    re-measure rather than failing an agent whose terminal is alive and drawing.
+  </p>
+
+  <h3>What is left</h3>
+  <p>
+    <code>broker.zig</code> remains on disk because the host links several of its
+    helpers, but nothing runs it: the <code>serve</code> role is deleted, the
+    supervisor is deleted, and <code>SessiondHost</code> holds no broker
+    transport at all. The residual flake is an input-claim race at kickoff, not a
+    terminal death — every terminal is alive when it happens.
+  </p>
+</section>
+
+<section id="live-16">
+  <div class="section-label">Evidence</div>
+  <h2>7e. The live 16-agent run: spawning was never the problem</h2>
+  <p>
+    A queen launched sixteen no-op agents on a live instance. All sixteen were
+    admitted, all sixteen got a host, and the daemon log recorded no launch
+    failure of any kind. What went wrong happened <em>after</em> the terminals
+    were up, which is why a spawn-side reading of it found nothing.
+  </p>
+
+  <h3>Nine agents alive and unreachable</h3>
+  <p>
+    The daemon could not deliver a message to nine of the sixteen. Every one of
+    them was live and idle. The host answered every retry with
+    <code>idempotency key reused with different input</code> — and the input was
+    byte-identical every time.
+  </p>
+  <p>
+    The host's replay ledger keyed an input's identity on the
+    <strong>claim token</strong>. A claim token is minted fresh by every
+    <code>CLAIM_ACQUIRE</code> that finds no live claim, and the daemon releases
+    its claim when each submit cycle closes — so a resend always arrives under a
+    brand-new token, and the ledger called it different input. The condition
+    could not self-correct: every further attempt minted another token. Identity
+    is now scoped to the <strong>writer</strong>, which is stable across attach
+    cycles and still keeps one viewer from reading back another's receipt.
+  </p>
+  <p>
+    The queen's own hypothesis — that a shared owner token
+    <code>hive-daemon:&lt;instance&gt;</code> collided keys <em>between</em>
+    agents — was wrong, and worth recording as wrong: the daemon is legitimately
+    one writer, and each agent has its own host process with its own ledger. The
+    collision was always inside a single agent's ledger.
+  </p>
+
+  <h3>A dead host could not be closed by any tool</h3>
+  <p>
+    <code>hive_kill</code> and <code>hive_mark_dead</code> both refused with
+    <code>sessiond locator has no terminal-host binding</code>, because
+    <code>terminate</code> required the host to still be <em>listed</em>. Both
+    close paths therefore depended on the very thing whose absence they were
+    called to clean up, and the agent row stayed live forever holding a quota
+    reservation and collecting undeliverable messages. A host this instance owns
+    but can no longer see is now reported as already terminated — with
+    <code>SESSIOND_HOST_ALREADY_ABSENT</code> and a null exit, because nobody
+    watched it leave. Ownership is still enforced; absence excuses a missing
+    host, never a missing claim to it.
+  </p>
+
+  <h3>The readiness gate was reasoning blind</h3>
+  <p>
+    Two opencode agents were failed for <em>"no sign of life for 12 s (screen
+    never redrew…)"</em>. The screen was never read at all:
+    <code>captureVisible</code> throws unconditionally on the sessiond path, so
+    the pane signal cannot fire, and of the gate's four signals only the process
+    check is available to a vendor with no hook wiring. The verdict was
+    nonetheless <strong>correct</strong> — both agents stopped at exactly 3560
+    output bytes, an identical TUI prologue, then silence for twenty minutes,
+    while the third opencode agent passed 8815 and kept going. The reason string
+    now says the screen was never readable rather than claiming an observation
+    nobody made.
+  </p>
+  <p>
+    Two of three concurrent opencode instances dying identically after TUI
+    initialisation is a vendor-level startup collision, not a terminal defect.
+    It is left named rather than worked around.
+  </p>
+
+  <h3>A worktree removed after a kill said keep</h3>
+  <p>
+    Reconciliation removed a worktree about fifteen seconds after a
+    <code>hive_kill</code> that kept it. This is the designed behaviour, not a
+    regression: the worktree had no unmerged commits and no real uncommitted
+    paths, and reclaiming exactly those is what the sweep is for.
+    <code>keepWorktree</code> scopes that one kill, not the repository's future;
+    durable intent is <code>hive_preserve_branch</code>, which nothing in the run
+    used. Recorded because the flag reads like a promise it does not make.
+  </p>
+  <p>
+    One real defect did surface next to it: opencode's provisioned
+    <code>.opencode/plugins/hive-turn-events.ts</code> was missing from the
+    discounted-wiring list, so every opencode worktree counted as carrying real
+    uncommitted work and could never be swept. The path is now derived from the
+    constant the writer uses.
+  </p>
+</section>
+
+<section id="rejected">
+  <div class="section-label">Decisions</div>
+  <h2>8. Rejected and deferred</h2>
+  <table>
+    <thead><tr><th></th><th>Proposal</th><th>Disposition</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="tag t-cut">rejected</span></td>
+        <td>Revert the concurrent broker accept loop as step 1</td>
+        <td>The race it exposed is real and is fixed with a mutex. Reverting the loop would restore the head-of-line blocking that made a wide burst unsurvivable in the first place</td>
+      </tr>
+      <tr>
+        <td><span class="tag t-cut">rejected</span></td>
+        <td>Make lease expiry non-fatal first, add reaping later</td>
+        <td>Every daemon crash in between would leak N hosts, N shells and N vendors permanently. Merged into one conditional change instead, so the safety property holds at every instant</td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">deferred</span></td>
+        <td>Show the pane first: fork <code>zsh</code> immediately and submit the provider command into the running shell instead of baking it into <code>argv</code></td>
+        <td>
+          Fixes no collapse, and costs more than it looks. Provider identity is established
+          by polling for a new foreground process and recorded as the run's pid, start token
+          and process group; input arbitration, readiness and hook attribution all key off
+          it. Submitting the launch command would mean arbitrating input against the shell
+          and then re-establishing identity afterwards — a new state machine in the
+          subsystem with this repo's worst defect history. <code>argv</code> cannot fail to
+          arrive; typed input can. Separately, the pane cannot appear before its worktree
+          exists, so &ldquo;tens of milliseconds&rdquo; was never the real target
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag t-cut">rejected</span></td>
+        <td>Have the host wait for the provider to take the PTY foreground before it reports READY, so the create's own answer carries &ldquo;the TUI is up&rdquo;</td>
+        <td>
+          Right idea, wrong place. The wait sits inside the create, and a create
+          holds an admission slot — so vendor startup serialised four at a time and
+          creates hit their ceiling. Measured 10/31 against 23&ndash;28 without it.
+          The readiness signal has to arrive <em>after</em> the create returns, which
+          means the event channel below, not a longer create
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">next</span></td>
+        <td><strong>Let the terminal report its own status instead of being polled for it.</strong> <code>SessionHost.subscribe(afterEventSeq)</code> is already in the frozen contract, declared and never implemented</td>
+        <td>
+          This is the root of what is left. <code>create</code> returns when the shell
+          is exec'd — before the profile is sourced and the vendor exec'd — so the one
+          fact the daemon needs is not knowable when its handle comes back, and nothing
+          tells it later. So it asks: forty <code>INSPECT</code>s per spawn, each a
+          broker round trip holding the state gate, which at thirty-one spawns is a
+          large share of the load being waited on. The host already knows the answer for
+          free: a foreground job is <code>tcgetpgrp</code> against the shell's own
+          process group, one local syscall. Every budget tuned in this document —
+          the create timeout, the foreground window, the poll backoff — is an epicycle
+          around asking instead of being told
+        </td>
+      </tr>
+      <tr>
+        <td><span class="tag t-open">deferred</span></td>
+        <td>Split the Workspace status feed from the visibility client</td>
+        <td>The half that could kill terminals is gone: there is no lease client left to isolate. What remains is a read-only feed plus an inventory publish, sharing a process but no longer a failure domain with terminal survival</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  <div class="shell" style="width:auto">
+    Reproduce with <code>bun run prototypes/spawn31/rig.ts --source --width 31</code>.
+    Without <code>--source</code> the rig runs the staged binary, which is not the code
+    under test.
+  </div>
+</footer>
+
+</div>
+</body>
+</html>

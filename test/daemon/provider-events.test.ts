@@ -27,23 +27,25 @@ function agent(tool: AgentRecord["tool"]): AgentRecord {
 }
 
 function run(value: AgentRecord): ProviderRun {
+  const suffix =
+    value.tool === "claude"
+      ? "201"
+      : value.tool === "codex"
+        ? "202"
+        : value.tool === "grok"
+          ? "203"
+          : value.tool === "kimi"
+            ? "204"
+            : "205";
   return {
-    runId:
-      value.tool === "claude"
-        ? "018f1e90-7b5a-7cc0-8000-000000000201"
-        : value.tool === "codex"
-          ? "018f1e90-7b5a-7cc0-8000-000000000202"
-          : "018f1e90-7b5a-7cc0-8000-000000000203",
+    runId: `018f1e90-7b5a-7cc0-8000-000000000${suffix}`,
     agentId: value.id,
     terminal: {
       schemaVersion: 1,
       instanceId: "provider-event-test",
       subject: { kind: "agent", agentId: value.id },
       generation: 1,
-      sessionId:
-        value.tool === "claude"
-          ? "ses_018f1e90-7b5a-7cc0-8000-000000000201"
-          : "ses_018f1e90-7b5a-7cc0-8000-000000000202",
+      sessionId: `ses_018f1e90-7b5a-7cc0-8000-000000000${suffix}`,
       hostKind: "sessiond",
       engineBuildId: "test",
     },
@@ -151,6 +153,34 @@ describe("provider event normalization", () => {
           toolName: "Read",
         }),
       ).toMatchObject({ kind: "tool-finished", toolName: "Read" });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("normalizes Kimi and OpenCode's run-bound idle hooks", () => {
+    const db = new HiveDatabase(":memory:");
+    try {
+      for (const tool of ["kimi", "opencode"] as const) {
+        const value = agent(tool);
+        db.upsertAgent(value);
+        const active = run(value);
+        db.insertProviderRun(active);
+        expect(
+          recordProviderHookEvent(db, value, {
+            kind: "turn-end",
+            agentName: value.name,
+            providerRunId: active.runId,
+            timestamp: at,
+            toolSessionId: `${tool}-session`,
+          }),
+        ).toMatchObject({
+          providerRunId: active.runId,
+          provider: tool,
+          conversationId: `${tool}-session`,
+          kind: "turn-idle",
+        });
+      }
     } finally {
       db.close();
     }

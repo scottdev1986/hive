@@ -190,10 +190,25 @@ function tailLines(value: string, count: number): string {
   return trimmed.split(/\r?\n/).slice(-count).join("\n").trim();
 }
 
-export function quietReason(quietMs: number, paneTail: string): string {
+/**
+ * `paneReadable` is not decoration: on the sessiond path `capturePane` throws on
+ * every poll, so the screen is never sampled at all. Reporting "screen never
+ * redrew" there claimed an observation nobody made, and a real 16-agent
+ * investigation went looking for a silent vendor when the truth was that two of
+ * the four signals were structurally unavailable. Name the blindness instead —
+ * a reason an operator can act on has to distinguish "we watched and saw
+ * nothing" from "we never looked".
+ */
+export function quietReason(
+  quietMs: number,
+  paneTail: string,
+  paneReadable = true,
+): string {
   const base =
     `no sign of life for ${Math.round(quietMs / 1000)}s ` +
-    "(screen never redrew, no hook event, no tool activity)";
+    (paneReadable
+      ? "(screen never redrew, no hook event, no tool activity)"
+      : "(screen was never readable, no hook event, no tool activity)");
   return paneTail === "" ? base : `${base}; last pane output:\n${paneTail}`;
 }
 
@@ -245,6 +260,9 @@ export async function watchForProofOfLife<Target = string>(
   let heartbeats = 0;
   let quiet = 0;
   let lastPaneTail = "";
+  // Did the screen ever answer at all? Distinguishes a pane we watched stay
+  // still from a pane we could never read.
+  let paneReadable = false;
   // A transiently unreadable process tree must not erase the last conclusive
   // observation. A later explicit false still replaces an earlier true.
   let lastKnownLaunchedProcessAlive: boolean | null = null;
@@ -290,6 +308,7 @@ export async function watchForProofOfLife<Target = string>(
     let paneChanged = false;
     try {
       const pane = await deps.capturePane(session);
+      paneReadable = true;
       lastPaneTail = tailLines(pane, 15);
 
       // A launch error is a launch error however lively the screen looks.
@@ -350,7 +369,7 @@ export async function watchForProofOfLife<Target = string>(
         reason:
           orphanedRedraws > 0
             ? orphanedPaneReason(deps.launchedCommand, lastPaneTail)
-            : quietReason(quietLimit * pollMs, lastPaneTail),
+            : quietReason(quietLimit * pollMs, lastPaneTail, paneReadable),
       };
     }
   }
@@ -371,7 +390,16 @@ export async function watchForProofOfLife<Target = string>(
  * never inferred from the agent looking alive. Inherited (human) MCP servers
  * are the opposite tolerance: their failure changes nothing here.
  */
-export const MCP_REPORTING_TIMEOUT_MS = 15_000;
+/**
+ * Fifteen seconds was measured against one agent starting on an idle machine.
+ * A vendor initializes its MCP servers as part of its own startup, and at
+ * thirty-one simultaneous launches that startup is competing with thirty other
+ * vendors for the machine — the window expired constantly while the terminals
+ * were alive and the vendors were merely slow. A budget that does not scale
+ * with load is the same defect as the visibility lease, and it fails the same
+ * way: under exactly the conditions it was meant to cover.
+ */
+export const MCP_REPORTING_TIMEOUT_MS = 90_000;
 
 /**
  * Wait, bounded, for the agent's credential to be seen on the daemon's MCP

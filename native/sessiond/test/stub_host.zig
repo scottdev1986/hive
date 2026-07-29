@@ -1089,7 +1089,7 @@ test "exact host identity absence requires a missing PID or changed start token"
     try std.testing.expect(broker.waitForExactProcessAbsence(std.math.maxInt(i32), "0:0", .non_parent));
 }
 
-test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
+test "broker launch admits a host whatever lease it claims, and dates it from the broker clock" {
     var path_storage: [96]u8 = undefined;
     const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-sessiond-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
@@ -1170,9 +1170,14 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
     defer std.fs.deleteTreeAbsolute(rejected_root) catch {};
     var rejected_runtime = try broker.Runtime.open(std.testing.allocator, rejected_root);
     defer rejected_runtime.deinit();
+    // A host that took longer to boot than the visibility window reports a
+    // lease with nothing left on it. It used to be rejected as unverifiable
+    // and killed — which at 31 wide is the common case, not the odd one, since
+    // a create measured 12–14 s against a 15 s window. Nothing enforces that
+    // lease now, so the host is admitted and the broker dates the record from
+    // its own clock.
     var rejected_record = record;
-    rejected_record.visibility.expires_mono_ns = 1 * std.time.ns_per_s +
-        broker.generated.limits.attach_grant_timeout_ms * std.time.ns_per_ms;
+    rejected_record.visibility.expires_mono_ns = 0;
     var rejected_host = fixtureHost(rejected_record);
     var rejected_launcher: LaunchDouble = .{
         .record = rejected_record,
@@ -1193,15 +1198,14 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
         rejected_launcher.launcher(),
         null,
     );
+    try std.testing.expect(rejected.failure == null);
+    const admitted_late = rejected_registry.lookup(rejected_record.locator).?.entry.record;
+    try std.testing.expect(admitted_late.state == .live);
     try std.testing.expectEqual(
-        broker.protocol.WireError.verification_unknown,
-        rejected.failure.?.code,
+        1 * std.time.ns_per_s + broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
+        admitted_late.visibility.expires_mono_ns,
     );
-    try std.testing.expect(rejected.created_payload == null);
-    try std.testing.expectEqual(
-        broker.protocol.WireError.not_found,
-        rejected_registry.lookup(rejected_record.locator).?.failure.code,
-    );
+    if (rejected.created_payload) |payload| std.testing.allocator.free(payload);
 }
 
 test "production CREATE reaches CREATED only after Registry admission" {
@@ -1441,17 +1445,31 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
     try std.testing.expectEqual(@as(u64, 8), entry.record.visibility.open_terminal_revision);
     try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
 
-    const expired = dispatchCreateFrame(
+    // Long past the deadline the lease used to impose, with nothing having
+    // renewed in between: the host is still registered and still served. A
+    // late message is not evidence that a terminal died — treating it as such
+    // is what killed three fleets.
+    const late = try visibilityRenewalForTest(
+        std.testing.allocator,
+        record,
+        workspace_token,
+        9,
+    );
+    defer std.testing.allocator.free(late);
+    const served = dispatchCreateFrame(
         backend.backend(),
         broker.generated.frame_type.visibility_renew,
         43,
         0,
-        valid,
-        renewed_expiry,
+        late,
+        renewed_expiry * 2,
     );
-    try std.testing.expectEqual(broker.protocol.WireError.not_found, expired.failure.code);
-    try std.testing.expectEqual(@as(usize, 1), host.renewal_calls);
-    try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
+    switch (served) {
+        .response => |response| response.deinit(std.testing.allocator),
+        else => return error.ExpectedVisibilityRenewal,
+    }
+    try std.testing.expectEqual(@as(usize, 2), host.renewal_calls);
+    try std.testing.expectEqual(@as(u64, 9), entry.record.visibility.open_terminal_revision);
 }
 
 test "production wire reaches neutral Controller for LIST INSPECT and TERMINATE" {
@@ -1992,13 +2010,13 @@ test "production CREATE rejects ordering length and digest before launch" {
     try std.testing.expectEqual(broker.protocol.WireError.not_ready, recommit.failure.code);
 }
 
-test "visibility expiry terminates through the host double with positive readback" {
+test "observed daemon death terminates through the host double with positive readback" {
     const expiry: u64 = 15 * std.time.ns_per_s;
     const record = fixtureRecord(expiry);
     var host = fixtureHost(record);
     var registry: broker.Registry = .{};
     try std.testing.expect(registry.register(record, host.control()) == null);
-    try std.testing.expectEqual(@as(usize, 1), registry.expireVisibility(expiry));
+    try std.testing.expectEqual(@as(usize, 1), registry.terminateAll("owning daemon is gone"));
     try std.testing.expect(host.terminated);
 
     var inspections: [2]broker.Inspection = undefined;
@@ -2008,7 +2026,7 @@ test "visibility expiry terminates through the host double with positive readbac
     try std.testing.expectEqual(.exited, list.entries[0].presence);
 }
 
-test "registry routes each grant and expiry to its locator-bound host" {
+test "registry routes each grant and termination to its locator-bound host" {
     const expiry: u64 = 15 * std.time.ns_per_s;
     const first_record = fixtureRecord(expiry);
     var second_record = fixtureRecord(expiry);
@@ -2031,7 +2049,7 @@ test "registry routes each grant and expiry to its locator-bound host" {
     ) == null);
     try std.testing.expect(first_host.grant_hash == null);
     try std.testing.expectEqualDeep(grant_hash, second_host.grant_hash.?);
-    try std.testing.expectEqual(@as(usize, 2), registry.expireVisibility(expiry));
+    try std.testing.expectEqual(@as(usize, 2), registry.terminateAll("owning daemon is gone"));
     try std.testing.expect(first_host.terminated and second_host.terminated);
 }
 

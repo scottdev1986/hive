@@ -20,16 +20,29 @@ pub fn main() !void {
     _ = args.next();
     const role = args.next() orelse return error.MissingRole;
     if (args.next() != null) return error.UnexpectedArgument;
+    // The engine build id belongs to the linked VT engine, not to this
+    // executable, so a launcher cannot derive it by hashing anything — it has
+    // to ask. A host refuses a create whose locator names a different engine,
+    // so a launcher with no broker to learn it from needs this one query. It
+    // reads no state and answers before HIVE_HOME is required.
+    if (std.mem.eql(u8, role, "engine-build-id")) {
+        const hex = try broker.engineBuildIdHex();
+        var out: [65]u8 = undefined;
+        @memcpy(out[0..64], &hex);
+        out[64] = '\n';
+        try std.fs.File.stdout().writeAll(&out);
+        return;
+    }
     const hive_home = std.process.getEnvVarOwned(allocator, "HIVE_HOME") catch |err| switch (err) {
         error.EnvironmentVariableNotFound => return error.MissingHiveHome,
         else => return err,
     };
     defer allocator.free(hive_home);
-    if (std.mem.eql(u8, role, "serve")) {
-        var launcher = try session_host.ProductionHostLauncher.init(allocator, hive_home);
-        defer launcher.deinit();
-        try broker.serve(allocator, hive_home, launcher.launcher());
-    } else if (std.mem.eql(u8, role, "host")) {
+    // There is no `serve` role. Hive launches each terminal host itself and
+    // speaks to it on the host's own sockets, so no broker process stands
+    // between them: it was never in the terminal data path, and one process
+    // relaying every launch and every inspect was the 31-wide ceiling.
+    if (std.mem.eql(u8, role, "host")) {
         session_host.runHostRole(allocator, hive_home) catch |err| {
             // This stderr is inherited by the broker startup log. Preserve the
             // host's actual boot failure instead of leaving only the broker's

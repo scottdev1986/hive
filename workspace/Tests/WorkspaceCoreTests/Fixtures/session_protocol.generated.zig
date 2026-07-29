@@ -236,6 +236,7 @@ pub const limits = struct {
     pub const checkpoint_bytes: usize = 536870912;
     pub const terminal_disk_bytes: u64 = 2147483648;
     pub const control_rpc_timeout_ms: u64 = 10000;
+    pub const create_rpc_timeout_ms: u64 = 60000;
     pub const attach_grant_timeout_ms: u64 = 30000;
     pub const visibility_renewal_ms: u64 = 5000;
     pub const visibility_expiry_ms: u64 = 15000;

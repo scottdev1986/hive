@@ -233,11 +233,18 @@ export class SessiondViewerAgentInput
       };
     }
     const recovery = `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`;
+    // A distinct key for the retry. The interrupted attempt left a draft under
+    // the original one holding the bytes it had written so far, and the host
+    // refuses a key it has already seen carrying different input — correctly,
+    // since that is what idempotency is for. The discard is positive evidence
+    // that attempt never committed, so this write is a new one. The suffix is
+    // derived rather than random, so retrying the retry stays idempotent.
+    const retryTransactionId = `${transactionId}:after-orphan-discard`;
     const retried = await this.submitOnce(
       locator,
       inspection,
       bytes,
-      transactionId,
+      retryTransactionId,
       isPromptPending,
       expectedForeground,
     );

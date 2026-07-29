@@ -2,6 +2,7 @@ import {
   OpencodeCapabilityProbe,
   OpencodeCliCapabilityTransport,
 } from "../../daemon/capability-discovery";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { shellJoin } from "../../daemon/session-host/shell-session";
 import {
   buildOpencodeResumeCommand,
@@ -10,20 +11,19 @@ import {
   type OpencodeSpawnOptions,
   resolveWorkingOpencodeExecutable,
   writeOpencodeAgentConfig,
+  writeOpencodeTurnPlugin,
 } from "./opencode-cli";
 import type { AgentAdapter } from "./provider-adapter";
 import { wrapSpawnWithCapabilityEnv } from "./shared/capability-env";
 
 export const opencodeAgentAdapter: AgentAdapter = {
   id: "opencode",
-  // TODO(C2): enable the Hive plugin descriptor only after the disabled
-  // OpenCode provider can be launched and its callbacks verified.
   communication: {
     provider: "opencode",
-    eventSource: "none",
+    eventSource: "hooks",
     nativeDelivery: false,
     toolBoundaryEvents: false,
-    turnBoundaryEvents: false,
+    turnBoundaryEvents: true,
     transcriptReader: false,
     nativeCancel: false,
     conversationResume: true,
@@ -39,6 +39,15 @@ export const opencodeAgentAdapter: AgentAdapter = {
         ? {}
         : { instructionPath: context.instructionPath }),
     });
+    if (context.providerRunId !== undefined) {
+      await writeOpencodeTurnPlugin(context.worktreePath, {
+        name: context.name,
+        daemonPort: context.daemonPort,
+        instanceId: hiveInstanceSuffix(),
+        providerRunId: context.providerRunId,
+        hiveCommand: context.hiveCommand,
+      });
+    }
     const options: OpencodeSpawnOptions = {
       model: context.model,
       readOnly: context.readOnly,

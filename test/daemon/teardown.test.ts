@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseProcessTable, runPs } from "../../src/daemon/resources";
+import { HostOperationError } from "../../src/daemon/session-host/host-operations";
 import {
-  SessiondBrokerUnavailableError,
   SessiondWireError,
 } from "../../src/daemon/session-host/sessiond-host";
 import {
@@ -329,7 +329,7 @@ describe("reapProcessTree", () => {
     ).resolves.toEqual({ killed: [], survivors: [] });
   });
 
-  test("an unreachable broker is an already-dead session, but survivors still refuse", async () => {
+  test("an unreachable host is an already-dead session, but survivors still refuse", async () => {
     const sessionLocator = {
       schemaVersion: 1 as const,
       instanceId: "hive-fixture",
@@ -358,12 +358,11 @@ describe("reapProcessTree", () => {
       readOnly: false,
       writeRevoked: false,
     } satisfies AgentRecord;
-    const brokerGone = {
+    const hostGone = {
       terminate: async () => {
-        throw new SessiondBrokerUnavailableError(
-          "/tmp/hb22-9fba/runtime/sessiond/broker.sock",
-          new Error("ENOENT"),
-        );
+        throw new HostOperationError("host socket failed", {
+          cause: new Error("ENOENT"),
+        });
       },
     };
 
@@ -372,7 +371,7 @@ describe("reapProcessTree", () => {
     const empty = world([{ pid: 1, ppid: 0, command: "init" }]);
     await expect(
       stopSessiondAgentSession(record, {
-        terminalHost: brokerGone,
+        terminalHost: hostGone,
         reap: empty.dependencies,
         readHostPid: async () => null,
         selfPid: 1,
@@ -380,18 +379,18 @@ describe("reapProcessTree", () => {
     ).resolves.toEqual({ killed: [], survivors: [] });
 
     // The guarantee the refusal exists for: a captured process that survives
-    // SIGKILL is live work, and an unreachable broker does not excuse it.
+    // SIGKILL is live work, and an unreachable host does not excuse it.
     const wedged = world([
       { pid: 100, ppid: 1, command: "sessiond host", unkillable: true },
     ]);
     await expect(
       stopSessiondAgentSession(record, {
-        terminalHost: brokerGone,
+        terminalHost: hostGone,
         reap: wedged.dependencies,
         readHostPid: async () => 100,
         selfPid: 1,
       }),
-    ).rejects.toThrow("sessiond broker is unavailable");
+    ).rejects.toThrow("host socket failed");
   });
 
   test("a positively-absent root with a broker NOT_FOUND is a completed teardown", async () => {

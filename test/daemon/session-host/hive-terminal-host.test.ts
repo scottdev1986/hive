@@ -293,16 +293,6 @@ class MemoryBindings implements TerminalHostBindingStore {
 }
 
 describe("HiveTerminalHostAdapter", () => {
-  const renewVisibility = async (
-    requestedLocator: typeof locator,
-    request: typeof visibility,
-  ) => ({
-    locator: requestedLocator,
-    state: "active" as const,
-    expiresAt: "2026-07-18T01:00:15.000Z",
-    openTerminalRevision: request.openTerminalRevision,
-  });
-
   test("projects bound neutral lifecycle evidence into the product contract", async () => {
     const bindings = new MemoryBindings();
     const unbound = {
@@ -317,13 +307,6 @@ describe("HiveTerminalHostAdapter", () => {
         throw new Error("issueAttach not under test");
       },
 
-      renewVisibility: async (
-        requestedLocator: typeof locator,
-        request: typeof visibility,
-      ) => {
-        renewalRequests.push({ locator: requestedLocator, request });
-        return renewVisibility(requestedLocator, request);
-      },
       create: async (spec: SessionSpec, input: Uint8Array) => {
         expect(spec).toEqual(sessionSpec);
         expect(input).toEqual(new Uint8Array());
@@ -370,17 +353,17 @@ describe("HiveTerminalHostAdapter", () => {
     await expect(
       adapter.create(sessionSpec, new Uint8Array(), { locator, visibility }),
     ).resolves.toEqual(createResult);
-    // Renew-at-create: the first lease renewal lands before create returns,
-    // on the same admission (2026-07-27 spawn-collapse fix). The binding is
-    // left in the renewed state the lease reports.
-    expect(renewalRequests).toEqual([{ locator, request: visibility }]);
+    // Create binds the terminal to a workspace session and nothing more. It
+    // does not renew, because there is no lease to keep alive: the host
+    // observes its own supervisor and lives until something stops it.
+    expect(renewalRequests).toEqual([]);
     const createEvidence = {
       expectedExecutable: sessionSpec.expectedExecutable,
       executableVerified: true,
       verifiedShellRoot: createResult.inspection.shellRoot,
       geometry,
       visibility: {
-        state: "visible" as const,
+        state: "attaching" as const,
         workspaceSessionId: visibility.workspaceSessionId,
         openTerminalRevision: "1",
         expiresAt: "2026-07-18T01:00:15.000Z",
@@ -516,8 +499,6 @@ describe("HiveTerminalHostAdapter", () => {
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
-
-      renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({
         state: "unknown" as const,
@@ -610,7 +591,6 @@ describe("HiveTerminalHostAdapter", () => {
         issueAttach: async () => {
           throw new Error("issueAttach not under test");
         },
-        renewVisibility,
         create: async () => createResult,
         claimInput: async () => ({
           state: "unknown" as const,
@@ -680,8 +660,6 @@ describe("HiveTerminalHostAdapter", () => {
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
-
-      renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({
         state: "unknown" as const,
@@ -774,7 +752,6 @@ describe("HiveTerminalHostAdapter", () => {
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
-      renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({
         state: "unknown" as const,
@@ -868,7 +845,6 @@ describe("HiveTerminalHostAdapter", () => {
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
-      renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({
         state: "unknown" as const,
@@ -1000,7 +976,6 @@ describe("HiveTerminalHostAdapter", () => {
         issueAttach: async () => {
           throw new Error("issueAttach not under test");
         },
-        renewVisibility,
         create: async () => createResult,
         claimInput: async () => ({
           state: "unknown" as const,
@@ -1110,7 +1085,6 @@ describe("HiveTerminalHostAdapter", () => {
           issueAttach: async () => {
             throw new Error("issueAttach not under test");
           },
-          renewVisibility,
           create: async () => createResult,
           claimInput: async () => ({
             state: "unknown" as const,
@@ -1182,8 +1156,6 @@ describe("HiveTerminalHostAdapter", () => {
       issueAttach: async () => {
         throw new Error("issueAttach not under test");
       },
-
-      renewVisibility,
       create: async () => ({
         ...createResult,
         locator: {
@@ -1257,6 +1229,138 @@ describe("HiveTerminalHostAdapter", () => {
     await expect(incomplete.inspect(locator)).rejects.toBeInstanceOf(
       TerminalHostBindingIncompleteError,
     );
+  });
+});
+
+describe("closing a session whose host is already gone", () => {
+  function adapterWithNoLiveHosts(options: {
+    endedRuns: string[];
+    activeRun?: ProviderRun;
+  }): { adapter: HiveTerminalHostAdapter; bindings: MemoryBindings } {
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedShellRoot: createResult.inspection.shellRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const adapter = new HiveTerminalHostAdapter(
+      {
+        issueAttach: async () => {
+          throw new Error("issueAttach not under test");
+        },
+        create: async () => createResult,
+        claimInput: async () => {
+          throw new Error("claimInput not under test");
+        },
+        submitInput: async () => {
+          throw new Error("submitInput not under test");
+        },
+        resize: async () => {
+          throw new Error("resize not under test");
+        },
+        // The host is gone: nothing is listed for this session any more.
+        list: async () => [],
+        inspect: async () => {
+          throw new Error("inspect not under test");
+        },
+        terminate: async () => {
+          throw new Error("a departed host must never be asked to terminate");
+        },
+      },
+      bindings,
+      locator.instanceId,
+      {
+        providerRuns: {
+          getActiveProviderRunByTerminal: () => options.activeRun ?? null,
+          endProviderRun: (runId: string) => {
+            options.endedRuns.push(runId);
+            return null;
+          },
+        },
+      },
+    );
+    return { adapter, bindings };
+  }
+
+  test("reports it terminated, so the close has a way to succeed", async () => {
+    const endedRuns: string[] = [];
+    const { adapter, bindings } = adapterWithNoLiveHosts({ endedRuns });
+
+    const result = await adapter.terminate(locator, {
+      reason: "queen closed the agent",
+      requestId: "request-fixture",
+      mode: "graceful",
+    });
+
+    // Before this, both close paths threw here, and an agent whose host had
+    // departed could never be closed by any tool: the row stayed live forever,
+    // holding a quota reservation and collecting undeliverable messages.
+    expect(result.state).toBe("terminated");
+    expect(result.survivors).toEqual([]);
+    // No exit is invented — nobody watched this host leave.
+    expect(result.exit).toBeNull();
+    expect(result.errors.map((error) => error.diagnosticId)).toEqual([
+      "SESSIOND_HOST_ALREADY_ABSENT",
+    ]);
+    // The close is still audited, so the record says who asked and why.
+    expect(bindings.values[0]?.terminationAudit).toEqual(
+      expect.objectContaining({
+        reason: "queen closed the agent",
+        requestId: "request-fixture",
+      }),
+    );
+  });
+
+  test("ends the provider run the departed host was carrying", async () => {
+    const endedRuns: string[] = [];
+    const run: ProviderRun = {
+      runId: "018f1e90-7b5a-7cc0-8000-000000000900",
+      agentId: "agent-fixture",
+      terminal: locator,
+      provider: "codex",
+      model: "gpt-fixture",
+      effort: null,
+      conversationId: null,
+      pid: 4_100,
+      startToken: "4100:original",
+      foregroundProcessGroupId: 4_100,
+      capabilityEpoch: 0,
+      launchGrantId: "launch-grant-fixture",
+      startedAt: "2026-07-18T01:00:00.000Z",
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    };
+    const { adapter } = adapterWithNoLiveHosts({ endedRuns, activeRun: run });
+
+    await adapter.terminate(locator, {
+      reason: "queen closed the agent",
+      requestId: "request-fixture",
+      mode: "graceful",
+    });
+
+    // A run left open would keep the agent looking busy after it is gone.
+    expect(endedRuns).toEqual([run.runId]);
+  });
+
+  test("still refuses a locator this instance does not own", async () => {
+    const endedRuns: string[] = [];
+    const { adapter } = adapterWithNoLiveHosts({ endedRuns });
+
+    // Absence excuses a missing host, never a missing claim of ownership.
+    await expect(
+      adapter.terminate(
+        { ...locator, instanceId: "some-other-hive" },
+        {
+          reason: "queen closed the agent",
+          requestId: "request-fixture",
+          mode: "graceful",
+        },
+      ),
+    ).rejects.toBeInstanceOf(TerminalHostBindingNotFoundError);
   });
 });
 

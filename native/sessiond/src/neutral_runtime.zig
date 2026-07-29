@@ -579,12 +579,20 @@ fn recordFromDisk(allocator: std.mem.Allocator, value: DiskRecord) !Record {
     return record;
 }
 
+/// How long a read may reuse the previous rescan. Short enough that a spawn
+/// polling every 25 ms still sees a new foreground promptly, long enough that
+/// thirty-one concurrent pollers cost tens of rescans a second rather than
+/// thousands.
+const recover_min_interval_ns: u64 = 100 * std.time.ns_per_ms;
+
 pub const Registry = struct {
     allocator: std.mem.Allocator,
     runtime: *Runtime,
     arena: std.heap.ArenaAllocator,
     entries: std.ArrayList(Record) = .{},
     recoveryComplete: bool = true,
+    /// When the last read-path rescan ran, in the caller's monotonic clock.
+    recovered_mono_ns: ?u64 = null,
 
     pub fn open(allocator: std.mem.Allocator, runtime: *Runtime) !Registry {
         var result: Registry = .{
@@ -607,6 +615,32 @@ pub const Registry = struct {
         try self.runtime.lockFile.lock(.exclusive);
         defer self.runtime.lockFile.unlock();
         try self.recoverUnlocked();
+        // The next read may rescan once more. Freshness is cheap to give up
+        // here and expensive to get wrong.
+        self.recovered_mono_ns = null;
+    }
+
+    /// A rescan re-reads and re-parses every session's record from disk under
+    /// an exclusive lock, and the broker holds its own state gate across the
+    /// whole call. Read paths used to do that per request, which is fine at
+    /// one agent and ruinous at thirty-one: establishing one provider's
+    /// foreground identity polls INSPECT forty times, so a wide burst spent
+    /// tens of thousands of full directory rescans serialized against the
+    /// accept loop, and the daemon's next HELLO timed out waiting to be
+    /// accepted at all (measured 2026-07-28 at 31 wide).
+    ///
+    /// Reads therefore share one rescan across a short window. A caller that
+    /// acts on state — create, terminate — still calls `recover` directly and
+    /// gets a fresh one.
+    pub fn recoverIfStale(self: *Registry, now_ns: u64) !void {
+        if (self.recovered_mono_ns) |recovered| {
+            if (now_ns >= recovered and now_ns - recovered < recover_min_interval_ns)
+                return;
+        }
+        try self.runtime.lockFile.lock(.exclusive);
+        defer self.runtime.lockFile.unlock();
+        try self.recoverUnlocked();
+        self.recovered_mono_ns = now_ns;
     }
 
     fn recoverUnlocked(self: *Registry) !void {

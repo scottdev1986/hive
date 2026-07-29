@@ -27,8 +27,8 @@ export function codexHome(
 
 // `[mcp_servers.idea]`, `[mcp_servers.hive.http_headers]` (first segment wins),
 // `[mcp_servers."odd.name"]`, and the inline `mcp_servers.x = { ... }` form.
-const TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(.+?)\s*\]\s*$/;
-const INLINE_ASSIGNMENT = /^\s*mcp_servers\s*\.\s*([^\s=.]+)\s*(?:\.|=)/;
+const TABLE_HEADER = /^\s*\[\s*mcp_servers\s*\.\s*(.+?)\s*]\s*$/;
+const INLINE_ASSIGNMENT = /^\s*mcp_servers\s*\.\s*([^\s=.]+)\s*[.=]/;
 
 const firstSegment = (path: string): string => {
   // Split on the first unquoted dot so `hive.http_headers` → `hive` while

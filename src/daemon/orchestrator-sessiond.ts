@@ -49,11 +49,7 @@ export type OrchestratorSessiondSnapshot = z.infer<
 export interface OrchestratorSessiondDependencies {
   terminalHost: Pick<
     HiveTerminalHostAdapter,
-    | "create"
-    | "inspect"
-    | "reconcileProviderRun"
-    | "renewVisibility"
-    | "terminate"
+    "create" | "inspect" | "reconcileProviderRun" | "terminate"
   >;
   providerRuns: Readonly<{
     getActiveProviderRunByTerminal(
@@ -143,7 +139,6 @@ export class OrchestratorSessiondController {
     signal: AbortSignal,
   ): Promise<OrchestratorSessiondSnapshot> {
     let locator: OrchestratorSessiondSnapshot["locator"] | null = null;
-    let createdHere = false;
     let createdInspection: SessionInspection | null = null;
     try {
       let policy = null;
@@ -172,7 +167,6 @@ export class OrchestratorSessiondController {
           { locator, visibility: policy.visibility },
         );
         createdInspection = created.inspection;
-        createdHere = true;
       }
       if (signal.aborted) throw new Error("queen sessiond creation canceled");
       if (
@@ -224,11 +218,6 @@ export class OrchestratorSessiondController {
         });
       }
       if (signal.aborted) throw new Error("queen sessiond creation canceled");
-      await this.dependencies.terminalHost.renewVisibility(
-        locator,
-        policy.visibility,
-      );
-      if (signal.aborted) throw new Error("queen sessiond creation canceled");
       const ready: OrchestratorSessiondSnapshot = {
         requestId: input.requestId,
         locator,
@@ -246,25 +235,14 @@ export class OrchestratorSessiondController {
       );
       return ready;
     } catch (error) {
-      let failure = error;
-      if (locator !== null && createdHere) {
-        try {
-          await this.dependencies.terminalHost.terminate(locator, {
-            mode: "immediate",
-            reason: "queen launch identity was not established",
-            requestId: input.requestId,
-          });
-        } catch (cleanupError) {
-          failure = new AggregateError(
-            [error, cleanupError],
-            "queen launch failed and its terminal cleanup was not confirmed",
-          );
-        }
-      }
+      // A launch that could not be verified is not a terminal that must die.
+      // This used to terminate the session on the way out; that killed queens
+      // whose terminal was up and whose provider was running, and when the
+      // terminate itself failed it left a killed host with no audit at all.
       if (locator !== null) {
         this.dependencies.bindings.releaseUncreatedTerminalHostSession(locator);
       }
-      throw failure;
+      throw error;
     }
   }
 

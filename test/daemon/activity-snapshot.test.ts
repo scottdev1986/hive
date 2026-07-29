@@ -234,16 +234,16 @@ describe("ActivitySnapshot", () => {
     });
   });
 
-  test("Kimi shared transcript entries never claim an executor turn", () => {
+  test("Kimi hook events, not shared transcript entries, claim an executor turn", () => {
     const sharedWireEntry = {
       type: "turn.prompt",
       origin: { kind: "user" },
     };
     expect(sharedWireEntry.origin.kind).toBe("user");
     expect(getAgentAdapter("kimi").communication).toMatchObject({
-      eventSource: "none",
+      eventSource: "hooks",
       toolBoundaryEvents: false,
-      turnBoundaryEvents: false,
+      turnBoundaryEvents: true,
       transcriptReader: false,
     });
 

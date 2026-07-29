@@ -36,6 +36,16 @@ pub const VisibilityLease = struct {
         self.state = .visible;
     }
 
+    /// A running host holds its own lease open. Liveness is observed — the
+    /// host watches its supervisor's process — so the deadline no longer
+    /// decides whether the terminal may live; it only bounds the wire's
+    /// `expiresAt` and the input-claim window. Renewal by message is what a
+    /// wide spawn burst starved, and nothing has to arrive for this to happen.
+    pub fn touch(self: *VisibilityLease, now_ns: u64) void {
+        if (self.state == .expired) return;
+        self.expires_mono_ns = expiryFrom(now_ns) catch return;
+    }
+
     pub fn expired(self: *VisibilityLease, now_ns: u64) bool {
         if (self.state == .expired) return true;
         if (now_ns < self.expires_mono_ns) return false;

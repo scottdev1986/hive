@@ -58,6 +58,17 @@ export const TERMINAL_LIMITS = {
   terminalActiveCellsMax: 250_000,
   kittyImageDecodedBytesPerGeneration: 16 * 1024 * 1024,
   controlRpcTimeoutMilliseconds: 10_000,
+  /** A create is not an RPC that reads a record. It forks a host process, which
+   * forks a login `zsh -l -i` — sourcing the operator's whole shell profile —
+   * which execs a vendor CLI, and the reply waits for all of it. Measured
+   * 2026-07-28 on one machine: 0.3–1.4 s per create at 16 agents, 12.3–14.3 s
+   * at 31, because thirty-one vendor CLIs starting at once is what the host is
+   * competing with. Under one shared 10 s budget the 31-wide burst lost 26 of
+   * 31 hosts to CREATE_COMMIT and HELLO timeouts while every create was in
+   * fact progressing normally. Bounding "fork a shell and a vendor" with the
+   * same number as "read a record" is the same conflation the visibility lease
+   * made, one layer down. */
+  createRpcTimeoutMilliseconds: 60_000,
   attachGrantTimeoutMilliseconds: 30_000,
   visibilityRenewalMilliseconds: 5_000,
   visibilityExpiryMilliseconds: 15_000,

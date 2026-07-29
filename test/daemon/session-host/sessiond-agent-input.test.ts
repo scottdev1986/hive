@@ -248,7 +248,15 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     expect(result.outcome).toBe("injected");
     // Resolved as an abandoned draft, never as a preemption of a held claim.
     expect(modes).toEqual(["orphaned"]);
-    expect(wire.attempts).toEqual(["message-1", "message-1"]);
+    // The retry carries its own key. The interrupted attempt left a draft under
+    // the first one holding the bytes it had written, and reusing it is refused
+    // as "idempotency key reused with different input" — which cost an agent
+    // per wide burst. The suffix is derived, so retrying the retry is still
+    // idempotent.
+    expect(wire.attempts).toEqual([
+      "message-1",
+      "message-1:after-orphan-discard",
+    ]);
   });
 
   test("a held human claim is never preempted by automation", async () => {

@@ -234,7 +234,6 @@ import {
   type WorkspaceVisibilitySnapshot,
   WorkspaceVisibilitySnapshotSchema,
 } from "./session-host/workspace-visibility";
-import type { SessiondBrokerSupervisor } from "./sessiond-broker";
 import {
   type SpawnBatchRequest,
   SpawnBatchRequestSchema,
@@ -276,10 +275,10 @@ export { HIVE_VERSION };
 
 const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-/** How often the daemon re-renews the last accepted Workspace inventory. Must
- * stay comfortably under sessiond's `visibility_expiry_ms` (15 s) so a missed
- * tick is survivable; three ticks fit inside one lease. */
-export const WORKSPACE_VISIBILITY_RENEWAL_MS = 5_000;
+/** How often the daemon checks that the Workspace it serves is still running.
+ * Nothing a terminal needs rides on this tick: terminals observe their own
+ * supervisor and outlive any number of missed ones. */
+export const WORKSPACE_OWNER_WATCH_MS = 5_000;
 export const WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS = 15_000;
 
 /**
@@ -433,7 +432,6 @@ export interface HiveDaemonOptions {
    * before listen; torn down after agent kill so terminate still has a broker.
    * Embedded tests omit this.
    */
-  sessiondBroker?: SessiondBrokerSupervisor;
   machineMutations?: Pick<MachineMutationCoordinator, "beginOperation">;
   quota?: QuotaService;
   /** Durable provider-reported token accounting. Injectable so collector and
@@ -533,7 +531,6 @@ export class HiveDaemon {
   private readonly initiateShutdown: () => void;
   /** Shutdown latch shared by POST /stop and Workspace-death detection. */
   private stopInProgress = false;
-  private readonly sessiondBroker: SessiondBrokerSupervisor | null;
   private readonly machineMutations: Pick<
     MachineMutationCoordinator,
     "beginOperation"
@@ -597,8 +594,7 @@ export class HiveDaemon {
   private bunServer: Server<undefined> | null = null;
   private readonly drainHandler: DrainHandler;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
-  private visibilityRenewalTimer: ReturnType<typeof setInterval> | null = null;
-  private visibilityRenewalInFlight = false;
+  private workspaceOwnerTimer: ReturnType<typeof setInterval> | null = null;
   private ownerRegistrationTimer: ReturnType<typeof setTimeout> | null = null;
   private maintenanceRunning = false;
   /** Wake-path faults already reported, so a persistent one alerts once. */
@@ -713,7 +709,6 @@ export class HiveDaemon {
           setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
         }
       });
-    this.sessiondBroker = options.sessiondBroker ?? null;
     if (options.machineMutations !== undefined) {
       this.machineMutations = options.machineMutations;
       this.ownedMachineMutations = null;
@@ -1014,9 +1009,6 @@ export class HiveDaemon {
       port: () => this.listeningPort ?? this.port,
       // #57: a resume whose hive MCP never answers is refused, not recorded.
       mcpClientSeen: (subject, since) => this.mcpClientSeen(subject, since),
-      // §07: a resume that dies of a vendor rate limit is a drain, not a crash.
-      drainError: (agent, failure) =>
-        this.drainHandler.onVendorError(agent, failure),
       revokeCapabilities: (agentName) => {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
@@ -1060,7 +1052,6 @@ export class HiveDaemon {
       // A thunk, not a value: a resume launched after the user flips the
       // Agents-menu dial must match the setting the user can see, not the one
       // the daemon booted with.
-      ...(autonomy === undefined ? {} : { autonomy: () => autonomy.get() }),
       ...(options.recovery?.resolveClaudeSessionId === undefined
         ? {}
         : { resolveClaudeSessionId: options.recovery.resolveClaudeSessionId }),
@@ -1355,17 +1346,10 @@ export class HiveDaemon {
       });
     }, 30_000);
     this.reconciliationTimer.unref?.();
-    // Far tighter than the 30s reconciliation: the lease it defends is 15s.
-    this.visibilityRenewalTimer = setInterval(() => {
-      void this.renewWorkspaceVisibility().catch((error) => {
-        console.error(
-          `Hive workspace visibility renewal failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
-    }, WORKSPACE_VISIBILITY_RENEWAL_MS);
-    this.visibilityRenewalTimer.unref?.();
+    this.workspaceOwnerTimer = setInterval(() => {
+      this.checkWorkspaceOwnerAlive();
+    }, WORKSPACE_OWNER_WATCH_MS);
+    this.workspaceOwnerTimer.unref?.();
     if (this.manageLifecycle && this.workspaceVisibility !== null) {
       this.ownerRegistrationTimer = setTimeout(() => {
         this.ownerRegistrationTimer = null;
@@ -1797,6 +1781,13 @@ export class HiveDaemon {
         );
       });
       await this.reconcileAgents();
+      await this.sweepStrandedWorktrees().catch((error) => {
+        console.error(
+          `Hive stranded-worktree sweep failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       await this.refreshToolTelemetry().catch((error) => {
         console.error(
           `Hive tool telemetry sweep failed: ${
@@ -2108,6 +2099,82 @@ export class HiveDaemon {
     return this.db.getTerminalHostBindingByLocator(locator) === null;
   }
 
+  /**
+   * Re-asks git about each stranded worktree, and releases the ones that are
+   * no longer stranded.
+   *
+   * A worktree recorded when its agent died is not a permanent verdict: work
+   * gets merged, or cherry-picked onto main afterwards, and the answer changes
+   * without anyone touching the row. Nobody is left to ask — the agent is gone
+   * — so the daemon asks for itself. This is what keeps the digest short
+   * enough that the queen still reads it: a list whose steady state is
+   * non-empty is one she correctly learns to ignore.
+   *
+   * Removal happens only when git says there is nothing left, so this can
+   * delete a worktree but never work.
+   */
+  async sweepStrandedWorktrees(): Promise<number> {
+    const entries = this.db.listStrandedWorktrees();
+    if (entries.length === 0) return 0;
+    // Resolved once for the sweep, not once per worktree. A repo that cannot
+    // answer falls back to the assessment's own default rather than failing
+    // the sweep, since being unable to name the branch is not evidence about
+    // anyone's work.
+    const mainBranch = await resolveLandingTargetBranch(this.repoRoot).catch(
+      () => undefined,
+    );
+    let released = 0;
+    for (const entry of entries) {
+      let work: { dirtyFiles: readonly string[]; unmergedCommits: number };
+      try {
+        work = await this.assessStranded(
+          this.repoRoot,
+          entry.worktreePath,
+          entry.branch,
+          mainBranch,
+        );
+      } catch {
+        // A worktree git cannot answer for stays recorded. Unreadable is not
+        // empty, and this is the one place that would act on the difference.
+        continue;
+      }
+      if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
+        this.db.recordStrandedWorktree({
+          branch: entry.branch,
+          agentName: entry.agentName,
+          worktreePath: entry.worktreePath,
+          unmergedCommits: work.unmergedCommits,
+          dirtyFileCount: work.dirtyFiles.length,
+        });
+        continue;
+      }
+      // Nothing to lose: git has just reported no dirty files and no commit
+      // whose change is missing from the main branch. The branch itself is
+      // left alone — deleting a ref is a separate decision, and the worktree
+      // directory is what actually accumulates.
+      try {
+        await this.cleanupWorktree(this.repoRoot, entry.worktreePath, {
+          deleteBranch: false,
+        });
+      } catch (error) {
+        // A worktree that cannot be removed stays recorded rather than being
+        // quietly forgotten, or it becomes a directory nothing tracks.
+        console.error(
+          `Hive could not remove ${entry.agentName}'s settled worktree ${entry.worktreePath}: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+        continue;
+      }
+      this.db.clearStrandedWorktree(entry.branch);
+      released += 1;
+      this.writeDaemonLog(
+        `Hive removed ${entry.agentName}'s worktree ${entry.branch}: its work is on the main branch. The name is available again.`,
+      );
+    }
+    return released;
+  }
+
   private async killAgentTeardown(
     agent: AgentRecord,
     options: {
@@ -2224,6 +2291,19 @@ export class HiveDaemon {
             unmergedCommits: work.unmergedCommits,
             note: `${agent.name} left work that is not on ${targetBranch}; merge it via an integrator agent or pass discardWork to delete it.`,
           };
+          // The row holds the name until the work is accounted for, and is the
+          // only durable record that this worktree exists — without it every
+          // stranded worktree needs a fresh investigation to identify.
+          if (agent.branch !== null && agent.worktreePath !== null) {
+            this.db.recordStrandedWorktree({
+              branch: agent.branch,
+              agentName: agent.name,
+              worktreePath: agent.worktreePath,
+              unmergedCommits: work.unmergedCommits,
+              dirtyFileCount: work.dirtyFiles.length,
+              at: timestamp,
+            });
+          }
           // The kill is immediate, so nobody was asked whether this work
           // mattered. Preserve it as a ref before anything else can decide it
           // did not: the ref outlives the branch, the worktree and the daemon,
@@ -2528,16 +2608,13 @@ export class HiveDaemon {
     // Broker dies after agents: terminate still needs a live socket. Heidi's
     // teardown already treats an unreachable broker as a dead session rather
     // than a refusal, so a race here cannot wedge shutdown.
-    if (this.sessiondBroker !== null) {
-      await this.sessiondBroker.stop();
-    }
     if (this.reconciliationTimer !== null) {
       clearInterval(this.reconciliationTimer);
       this.reconciliationTimer = null;
     }
-    if (this.visibilityRenewalTimer !== null) {
-      clearInterval(this.visibilityRenewalTimer);
-      this.visibilityRenewalTimer = null;
+    if (this.workspaceOwnerTimer !== null) {
+      clearInterval(this.workspaceOwnerTimer);
+      this.workspaceOwnerTimer = null;
     }
     if (this.ownerRegistrationTimer !== null) {
       clearTimeout(this.ownerRegistrationTimer);
@@ -3727,22 +3804,17 @@ export class HiveDaemon {
       return json({ error: body.error.message }, { status: 400 });
     const result = this.workspaceVisibility.publish(body.data);
     if (result.state !== "accepted") return json(result, { status: 409 });
-    // A publish makes an inventory CURRENT. It does not keep it alive — the
-    // renewal timer on WORKSPACE_VISIBILITY_RENEWAL_MS renews whatever
-    // inventory is current, which is exactly why it was made independent of
-    // publishes after 2026-07-21.
+    // A publish records which panes the Workspace is showing. It decides
+    // nothing about which terminals exist: a terminal is alive because its
+    // process is alive, and it observes that for itself.
     //
-    // Renewing here as well was the 2026-07-27 collapse. The reply cost one
-    // broker round trip PER TERMINAL while the Workspace waited under a fixed
-    // 5 s timeout, so at a 31-agent burst it could not arrive in time; the
-    // Workspace abandoned the publish and retried, and no renewal landed
-    // inside the 15 s lease while the daemon itself stayed responsive
-    // (measured: 1.1 s worst loop lag through the same burst). It also
-    // answered 409 for an inventory it had just ACCEPTED, so the Workspace
-    // could not tell "your inventory was refused" from "a host you no longer
-    // own failed to renew". Renewing per publish AND per timer also stacks
-    // overlapping fan-outs of one connection per terminal, which is its own
-    // way to starve the broker.
+    // This endpoint used to renew a 15 s lease per published terminal. The
+    // reply then cost one broker round trip PER TERMINAL under the Workspace's
+    // fixed 5 s timeout, so at a 31-agent burst it could not arrive in time
+    // and the whole fleet self-terminated while the daemon itself stayed
+    // responsive (measured: 1.1 s worst loop lag through the same burst).
+    // Making a terminal's life depend on a message arriving on time is what
+    // killed three fleets; nothing here may reintroduce it.
     return json(result, { status: 200 });
   }
 
@@ -3777,225 +3849,20 @@ export class HiveDaemon {
     return json({ state: "accepted" });
   }
 
-  /** Renews one inventory's leases. `admit` is the only liveness gate: it
-   * returns null unless the recorded Workspace source still verifies by PID and
-   * start token, so an unverified or dead Workspace renews nothing.
-   *
-   * The renewal target resolves to the agent's LATEST binding with create
-   * evidence, never blindly to the inventory's locator: after a recovery moves
-   * an agent to generation N+1 the Workspace keeps publishing its gen-N pane
-   * (2026-07-27, david — the attach path refused the generation change and
-   * the inventory never learned the new locator), and the gen-N binding still
-   * carries create evidence, so renewing the inventory's locator is a
-   * guaranteed failure that also strands the live session. The inventory
-   * still decides WHO is visible; the binding store decides WHICH generation
-   * of them exists. */
-  private async renewVisibleTerminals(
-    terminals: WorkspaceVisibilitySnapshot["terminals"],
-  ): Promise<
-    Array<
-      | { sessionId: string; state: "renewed" }
-      | { sessionId: string; state: "unknown"; diagnostic: string }
-      | null
-    >
-  > {
+  /** The Workspace's own liveness is policy the daemon owns: a Hive with no
+   * Workspace has nobody to serve, so it shuts down. Nothing a terminal needs
+   * rides on this check — terminals observe their own supervisor and outlive
+   * any number of missed ticks. Before 2026-07-28 this same tick renewed one
+   * 15 s lease per visible terminal, which made every agent's survival depend
+   * on a message landing on time and killed three fleets when it could not. */
+  checkWorkspaceOwnerAlive(): void {
     const workspaceVisibility = this.workspaceVisibility;
-    if (workspaceVisibility == null) return terminals.map(() => null);
-    const bindingsByAgent = new Map<
-      string,
-      NonNullable<ReturnType<HiveDatabase["getTerminalHostBindingByLocator"]>>
-    >();
-    const instances = new Set(
-      terminals.map((terminal) => terminal.locator.instanceId),
-    );
-    for (const instanceId of instances) {
-      for (const binding of this.db.listTerminalHostBindings(instanceId)) {
-        if (binding.locator.subject.kind !== "agent") continue;
-        if (binding.createEvidence === undefined) continue;
-        const agentId = binding.locator.subject.agentId;
-        const current = bindingsByAgent.get(agentId);
-        if (
-          current === undefined ||
-          binding.locator.generation > current.locator.generation
-        ) {
-          bindingsByAgent.set(agentId, binding);
-        }
-      }
-    }
-    return await Promise.all(
-      terminals.map(async (terminal) => {
-        // Resolve by agent, not by the inventory's locator: a recovery moves
-        // the agent to generation N+1 while the Workspace keeps publishing
-        // its gen-N pane (2026-07-27, david), and the gen-N binding still
-        // carries create evidence — renewing it is a guaranteed failure that
-        // also leaves the live gen-N+1 session with no renewal path at all.
-        const binding =
-          bindingsByAgent.get(terminal.agentId) ??
-          this.db.getTerminalHostBindingByLocator(terminal.locator);
-        if (binding?.createEvidence === undefined) return null;
-        const admission = await workspaceVisibility.admit({
-          agentId: terminal.agentId,
-          agentName: terminal.agentName,
-        });
-        if (admission === null) return null;
-
-        try {
-          await this.terminalHost.renewVisibility(
-            binding.locator,
-            admission.visibility,
-          );
-          return {
-            sessionId: binding.locator.sessionId,
-            state: "renewed" as const,
-          };
-        } catch (error) {
-          // Keep the host's own refusal. Flattening every cause to one string
-          // cost the 2026-07-27 investigation two minutes of bare 409s that
-          // could not distinguish a queued RPC from a dead host from a
-          // generation mismatch — three failures with three different fixes.
-          return {
-            sessionId: binding.locator.sessionId,
-            state: "unknown" as const,
-            diagnostic: `sessiond visibility renewal failed closed: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          };
-        }
-      }),
-    );
-  }
-
-  /**
-   * Keeps the last accepted inventory's leases alive while the Workspace that
-   * authored it is still verifiably running.
-   *
-   * sessiond expires a visibility lease `visibility_expiry_ms` (15 s) after the
-   * last renewal and then terminates the host. Renewal used to ride *only* on
-   * the Workspace's own publishes, which made a stalled publisher
-   * indistinguishable from a dead Workspace: on 2026-07-21 one hung publish
-   * froze renewal for every pane and sessiond killed all five vendors
-   * (docs/incidents/2026-07-21-fleet-visibility-expiry.md).
-   *
-   * This does not widen the invariant. It renews only what `admit` still
-   * admits, and `admit` requires a positive PID+start-token match against the
-   * recorded source. A dead or unobservable Workspace shuts down the daemon;
-   * sessiond's lease remains the independent backstop if daemon shutdown
-   * cannot finish. A stalled publisher with a live source keeps renewing.
-   */
-  async renewWorkspaceVisibility(): Promise<number> {
-    const workspaceVisibility = this.workspaceVisibility;
-    if (workspaceVisibility == null) return 0;
-    // One pass at a time. The interval fires on a fixed cadence whether or not
-    // the previous pass finished, and a pass costs one broker round trip per
-    // terminal; at fleet width those passes overlap and each one makes the
-    // next slower, which starves the very renewals they are trying to land.
-    if (this.visibilityRenewalInFlight) return 0;
-    this.visibilityRenewalInFlight = true;
-    try {
-      return await this.renewWorkspaceVisibilityPass(workspaceVisibility);
-    } finally {
-      this.visibilityRenewalInFlight = false;
-    }
-  }
-
-  private async renewWorkspaceVisibilityPass(
-    workspaceVisibility: NonNullable<HiveDaemon["workspaceVisibility"]>,
-  ): Promise<number> {
-    if (!workspaceVisibility.sourceVerified()) {
-      if (!workspaceVisibility.ownerRegistered()) return 0;
-      if (!this.stopInProgress) {
-        this.stopInProgress = true;
-        this.initiateShutdown();
-      }
-      return 0;
-    }
-    const snapshot = workspaceVisibility.currentSnapshot();
-    if (snapshot === null) return 0;
-    const began = Date.now();
-    const renewals = await this.renewVisibleTerminals(snapshot.terminals);
-    const elapsedMs = Date.now() - began;
-    const failures = renewals.filter((renewal) => renewal?.state === "unknown");
-    // A pass that outruns the lease it defends cannot keep anything alive, and
-    // until 2026-07-27 it left no trace at all: the fleet simply died and the
-    // only surviving evidence was sessiond's own VISIBILITY_EXPIRED records.
-    if (failures.length > 0 || elapsedMs >= WORKSPACE_VISIBILITY_RENEWAL_MS) {
-      // `skipped` is load-bearing and was the reading that explained the
-      // 2026-07-27 residue: a terminal with no binding, no create evidence or
-      // no admission is silently returned as null, so a pass over a fleet that
-      // is still being created renews NOTHING and still reports "0 failed".
-      const renewed = renewals.filter(
-        (renewal) => renewal?.state === "renewed",
-      ).length;
-      const skipped = renewals.filter((renewal) => renewal === null).length;
-      this.writeDaemonLog(
-        `Hive workspace visibility renewal pass: ${elapsedMs}ms for ` +
-          `${snapshot.terminals.length} terminal(s), ` +
-          `${renewed} renewed, ${skipped} not yet renewable, ` +
-          `${failures.length} failed` +
-          (failures.length === 0
-            ? ""
-            : ` — ${failures
-                .slice(0, 5)
-                .map(
-                  (failure) => `${failure?.sessionId}: ${failure?.diagnostic}`,
-                )
-                .join("; ")}`),
-      );
-    }
-    await this.recordVisibilityExpiryAudits(snapshot);
-    return renewals.filter((renewal) => renewal?.state === "renewed").length;
-  }
-
-  /**
-   * Records why these hosts died. A withheld or failed renewal can let the
-   * sessiond lease expire, but neither condition proves termination: only an
-   * expired inspection with vendor-death evidence may write the audit. Before
-   * this, a VISIBILITY_EXPIRED kill left
-   * `terminationAuditJson` NULL. That is why the 2026-07-21 fleet death had no
-   * durable record at all and had to be reconstructed from workspace.log.
-   *
-   * `origin: "visibility-expiry"` is load-bearing: recovery treats an operator
-   * audit as a deliberate kill and stops resuming the agent, but nobody asked
-   * for these agents to stop, so they must stay recoverable. Written once per
-   * binding — a binding that already carries an audit is left alone, so the
-   * 5 s tick cannot overwrite an operator's record or rewrite its own.
-   */
-  private async recordVisibilityExpiryAudits(
-    snapshot: WorkspaceVisibilitySnapshot,
-  ): Promise<void> {
-    for (const terminal of snapshot.terminals) {
-      const binding = this.db.getTerminalHostBindingByLocator(terminal.locator);
-      if (binding?.createEvidence === undefined) continue;
-      if (binding.terminationAudit !== undefined) continue;
-      if (Date.parse(binding.createEvidence.visibility.expiresAt) > Date.now())
-        continue;
-      let inspection: Awaited<ReturnType<SessionHost["inspect"]>>;
-      try {
-        inspection = await this.terminalHost.inspect(terminal.locator);
-      } catch {
-        continue;
-      }
-      if (
-        inspection.visibility.state !== "expired" ||
-        !sessiondTerminalIsDead(inspection)
-      )
-        continue;
-      try {
-        this.db.recordTerminalHostTermination(terminal.locator, {
-          reason:
-            "sessiond reports the visibility lease expired and the host died",
-          requestId: mintSessionRequestId(),
-          requestedAt: new Date().toISOString(),
-          origin: "visibility-expiry",
-        });
-      } catch (error) {
-        console.error(
-          `Hive visibility-expiry audit failed for ${terminal.locator.sessionId}: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      }
-    }
+    if (workspaceVisibility == null) return;
+    if (workspaceVisibility.sourceVerified()) return;
+    if (!workspaceVisibility.ownerRegistered()) return;
+    if (this.stopInProgress) return;
+    this.stopInProgress = true;
+    this.initiateShutdown();
   }
 
   private async tokenUsageEndpoint(

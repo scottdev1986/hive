@@ -15,7 +15,7 @@ This operating contract applies only to a Kimi Code agent. It does not apply to 
 ## Your permissions may not be what Hive asked for
 This is the rule that separates Kimi from Claude and Codex, and it is the one most likely to let you do damage while believing you were contained.
 
-Kimi has **no per-launch permission channel**. There is no read-only flag, no per-tool deny, and no flag that forces `manual` mode back on. Its only permission surface is `default_permission_mode` and `[[permission.rules]]` in the operator's global `~/.kimi-code/config.toml`, which Hive deliberately does not write — that file is the user's.
+Kimi has **no per-launch permission channel**. There is no read-only flag, no per-tool deny, and no flag that forces `manual` mode back on. Its only permission surface is `default_permission_mode` and `[[permission.rules]]` in the operator's global `~/.kimi-code/config.toml`. Hive may manage its marked lifecycle `Stop` hook in that file, but it never changes these permission settings — they are the user's.
 
 What that means for you:
 

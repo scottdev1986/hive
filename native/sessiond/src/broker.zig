@@ -636,7 +636,6 @@ pub const Registry = struct {
             locator,
             workspace_session_id,
             revision,
-            now_ns,
         )) |failure| return failure;
         const result = self.lookup(locator).?;
         const entry = switch (result) {
@@ -659,15 +658,13 @@ pub const Registry = struct {
         locator: Locator,
         workspace_session_id: []const u8,
         revision: u64,
-        now_ns: u64,
     ) ?protocol.Failure {
         const result = self.lookup(locator) orelse return .{ .code = .not_found, .close_connection = false };
         const entry = switch (result) {
             .failure => |failure| return failure,
             .entry => |entry| entry,
         };
-        if (entry.record.state != .live or entry.record.visibility.state == .expired or
-            now_ns >= entry.record.visibility.expires_mono_ns)
+        if (entry.record.state != .live)
             return .{ .code = .not_found, .close_connection = false };
         if (!std.mem.eql(u8, entry.record.visibility.workspace_session_id, workspace_session_id))
             return .{ .code = .forbidden, .close_connection = false };
@@ -690,8 +687,7 @@ pub const Registry = struct {
             .failure => |failure| return failure,
             .entry => |entry| entry,
         };
-        if (entry.record.state != .live or entry.record.visibility.state == .expired or
-            now_ns >= entry.record.visibility.expires_mono_ns)
+        if (entry.record.state != .live)
             return .{ .code = .not_ready, .close_connection = false };
         const expires_ns = std.math.add(
             u64,
@@ -728,8 +724,7 @@ pub const Registry = struct {
             .failure => |failure| return failure,
             .entry => |entry| entry,
         };
-        if (entry.record.state != .live or entry.record.visibility.state == .expired or
-            now_ns >= entry.record.visibility.expires_mono_ns)
+        if (entry.record.state != .live)
             return .{ .code = .unauthenticated, .close_connection = true };
         var candidate: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(raw_token, &candidate, .{});
@@ -792,13 +787,16 @@ pub const Registry = struct {
         self.enumeration_complete = false;
     }
 
-    pub fn expireVisibility(self: *Registry, now_ns: u64) usize {
-        var expired: usize = 0;
+    /// Terminates every host this broker still holds. Called when the daemon
+    /// that owns this broker is observed gone: the hosts are separate forks
+    /// that would otherwise reparent to launchd and keep their vendors running
+    /// with nobody left to stop them. Each host also watches this process
+    /// independently, so a broker that is killed outright is still covered —
+    /// this path is the fast, clean one.
+    pub fn terminateAll(self: *Registry, reason: []const u8) usize {
+        var terminated: usize = 0;
         for (&self.entries) |*slot| if (slot.*) |*entry| {
-            if (entry.record.state != .live or entry.record.visibility.state == .expired or
-                now_ns < entry.record.visibility.expires_mono_ns)
-                continue;
-            entry.record.visibility.state = .expired;
+            if (entry.record.state != .live) continue;
             var request_id_storage: [40]u8 = undefined;
             const request_id = taggedUuidV7(&request_id_storage, "req_") catch {
                 entry.record.state = .unknown;
@@ -806,12 +804,12 @@ pub const Registry = struct {
             };
             _ = self.terminate(entry.record.locator, .{
                 .mode = "graceful",
-                .reason = "visibility lease expired",
+                .reason = reason,
                 .request_id = request_id,
             });
-            expired += 1;
+            terminated += 1;
         };
-        return expired;
+        return terminated;
     }
 
     pub fn recoverCandidate(
@@ -1220,7 +1218,20 @@ pub fn launchHost(
         readback.pending,
         .{ .code = .generation_mismatch, .close_connection = false },
     );
-    const lease_remaining_ns = readback.record.visibility.expires_mono_ns;
+    // Deliberately NOT gated on how much of the host's stated lease is left.
+    //
+    // The host writes `expiresAt = now + visibility_expiry_ms` early in boot,
+    // before it forks a login shell and execs the vendor; the broker sees it
+    // only once READY arrives. At fleet width that gap is longer than the 15 s
+    // window — measured 12.3–14.3 s per create at 31 wide — so the remaining
+    // lease reads as zero and a healthy host that merely booted slowly was
+    // rejected as unverifiable, killed, and its create failed. That is the
+    // deleted lease still deciding whether a terminal may exist, through a
+    // constant that does not scale with burst width.
+    //
+    // Nothing enforces the lease now, and the broker sets this record's expiry
+    // from its own clock below, so the host's value is not authority for
+    // anything. Every other field here still has to match exactly.
     if (readback.record.state != .live or readback.record.visibility.state != .attaching or
         !std.mem.eql(
             u8,
@@ -1238,9 +1249,7 @@ pub fn launchHost(
             readback.record.visibility.workspace_session_id,
             spec.value.visibility.workspaceSessionId,
         ) or
-        readback.record.visibility.open_terminal_revision != initial_revision or
-        lease_remaining_ns == 0 or
-        lease_remaining_ns > generated.limits.visibility_expiry_ms * std.time.ns_per_ms)
+        readback.record.visibility.open_terminal_revision != initial_revision)
         return rejectLaunchedHost(
             launcher,
             readback.pending,
@@ -1943,9 +1952,9 @@ pub const ProductionBackend = struct {
         if (header.type_code == generated.frame_type.create_commit)
             return self.commit(allocator, payload, now_ns);
         if (header.type_code == generated.frame_type.list)
-            return self.list(allocator, payload);
+            return self.list(allocator, payload, now_ns);
         if (header.type_code == generated.frame_type.inspect)
-            return self.inspect(allocator, payload);
+            return self.inspect(allocator, payload, now_ns);
         if (header.type_code == generated.frame_type.terminate)
             return self.terminate(allocator, payload);
         if (header.type_code == generated.frame_type.visibility_renew)
@@ -2096,12 +2105,20 @@ pub const ProductionBackend = struct {
         });
     }
 
+    // LIST and INSPECT are reads, and reads share a rescan across a short
+    // window. Rescanning per request means re-reading and re-parsing every
+    // session's record from disk under an exclusive lock while this backend
+    // holds the broker's state gate — affordable once, ruinous when thirty-one
+    // spawns are each polling INSPECT forty times to establish a foreground
+    // identity. TERMINATE below acts on state and still takes a fresh scan.
     fn list(
         self: *ProductionBackend,
         allocator: std.mem.Allocator,
         payload: []const u8,
+        now_ns: u64,
     ) BackendResult {
-        self.control_plane.registry.recover() catch |err| return controlPlaneFailure(err);
+        self.control_plane.registry.recoverIfStale(now_ns) catch |err|
+            return controlPlaneFailure(err);
         var controller = self.control_plane.controller(allocator);
         const response = controller.list(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
@@ -2111,8 +2128,10 @@ pub const ProductionBackend = struct {
         self: *ProductionBackend,
         allocator: std.mem.Allocator,
         payload: []const u8,
+        now_ns: u64,
     ) BackendResult {
-        self.control_plane.registry.recover() catch |err| return controlPlaneFailure(err);
+        self.control_plane.registry.recoverIfStale(now_ns) catch |err|
+            return controlPlaneFailure(err);
         var controller = self.control_plane.controller(allocator);
         const response = controller.inspect(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
@@ -2206,7 +2225,6 @@ pub const ProductionBackend = struct {
             locator,
             parsed.value.workspaceSessionId,
             revision,
-            now_ns,
         )) |renewal_failure| return .{ .failure = renewal_failure };
         const lookup = self.registry.lookup(locator).?;
         const entry = switch (lookup) {
@@ -2361,6 +2379,39 @@ fn captureBrokerOwner() !BrokerOwner {
     return owner;
 }
 
+/// Names whoever terminates this broker.
+///
+/// A broker that dies mid-burst takes its hosts' supervisor with it, and the
+/// 2026-07-28 31-wide runs kept recording `exited 143` — SIGTERM — with no way
+/// to tell who sent it. The daemon's own supervisor is ruled out (it suppresses
+/// the restart path for exits it initiated) and so is the memory watchdog (it
+/// walks descendants of each terminal's shell root; this process is their
+/// parent). The kernel knows the answer and puts it in `si_pid`, so ask it,
+/// then exit exactly as the default disposition would have.
+fn onBrokerTermination(sig: c_int, info: [*c]c.siginfo_t, _: ?*anyopaque) callconv(.c) void {
+    var buffer: [128]u8 = undefined;
+    const text = std.fmt.bufPrint(
+        &buffer,
+        "broker terminated by signal {d} sent from pid {d}\n",
+        .{ sig, info.*.si_pid },
+    ) catch "broker terminated by a signal\n";
+    _ = std.posix.write(std.posix.STDERR_FILENO, text) catch {};
+    c._exit(128 + sig);
+}
+
+fn reportBrokerTermination() void {
+    var action = std.mem.zeroes(c.struct_sigaction);
+    action.__sigaction_u.__sa_sigaction = onBrokerTermination;
+    action.sa_flags = c.SA_SIGINFO;
+    _ = c.sigaction(c.SIGTERM, &action, null);
+    _ = c.sigaction(c.SIGINT, &action, null);
+}
+
+/// How often the serve loop runs its janitorial passes. Short enough that a
+/// host's exit is noticed promptly and its registry slot returned; long enough
+/// that accepting a connection is not queued behind them.
+const maintenance_interval_ns: u64 = 250 * std.time.ns_per_ms;
+
 fn brokerOwnerIsLive(owner: BrokerOwner) bool {
     const observed = inspectProcess(owner.pid) catch return false;
     return std.meta.eql(observed.start_token, owner.start_token);
@@ -2373,6 +2424,7 @@ pub fn serve(
     hive_home: []const u8,
     launcher: HostLauncher,
 ) !void {
+    reportBrokerTermination();
     const owner = try captureBrokerOwner();
     var runtime = try Runtime.open(allocator, hive_home);
     defer runtime.deinit();
@@ -2403,12 +2455,37 @@ pub fn serve(
         .build_id = build_id,
     };
     defer shared.drain();
+    var last_maintenance_ns: u64 = 0;
     while (true) {
-        if (!brokerOwnerIsLive(owner)) return;
-        {
+        if (!brokerOwnerIsLive(owner)) {
+            // The broker stops serving; it does NOT kill the hosts on its way
+            // out. Its daemon being gone says nothing about whether an agent's
+            // terminal is alive and working, and killing on that inference is
+            // what left SIGKILLed hosts with rendered TUIs and no audit.
+            std.log.info("broker observed its daemon exit; leaving hosts running", .{});
+            return;
+        }
+        // Maintenance runs on a cadence, not once per accepted connection.
+        //
+        // Both passes want the gate that in-flight connections hold, and this
+        // loop took it TWICE before it even polled — so a worker busy with a
+        // create or a registry rescan delayed accepting connections that were
+        // already pending, and the daemon's HELLO timed out waiting to be
+        // accepted at all. That is the 31-wide failure that survived every
+        // other fix.
+        //
+        // A cadence rather than a `tryLock`: skipping opportunistically starves
+        // whichever pass loses the race, and `reapExitedHosts` is the only path
+        // that returns registry capacity — starving it produced ALREADY_EXISTS
+        // failures when that was tried. Four passes a second happen regardless
+        // of contention, and nothing needs them more often than that.
+        const maintenance_due = timer.read() -| last_maintenance_ns >= maintenance_interval_ns;
+        if (maintenance_due) {
+            last_maintenance_ns = timer.read();
             shared.state_gate.lock();
             defer shared.state_gate.unlock();
             _ = recovered.registry.reapExitedHosts();
+            recovered.verifyDirectoryQuarantines(&runtime, timer.read());
         }
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = runtime.server.stream.handle,
@@ -2419,11 +2496,6 @@ pub fn serve(
             &poll_fds,
             @intCast(generated.limits.visibility_renewal_ms),
         );
-        {
-            shared.state_gate.lock();
-            defer shared.state_gate.unlock();
-            recovered.verifyDirectoryQuarantines(&runtime, timer.read());
-        }
         if (ready == 0) continue;
         if (poll_fds[0].revents & std.posix.POLL.IN == 0) return error.BrokerSocketUnavailable;
         const accepted = runtime.acceptAuthenticatedPeer() catch |err| switch (err) {

@@ -1,7 +1,4 @@
-import {
-  type CapabilityProvider,
-  unknownVendor,
-} from "../../schemas/capability";
+import { type CapabilityProvider, unknownVendor } from "../../schemas";
 import { claudeAgentAdapter } from "./claude-adapter";
 import { codexAgentAdapter } from "./codex-adapter";
 import { grokAgentAdapter } from "./grok-adapter";

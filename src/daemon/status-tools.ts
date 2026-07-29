@@ -277,6 +277,23 @@ export function registerStatusTools(
       // logs. It rides structuredContent (the text payload stays the agents
       // shape parsers already read).
       const memory = { embeddings: deps.memoryEmbeddingsStatusSection() };
+      // Worktrees whose agent is gone and whose work is not accounted for.
+      // Omitted entirely when there are none: a section that is always present
+      // is one the orchestrator learns to skip, and the whole point is that its
+      // steady state is empty. Rows leave on their own once their work reaches
+      // the main branch, so anything listed here is genuinely undecided.
+      const stranded = deps.db.listStrandedWorktrees().map((entry) => ({
+        agent: entry.agentName,
+        branch: entry.branch,
+        worktreePath: entry.worktreePath,
+        unmergedCommits: entry.unmergedCommits,
+        dirtyFiles: entry.dirtyFileCount,
+        strandedSince: entry.firstSeenAt,
+        holdsName: entry.agentName,
+        resolve: `merge ${entry.branch}, or hive_kill the name again with discardWork to delete it`,
+      }));
+      const strandedSection =
+        stranded.length === 0 ? {} : { strandedWorktrees: stranded };
       if (fields !== undefined) {
         const base = toolResult(
           result.map((record) =>
@@ -290,13 +307,21 @@ export function registerStatusTools(
         );
         return {
           ...base,
-          structuredContent: { ...base.structuredContent, memory },
+          structuredContent: {
+            ...base.structuredContent,
+            memory,
+            ...strandedSection,
+          },
         };
       }
       const base = toolResult(result, "agents");
       return {
         ...base,
-        structuredContent: { ...base.structuredContent, memory },
+        structuredContent: {
+          ...base.structuredContent,
+          memory,
+          ...strandedSection,
+        },
       };
     },
   );

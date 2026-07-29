@@ -1,10 +1,12 @@
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  createHash as nodeCreateHash,
+  randomBytes,
+} from "node:crypto";
 import { connect, type Socket } from "node:net";
-import { join } from "node:path";
 import type { z } from "zod";
 import {
   AppliedPayloadSchema,
-  AttachGrantPayloadSchema,
   AttachRequestPayloadSchema,
   ClaimAcquirePayloadSchema,
   ClaimResultPayloadSchema,
@@ -19,13 +21,9 @@ import {
   HelloPayloadSchema,
   InputSubmitPayloadSchema,
   InspectedPayloadSchema,
-  InspectPayloadSchema,
-  ListedPayloadSchema,
-  ListPayloadSchema,
   OrphanDiscardedPayloadSchema,
   OrphanDiscardPayloadSchema,
   PingPongPayloadSchema,
-  RenewedPayloadSchema,
   ResizePayloadSchema,
   SESSION_PROTOCOL_MINOR_RANGE,
   SESSION_PROTOCOL_VERSION,
@@ -33,14 +31,12 @@ import {
   TERMINAL_LIMITS,
   TerminatedPayloadSchema,
   TerminatePayloadSchema,
-  VisibilityRenewPayloadSchema,
   WelcomePayloadSchema,
   type WireErrorCode,
 } from "../../schemas/session-protocol";
-import { createHash as nodeCreateHash } from "node:crypto";
 import { type DaemonHandshake, expectedDaemonHandshake } from "../handshake";
 import { resolveHiveHome } from "../instance-identity";
-import { observeSessiondOutput } from "./sessiond-output-observer";
+import { resolveSessiondBinary } from "../sessiond-broker";
 import type {
   AttachGrant,
   AttachRequest,
@@ -48,10 +44,22 @@ import type {
   CaptureResult,
   CreateResult,
   SessionHost,
+  SessionLocator,
   SessionSpec,
-  VisibilityLease,
-  VisibilityRequest,
 } from "./contract";
+import {
+  adoptHost,
+  discardHostInputOrphan,
+  executableBuildHash,
+  issueHostAttachGrant,
+} from "./host-control";
+import { createResultFromRecord, launchHost } from "./host-launcher";
+import {
+  callHost,
+  listNeutralSessions,
+  readControlSecret,
+} from "./host-operations";
+import { observeSessiondOutput } from "./sessiond-output-observer";
 
 import {
   HiveTerminalBindingSchema,
@@ -105,7 +113,7 @@ export type LandedTerminalHost = Pick<
   TerminalHost,
   "claimInput" | "submitInput" | "resize" | "inspect" | "list" | "terminate"
 > &
-  Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
+  Pick<SessionHost, "create" | "issueAttach">;
 
 export class SessiondProtocolError extends Error {
   constructor(message: string) {
@@ -129,16 +137,6 @@ export class SessiondWireNotReadyError extends Error {
   constructor(readonly operation: string) {
     super(`sessiond ${operation} requires the frozen neutral host-attach wire`);
     this.name = "SessiondWireNotReadyError";
-  }
-}
-
-export class SessiondBrokerUnavailableError extends Error {
-  constructor(
-    readonly socketPath: string,
-    cause: unknown,
-  ) {
-    super(`sessiond broker is unavailable at ${socketPath}`, { cause });
-    this.name = "SessiondBrokerUnavailableError";
   }
 }
 
@@ -284,6 +282,10 @@ export type SessiondControlRequest<Result> = Readonly<{
   payload: unknown;
   responseSchema: z.ZodType<Result>;
   flags?: number;
+  /** Defaults to the control-RPC budget. Only a create overrides it: reading a
+   * record and forking a shell plus a vendor CLI are not the same operation
+   * and must not share one deadline. */
+  timeoutMilliseconds?: number;
 }>;
 
 export interface SessiondControlClient {
@@ -328,7 +330,6 @@ export class SessiondSocketClient implements SessiondBrokerClient {
   private automatedMessageMaxBytes = TERMINAL_LIMITS.automatedMessageBytes;
   private activeCreate: ActiveCreate | null = null;
   private negotiatedEngineBuildId: string | null = null;
-
   get engineBuildId(): string | null {
     return this.negotiatedEngineBuildId;
   }
@@ -378,7 +379,8 @@ export class SessiondSocketClient implements SessiondBrokerClient {
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error(`sessiond ${request.requestType} request timed out`));
-      }, TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
+      }, request.timeoutMilliseconds ??
+        TERMINAL_LIMITS.controlRpcTimeoutMilliseconds);
       timeout.unref?.();
       this.pending.set(requestId, {
         responseType: request.responseType,
@@ -491,6 +493,7 @@ export class SessiondSocketClient implements SessiondBrokerClient {
       responseType: "CREATED",
       payload: commit,
       responseSchema: CreatedPayloadSchema,
+      timeoutMilliseconds: TERMINAL_LIMITS.createRpcTimeoutMilliseconds,
     });
   }
 
@@ -671,122 +674,50 @@ export class SessiondSocketClient implements SessiondBrokerClient {
 export interface SessiondHostOptions {
   repoRoot?: string;
   hiveHome?: string;
-  handshake?: () => Promise<DaemonHandshake>;
-  connectBroker?: () => Promise<SessiondBrokerClient>;
+  /** Test seam: launch a terminal host. Defaults to the real launcher. */
+  launchHost?: typeof launchHost;
+  /** Test seam: speak to a host directly. Defaults to the real NHOP client. */
+  callHost?: typeof callHost;
+  /** Test seam: read a host's operation capability. */
+  readControlSecret?: typeof readControlSecret;
+  /** Test seam: enumerate published terminals. */
+  listSessions?: typeof listNeutralSessions;
+  /** Test seam: prove ownership of a freshly launched host. */
+  adoptHost?: typeof adoptHost;
+  /** Test seam: open the host's viewer wire for claim/input/resize. */
   connectDirect?: (session: SessionRef) => Promise<SessiondControlClient>;
+  /** Bindings the create path requires; absent disables create admission. */
   pendingBindings?: TerminalHostBindingStore;
-}
-
-async function connectBroker(
-  path: string,
-  handshake: DaemonHandshake,
-): Promise<SessiondBrokerClient> {
-  let client: SessiondSocketClient;
-  try {
-    client = await SessiondSocketClient.connect(path);
-  } catch (error) {
-    throw new SessiondBrokerUnavailableError(path, error);
-  }
-  try {
-    const hello = HelloPayloadSchema.parse({
-      schemaVersion: 1,
-      buildId: handshake.buildHash,
-      instanceId: handshake.instanceId,
-      protocol: {
-        major: SESSION_PROTOCOL_VERSION.major,
-        minMinor: SESSION_PROTOCOL_MINOR_RANGE.min,
-        maxMinor: SESSION_PROTOCOL_MINOR_RANGE.max,
-      },
-      clientRole: "daemon",
-      daemonControl: {
-        productVersion: handshake.productVersion,
-        buildHash: handshake.buildHash,
-        wireProtocol: handshake.wireProtocol,
-        schemaEpoch: handshake.schemaEpoch,
-        instanceId: handshake.instanceId,
-        hiveUuid: handshake.hiveUuid,
-        identityKey: handshake.identityKey,
-        repoFamilyKey: handshake.repoFamilyKey,
-      },
-    });
-    const welcome = await client.request({
-      requestType: "HELLO",
-      responseType: "WELCOME",
-      payload: hello,
-      responseSchema: WelcomePayloadSchema,
-    });
-    if (
-      welcome.endpointRole !== "broker" ||
-      welcome.instanceId !== handshake.instanceId ||
-      welcome.protocol.major !== SESSION_PROTOCOL_VERSION.major ||
-      welcome.protocol.minor < SESSION_PROTOCOL_MINOR_RANGE.min ||
-      welcome.protocol.minor > SESSION_PROTOCOL_MINOR_RANGE.max
-    ) {
-      throw new SessiondProtocolError(
-        "sessiond broker WELCOME does not match this daemon",
-      );
-    }
-    client.setNegotiatedLimits(welcome.limits);
-    client.setNegotiatedEngineBuildId(welcome.engineBuildId);
-    return client;
-  } catch (error) {
-    client.close();
-    throw error;
-  }
-}
-
-/**
- * Bounds in-flight broker create transactions. The sessiond broker serves one
- * connection start-to-finish, launch included, so every concurrent create is
- * queue time on a serial loop measured against a fixed 10 s RPC timeout. At
- * the 2026-07-27 incident's measured ~320 ms per loaded launch, 8 in flight
- * queues at most ~2.6 s of create work — deep inside the budget with margin
- * for the cheap RPCs (renew/inspect) that interleave behind it
- * (planning/2026-07-27-spawn-collapse-root-cause.md).
- */
-const MAX_IN_FLIGHT_CREATES = 8;
-
-class CreateAdmission {
-  private inFlight = 0;
-  private readonly waiters: Array<() => void> = [];
-
-  async acquire(): Promise<() => void> {
-    if (this.inFlight >= MAX_IN_FLIGHT_CREATES) {
-      await new Promise<void>((resolve) => {
-        this.waiters.push(resolve);
-      });
-    }
-    this.inFlight += 1;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.inFlight -= 1;
-      this.waiters.shift()?.();
-    };
-  }
+  /** Accepted and ignored. Nothing is dialled at startup any more — a host is
+   * launched with a capability, so there is no handshake to present. */
+  handshake?: () => Promise<unknown>;
 }
 
 export class SessiondHost implements LandedTerminalHost {
-  private readonly createAdmission = new CreateAdmission();
-  private readonly connectBroker: () => Promise<SessiondBrokerClient>;
   private readonly connectDirect: (
     session: SessionRef,
   ) => Promise<SessiondControlClient>;
   private readonly pendingBindings: TerminalHostBindingStore | null;
+  private readonly hiveHome: string;
+  private readonly repoRoot: string;
+  private readonly launchHostProcess: typeof launchHost;
+  private readonly callHostDirect: typeof callHost;
+  private readonly readControlSecret: typeof readControlSecret;
+  private readonly listSessions: typeof listNeutralSessions;
+  private readonly adoptHost: typeof adoptHost;
 
   constructor(options: SessiondHostOptions = {}) {
     const hiveHome = resolveHiveHome(options.hiveHome);
-    const handshake =
+    this.hiveHome = hiveHome;
+    this.repoRoot = options.repoRoot ?? process.cwd();
+    this.launchHostProcess = options.launchHost ?? launchHost;
+    this.callHostDirect = options.callHost ?? callHost;
+    this.readControlSecret = options.readControlSecret ?? readControlSecret;
+    this.listSessions = options.listSessions ?? listNeutralSessions;
+    this.adoptHost = options.adoptHost ?? adoptHost;
+    const _handshake =
       options.handshake ??
       (() => expectedDaemonHandshake(options.repoRoot ?? process.cwd()));
-    this.connectBroker =
-      options.connectBroker ??
-      (async () =>
-        connectBroker(
-          join(hiveHome, "runtime", "sessiond", "broker.sock"),
-          await handshake(),
-        ));
     this.connectDirect =
       options.connectDirect ??
       (async () => {
@@ -813,109 +744,108 @@ export class SessiondHost implements LandedTerminalHost {
       ...parsedSpec,
       visibility: binding.visibility,
     });
-    const release = await this.createAdmission.acquire();
+    const queuedAt = Date.now();
+    // A create forks a host, a login shell and a vendor CLI, and the reply
+    // waits for all of it — against the same 10 s deadline an INSPECT gets.
+    // When a wide burst loses hosts to CREATE_COMMIT timeouts, the two numbers
+    // that tell queueing apart from a slow launch are the only ones missing.
+    const admittedAt = Date.now();
     try {
-      const broker = await this.connectBroker();
+      // Hive launches the host itself. There is no broker between them: it was
+      // never in the terminal data path, and one process handing descriptors to
+      // thirty-one concurrent launches was the 31-wide ceiling — its connection
+      // threads parked inside multi-second boots and stopped accepting, so
+      // creates that never started failed at HELLO.
+      const adoptionSecret = new Uint8Array(randomBytes(32));
+      const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
+      if (executablePath === null) {
+        throw new SessiondProtocolError("hive-sessiond binary was not found");
+      }
       try {
-        const engineBuildId = this.requireEngineBuildId(broker);
-        if (engineBuildId !== parsedSpec.locator.engineBuildId) {
-          throw new SessiondProtocolError(
-            "sessiond broker engine build changed before create",
+        const launched = await this.launchHostProcess({
+          hiveHome: this.hiveHome,
+          sessionId: locator.sessionId,
+          executablePath,
+          specJson: JSON.stringify(payload),
+          initialInput,
+          adoptionSecret,
+          readyTimeoutMilliseconds:
+            TERMINAL_LIMITS.createRpcTimeoutMilliseconds,
+        });
+        // Both the stream and the process handle are retained: the stream is
+        // the terminal's channel to Hive, and dropping the handle can let the
+        // runtime reap a healthy host.
+        this.hostControl.set(locator.sessionId, launched.control);
+        this.hostProcess.set(locator.sessionId, launched.process);
+        this.hostSecret.set(locator.sessionId, adoptionSecret);
+        // The host refuses every control verb until ownership is proved, so
+        // adoption happens once here rather than per grant.
+        await this.adoptHost({
+          hiveHome: this.hiveHome,
+          sessionId: locator.sessionId,
+          locator,
+          adoptionSecret,
+          buildId: await executableBuildHash(executablePath),
+        });
+        return createResultFromRecord(launched.record, parsedSpec.argv);
+      } finally {
+        // Only the slow ones. A create that outruns half its budget separates
+        // "queued behind other creates" from "this launch is genuinely slow".
+        const launchMs = Date.now() - admittedAt;
+        if (launchMs * 2 >= TERMINAL_LIMITS.createRpcTimeoutMilliseconds) {
+          console.error(
+            `sessiond create ${locator.sessionId} was slow: ` +
+              `${admittedAt - queuedAt}ms queued, ${launchMs}ms launching`,
           );
         }
-        try {
-          const { schemaVersion: _, ...result } =
-            await broker.createTransaction(payload, initialInput);
-          return result;
-        } catch (error) {
-          // launchHost rejects capacity before it opens a host directory or
-          // launches a process. That typed receipt is positive never-created
-          // evidence, so the pending product binding must not survive as a pane.
-          if (
-            error instanceof SessiondWireError &&
-            error.code === "CAPACITY_EXCEEDED"
-          ) {
-            this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
-          }
-          throw error;
-        }
-      } finally {
-        broker.close();
       }
-    } finally {
-      release();
-    }
-  }
-
-  async discoverEngineBuildId(): Promise<string> {
-    const broker = await this.connectBroker();
-    try {
-      return this.requireEngineBuildId(broker);
-    } finally {
-      broker.close();
-    }
-  }
-
-  /** One connection, reused across renewals and across passes.
-   *
-   * A renewal pass opens one connection PER TERMINAL, and each connection pays
-   * a full authenticated HELLO — daemon.lock read, kernel peer inspection,
-   * handshake comparison. At 31 terminals that is 31 handshakes every 5 s, and
-   * during a spawn burst they contend with the launches themselves: the first
-   * pass of a 31-agent burst measured 10.9 s, longer than the 15 s lease it
-   * defends leaves for the hosts created at the START of the burst. The same
-   * pass costs ~950 ms once the burst is over.
-   *
-   * The wire already supports this — the broker serves frames in a loop and
-   * the client multiplexes replies by request id, so the concurrent renewals
-   * of one pass share this connection rather than racing for accepts. */
-  private renewalBroker: Promise<SessiondBrokerClient> | null = null;
-
-  private async renewalConnection(): Promise<SessiondBrokerClient> {
-    const existing = this.renewalBroker;
-    if (existing !== null) return await existing;
-    const opening = this.connectBroker().catch((error: unknown) => {
-      // A failed connect must not be cached, or every later renewal inherits
-      // one bad moment forever.
-      this.renewalBroker = null;
-      throw error;
-    });
-    this.renewalBroker = opening;
-    return await opening;
-  }
-
-  async renewVisibility(
-    locator: Parameters<SessionHost["renewVisibility"]>[0],
-    request: VisibilityRequest,
-  ): Promise<VisibilityLease> {
-    const payload = VisibilityRenewPayloadSchema.parse({
-      schemaVersion: 1,
-      locator,
-      ...request,
-    });
-    const broker = await this.renewalConnection();
-    try {
-      const { schemaVersion: _, ...lease } = await broker.request({
-        requestType: "VISIBILITY_RENEW",
-        responseType: "RENEWED",
-        payload,
-        responseSchema: RenewedPayloadSchema,
-      });
-      return lease;
     } catch (error) {
-      // A per-session refusal (NOT_FOUND for a host that already died) leaves
-      // the connection usable; a transport failure does not. Drop the cached
-      // connection only for the latter, so one dead session does not force 30
-      // reconnects behind it.
-      if (!(error instanceof SessiondWireError)) {
-        this.renewalBroker = null;
-        try {
-          broker.close();
-        } catch {}
-      }
+      // Nothing was created, so the pending binding must not survive as a pane.
+      this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
       throw error;
     }
   }
+
+  /**
+   * Each terminal's control stream, held open after registration.
+   *
+   * The broker closed this the moment it acknowledged, which is why a host had
+   * no way to reach Hive afterwards and readiness had to be polled out of it.
+   */
+  private readonly hostControl = new Map<string, Socket>();
+  private readonly hostProcess = new Map<
+    string,
+    ReturnType<typeof Bun.spawn>
+  >();
+  private readonly hostSecret = new Map<string, Uint8Array>();
+
+  /**
+   * The engine build the hosts will actually run.
+   *
+   * This used to be read from a broker's HELLO. It belongs to the linked VT
+   * engine, not to any running process, so it is asked of the binary that will
+   * be executed — which is the same answer without needing a broker to be up.
+   */
+  async discoverEngineBuildId(): Promise<string> {
+    const cached = this.engineBuildIdCache;
+    if (cached !== null) return cached;
+    const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
+    if (executablePath === null) {
+      throw new SessiondProtocolError("hive-sessiond binary was not found");
+    }
+    const child = Bun.spawn([executablePath, "engine-build-id"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const value = (await new Response(child.stdout).text()).trim();
+    if (value.length === 0) {
+      throw new SessiondProtocolError("hive-sessiond reported no engine build");
+    }
+    this.engineBuildIdCache = value;
+    return value;
+  }
+
+  private engineBuildIdCache: string | null = null;
 
   /**
    * INPUT_ORPHAN_DISCARD: ask the host for a typed, authorized resolution
@@ -924,26 +854,24 @@ export class SessiondHost implements LandedTerminalHost {
    * docs/incidents/2026-07-21-messaging-regression.md.
    */
   async discardInputOrphan(
-    locator: Parameters<SessionHost["renewVisibility"]>[0],
+    locator: SessionLocator,
     mode: OrphanDiscardMode,
   ): Promise<OrphanDiscardResult> {
-    const payload = OrphanDiscardPayloadSchema.parse({
-      schemaVersion: 1,
+    OrphanDiscardPayloadSchema.parse({ schemaVersion: 1, locator, mode });
+    const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
+    if (executablePath === null) {
+      throw new SessiondProtocolError("hive-sessiond binary was not found");
+    }
+    const answer = await discardHostInputOrphan({
+      hiveHome: this.hiveHome,
+      sessionId: locator.sessionId,
       locator,
       mode,
+      buildId: await executableBuildHash(executablePath),
     });
-    const broker = await this.connectBroker();
-    try {
-      const { schemaVersion: _, ...result } = await broker.request({
-        requestType: "INPUT_ORPHAN_DISCARD",
-        responseType: "ORPHAN_DISCARDED",
-        payload,
-        responseSchema: OrphanDiscardedPayloadSchema,
-      });
-      return result;
-    } finally {
-      broker.close();
-    }
+    const { schemaVersion: _, ...result } =
+      OrphanDiscardedPayloadSchema.parse(answer);
+    return result;
   }
 
   /**
@@ -1012,32 +940,23 @@ export class SessiondHost implements LandedTerminalHost {
     locator: Parameters<SessionHost["issueAttach"]>[0],
     request: AttachRequest,
   ): Promise<AttachGrant> {
-    const payload = AttachRequestPayloadSchema.parse({
-      schemaVersion: 1,
+    // Validate the request on the way in, exactly as the wire projection did.
+    AttachRequestPayloadSchema.parse({ schemaVersion: 1, locator, ...request });
+    const inspection = await this.inspect({
+      key: locator.sessionId,
+      incarnation: String(locator.generation),
+    }).catch(() => null);
+    return await issueHostAttachGrant({
+      hiveHome: this.hiveHome,
+      sessionId: locator.sessionId,
       locator,
-      ...request,
+      request,
+      engineBuildId: locator.engineBuildId,
+      checkpointSeq:
+        inspection?.checkpoints.newest?.throughEventSequence ?? "0",
+      outputSeq: inspection?.output.retained.endExclusive ?? "0",
+      now: () => new Date(),
     });
-    const broker = await this.connectBroker();
-    try {
-      const { schemaVersion: _, ...grant } = await broker.request({
-        requestType: "ATTACH_REQUEST",
-        responseType: "ATTACH_GRANT",
-        payload,
-        responseSchema: AttachGrantPayloadSchema,
-      });
-      return grant;
-    } finally {
-      broker.close();
-    }
-  }
-
-  private requireEngineBuildId(broker: SessiondBrokerClient): string {
-    if (broker.engineBuildId === null) {
-      throw new SessiondProtocolError(
-        "sessiond broker did not publish its engine build",
-      );
-    }
-    return broker.engineBuildId;
   }
 
   async claimInput(
@@ -1120,36 +1039,52 @@ export class SessiondHost implements LandedTerminalHost {
     }
   }
 
+  /**
+   * Asks the terminal directly.
+   *
+   * This used to travel daemon → broker → host, with the broker opening a fresh
+   * connection to `host.sock` per request and relaying the answer. The spawn
+   * path alone polls this dozens of times per agent, so at thirty-one wide
+   * every poll queued behind other launches on one accept loop. The answer was
+   * always the host's; now it is asked for directly.
+   */
   async inspect(session: SessionRef): Promise<SessionInspection> {
-    const payload = InspectPayloadSchema.parse({ schemaVersion: 1, session });
-    const broker = await this.connectBroker();
-    try {
-      const { schemaVersion: _, ...inspection } = await broker.request({
-        requestType: "INSPECT",
-        responseType: "INSPECTED",
-        payload,
-        responseSchema: InspectedPayloadSchema,
-      });
-      return inspection;
-    } finally {
-      broker.close();
-    }
+    const secret = await this.readControlSecret(this.hiveHome, session);
+    const body = await this.callHostDirect({
+      hiveHome: this.hiveHome,
+      sessionId: session.key,
+      session,
+      operation: "inspect",
+      payload: JSON.stringify({ schemaVersion: 1, includeCheckpoint: true }),
+      secret,
+      timeoutMilliseconds: TERMINAL_LIMITS.controlRpcTimeoutMilliseconds,
+    });
+    const { schemaVersion: _, ...inspection } = InspectedPayloadSchema.parse(
+      JSON.parse(body),
+    );
+    return inspection;
   }
 
+  /**
+   * Enumerates terminals from what the hosts themselves published.
+   *
+   * The broker answered this from a registry it built by launching; Hive
+   * launches directly now, so that registry cannot know these hosts. A host
+   * that cannot be reached is omitted rather than failing the whole
+   * enumeration — one dead terminal must not blind Hive to the rest.
+   */
   async list(): Promise<readonly SessionInspection[]> {
-    const payload = ListPayloadSchema.parse({ schemaVersion: 1 });
-    const broker = await this.connectBroker();
-    try {
-      const response = await broker.request({
-        requestType: "LIST",
-        responseType: "LISTED",
-        payload,
-        responseSchema: ListedPayloadSchema,
-      });
-      return response.entries;
-    } finally {
-      broker.close();
-    }
+    const sessions = await this.listSessions(this.hiveHome);
+    const inspected = await Promise.all(
+      sessions.map(async (session) => {
+        try {
+          return await this.inspect(session);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return inspected.filter((entry) => entry !== null);
   }
 
   async terminate(
@@ -1159,17 +1094,20 @@ export class SessiondHost implements LandedTerminalHost {
       schemaVersion: 1,
       ...request,
     });
-    const broker = await this.connectBroker();
-    try {
-      const { schemaVersion: _, ...result } = await broker.request({
-        requestType: "TERMINATE",
-        responseType: "TERMINATED",
-        payload,
-        responseSchema: TerminatedPayloadSchema,
-      });
-      return result;
-    } finally {
-      broker.close();
-    }
+    const secret = await this.readControlSecret(this.hiveHome, request.session);
+    const body = await this.callHostDirect({
+      hiveHome: this.hiveHome,
+      sessionId: request.session.key,
+      session: request.session,
+      operation: "terminate",
+      payload: JSON.stringify(payload),
+      secret,
+      idempotencyKey: request.idempotencyKey,
+      timeoutMilliseconds: TERMINAL_LIMITS.controlRpcTimeoutMilliseconds,
+    });
+    const { schemaVersion: _, ...result } = TerminatedPayloadSchema.parse(
+      JSON.parse(body),
+    );
+    return result;
   }
 }
