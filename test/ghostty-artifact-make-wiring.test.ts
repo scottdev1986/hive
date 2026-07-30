@@ -10,16 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Regression on the MAKE WIRING, not on the shell scripts it calls.
-//
-// 65855caa detected a stale same-key GhosttyKit artifact correctly but hung the
-// heal off the stamp rule as a .PHONY ORDER-ONLY prerequisite. GNU Make 3.81
-// (what macOS ships) stats a target once and decides then whether to remake it,
-// so deleting the stamp from a prerequisite's recipe changes nothing: the
-// rebuild recipe never runs, the staging rule never runs, make exits 0 — and
-// the stamp is gone. The poisoned artifact stayed staged, the Workspace app
-// kept an engine build id sessiond did not share, and every pane attach failed
-// the M3 engine fence as "renderer disconnected".
+// This tests the Make wiring rather than the shell scripts it calls. GNU Make
+// 3.81 stats a target once before deciding whether to remake it, so deleting a
+// stamp from a .PHONY order-only prerequisite cannot trigger that target's
+// rebuild recipe. A stale same-key artifact must be rebuilt and staged during
+// the same invocation.
 //
 // These tests drive the REAL Makefile with NATIVE_CACHE pointed at a seeded
 // cache, so a regression in the wiring bites here even if every script below
@@ -125,7 +120,7 @@ function planBuild(cache: string, staged: string): string {
 }
 
 test("a stale artifact wearing a current lock stamp is rebuilt and restaged", () => {
-  // The incident's own drift: same upstream commit, regenerated patch series.
+  // The cache key stays the same while the locked patch series differs.
   const { cache, stamp, staged } = seedCache({
     ...lockedIdentity(),
     patchedTree: "d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb",
@@ -137,7 +132,6 @@ test("a stale artifact wearing a current lock stamp is rebuilt and restaged", ()
   const plan = planBuild(cache, staged);
   expect(plan).toContain(REBUILD);
   expect(plan).toContain(STAGE);
-  // The lying stamp is gone, so a later build cannot trust it either.
   expect(existsSync(stamp)).toBe(false);
 });
 

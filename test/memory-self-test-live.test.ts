@@ -1,4 +1,4 @@
-// Defect D3: the live tier of `hive memory self-test` must prove the
+// The live tier of `hive memory self-test` must prove the
 // DEPLOYED surface — a running daemon answered over MCP through the same
 // daemon.port + operator-credential discovery every CLI command uses. These
 // tests stand up a real HiveDaemon on an ephemeral port against a scratch

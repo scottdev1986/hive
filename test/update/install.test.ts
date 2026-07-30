@@ -227,11 +227,9 @@ describe("staging a release", () => {
 });
 
 /**
- * The bypass. `runUpdate` used to ask `isStaged()` and skip staging entirely when
- * the answer was yes, which skipped the signature, the digest, and the probe all
- * at once — an interrupted earlier run was enough to walk a binary past an
- * otherwise fail-closed path. `ensureStaged` is the single door both cases go
- * through, and "it is already on disk" is not evidence about what is on disk.
+ * Existing staged bytes must pass the same signature, digest, and probe checks
+ * as newly downloaded bytes. `ensureStaged` is the single door for both cases;
+ * presence on disk is not evidence that the contents are safe to activate.
  */
 describe("ensureStaged: an already-staged version is re-proved, never assumed", () => {
   test("refuses an unsigned manifest before using staged bytes", async () => {

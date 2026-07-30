@@ -14,13 +14,9 @@ import {
  * same file is a document the daemon may legitimately EMIT, and — the part that
  * matters — that it still exercises every subject KIND the schema can produce.
  *
- * WHY: this is the exact failure class that shipped a Settings-killing decode
- * break here once already. Two suites stayed green while each side pinned its
- * OWN hand-written fixture, so a role/mode one side added went untested on the
- * other until it reached a user. The one shared fixture is the handshake: add a
- * role to `TOKEN_USAGE_ROLES` and THIS test fails until the fixture carries it,
- * at which point the Swift decoder is forced to face it too. Neither side may
- * change the kind axis alone.
+ * The shared fixture is the handshake between decoders. Adding a role to
+ * `TOKEN_USAGE_ROLES` fails this test until the fixture carries it, so neither
+ * side can change the kind axis alone.
  */
 describe("token usage wire contract (shared with the Swift Usage decoder)", () => {
   const fixturePath = join(
@@ -47,17 +43,12 @@ describe("token usage wire contract (shared with the Swift Usage decoder)", () =
       ),
     ].sort();
 
-    // A role the fixture never carries is a role the Swift decoder is never
-    // tested against — exactly how a new wire kind ships broken. The guard is
-    // what keeps the next role added to the axis honest.
     expect(fixtureRoles).toEqual(schemaRoles);
   });
 
   test("every session carries the three breakdown buckets", () => {
     const snapshot = TokenUsageSnapshotSchema.parse(fixture);
     for (const session of snapshot.sessions) {
-      // strictObject parsing already requires these keys; asserting them here
-      // documents that they are part of the contract, not optional daemon garnish.
       expect(session.fleet).toBeDefined();
       expect(session.hiveControl).toBeDefined();
       expect(session.workerSessions).toBeDefined();

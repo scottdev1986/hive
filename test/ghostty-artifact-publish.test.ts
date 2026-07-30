@@ -9,18 +9,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Regression: the GhosttyKit shared-cache key is ghostty-<commit>-zig-<ver>,
-// which omits the patch series and the other locked inputs. The publish step
-// in build-ghosttykit.sh kept any same-key incumbent that merely HAD an
-// artifact-manifest.json — so when 689bc0a0 regenerated the patch series
-// (same upstream commit, same zig), the freshly built engine was discarded,
-// the stale incumbent was stamped as current, and the installed Workspace app
-// embedded an engine build id that no longer matched sessiond's. Every pane
-// attach then failed the M3 engine fence and surfaced as
-// "renderer disconnected" while status plumbing stayed green.
-//
-// The fixtures below use the incident's real values: the incumbent records
-// the pre-689bc0a0 patch series, the lock demands the regenerated one.
+// The GhosttyKit shared-cache key omits the patch series and other locked
+// inputs. Publishing must compare the full manifest before keeping a same-key
+// incumbent, or a stale engine can replace a freshly built one. The fixtures
+// use one patch series for the incumbent and another for the current lock.
 
 const root = join(import.meta.dir, "..");
 const publish = join(root, "scripts", "publish-ghostty-artifact.sh");
@@ -113,16 +105,13 @@ test("publish replaces a same-key incumbent built from a different patch series 
   writeArtifact(finalOut, oldIdentity, "stale-engine");
   writeArtifact(out, newIdentity, "fresh-engine");
   writeLock(lock, newIdentity);
-  // Positive control on the fixtures: the incumbent really is a different
-  // patch series than the lock demands.
   expect(manifestPatchSha(finalOut)).toBe(OLD_PATCH_SHA);
   expect(manifestPatchSha(out)).toBe(NEW_PATCH_SHA);
 
   const result = run([publish, out, finalOut, lock]);
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
-  // The fresh build must win: keeping the stale incumbent here is the exact
-  // failure that shipped a Workspace renderer refusing every attach.
+  // The fresh build must win when the full locked identity differs.
   expect(manifestPatchSha(finalOut)).toBe(NEW_PATCH_SHA);
   expect(readFileSync(join(finalOut, "engine-marker.txt"), "utf8")).toBe(
     "fresh-engine",
@@ -142,7 +131,6 @@ test("publish keeps a same-key incumbent built from the same locked inputs (#46 
   const result = run([publish, out, finalOut, lock]);
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
-  // The concurrent consumer's copy survives untouched; the duplicate is gone.
   expect(readFileSync(join(finalOut, "engine-marker.txt"), "utf8")).toBe(
     "incumbent-engine",
   );
@@ -169,12 +157,11 @@ test("lock check accepts a matching artifact and refuses every drifted field", (
   const lock = join(base, "toolchain-lock.json");
   writeLock(lock, newIdentity);
 
-  // Positive control: an artifact recording the lock's identity passes.
   const matching = join(base, "matching");
   writeArtifact(matching, newIdentity, "engine");
   expect(run([lockCheck, matching, lock]).exitCode).toBe(0);
 
-  // Each single-field drift is refused — including the incident's pair.
+  // Each field contributes independently to the locked identity.
   for (const [field, value] of [
     ["commit", "0000000000000000000000000000000000000000"],
     ["patchedTree", OLD_TREE],

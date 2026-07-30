@@ -1,6 +1,6 @@
 import { required } from "./required";
-// The HM-5 honest gate evidence (board #122, plan D4/A7): the REAL local
-// embedding model (fastembed bge-small-en-v1.5, no mocks) recalls a canary
+// The real local embedding model (fastembed bge-small-en-v1.5, no mocks)
+// must recall a canary
 // article from a PARAPHRASE query that the porter-tokenizer FTS cannot
 // match. This is the property the whole semantic leg exists for — if it
 // fails, the leg is decorative and the card's premise is wrong.
@@ -186,8 +186,8 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
     });
   }, 120_000);
 
-  // HM-5 final package (board #122): the golden-canary self-test's semantic
-  // assertions, proven against the REAL model — the bun-test suite only ever
+  // The golden-canary self-test's semantic assertions run against the real
+  // model; the bun-test suite only ever
   // sees the SKIP/mock path, so this is where semantic-recall and
   // consolidation-dry-run earn their PASS lines. The self-test plants and
   // cleans up its own throwaway fixture; it just reuses this suite's loaded

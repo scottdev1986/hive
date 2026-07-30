@@ -124,8 +124,7 @@ function shipped(text: string): boolean {
  * `—`). Either kind turns the file's bytes into different bytes, so a naive
  * search for a file's longest line finds nothing *whether or not that file
  * leaked* — which is a guard that cannot fail, and a guard that cannot fail is
- * worthless. This was not hypothetical: the first version of this test could not
- * see a Hive memory that was genuinely embedded in the binary.
+ * worthless. The fingerprint must detect Hive memory embedded in the binary.
  *
  * So fingerprint with the longest run of plain printable ASCII that no escape
  * rule touches. Those bytes survive bundling intact, and are found if — and only
@@ -181,10 +180,8 @@ test("the compiled binary carries every shipped skill", () => {
 });
 
 /**
- * No exemptions, deliberately. An earlier version of this test excused any dev
- * text that also appeared in a shipped skill — and that rule turned out to
- * swallow a real leak, because text pasted into a shipped skill exempts itself.
- * An exemption you can grant yourself by leaking is not an exemption. The
+ * No exemptions, deliberately. Excusing dev text that also appears in a
+ * shipped skill lets copied text exempt itself from the guard. The
  * shipped guidance moved *out* of `.hive/skills/` rather than being copied, so
  * there is no dev file whose words are legitimately in the binary, and nothing
  * here needs excusing.

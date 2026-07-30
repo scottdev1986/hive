@@ -1,18 +1,13 @@
-// HiveMemory HM-4 (board #121): the vendor memory conformance matrix, static
-// half. Every wired vendor must deliver the one `hive` MCP server (loopback
+// Every wired vendor must deliver the one `hive` MCP server (loopback
 // HTTP + per-agent Bearer capability auth) through its own config channel,
 // because the whole memory surface — search/read/write, the episodic tools,
 // pitfall promotion — rides that single entry. A vendor row drives the REAL
 // config writer into a fixture worktree and asserts the produced config, the
 // auth delivery channel, that no capability token ever reaches an argv, and
 // the spawn-time prompt's memory surface.
-//
-// Kimi Code and opencode join this matrix when their adapters land (issue
-// #63): adding a vendor is adding one row to VENDORS.
-//
 // Live-agent recall proofs stay environment-gated
 // (HIVE_LIVE_MEMORY_CONFORMANCE=1), the repo's existing live e2e pattern;
-// this suite is the static half of the HM-4 matrix.
+// this suite is the static half of the vendor matrix.
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -223,7 +218,7 @@ describe("vendor memory conformance (HM-4 static matrix)", () => {
   });
 });
 
-// The live half of the HM-4 matrix (real CLIs, real spawns, in-transcript
+// The live half of the vendor matrix (real CLIs, real spawns, in-transcript
 // recall proofs) runs only on explicit request — the repo's live e2e
 // pattern. Skipped by default.
 const live = process.env.HIVE_LIVE_MEMORY_CONFORMANCE === "1";

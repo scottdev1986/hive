@@ -17,15 +17,9 @@ import {
  * and — the part that matters — that it still covers every enum value the
  * schema can produce.
  *
- * WHY: capability-first routing added the effort mode "never-configured". The
- * Swift decoder had never heard of it, threw on the whole document, and the
- * Settings screen fell back to an in-memory store — every setting silently
- * stopped persisting, with a green test suite on both sides, because each side
- * only ever tested its own hand-written fixture.
- *
- * So: add a mode to the schema and THIS test fails until you add it to the
- * shared fixture, at which point the Swift decoder is forced to face it too.
- * The fixture is the handshake; neither side may change the schema alone.
+ * Every mode must appear in the shared fixture so both decoders exercise the
+ * same vocabulary. Adding a mode fails this test until the fixture carries it;
+ * neither side may change the schema alone.
  */
 describe("routing policy wire contract (shared with the Swift Settings decoder)", () => {
   const fixturePath = join(
@@ -55,23 +49,13 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
       ]),
     ].sort();
 
-    // An effort mode the fixture never carries is a mode the Swift decoder is
-    // never tested against — exactly how "never-configured" shipped broken.
     expect(fixtureModes).toEqual(schemaModes);
   });
 
   /**
-   * THE CATEGORY HALF OF THE HANDSHAKE, and the reason it exists: the effort
-   * modes got this guard after they shipped broken, and CATEGORIES then drifted
-   * the same way, unguarded. `standard_coding` lived in this schema for months
-   * while the Swift enum had never heard of it — so the Settings screen, which
-   * builds its cards from TaskCategory.allCases, could not show or edit that
-   * chain, while the daemon happily routed real work through it. Two green
-   * suites, one broken wire, exactly as before.
-   *
-   * So: add a category to the schema and THIS test fails until the fixture
-   * carries a chain for it, at which point the Swift parity test is forced to
-   * name it too.
+   * Every category must appear in the shared fixture so the Settings screen can
+   * show and edit every chain the daemon can route through. Adding a category
+   * fails this test until both decoders name it.
    */
   test("the fixture exercises EVERY routing category the daemon can emit", () => {
     const schemaCategories = [...ROUTING_CATEGORIES].sort();
@@ -79,18 +63,13 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
     const policy = RoutingPolicySchema.parse(fixture);
     const fixtureCategories = Object.keys(policy.chains).sort();
 
-    // A category the fixture never carries is a category the Swift decoder is
-    // never tested against — and a chain the user may never get to configure.
     expect(fixtureCategories).toEqual(schemaCategories);
   });
 
   /**
-   * Selection is ONE mode for the whole document since per-category overrides
-   * were removed, so no single fixture can exercise all three the way the
-   * effort and category guards above do. The vocabulary is pinned literally
-   * instead: add a mode to the schema and this fails, which is the prompt to
-   * add it to the Swift `SelectionMode` enum — the decoder that would
-   * otherwise throw on the whole document, exactly as "never-configured" did.
+   * Selection is one mode for the whole document, so a single fixture cannot
+   * exercise every value. Pinning the vocabulary here forces any new mode into
+   * the Swift `SelectionMode` enum before either decoder accepts it alone.
    */
   test("the selection vocabulary is pinned, so a new mode must reach the Swift decoder", () => {
     expect([...SelectionModeSchema.options].sort()).toEqual([
