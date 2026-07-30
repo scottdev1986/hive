@@ -22,14 +22,14 @@ let package = Package(
     dependencies: [],
     targets: [
         .target(name: "WorkspaceCore"),
-        // WP5 L0: GhosttyKit binary (offline-built) + authoritative C ABI header target.
+        // Offline-built GhosttyKit binary plus its authoritative C ABI header target.
         .binaryTarget(
             name: "GhosttyKit",
             path: ghosttyKitPath
         ),
         // C ABI surface for the seven _v1 symbols. `include/hive_ghostty_bridge.h` is a
         // symlink to repo-root `native/include/hive_ghostty_bridge.h` (one file pins
-        // both halves — same pattern as Fixtures sharing the daemon wire doc).
+        // both halves).
         // HeaderParityTests fails closed if that link ever becomes a drifting fork.
         .target(
             name: "HiveGhosttyC",
@@ -69,9 +69,8 @@ let package = Package(
         .testTarget(
             name: "WorkspaceCoreTests",
             dependencies: ["WorkspaceCore"],
-            // The daemon's real wire document, shared with the daemon-side
-            // contract test (test/schemas/routing-policy.wire-contract.test.ts)
-            // so one file pins both halves of the schema.
+            // The daemon and Workspace tests share these fixtures so one file
+            // pins both halves of the wire schema.
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
@@ -86,7 +85,7 @@ let package = Package(
             name: "GhosttyManualIsolationProbe",
             // Isolation probe talks only the C bridge + AppKit host view; it must
             // not pull HiveTerminalKit (and the Gate-10 snapshot symbol) so a
-            // six-or-seven-symbol kit can both qualify Gate 1.
+            // a kit exposing either bridge generation can qualify.
             dependencies: ["HiveGhosttyC"],
             path: "Tests/GhosttyManualIsolationProbe",
             linkerSettings: [
@@ -125,8 +124,8 @@ let package = Package(
             dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
             path: "Tests/GhosttyGate10Probe"
         ),
-        // B2.0 boundary probe: deliberately cannot import HiveGhosttyC or
-        // GhosttyKit. It drives only Workspace-visible Hive value types.
+        // This boundary probe deliberately cannot import HiveGhosttyC or
+        // GhosttyKit; it drives only Workspace-visible Hive value types.
         .executableTarget(
             name: "HiveTerminalB20Probe",
             dependencies: ["HiveTerminalKit"],

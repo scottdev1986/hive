@@ -36,7 +36,7 @@ concurrency:
 jobs:
   build-and-publish:
     # macOS arm64: the arm64 slice builds natively and the x64 slice under
-    # Rosetta 2 (measured working — graphify-bundling.md). PyInstaller cannot
+    # Rosetta 2. PyInstaller cannot
     # cross-compile, so unlike the Bun slices both builds run through a real
     # interpreter of the target arch.
     runs-on: macos-15

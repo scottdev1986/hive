@@ -90,7 +90,7 @@ jobs:
       - name: Test
         run: bun test
 
-      # Defect D4: the memory self-test's semantic assertions SKIP unless a
+      # The memory self-test's semantic assertions SKIP unless a
       # real embedder is present, so the default probe above is no gate on the
       # semantic leg. This step is the gate: --strict turns any SKIP into a
       # FAIL, and HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 loads the real local
@@ -253,7 +253,8 @@ jobs:
       # so the tag is minted only once there are artifacts to attach to it.
       #
       # BUN_NO_CODESIGN_MACHO_BINARY is set only when signing: it makes the
-      # compiled binary re-signable (oven-sh/bun#29120). The signing env is
+      # compiled binary re-signable because Bun's ad-hoc signature leaves too
+      # little space for the release signature. The signing env is
       # harmless when signing is off — a skipped keychain step yields an empty
       # identity, and sign.ts takes the unsigned branch.
       # --public-key is passed only when the offline key exists, which is what
