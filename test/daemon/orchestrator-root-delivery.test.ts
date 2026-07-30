@@ -5,6 +5,8 @@ import { SessiondOrchestratorRootDelivery } from "../../src/daemon/orchestrator-
 import type { OrchestratorSessiondSnapshot } from "../../src/daemon/orchestrator-sessiond";
 import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-contract";
 import {
+  type AgentMessage,
+  AgentMessageSchema,
   type MessageAttempt,
   ORCHESTRATOR_NAME,
   type ProviderRun,
@@ -78,16 +80,24 @@ function attemptDb(active: ProviderRun | null = providerRun) {
   };
 }
 
-/** A MessageDelivery wired to a live root host that accepts every write. */
+/** A MessageDelivery wired to a live root host that accepts every write.
+ * `midTurn` drives the pane's output cursor, which is what the root deliverer
+ * actually samples: a moving cursor is a pane painting a turn. */
 function queenDeliveryHarness(
   db: HiveDatabase,
+  midTurn: () => boolean = () => false,
   composerActive: (recipient: string) => boolean = () => false,
 ) {
   const writes: Uint8Array[] = [];
+  let painted = 0;
   const rootDelivery = new SessiondOrchestratorRootDelivery({
     db,
     current: () => sessiondRoot,
     ready: () => true,
+    observeOutputSeq: async () => {
+      if (midTurn()) painted += 1;
+      return String(painted);
+    },
     input: {
       async writeAutomated(input) {
         writes.push(input.bytes);
@@ -110,6 +120,23 @@ function queenDeliveryHarness(
     composerActive,
   );
   return { writes, delivery };
+}
+
+/** A queen message already older than the delivery cap when the wake runs. */
+function insertAgedQueenMessage(db: HiveDatabase, ageMs: number): AgentMessage {
+  return db.insertMessage(
+    AgentMessageSchema.parse({
+      id: crypto.randomUUID(),
+      from: "maya",
+      to: ORCHESTRATOR_NAME,
+      body: "david closed.",
+      createdAt: new Date(Date.now() - ageMs).toISOString(),
+      priority: "normal",
+      state: "queued",
+      sequence: db.nextMessageSequence(ORCHESTRATOR_NAME),
+      idempotencyKey: null,
+    }),
+  );
 }
 
 describe("SessiondOrchestratorRootDelivery", () => {
@@ -245,15 +272,28 @@ describe("SessiondOrchestratorRootDelivery", () => {
     });
   });
 
-  test("a normal notice never submits into an open root turn", async () => {
+  test("a quiet root receives its notice on the spot", async () => {
     const db = new HiveDatabase(":memory:");
     db.insertProviderRun(providerRun);
-    db.insertEvent({
-      kind: "turn-start",
-      agentName: ORCHESTRATOR_NAME,
-      timestamp: "2026-07-30T21:48:00.000Z",
-    });
-    const { writes, delivery } = queenDeliveryHarness(db);
+    const { writes, delivery } = queenDeliveryHarness(db, () => false);
+
+    const message = await delivery.send(
+      "maya",
+      ORCHESTRATOR_NAME,
+      "david closed.",
+    );
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toBeUndefined();
+    db.close();
+  });
+
+  test("a notice against a mid-turn root holds, visibly, and delivers when the pane goes quiet", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    let painting = true;
+    const { writes, delivery } = queenDeliveryHarness(db, () => painting);
 
     const message = await delivery.send(
       "maya",
@@ -262,64 +302,16 @@ describe("SessiondOrchestratorRootDelivery", () => {
     );
 
     // The payload is a composer submission (bracketed paste + Enter). Landing
-    // it mid-turn makes the provider cancel the turn's pending tool calls as
-    // a human rejection, so an open turn must hold the notice, visibly.
+    // it mid-turn makes the provider cancel the turn's pending tool calls as a
+    // human rejection, so a pane measured painting holds the notice, visibly.
     expect(writes).toHaveLength(0);
     expect(db.getMessage(message.id)?.state).toBe("queued");
     expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toMatchObject({
       messageId: message.id,
-      diagnostic: "root provider has an open turn; waiting for turn-end",
-    });
-    db.close();
-  });
-
-  test("the held notice delivers and reaches notified at turn-end", async () => {
-    const db = new HiveDatabase(":memory:");
-    db.insertProviderRun(providerRun);
-    db.insertEvent({
-      kind: "turn-start",
-      agentName: ORCHESTRATOR_NAME,
-      timestamp: "2026-07-30T21:48:00.000Z",
-    });
-    const { writes, delivery } = queenDeliveryHarness(db);
-    const message = await delivery.send(
-      "maya",
-      ORCHESTRATOR_NAME,
-      "david closed.",
-    );
-    expect(writes).toHaveLength(0);
-
-    db.insertEvent({
-      kind: "turn-end",
-      agentName: ORCHESTRATOR_NAME,
-      timestamp: "2026-07-30T21:49:00.000Z",
-    });
-    // The trigger process-event fires on the root's turn-end hook.
-    await delivery.flushQueued(ORCHESTRATOR_NAME);
-
-    expect(writes).toHaveLength(1);
-    expect(db.getMessage(message.id)?.state).toBe("notified");
-    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toBeUndefined();
-    db.close();
-  });
-
-  test("a held root composer lease records its hold and delivers on release", async () => {
-    const db = new HiveDatabase(":memory:");
-    db.insertProviderRun(providerRun);
-    let leased = true;
-    const { writes, delivery } = queenDeliveryHarness(db, () => leased);
-
-    const message = await delivery.send("maya", ORCHESTRATOR_NAME, "Report.");
-
-    expect(writes).toHaveLength(0);
-    expect(db.getMessage(message.id)?.state).toBe("queued");
-    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toMatchObject({
-      messageId: message.id,
-      diagnostic: "root composer lease held; waiting for release",
+      diagnostic: "root is mid-turn; retrying",
     });
 
-    leased = false;
-    // The maintenance sweep retries queued queen mail after the lease lifts.
+    painting = false;
     await delivery.wakeOrchestrator();
 
     expect(writes).toHaveLength(1);
@@ -328,15 +320,64 @@ describe("SessiondOrchestratorRootDelivery", () => {
     db.close();
   });
 
-  test("urgent queen mail still delivers during an open turn", async () => {
+  test("queen mail lands at the cap even when the root never goes quiet", async () => {
     const db = new HiveDatabase(":memory:");
     db.insertProviderRun(providerRun);
+    // A turn that opened and never closed: the remembered signal that held
+    // queen mail forever while the queen sat idle.
     db.insertEvent({
       kind: "turn-start",
       agentName: ORCHESTRATOR_NAME,
       timestamp: "2026-07-30T21:48:00.000Z",
     });
-    const { writes, delivery } = queenDeliveryHarness(db);
+    const { writes, delivery } = queenDeliveryHarness(db, () => true);
+    const message = insertAgedQueenMessage(db, 15_001);
+
+    await delivery.wakeOrchestrator();
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    db.close();
+  });
+
+  test("a held notice reaches the cap on its own retry, with no further wake", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    const { writes, delivery } = queenDeliveryHarness(db, () => true);
+    const message = insertAgedQueenMessage(db, 14_500);
+
+    await delivery.wakeOrchestrator();
+    expect(writes).toHaveLength(0);
+
+    // Nothing else calls back within the cap: the daemon sweep is slower than
+    // it is. The delivery below is the held notice's own retry landing.
+    await Bun.sleep(1_500);
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    db.close();
+  });
+
+  test("a held root composer lease no longer holds queen mail", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    const { writes, delivery } = queenDeliveryHarness(
+      db,
+      () => false,
+      () => true,
+    );
+
+    const message = await delivery.send("maya", ORCHESTRATOR_NAME, "Report.");
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    db.close();
+  });
+
+  test("urgent queen mail still delivers mid-turn", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    const { writes, delivery } = queenDeliveryHarness(db, () => true);
 
     const message = await delivery.send("maya", ORCHESTRATOR_NAME, "Stop.", {
       priority: "urgent",

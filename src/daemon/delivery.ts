@@ -11,7 +11,6 @@ import {
 } from "../schemas";
 import { isComposerLeased } from "./composer-lease";
 import type { HiveDatabase } from "./db";
-import { deriveOrchestratorStatus } from "./orchestrator-status";
 import type { PaneProcessState } from "./resources";
 import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
 import {
@@ -19,6 +18,15 @@ import {
   type SessiondAgentInput,
   type SessiondInjectResult,
 } from "./session-host/sessiond-agent-input";
+
+/** How long a queued normal queen notice may wait for a quiet root, measured
+ * from when it was enqueued. Past it the notice goes in mid-turn: the provider
+ * cancels that turn's pending tool calls, which is recoverable, and mail that
+ * never arrives is not. */
+const ROOT_HOLD_CAP_MS = 15_000;
+
+/** How soon a held queen notice re-observes the root. */
+const ROOT_RETRY_MS = 3_000;
 
 function idempotencySenders(from: string): readonly string[] {
   return isOrchestratorName(from) ? orchestratorRecipientNames() : [from];
@@ -50,6 +58,10 @@ export type RootDeliveryOutcome =
 
 export interface RootProtocolDeliverer {
   isLive(): boolean;
+  /** True only when the root pane is measured, right now, to be painting a
+   * turn. A root that cannot be observed is not mid-turn — an unmeasured
+   * answer must never become a hold. */
+  isMidTurn?(): Promise<boolean>;
   deliverMessage(
     content: string,
     meta: Record<string, string>,
@@ -126,6 +138,8 @@ export class MessageDelivery {
     string,
     { messageId: string; reason: string }
   >();
+
+  private rootRetry: ReturnType<typeof setTimeout> | null = null;
 
   async send(
     from: string,
@@ -264,42 +278,31 @@ export class MessageDelivery {
   }
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
-    if (this.rootComposerActive()) {
-      this.recordRootComposerHold();
-      return [];
-    }
     if (this.rootProtocol?.isLive() !== true) return [];
     return this.withSessionLock("root", async () => {
-      if (this.rootComposerActive()) {
-        this.recordRootComposerHold();
-        return [];
-      }
-      if (this.rootProtocol?.isLive() !== true) return [];
+      const rootProtocol = this.rootProtocol;
+      if (rootProtocol?.isLive() !== true) return [];
       const messages = await this.orchestratorInbox();
       const queued = messages.filter((message) => message.state === "queued");
-      if (queued.length === 0) return [];
       const first = queued[0];
       if (first === undefined) return [];
       const urgent = queued.some((message) => message.priority === "urgent");
-      const rootProtocol = this.rootProtocol;
-      if (rootProtocol === undefined) return [];
+      const heldFor = Date.now() - Date.parse(first.createdAt);
       if (
         !urgent &&
-        deriveOrchestratorStatus(
-          this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
-        ) === "working"
+        heldFor < ROOT_HOLD_CAP_MS &&
+        (await rootProtocol.isMidTurn?.()) === true
       ) {
         // The root write is a composer submission (bracketed paste + Enter),
         // and a submission into an open turn is an interrupt: the provider
-        // cancels the turn's still-pending tool calls as a human rejection
-        // while the daemon-side work runs on. Hold normal mail on a MEASURED
-        // open turn only — newest signal is turn-start — so an absent or
-        // contradictory turn record never silences the queen. The root's
-        // turn-end hook flushes this queue at the genuine safe point.
+        // cancels that turn's still-pending tool calls as a human rejection
+        // while the daemon-side work runs on. Worth dodging for a few seconds,
+        // never worth losing the message over.
         this.declines.set(ORCHESTRATOR_NAME, {
           messageId: first.id,
-          reason: "root provider has an open turn; waiting for turn-end",
+          reason: "root is mid-turn; retrying",
         });
+        this.scheduleRootRetry(ROOT_HOLD_CAP_MS - heldFor);
         return [];
       }
       const outcome = await rootProtocol.deliverMessage(
@@ -536,25 +539,20 @@ export class MessageDelivery {
       : `📨 Hive: ${messages.length} unread messages. Check hive_inbox.`;
   }
 
-  private rootComposerActive(): boolean {
-    return orchestratorRecipientNames().some((name) =>
-      this.composerActive(name),
+  /** The hold above ends on wall-clock, so something has to come back for it;
+   * the daemon's own sweep is far slower than the cap. One pending retry
+   * serves every queued notice, since the oldest one sets the deadline. A
+   * failed retry loses nothing: the row stays queued with its reason. */
+  private scheduleRootRetry(untilCapMs: number): void {
+    if (this.rootRetry !== null) return;
+    this.rootRetry = setTimeout(
+      () => {
+        this.rootRetry = null;
+        void this.wakeOrchestrator().catch(() => {});
+      },
+      Math.min(ROOT_RETRY_MS, untilCapMs),
     );
-  }
-
-  /** A held composer lease is a delivery veto like any other, so it must
-   * leave the reason blockedDeliveries reads — an unrecorded hold reads as
-   * "no mail" from the outside. Record-only: the lease itself still governs,
-   * and a successful delivery after release clears this entry. */
-  private recordRootComposerHold(): void {
-    const first = this.db
-      .getUnacknowledgedMessages(ORCHESTRATOR_NAME)
-      .find((message) => message.state === "queued");
-    if (first === undefined) return;
-    this.declines.set(ORCHESTRATOR_NAME, {
-      messageId: first.id,
-      reason: "root composer lease held; waiting for release",
-    });
+    this.rootRetry.unref?.();
   }
 
   private async providerIsRunning(agent: AgentRecord): Promise<boolean> {

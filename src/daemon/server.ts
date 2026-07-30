@@ -746,6 +746,8 @@ export class HiveDaemon {
           db: this.db,
           current: () => this.orchestratorSessiond?.snapshot() ?? null,
           ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
+          observeOutputSeq: async (locator) =>
+            (await this.terminalHost.inspect(locator)).outputSeq,
           input: {
             writeAutomated: async (input) =>
               this.sessiondInput.writeAutomated === undefined

@@ -13,7 +13,16 @@ export interface SessiondOrchestratorRootDeliveryDependencies {
   >;
   current: () => OrchestratorSessiondSnapshot | null;
   ready: () => boolean;
+  /** The pane's output cursor read from the host now. Absent on a host that
+   * cannot be observed at all. */
+  observeOutputSeq?: (
+    locator: OrchestratorSessiondSnapshot["locator"],
+  ) => Promise<string>;
 }
+
+/** How long the pane is watched for a repaint. Long enough to catch a
+ * provider's progress line, short enough to sit inside one delivery. */
+const QUIET_SAMPLE_MS = 400;
 
 /** The host receipt returned by INPUT_SUBMIT is the only success boundary.
  * Preparing a locator, acquiring a claim, or enqueueing a message is never
@@ -32,6 +41,23 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
       this.dependencies.current()?.state === "running" &&
       this.dependencies.ready()
     );
+  }
+
+  /** Two live samples of the pane's output cursor. A provider working a turn
+   * repaints its progress line the whole time; one parked at its prompt paints
+   * nothing. Only a cursor seen to move is an open turn — a host that will not
+   * answer says nothing about the turn, and silence is never a hold. */
+  async isMidTurn(): Promise<boolean> {
+    const observe = this.dependencies.observeOutputSeq;
+    const locator = this.dependencies.current()?.locator;
+    if (observe === undefined || locator === undefined) return false;
+    try {
+      const before = await observe(locator);
+      await Bun.sleep(QUIET_SAMPLE_MS);
+      return (await observe(locator)) !== before;
+    } catch {
+      return false;
+    }
   }
 
   async deliverMessage(
