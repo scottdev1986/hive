@@ -55,8 +55,6 @@ export const HV1_CAPABILITY_WIRE_SCHEMAS = {
  * coding tier, how good a model is, or what a turn will cost. That is the
  * manifest's job, and keeping the two apart is the point of this file.
  *
- * Three rules from the vendor-surfaces research govern every field below.
- *
  * **Presence is positive evidence; absence is unknown.** Claude's menu omits
  * aliases that launch fine (`best`, bare `claude-opus-4-8`), so no absence
  * anywhere is proof of impossibility. A field the provider did not send is
@@ -193,8 +191,7 @@ export const CapabilitySurfaceSchema = z.enum([
    */
   "codex.account/rateLimits/read",
   /**
-   * `GET https://api.kimi.com/coding/v1/usages` — the endpoint the kimi
-   * CLI's own /usage panel calls: the account's weekly quota and rolling
+   * The endpoint used by Kimi's own usage panel: the account's weekly quota and rolling
    * 300-minute rate window, read with the CLI's OAuth credential.
    */
   "kimi.usages",
@@ -317,9 +314,8 @@ export const CapabilityRecordSchema = z.strictObject({
 
   // --- Discovered facts, each stamped with its own surface and time. ---
   /**
-   * The vendor's own display name ("Fable"). Phase 1 left this out and said to
-   * add it when something needed it; the billing surface is that something. It
-   * is the ONLY key `get_usage` gives a per-model plan pool under
+   * The vendor's own display name ("Fable"). It is the only key `get_usage`
+   * gives a per-model plan pool under
    * (`model_scoped[].display_name`), so without it "would this model spend real
    * money" cannot be joined to the model at all. Null when the menu omits it.
    */
@@ -432,12 +428,6 @@ export const EffectiveDefaultSchema = z.strictObject({
 });
 export type EffectiveDefault = z.infer<typeof EffectiveDefaultSchema>;
 
-// `capabilityFreshness` lived here: a fresh/stale verdict for a capability
-// record, written for the derivation engine that chose models from the catalog.
-// That engine was deleted in the 2026-07-13 cutover (the user is the router —
-// see routing-derivation.ts), taking every caller with it, and the helper sat
-// dead behind a passing test for months. Validation deliberately does NOT gate
-// on staleness: a stale record is still the best evidence Hive has about what a
-// model accepts, and refusing a launch over an old catalog turns a discovery
-// hiccup into an outage. Naming staleness in a validation warning remains
-// unimplemented; restore a freshness helper only when something surfaces it.
+// Validation does not gate on freshness: a stale record is still the best
+// evidence Hive has about what a model accepts. Refusing a launch over an old
+// catalog turns a discovery hiccup into an outage.

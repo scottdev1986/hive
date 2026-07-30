@@ -7,15 +7,9 @@ import {
 } from "./capability";
 
 /**
- * What survives of the derivation era: vendor identity as a measured fact.
- *
- * The derivation engine itself — the four tiers, the hardcoded tier→vendor
- * preference, the tier→effort ladder, and the snapshot replay — died in the
- * 2026-07-13 cutover (user directive: the user is the router). Routes now
- * come from the routing policy store's category chains, walked link by link
- * through the launch gate. What this file keeps is the one thing that was
- * never a routing opinion: reading which vendor publishes a model, from the
- * vendors' own catalogs.
+ * Reads vendor identity as a measured fact. Routes come from the routing
+ * policy store's category chains and pass link by link through the launch gate;
+ * this module only identifies which vendor publishes a model.
  */
 
 /**
@@ -34,13 +28,9 @@ export type ProviderDiscovery =
 /**
  * Which vendor a model belongs to — and, when that cannot be established, WHY.
  *
- * The three states are not decoration. Hive used to answer this question by
- * regex over the model's spelling (`/^claude([-.]|$)/`, `/^(gpt|codex)/`) and
- * return null for anything it could not place — and both callers read that
- * null as PERMISSION. A model no pattern recognised was allowed onto whatever
- * tool the router had picked, and its spend was billed to whatever meter it
- * was handed. Unknown read as yes, which is how a vendor's model ends up in
- * another vendor's TUI and another vendor's pool.
+ * Do not infer this with a regex over the model name or collapse an unknown
+ * result to null: callers can mistake null for permission and route a model
+ * through another vendor's UI and quota pool.
  *
  * A model's vendor is a FACT the vendor itself publishes, so it is read from
  * the discovered catalog, never inferred from the name. And "nobody claims

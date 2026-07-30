@@ -93,9 +93,8 @@ export const WorkspaceEventV2Schema = z.strictObject({
 });
 export type WorkspaceEventV2 = z.infer<typeof WorkspaceEventV2Schema>;
 
-// Shape adjudicated for WP7: §24 required a schema/hash/high-water snapshot
-// without fixing the wire fields. The snapshot is a projection checkpoint,
-// never a second event log.
+// The snapshot is a schema, hash, and high-water projection checkpoint, never
+// a second event log.
 export const WorkspaceSnapshotV2Schema = z.strictObject({
   schemaVersion: z.literal(2),
   instanceId: z.string().min(1),

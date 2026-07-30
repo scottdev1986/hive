@@ -9,10 +9,8 @@ import {
 } from "./session-protocol";
 
 /**
- * MessageEnvelope v2 is owned by docs/design/hive-communication.html#data-model.
- * This module deliberately does not redefine that envelope. It contains only
- * the provider/injection/receipt fields the terminal foundation must consume
- * or emit under terminal-stack-transition.html §25.
+ * This module does not redefine MessageEnvelope v2. It contains only the
+ * provider, injection, and receipt fields the terminal foundation consumes.
  */
 export const MESSAGE_ENVELOPE_V2_OWNER =
   "docs/design/hive-communication.html#data-model" as const;

@@ -116,8 +116,8 @@ export const HandoffPickupSchema = z
 export type HandoffPickup = z.infer<typeof HandoffPickupSchema>;
 
 /**
- * Legacy capability-escalation payload. It remains distinct from the durable
- * C5 bundle: escalation is an agent-authored claim, not measured preservation.
+ * Capability-escalation payload. It remains distinct from the durable bundle:
+ * escalation is an agent-authored claim, not measured preservation.
  */
 export const HandoffSchema = z.object({
   agentName: z.string().min(1),

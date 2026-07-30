@@ -37,9 +37,8 @@ export const SESSION_PROTOCOL_PATHS = {
 } as const;
 
 export const TERMINAL_LIMITS = {
-  // 64 = 2x the 31-agent spawn target (planning/2026-07-27-spawn-collapse-
-  // root-cause.md): 31 agents + the orchestrator host + recovery generations
-  // must fit with real headroom. Fixed array in the broker, not a knob.
+  // The fixed broker array must fit the agent spawn target, orchestrator host,
+  // and recovery generations with headroom.
   liveSessionsPerHiveHome: 64,
   authenticatedViewersPerGeneration: 4,
   controlJsonBytesPerFrame: 256 * 1024,
@@ -61,8 +60,8 @@ export const TERMINAL_LIMITS = {
   /** A create is not an RPC that reads a record. It forks a host process, which
    * forks a login `zsh -l -i` — sourcing the operator's whole shell profile —
    * which execs a vendor CLI, and the reply waits for all of it. Measured
-   * 2026-07-28 on one machine: 0.3–1.4 s per create at 16 agents, 12.3–14.3 s
-   * at 31, because thirty-one vendor CLIs starting at once is what the host is
+   * Create latency grows sharply under wide bursts because vendor CLIs start
+   * concurrently with the host. The host is
    * competing with. Under one shared 10 s budget the 31-wide burst lost 26 of
    * 31 hosts to CREATE_COMMIT and HELLO timeouts while every create was in
    * fact progressing normally. Bounding "fork a shell and a vendor" with the
@@ -1002,7 +1001,7 @@ export const TerminalHostCheckpointSchema = z
     opaqueBytes: TerminalHostCheckpointBytesSchema,
   })
   .readonly();
-/** Shared by inspection and by the §11 lifecycle event: events carry the facts
+/** Shared by inspection and lifecycle events: events carry the facts
  * inspection reports, so one vocabulary states a lifecycle in both. */
 const TerminalHostLifecycleSchema = z.enum([
   "creating",
@@ -1088,7 +1087,7 @@ export const TerminalHostTerminationResultSchema = z
     diagnostics: z.array(z.string()).readonly(),
   })
   .readonly();
-/** §5 ordered resize, neutral projection. The revision is monotonic and the
+/** Ordered resize, neutral projection. The revision is monotonic and the
  * idempotency key makes a repeat of the same transaction replay its receipt
  * rather than mutate a second time. */
 export const TerminalHostResizeRequestSchema = z
@@ -1099,7 +1098,7 @@ export const TerminalHostResizeRequestSchema = z
     idempotencyKey: z.string().min(1),
   })
   .readonly();
-/** §5 applied receipt. `window` is what the terminal reported AFTER the set,
+/** Applied resize receipt. `window` is what the terminal reported after the set,
  * not what was asked for, and `orderedAt` is the receipt's position in the
  * session mutation order it shares with input. There is deliberately no field
  * claiming the foreground application handled its resize notification: the
@@ -1112,7 +1111,7 @@ export const TerminalHostResizeReceiptSchema = z
     window: TerminalHostWindowSizeSchema,
   })
   .readonly();
-/** §7 checkpoint capability. A caller that cannot apply a checkpoint offers
+/** Checkpoint capability. A caller that cannot apply a checkpoint offers
  * none, so this is the unit of the checkpoint half of attach negotiation and
  * names the same pair a checkpoint document carries. */
 export const TerminalHostCheckpointCapabilitySchema = z
@@ -1121,7 +1120,7 @@ export const TerminalHostCheckpointCapabilitySchema = z
     schemaVersion: z.string().min(1),
   })
   .readonly();
-/** §7 attachment cursor. It names BOTH positions in the one session order — an
+/** Attachment cursor. It names both positions in the one session order — an
  * event position and an output byte offset — so a resumed attachment and the
  * events around it stay comparable without a second clock, and it MAY bind an
  * opaque checkpoint identity: the hash of the checkpoint the caller has already
@@ -1134,7 +1133,7 @@ export const TerminalHostAttachCursorSchema = z
     checkpoint: z.string().min(1).nullable(),
   })
   .readonly();
-/** §7 attach request. It offers a same-major protocol minor range and the
+/** Attach request. It offers a same-major protocol minor range and the
  * checkpoint capabilities the caller can apply; the host selects one of each,
  * which is what makes attachment negotiated rather than assumed. */
 export const TerminalHostAttachRequestSchema = z
@@ -1158,7 +1157,7 @@ export const TerminalHostAttachRequestSchema = z
     cursor: TerminalHostAttachCursorSchema,
   })
   .readonly();
-/** §7 attach outcome. `resumeFrom` is where the stream WILL resume, reported by
+/** Attach outcome. `resumeFrom` is where the stream will resume, reported by
  * the host rather than assumed from the cursor that was asked for — the same
  * readback rule the resize receipt follows. There is deliberately no field for
  * a partially delivered escape sequence or a split multibyte character: resume
@@ -1195,7 +1194,7 @@ export const TerminalHostAttachResultSchema = z.discriminatedUnion("state", [
     })
     .readonly(),
 ]);
-/** §11 event flow-control limits, negotiated on the same terms as output (§6).
+/** Event flow-control limits, negotiated on the same terms as output.
  * Retained events are bounded and released by acknowledgement; these are the
  * concrete caps and watermarks the behavioral contract deliberately leaves to
  * the wire. Events are counted rather than measured, so the retention and
@@ -1218,7 +1217,7 @@ export const TerminalHostSubscriptionLimitsSchema = z
   )
   .meta({ "x-hive-ordered-event-watermarks": true })
   .readonly();
-/** §11 subscription cursor. It names both positions in the one session order —
+/** Subscription cursor. It names both positions in the one session order —
  * an event position and the output offset beside it — so a delivered event and
  * the output around it stay comparable without a second clock. */
 export const TerminalHostSubscriptionCursorSchema = z
@@ -1227,7 +1226,7 @@ export const TerminalHostSubscriptionCursorSchema = z
     outputOffset: DecimalUint64Schema,
   })
   .readonly();
-/** §11 subscribe request. A subscription is a resumable cursor, not a boolean:
+/** Subscribe request. A subscription is a resumable cursor, not a boolean:
  * it negotiates a same-major minor range and event flow-control limits, and
  * begins either at a caller-supplied event position or at the current end. */
 export const TerminalHostSubscribeRequestSchema = z
@@ -1257,7 +1256,7 @@ export const TerminalHostSubscribeRequestSchema = z
     ]),
   })
   .readonly();
-/** §11 subscribe outcome. `resumeFrom` is where delivery WILL begin, reported by
+/** Subscribe outcome. `resumeFrom` is where delivery will begin, reported by
  * the host rather than echoed from the request — the same readback rule attach
  * and the resize receipt follow. A cursor outside retention is a `gap` that
  * states the missing event range and requires a fresh inspection; silent loss
@@ -1294,11 +1293,11 @@ export const TerminalHostSubscribeResultSchema = z.discriminatedUnion("state", [
     })
     .readonly(),
 ]);
-/** §11 delivered event. Exactly the eight facts inspection reports, ordered
+/** Delivered event. Exactly the eight facts inspection reports, ordered
  * rather than sampled: a lifecycle transition, launch evidence, an applied
  * resize revision, an input-ownership change, a retention gap, output closure,
  * exit, and reap. Output closure, exit and reap stay three separate facts
- * exactly as in §4, so no encoding can collapse them into one. Every event
+ * as separate values, so no encoding can collapse them into one. Every event
  * carries the session reference that fences it — an incarnation that has ended
  * never delivers a successor's events — and `at`, its position in the one
  * session order, so a delivered event and the output around it are comparable
@@ -1382,7 +1381,7 @@ export const TerminalHostSubscriptionEventSchema = z.discriminatedUnion(
       .readonly(),
   ],
 );
-/** §11 event acknowledgement. Retained events are released by acknowledgement
+/** Event acknowledgement. Retained events are released by acknowledgement
  * on the same terms as output, and subscribers are independent, so the release
  * names WHICH subscription it releases: without that identity one subscriber's
  * acknowledgement would release events another has not been delivered. */
@@ -1393,7 +1392,7 @@ export const TerminalHostEventAcknowledgementRequestSchema = z
     through: TerminalHostSubscriptionCursorSchema,
   })
   .readonly();
-/** §11 acknowledgement receipt. `through` is what the host actually released
+/** Acknowledgement receipt. `through` is what the host actually released
  * through, reported by the host rather than echoed from the request — the same
  * readback rule attach, subscribe and the resize receipt follow. */
 export const TerminalHostEventAcknowledgementSchema = z
@@ -1415,7 +1414,7 @@ const PositiveDecimalUint64Schema = z
     "must fit in an unsigned 64-bit integer",
   )
   .meta({ format: "hive-uint64-decimal" });
-/** Visibility extension §Boundary. The complete neutral evidence a source
+/** The complete neutral evidence a visibility source
  * offers: one source-session identity, its EXACT live process identity, and the
  * current positive inventory revision. A PID by itself is never identity, so
  * the process carries the operating-system-derived start token that makes PID
@@ -1428,7 +1427,7 @@ export const TerminalHostVisibilityRequestSchema = z
     inventoryRevision: PositiveDecimalUint64Schema,
   })
   .readonly();
-/** Visibility extension §Normative vocabulary. A lease binds the host-issued
+/** A visibility lease binds the host-issued
  * exact session reference, the ACCEPTED source identity, and the ACCEPTED
  * revision, and is active only between `issuedAt` and a finite `expiresAt`. */
 export const TerminalHostVisibilityLeaseSchema = z
@@ -1452,7 +1451,7 @@ export const TerminalHostVisibilityLeaseSchema = z
   )
   .meta({ "x-hive-ordered-lease-window": true })
   .readonly();
-/** Visibility extension §3 renewal request. It names the exact session
+/** Visibility renewal request. It names the exact session
  * reference and repeats the COMPLETE visibility request — renewal re-proves
  * current representation rather than trusting the lease it already holds. */
 export const TerminalHostVisibilityRenewalRequestSchema = z
@@ -1461,9 +1460,9 @@ export const TerminalHostVisibilityRenewalRequestSchema = z
     visibility: TerminalHostVisibilityRequestSchema,
   })
   .readonly();
-/** Visibility extension §3/§5 renewal outcome. Success returns a NEW active
+/** Visibility renewal outcome. Success returns a new active
  * lease with a finite expiry. A rejection carries exactly one typed reason from
- * the closed §5 list and no lease: it does not extend the deadline, and — the
+ * the closed reason list and no lease: it does not extend the deadline, and
  * expired case aside — it never pretends the prior lease or process vanished,
  * because the existing bounded deadline stays authoritative. Partial or
  * unavailable evidence is `unknown`, never absence, rejection, or success. */
@@ -1480,7 +1479,7 @@ export const TerminalHostVisibilityRenewalResultSchema = z.discriminatedUnion(
     z
       .strictObject({
         state: z.literal("rejected"),
-        // §3 names this field: a rejected or unknown renewal HAS `renewed: false`.
+        // A rejected or unknown renewal explicitly has `renewed: false`.
         // Carrying it as a literal rather than leaving it implied in the
         // discriminator means a consumer that reads the field without switching on
         // the state still cannot read a rejection as a renewal.
@@ -1753,7 +1752,7 @@ export const WelcomePayloadSchema = z
     connectionId: DecimalUint64Schema,
     /** WELCOME returns a monotonic server epoch; shape adjudicated as decimal nanos. */
     serverEpoch: DecimalUint64Schema,
-    /** WELCOME returns limits; shape adjudicated to the four §18 negotiated transport caps. */
+    /** WELCOME returns the four negotiated transport limits. */
     limits: z
       .strictObject({
         controlFrameMaxBytes: z
@@ -1803,7 +1802,7 @@ export const PingPongPayloadSchema = z
   .strictObject({
     /** PING/PONG are v1 control payloads. */
     schemaVersion: z.literal(1),
-    /** PING/PONG carry sender monotonic nanos; §18 encodes uint64 as decimal text. */
+    /** PING/PONG carry sender monotonic nanoseconds; uint64 uses decimal text. */
     monoNanos: DecimalUint64Schema,
   })
   .readonly();

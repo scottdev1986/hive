@@ -7,8 +7,7 @@ import {
 /**
  * The user's routing policy — the store behind the Model Control Center and,
  * once the AuthorizedLaunch gate lands, the router's only source of standing
- * preference. Governed by docs/routing/routing-policy.md:
- * chains carry exact (provider, model, effort) targets and nothing else;
+ * preference. Chains carry exact (provider, model, effort) targets and nothing else;
  * order is semantic (primary first, a fallback chain, never parallel); a
  * bare "default" string that looks like a model id is illegal, and no legal
  * form expresses "whatever the vendor picks".
@@ -16,11 +15,10 @@ import {
  * FAIL-CLOSED READING, the rule every consumer must inherit: an absent row
  * means NOT CONFIGURED, and not-configured never means allowed. The helpers
  * at the bottom are the one implementation of that reading — a consumer that
- * re-derives it by hand is how a null becomes permission again (repo memory:
- * unknown-read-as-permission).
+ * re-derives it by hand is how a null becomes permission again.
  */
 
-/** Task categories replace tiers (governing doc §2.4). `default` is the
+/** `default` is the
  * user-authored global fallback chain, consulted when a category is empty.
  * `long_context` is deliberately NOT a category — it returns as a requirement
  * modifier on spawn, not as a routing bucket. */
@@ -71,10 +69,8 @@ const ExactModelIdSchema = z
 /**
  * One link of a fallback chain: a specific (provider, model, effort). There
  * is deliberately NO other form — no "vendor default", no moving pointer of
- * any kind (user ruling 2026-07-13: "we are specific on the models that we
- * choose"). A default that quietly wins is the defect this store exists to
- * delete, and vendors move their defaults server-side mid-session (memory:
- * vendor-default-model-moves-under-you); an indirection that cannot be
+ * any kind. A default that quietly wins is the defect this store exists to
+ * delete, and vendors move their defaults server-side mid-session; an indirection that cannot be
  * written cannot bite.
  */
 export const ChainEntrySchema = z.strictObject({
@@ -125,9 +121,9 @@ export const SelectionModeSchema = z.enum([
 export type SelectionMode = z.infer<typeof SelectionModeSchema>;
 
 /**
- * One selection mode governs every category. Per-category overrides were
- * removed on 2026-07-27 (user directive): `set-chain` wrote one as a side
- * effect of authoring a chain, so a category the user had never ruled on
+ * One selection mode governs every category. Do not write per-category
+ * overrides as a side effect of authoring a chain: a category the user has
+ * never ruled on would
  * silently outranked the control they had — and the global switch read as
  * broken because nothing was left for it to govern.
  */

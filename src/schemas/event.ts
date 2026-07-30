@@ -24,9 +24,8 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   HookEventBaseSchema.extend({ kind: z.literal("turn-failure") }),
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
-    // Retained for persisted events from older producers. Current terminal
-    // hooks carry no usage data; live context measurement lands on the agent
-    // row through statusline and telemetry instead.
+    // Optional so persisted events remain decodable. Terminal hooks carry no
+    // usage data; live context measurement lands on the agent row instead.
     contextPct: z.number().min(0).max(100).optional(),
     usageUnits: z.number().nonnegative().optional(),
     usageSource: z.enum(["provider", "gateway", "estimated"]).optional(),
@@ -52,9 +51,8 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("effort-drift"),
     description: z.string().min(1),
   }),
-  // A completed tool call inside a running turn (Claude's PostToolUse). This
-  // is the "nearest safe lifecycle boundary" SPEC decision 1 gives urgent
-  // messages: the agent is provably between tool calls, so an injected paste
+  // A completed tool call inside a running turn (Claude's PostToolUse). The
+  // agent is provably between tool calls, so an injected paste
   // lands in the composer as a queued steer instead of interrupting anything.
   // It is a delivery tick, not a lifecycle fact — it never changes status and
   // is not persisted to the events table.

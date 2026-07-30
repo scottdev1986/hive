@@ -162,9 +162,9 @@ export const MemoryWriteResultSchema = z
     status: MemoryVerificationStatusSchema,
     verified: IsoDateSchema.optional(),
     similarCandidates: z.array(MemorySimilarCandidateSchema).optional(),
-    /** What happened to this write's vector projection (defect D2):
-     * "indexed" | "queued" | "unavailable:<state>". Optional so older daemons
-     * still parse. */
+    /** What happened to this write's vector projection:
+     * "indexed" | "queued" | "unavailable:<state>". Optional for wire
+     * compatibility with daemons that omit the field. */
     embedding: z.string().optional(),
   })
   .superRefine((input, context) => {

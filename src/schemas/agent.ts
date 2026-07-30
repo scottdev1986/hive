@@ -9,8 +9,7 @@ import { SessionLocatorSchema } from "./session-protocol";
 // The architectural role word remains "orchestrator"; this is the address.
 export const ORCHESTRATOR_NAME = "queen";
 
-// Compatibility synonym still accepted for addressing. Not removed: callers
-// and memories that say "orchestrator" must keep working.
+// Compatibility synonym accepted so stored addresses remain routable.
 export const ORCHESTRATOR_NAME_ALIASES = ["orchestrator"] as const;
 
 /** Every accepted root recipient name: preferred first, then synonyms. */
@@ -38,7 +37,8 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
     tool: z.literal("claude"),
     model: z.string().min(1),
     // Optional only for the short launch window before Claude's first
-    // statusLine render, and for legacy rows. Once observed it is immutable.
+    // statusLine render and persisted rows without the field. Once observed it
+    // is immutable.
     effort: EffortLevelSchema.optional(),
   }),
   z.strictObject({
@@ -98,8 +98,8 @@ const AgentRecordShape = {
   id: z.string().min(1),
   name: z.string().min(1),
   tool: CapabilityProviderSchema,
-  /** The model this agent was *launched* with — decision 6's immutable execution
-   * identity, which a control restart replays to reproduce the launch it is
+  /** The model this agent was *launched* with. A control restart replays this
+   * immutable execution identity to reproduce the launch it is
    * interrupting. It is an intention, and it never changes. */
   model: z.string().min(1),
   /** The model this agent is *observed* running, read from its transcript. A
@@ -107,8 +107,7 @@ const AgentRecordShape = {
    * means "no observation" — never "the same as spawn", because a guess is what
    * this field exists to stop. Quota accounting and `hive status` read it first. */
   liveModel: z.string().min(1).optional(),
-  /** The task category this agent was spawned under (was `tier` before the
-   * 2026-07-13 cutover; existing rows are migrated at database open). */
+  /** The task category this agent was spawned under. */
   category: RoutingCategorySchema,
   status: z.enum([
     "spawning",
@@ -116,7 +115,7 @@ const AgentRecordShape = {
     "idle",
     "awaiting-approval",
     "control-paused",
-    /** Held by the quota drain handler (§08): its provider's window is
+    /** Held by the quota drain handler when its provider's window is
      * spent and resets soon; the 30s sweep pokes it past the reset. */
     "held",
     "stuck",
@@ -144,8 +143,8 @@ const AgentRecordShape = {
   taskDescription: z.string(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
-  /** Present for every agent created by the current runtime. Optional only so
-   * old closed history can still be decoded during database migration. */
+  /** Identifies the agent's terminal host. Optional so persisted records
+   * without a locator remain decodable during database migration. */
   sessionLocator: SessionLocatorSchema.optional(),
   // The tool-level conversation identity (Claude session id, Codex thread id)
   // captured from hook traffic, so a crashed process can be relaunched with
@@ -155,12 +154,9 @@ const AgentRecordShape = {
   /**
    * How full this agent's context is, or **null when Hive has not observed it**.
    *
-   * Null is the whole point of the field being shaped this way. It used to be a
-   * plain number, so "unknown" was unrepresentable and every unobserved agent
-   * fell back to the spawn default of 0 — which does not mean "empty", it means
-   * "we have no idea", and it lies in the *flattering* direction: 0% invites the
-   * orchestrator to pile more work onto an agent it can see nothing about. A
-   * live Codex agent that had done real work sat at 0% for exactly this reason.
+   * Do not substitute zero for null: zero means an empty observed context,
+   * while null means Hive has no evidence. Treating null as zero can invite
+   * more work onto an agent whose context Hive cannot inspect.
    *
    * Hive has no automatic recycle actuator. The orchestrator may use this as
    * one input to reuse, and must treat null as "not eligible", never as room.
@@ -171,7 +167,7 @@ const AgentRecordShape = {
   // account's plan upgrades it. Absent until a statusline report has ever
   // carried it. This is the measured denominator the telemetry sweep divides
   // the transcript's token count by; it is never defaulted, because a guessed
-  // 200k once reported agents at ~22% of a 1M window as 100% full.
+  // A guessed denominator can substantially overstate context use.
   contextWindow: z.number().int().positive().optional(),
   // Per-session graph-tool adoption observed from the agent's provider
   // artifacts. Present only on hive_status rows when graphify is configured;
@@ -223,8 +219,7 @@ export function isLiveAgent(agent: Pick<AgentRecord, "status">): boolean {
  * name puts two indistinguishable `sarah` rows in front of the user — the
  * ambiguity the naming rules exist to prevent.
  *
- * Falls back to the record's own clock for rows written before Hive tracked
- * closure durably.
+ * Falls back to the record's own clock when durable closure time is absent.
  */
 export function describeAgentName(
   agent: Pick<

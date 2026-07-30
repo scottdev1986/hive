@@ -73,9 +73,7 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   RoutingCategory,
   { fiveHour: number; weekly: number }
 > = {
-  // The old tier guesses, carried onto the categories that inherited their
-  // work: deep-class categories keep deep's estimate, and so on. Workload
-  // guesses, never provider numbers; observations overwrite them.
+  // Workload guesses, never provider numbers; observations overwrite them.
   complex_coding: { fiveHour: 8, weekly: 1.5 },
   debugging: { fiveHour: 8, weekly: 1.5 },
   heavy_research: { fiveHour: 8, weekly: 1.5 },
@@ -197,8 +195,8 @@ export const StatuslineReportSchema = z.strictObject({
    * fill, and the model id cannot imply it, because the 1M upgrade tracks the
    * plan and not the name (`claude-opus-4-8` is 200k on one plan and 1M on
    * another, byte-identical). Absent when the payload carried no window, and
-   * absent must stay absent: dividing by a plausible-looking 200000 is what
-   * reported live agents at ~22% of a 1M window as 100% full.
+   * absent must stay absent: dividing by a plausible-looking default can
+   * substantially overstate context use.
    */
   contextWindow: z.number().int().positive().optional(),
   /**
