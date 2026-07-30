@@ -487,7 +487,8 @@ function applyMutation(
       for (const candidate of mutation.route.candidates) {
         const existing = models.find(
           (row) =>
-            row.provider === candidate.provider && row.model === candidate.model,
+            row.provider === candidate.provider &&
+            row.model === candidate.model,
         );
         models = models.filter(
           (row) =>
@@ -556,9 +557,7 @@ function provisionalBaselineRoute(
           },
         ];
   });
-  return candidates.length === 0
-    ? null
-    : { mode: "hive-equal", candidates };
+  return candidates.length === 0 ? null : { mode: "hive-equal", candidates };
 }
 
 /**

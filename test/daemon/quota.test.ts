@@ -419,7 +419,11 @@ describe("quota persistence and reservations", () => {
       CLAUDE_CANDIDATE,
       "simple_coding",
     );
-    required(services[1]).reserveLaunch("sam", CLAUDE_CANDIDATE, "simple_coding");
+    required(services[1]).reserveLaunch(
+      "sam",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
 
     const owner = owned.instanceId;
     const sibling =

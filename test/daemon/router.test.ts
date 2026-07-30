@@ -195,7 +195,11 @@ describe("smooth weighted selection", () => {
       candidates: [CLAUDE, CODEX, GROK],
     };
     const router = makeRouter(openDb(), policyWith({ global: route }));
-    const selection = await router.select(request("first"), permissiveGate, NOW);
+    const selection = await router.select(
+      request("first"),
+      permissiveGate,
+      NOW,
+    );
     expect(selectedDecision(selection).reason).toBe("hive-equal");
     const providers = await selectProviders(router, 17, "eq");
     providers.push(selectedDecision(selection).provider);

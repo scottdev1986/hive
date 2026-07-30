@@ -63,7 +63,11 @@ export interface RouteRequest {
 
 export type RouteRefusal =
   | { kind: "never-configured"; detail: string }
-  | { kind: "no-candidate"; detail: string; evaluations: CandidateEvaluation[] };
+  | {
+      kind: "no-candidate";
+      detail: string;
+      evaluations: CandidateEvaluation[];
+    };
 
 export type RouteSelection =
   | {
@@ -159,7 +163,11 @@ export class HiveRouter {
               evaluations: [],
             },
           }
-        : { outcome: "selected", decision: prior, authorized: minted.authorized };
+        : {
+            outcome: "selected",
+            decision: prior,
+            authorized: minted.authorized,
+          };
     }
 
     // Selection retries on a policy edit mid-evaluation: a decision is never
@@ -180,8 +188,10 @@ export class HiveRouter {
       }
       const { route } = resolved;
       const evaluations: CandidateEvaluation[] = [];
-      const eligible: { candidate: RouteCandidate; authorized: AuthorizedLaunch }[] =
-        [];
+      const eligible: {
+        candidate: RouteCandidate;
+        authorized: AuthorizedLaunch;
+      }[] = [];
       for (const candidate of route.candidates) {
         const evaluation = await this.evaluate(candidate, request, gate, now);
         evaluations.push(evaluation.evaluation);
@@ -209,9 +219,7 @@ export class HiveRouter {
             eligible.map((entry) => entry.candidate),
             now,
           );
-          const winner = eligible.find(
-            (entry) => entry.candidate === selected,
-          );
+          const winner = eligible.find((entry) => entry.candidate === selected);
           if (winner === undefined) {
             throw new Error(
               "router selected a candidate outside the eligible set",

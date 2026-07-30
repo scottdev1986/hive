@@ -143,7 +143,11 @@ function rolesFor(
         candidate.provider === record.provider &&
         recordMatches(record, candidate.model)
       ) {
-        roles.push({ scope, weight: candidate.weight, effort: candidate.effort });
+        roles.push({
+          scope,
+          weight: candidate.weight,
+          effort: candidate.effort,
+        });
       }
     }
   }

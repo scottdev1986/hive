@@ -36,14 +36,14 @@ describe("route candidate syntax — the CLI half of the Control Center contract
       effort: { mode: "none" },
       weight: 1,
     });
-    expect(parseRouteCandidateArg("claude/claude-fable-5@hive-decides")).toEqual(
-      {
-        provider: "claude",
-        model: "claude-fable-5",
-        effort: { mode: "hive-decides" },
-        weight: 1,
-      },
-    );
+    expect(
+      parseRouteCandidateArg("claude/claude-fable-5@hive-decides"),
+    ).toEqual({
+      provider: "claude",
+      model: "claude-fable-5",
+      effort: { mode: "hive-decides" },
+      weight: 1,
+    });
   });
 
   test("=WEIGHT sets an integer rating 1–100 and refuses the rest", () => {
@@ -191,7 +191,13 @@ describe("Model Control Center daemon pinning", () => {
       await setRoute("complex_coding", "user-weighted", [], "1", 4483);
       // Bad scope and bad mode refuse locally rather than reach the daemon.
       await expect(
-        setRoute("profiling", "hive-equal", ["claude/claude-fable-5"], "2", 4483),
+        setRoute(
+          "profiling",
+          "hive-equal",
+          ["claude/claude-fable-5"],
+          "2",
+          4483,
+        ),
       ).rejects.toThrow(/unknown route scope/);
       await expect(
         setRoute("global", "ordered", ["claude/claude-fable-5"], "2", 4483),
