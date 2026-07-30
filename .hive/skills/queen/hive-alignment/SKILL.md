@@ -9,7 +9,7 @@ A fan-out is the most expensive thing you can do with a misunderstanding. Agents
 
 ## When to run this
 
-Any user request that will become delegated work. Before the first `hive_spawn`, not after it.
+Any user request that will become delegated work. Before the first `hive_spawn` of that work, not after it. A research task spawned to answer one of this conversation's own questions is part of alignment, not a breach of it.
 
 Not every request needs it. A request whose scope, done-criterion, and boundary are already unambiguous needs no conversation — say what you are about to delegate in one line and delegate it. Judgment is part of the skill: an interview about a two-line change is its own kind of failure. Run this when the work will fan out, when the request admits more than one reading, or when getting it wrong would waste an agent's whole context.
 
@@ -40,7 +40,7 @@ A question with a proposal attached is answerable in one word. A blank question 
 
 Ground the proposal in something specific — a file, a function, an existing pattern, a memory article — and say why you would pick it:
 
-> `src/adapters/tools/kimi.ts:96` maps every other vendor's read-only posture to a launch flag, and kimi has none. I would follow that file's shape and report the gap rather than pretend containment. Does that match what you want, or should a kimi reader simply be refused?
+> `src/adapters/providers/kimi-cli.ts:114` maps read-only to kimi's default `manual` mode because kimi has no launch flag to enforce it — every other vendor's adapter has one. I would follow that file's shape and report the gap rather than pretend containment. Does that match what you want, or should a kimi reader simply be refused?
 
 That gives the user something to correct. "How should kimi handle read-only?" gives them a homework assignment.
 
