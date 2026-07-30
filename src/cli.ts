@@ -24,6 +24,7 @@ import {
   readHookStdin,
   runHiveEvent,
 } from "./cli/event";
+import { ensureEmbeddingsRuntime } from "./cli/embeddings";
 import { provisionGraphifyRuntime, runGraphifyStatus } from "./cli/graphify";
 import { runInitCli } from "./cli/init";
 import { memoryConsolidateCli } from "./cli/memory-consolidate";
@@ -642,6 +643,20 @@ export function createProgram(): Command {
     .command("graphify-runtime-install", { hidden: true })
     .action(async () => {
       process.exitCode = await provisionGraphifyRuntime();
+    });
+
+  // Same boundary for embeddings: the activated binary is the runtime's only
+  // consumer, so it is the only process whose probe answers the real question.
+  program
+    .command("embeddings-runtime-install", { hidden: true })
+    .action(async () => {
+      const outcome = await ensureEmbeddingsRuntime();
+      if (outcome.ok) {
+        console.log(outcome.detail);
+      } else {
+        console.error(outcome.reason);
+        process.exitCode = 1;
+      }
     });
 
   const memory = program

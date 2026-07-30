@@ -67,10 +67,7 @@ import {
   IS_RELEASE_BUILD,
   versionLine,
 } from "../version";
-import {
-  type EmbeddingsInstallOutcome,
-  ensureEmbeddingsRuntimeForRelease,
-} from "./embeddings";
+import type { EmbeddingsInstallOutcome } from "./embeddings";
 import { fetchAgentStatus } from "./mcp";
 
 const arch = (): HiveArch => (HIVE_ARCH === "arm64" ? "arm64" : "x64");
@@ -406,6 +403,36 @@ async function graphifyUpdateLine(
   ].join("\n");
 }
 
+/**
+ * The activated binary provisions its own embedding runtime. Probing in this
+ * (old) process would answer "loadable by the updater" — the one context
+ * guaranteed to differ from the runtime's consumer, and the exact confusion
+ * that shipped a good runtime and then discarded it. The new binary installs
+ * the runtime its own release pinned, keeps a healthy install untouched, and
+ * its exit is the verdict.
+ */
+export async function ensureEmbeddingsRuntimeForRelease(
+  version: string,
+  root = installRoot(),
+  execute: (command: string, args: string[]) => Promise<string> = run,
+): Promise<EmbeddingsInstallOutcome> {
+  try {
+    const output = await execute(cliPath(currentLink(root)), [
+      "embeddings-runtime-install",
+    ]);
+    return {
+      ok: true,
+      detail:
+        output.trim() || `embedding runtime from hive ${version} installed`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /** The activated binary checks the shared Graphify channel after Hive moves. */
 export async function ensureGraphifyRuntimeForRelease(
   version: string,
@@ -468,7 +495,8 @@ export async function runUpdate(requested?: string): Promise<void> {
     activate: () => activateWithHealthCheck(version, { root, healthCheck }),
     ensureBinLink: () => ensureBinLink(root),
     stopStaleDaemon: stopStaleDaemonAfterActivation,
-    provisionEmbeddings: ensureEmbeddingsRuntimeForRelease,
+    provisionEmbeddings: (activatedVersion) =>
+      ensureEmbeddingsRuntimeForRelease(activatedVersion, root),
     provisionGraphify: (activatedVersion) =>
       ensureGraphifyRuntimeForRelease(activatedVersion, root),
     log: console.log,

@@ -10,18 +10,20 @@
 //
 // A runtime already on disk that probe-verifies is kept, because re-staging
 // (or re-downloading) over a healthy install buys nothing. Anything else
-// provisions, trying in order:
-//   1. DEV: copy fastembed and its full dependency closure from a checkout's
-//      node_modules (HIVE_EMBEDDINGS_SOURCE, or walking up from the cwd) into
-//      ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override) and bundle it
-//      with `bun build`. The staging pipeline itself lives in
-//      src/release/embeddings-runtime.ts, shared with the release build so
-//      the shipped artifact is byte-for-byte the dev layout.
-//   2. PROD: a released binary with no checkout in reach downloads the pinned
-//      `embeddings-runtime.tar.gz` from its own release — the pin is the
-//      running binary's version, and the bytes are verified against the
-//      Ed25519-signed release manifest before anything is unpacked
-//      (src/release/embeddings-install.ts).
+// provisions, by build kind:
+//   - RELEASE (this build carries the pinned runtime digest): always download
+//     the pinned `embeddings-runtime.tar.gz` from this binary's own release,
+//     verified against the Ed25519-signed release manifest before anything is
+//     unpacked (src/release/embeddings-install.ts). A checkout in reach is a
+//     developer detail this path must never notice: the release loader only
+//     accepts the digest its release shipped, so a locally staged tree could
+//     only ever be refused.
+//   - DEV: copy fastembed and its full dependency closure from a checkout's
+//     node_modules (HIVE_EMBEDDINGS_SOURCE, or walking up from the cwd) into
+//     ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override) and bundle it
+//     with `bun build`. The staging pipeline itself lives in
+//     src/release/embeddings-runtime.ts, shared with the release build so
+//     the shipped artifact is byte-for-byte the dev layout.
 //
 // Either way, install is only "done" when the strict probe passes: load the
 // installed bundle — never the node_modules fallback — and embed a probe
@@ -42,7 +44,7 @@ import {
   findSourceNodeModules,
   stageEmbeddingRuntime,
 } from "../release/embeddings-runtime";
-import { HIVE_VERSION } from "../version";
+import { HIVE_EMBEDDINGS_DIGEST } from "../version";
 
 export type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 // The bundling pipeline moved to src/release/embeddings-runtime.ts (shared
@@ -137,6 +139,10 @@ export interface EmbeddingsProvisionDeps {
   runtimeDir: string;
   /** Where the dev flow looks for a checkout's node_modules. */
   cwd: string;
+  /** True when this build carries the pinned runtime digest (a release).
+   * A release build's loader accepts only the runtime its own release
+   * shipped, so checkout staging can never satisfy it. */
+  releaseBuild: boolean;
   installFromCheckout: (
     sourceNodeModules: string,
     runtimeDir: string,
@@ -145,9 +151,12 @@ export interface EmbeddingsProvisionDeps {
 }
 
 /**
- * The one provisioning flow: a checkout copy when a checkout is in reach
- * (dev), the release download when there is none (prod). An explicit `from`
- * — HIVE_EMBEDDINGS_SOURCE, which a dev run sets — is a promise: when it names
+ * The one provisioning flow. A release build always downloads its own pinned
+ * runtime: its loader refuses anything else, so a nearby checkout — a
+ * developer detail — must never divert a user's install onto a path that can
+ * only end in the digest refusal. A dev build stages a checkout copy when one
+ * is in reach and downloads otherwise. An explicit `from` —
+ * HIVE_EMBEDDINGS_SOURCE, which a dev run sets — is a promise: when it names
  * no fastembed source that is a loud failure, never a silent fallback to the
  * network.
  */
@@ -155,6 +164,18 @@ export async function provisionEmbeddingsRuntime(
   options: { from?: string },
   deps: EmbeddingsProvisionDeps,
 ): Promise<EmbeddingsInstallOutcome> {
+  if (deps.releaseBuild) {
+    if (options.from !== undefined) {
+      return {
+        ok: false,
+        reason:
+          `${EMBEDDINGS_SOURCE_ENV} is a dev-build control; this release ` +
+          "build loads only the runtime its own release shipped and would " +
+          "refuse a locally staged one — unset it",
+      };
+    }
+    return deps.installFromRelease(deps.runtimeDir);
+  }
   const source = await findSourceNodeModules(options.from ?? deps.cwd);
   if (source !== null) {
     return deps.installFromCheckout(source, deps.runtimeDir);
@@ -175,6 +196,7 @@ function defaultProvisionDeps(probe: EmbeddingsProbe): EmbeddingsProvisionDeps {
   return {
     runtimeDir: embeddingsRuntimeDir(),
     cwd: process.cwd(),
+    releaseBuild: HIVE_EMBEDDINGS_DIGEST !== null,
     installFromCheckout: (source, runtimeDir) =>
       installFromCheckout(source, runtimeDir, probe),
     installFromRelease: (runtimeDir) => installFromRelease(runtimeDir, probe),
@@ -199,38 +221,4 @@ export async function ensureEmbeddingsRuntime(
     source === undefined || source === "" ? {} : { from: source },
     deps,
   );
-}
-
-export interface EnsureForReleaseDeps {
-  /** Injectable probe; `bun test` never downloads a model. */
-  probe?: EmbeddingsProbe;
-  /** The version-pinned release install; injectable so tests never touch the
-   * network. */
-  installFromRelease?: (
-    runtimeDir: string,
-    version: string,
-  ) => Promise<EmbeddingsInstallOutcome>;
-}
-
-/**
- * `hive update`'s step, keyed to the version it just activated. Embeddings
- * are a required component (user ruling 2026-07-22), so an update that moves
- * the binary re-provisions the runtime from that version's release — the
- * runtime on disk was pinned to the old one. Updating *to* the version this
- * binary already is means the runtime pin did not move either, so the healthy
- * probe-verified install skips fast, exactly like init.
- */
-export async function ensureEmbeddingsRuntimeForRelease(
-  version: string,
-  deps: EnsureForReleaseDeps = {},
-): Promise<EmbeddingsInstallOutcome> {
-  const probe = deps.probe ?? defaultProbe;
-  if (version === HIVE_VERSION) return ensureEmbeddingsRuntime(probe);
-  const install =
-    deps.installFromRelease ??
-    ((runtimeDir: string, pinned: string) =>
-      installEmbeddingsFromRelease(
-        defaultReleaseInstallDeps({ runtimeDir, probe, version: pinned }),
-      ));
-  return install(embeddingsRuntimeDir(), version);
 }

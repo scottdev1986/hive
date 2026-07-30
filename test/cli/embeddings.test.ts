@@ -11,11 +11,9 @@ import {
   EMBEDDINGS_SOURCE_ENV,
   type EmbeddingsProvisionDeps,
   ensureEmbeddingsRuntime,
-  ensureEmbeddingsRuntimeForRelease,
   findSourceNodeModules,
   provisionEmbeddingsRuntime,
 } from "../../src/cli/embeddings";
-import { HIVE_VERSION } from "../../src/version";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
 
 const tempRoots: string[] = [];
@@ -211,6 +209,7 @@ describe("provisionEmbeddingsRuntime — dev checkout first, release download se
     const deps: EmbeddingsProvisionDeps = {
       runtimeDir,
       cwd: "",
+      releaseBuild: false,
       installFromCheckout: async (source) => {
         calls.push(`checkout:${source}`);
         return { ok: true, detail: "staged from checkout" };
@@ -276,64 +275,53 @@ describe("provisionEmbeddingsRuntime — dev checkout first, release download se
   });
 });
 
-describe("ensureEmbeddingsRuntimeForRelease — hive update's step, keyed to the new version", () => {
-  async function withRuntimeHome<T>(
-    run: (runtimeDir: string) => Promise<T>,
-  ): Promise<T> {
-    const runtimeDir = await makeTempDir("hive-embed-release-");
-    const previous = process.env.HIVE_EMBEDDINGS_HOME;
-    process.env.HIVE_EMBEDDINGS_HOME = runtimeDir;
-    try {
-      return await run(runtimeDir);
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_EMBEDDINGS_HOME;
-      else process.env.HIVE_EMBEDDINGS_HOME = previous;
-    }
-  }
+describe("provisionEmbeddingsRuntime — a release build never takes a dev path", () => {
+  test("a checkout in reach is ignored: the release download runs anyway", async () => {
+    const root = await makeTempDir("hive-embed-release-build-");
+    const nm = join(root, "node_modules");
+    await plantPackage(nm, "fastembed");
+    const calls: string[] = [];
+    const deps: EmbeddingsProvisionDeps = {
+      runtimeDir: join(root, "runtime"),
+      cwd: root,
+      releaseBuild: true,
+      installFromCheckout: async () => {
+        throw new Error("a release build must never stage from a checkout");
+      },
+      installFromRelease: async () => {
+        calls.push("release");
+        return { ok: true, detail: "downloaded from release" };
+      },
+    };
 
-  test("a version bump re-provisions from the new release — a healthy old install does not skip", async () => {
-    await withRuntimeHome(async (runtimeDir) => {
-      // Healthy install for a different pin: a version bump must re-provision.
-      await mkdir(join(runtimeDir, "dist"), { recursive: true });
-      await writeFile(join(runtimeDir, "dist", "entry.js"), "// old bundle\n");
-      const calls: Array<[string, string]> = [];
-      let probes = 0;
+    const outcome = await provisionEmbeddingsRuntime({}, deps);
 
-      const outcome = await ensureEmbeddingsRuntimeForRelease("9.9.9", {
-        probe: async () => {
-          probes += 1;
-          return { model: "bge-small-en-v1.5", dimensions: 384 };
-        },
-        installFromRelease: async (dir, version) => {
-          calls.push([dir, version]);
-          return { ok: true, detail: `runtime from hive ${version} installed` };
-        },
-      });
-
-      expect(outcome).toEqual({
-        ok: true,
-        detail: "runtime from hive 9.9.9 installed",
-      });
-      expect(calls).toEqual([[runtimeDir, "9.9.9"]]);
-      // Version bump must not skip via the probe-healthy path.
-      expect(probes).toBe(0);
-    });
+    expect(outcome).toEqual({ ok: true, detail: "downloaded from release" });
+    expect(calls).toEqual(["release"]);
   });
 
-  test("the same version skips fast on a healthy probe-verified install", async () => {
-    await withRuntimeHome(async (runtimeDir) => {
-      await mkdir(join(runtimeDir, "dist"), { recursive: true });
-      await writeFile(join(runtimeDir, "dist", "entry.js"), "// bundle\n");
+  test("an explicit dev source is refused loudly, never staged or downloaded", async () => {
+    const root = await makeTempDir("hive-embed-release-build-");
+    const nm = join(root, "node_modules");
+    await plantPackage(nm, "fastembed");
+    const deps: EmbeddingsProvisionDeps = {
+      runtimeDir: join(root, "runtime"),
+      cwd: root,
+      releaseBuild: true,
+      installFromCheckout: async () => {
+        throw new Error("a release build must never stage from a checkout");
+      },
+      installFromRelease: async () => {
+        throw new Error("an explicit dev source must refuse, not download");
+      },
+    };
 
-      const outcome = await ensureEmbeddingsRuntimeForRelease(HIVE_VERSION, {
-        probe: async () => ({ model: "bge-small-en-v1.5", dimensions: 384 }),
-        installFromRelease: async () => {
-          throw new Error("release path must not run for the same version");
-        },
-      });
+    const outcome = await provisionEmbeddingsRuntime({ from: root }, deps);
 
-      expect(outcome.ok).toBe(true);
-      if (outcome.ok) expect(outcome.detail).toContain("already installed");
-    });
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) {
+      expect(outcome.reason).toContain(EMBEDDINGS_SOURCE_ENV);
+      expect(outcome.reason).toContain("dev-build control");
+    }
   });
 });

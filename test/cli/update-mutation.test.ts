@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   activateStagedUpdate,
+  ensureEmbeddingsRuntimeForRelease,
   ensureGraphifyRuntimeForRelease,
   rollbackWhenIdle,
 } from "../../src/cli/update";
@@ -20,6 +21,44 @@ const blocker = {
   },
   liveAgents: ["new-agent"],
 };
+
+test("embeddings provisioning is owned by the newly activated binary", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const outcome = await ensureEmbeddingsRuntimeForRelease(
+    "0.0.8",
+    "/tmp/hive-install",
+    async (command, args) => {
+      calls.push({ command, args });
+      return "embedding runtime installed and probe-verified\n";
+    },
+  );
+
+  expect(calls).toEqual([
+    {
+      command: "/tmp/hive-install/current/hive",
+      args: ["embeddings-runtime-install"],
+    },
+  ]);
+  expect(outcome).toEqual({
+    ok: true,
+    detail: "embedding runtime installed and probe-verified",
+  });
+});
+
+test("a failed provisioning exec is an outcome, never a thrown update", async () => {
+  const outcome = await ensureEmbeddingsRuntimeForRelease(
+    "0.0.8",
+    "/tmp/hive-install",
+    async () => {
+      throw new Error("hive exited 1: embedding-native-unloadable");
+    },
+  );
+
+  expect(outcome).toEqual({
+    ok: false,
+    reason: "hive exited 1: embedding-native-unloadable",
+  });
+});
 
 test("Graphify provisioning is owned by the newly activated binary", async () => {
   const calls: Array<{ command: string; args: string[] }> = [];
