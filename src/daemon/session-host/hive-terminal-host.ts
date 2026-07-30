@@ -494,7 +494,15 @@ export class HiveTerminalHostAdapter {
   async inspect(
     locator: HiveTerminalBinding["locator"],
   ): Promise<SessionInspection> {
-    const { binding, session } = await this.requireTransportBinding(locator);
+    // A host this instance owns but can no longer see is gone, and its absence
+    // is the answer to the question inspect was asked, not a failure to answer
+    // it. terminate already reports this case instead of failing closed;
+    // inspect throwing would mean a caller could observe a dead terminal only
+    // through the operation that kills it. Ownership is still enforced, so
+    // another instance's locator is still refused.
+    const binding = this.requireBinding(locator);
+    const session = await this.findLiveSession(locator);
+    if (session === null) return this.projectAbsentInspection(binding);
     const inspection = await this.host.inspect(session);
     if (!sameSession(inspection.session, session)) {
       throw new TerminalHostBindingMismatchError();
@@ -571,6 +579,54 @@ export class HiveTerminalHostAdapter {
       }
     }
     return projected;
+  }
+
+  /** An owned host that is no longer listed. Nobody watched this one leave, so
+   * every field that would describe how it left stays empty instead of
+   * carrying a value nothing measured — the same rule terminate follows when
+   * it reports SESSIOND_HOST_ALREADY_ABSENT with a null exit. */
+  private projectAbsentInspection(
+    binding: HiveTerminalBinding,
+  ): SessionInspection {
+    const created = binding.createEvidence;
+    if (created === undefined) throw new TerminalHostBindingIncompleteError();
+    return {
+      schemaVersion: 1,
+      locator: binding.locator,
+      // Not "exited": an exit is something observed, and this one was not.
+      presence: "lost",
+      complete: false,
+      hostPid: null,
+      hostStartToken: null,
+      shellRoot: null,
+      foreground: { state: "unknown", runId: null },
+      expectedExecutable: created.expectedExecutable,
+      executableVerified: false,
+      outputSeq: "0",
+      checkpointSeq: "0",
+      checkpointAvailable: false,
+      input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+      viewerCount: 0,
+      geometry: created.geometry,
+      resources: {},
+      // A lease outlives the host it was granted for, so the expiry answer
+      // comes from the clock rather than from a host that is not there.
+      visibility:
+        Date.parse(created.visibility.expiresAt) <= this.now().getTime()
+          ? { ...created.visibility, state: "expired" as const }
+          : created.visibility,
+      exit: null,
+      survivors: [],
+      evidenceAt: this.now().toISOString(),
+      // The zeroes above are placeholders for readings no live host supplied,
+      // and these say so rather than letting them read as measurements.
+      diagnosticIds: [
+        "SESSIOND_HOST_ALREADY_ABSENT",
+        VIEWER_COUNT_DIAGNOSTIC,
+        RESOURCES_DIAGNOSTIC,
+        INPUT_STATE_DIAGNOSTIC,
+      ],
+    };
   }
 
   private projectInspection(
