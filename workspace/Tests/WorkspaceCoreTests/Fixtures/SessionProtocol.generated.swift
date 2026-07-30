@@ -62,7 +62,7 @@ enum SessionProtocolGenerated {
     ]
     static let rawFrameTypes: Set<String> = ["CREATE_INPUT", "SNAPSHOT_BYTES", "OUTPUT", "HUMAN_INPUT", "AUTOMATION_CHUNK"]
 
-    /// HVTCP001 checkpoint envelope (§23 / CHECKPOINT_HEADER).
+    /// HVTCP001 checkpoint envelope (CHECKPOINT_HEADER).
     enum Checkpoint {
         static let magic = "HVTCP001"
         static let version: UInt16 = 1

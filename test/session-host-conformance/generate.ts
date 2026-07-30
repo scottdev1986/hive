@@ -112,7 +112,7 @@ const swiftIntConstants = (
 function renderSwiftCheckpointNested(indent: string, access = ""): string {
   const a = access ? `${access} ` : "";
   const inner = `${indent}    `;
-  return `${indent}/// HVTCP001 checkpoint envelope (§23 / CHECKPOINT_HEADER).
+  return `${indent}/// HVTCP001 checkpoint envelope (CHECKPOINT_HEADER).
 ${indent}${a}enum Checkpoint {
 ${indent}    ${a}static let magic = "${CHECKPOINT_HEADER.magic}"
 ${indent}    ${a}static let version: UInt16 = ${CHECKPOINT_HEADER.version}
