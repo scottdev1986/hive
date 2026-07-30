@@ -149,10 +149,10 @@ fn proveControllerCreate(allocator: std.mem.Allocator) !void {
 
 /// Drives `resize` over the route the PRODUCT takes: Controller.resize, across
 /// the neutral Client/Endpoint transport, into a HostOperations bound to a REAL
-/// terminal. An earlier version of this proof called handler().call on a
-/// hand-built operations object, which passed while the shipped host bound no
-/// terminal at all and answered every resize `unknown` -- a golden that
-/// hand-feeds the handler proves nothing about the wiring.
+/// terminal. Calling handler().call on a hand-built operations object is not
+/// enough: the shipped host could bind no terminal and answer every resize
+/// `unknown` while that path still passed — this golden requires the real
+/// client/server wiring.
 ///
 /// The geometry asserted is what the terminal reported through TIOCGWINSZ after
 /// the set, so a projection that echoed the request cannot pass, and a
@@ -250,21 +250,16 @@ fn proveResizeOverTheRealRoute(
     if (record.window.columns != window.columns or record.window.rows != window.rows)
         return error.ResizeWindowNotCommitted;
 
-    // PARTIAL IDEMPOTENCY -- this records what the implementation does today,
-    // and deliberately does NOT certify it as the contract.
+    // PARTIAL IDEMPOTENCY -- pins what the implementation does today, and
+    // deliberately does NOT certify it as the full contract.
     //
-    // The frozen request schema says a repeat of the same TRANSACTION replays
-    // its receipt rather than mutating twice. Replaying receipts needs durable
-    // per-session receipt storage (idempotency key + request digest + the
-    // applied receipt), which belongs to the single Record migration #108 owns;
-    // doing it here would mean migrating the same struct twice.
-    //
-    // So today an identical replay is answered `stale` naming the revision in
-    // force. That answer is TRUTHFUL -- revision 7 really is current, and no
-    // second mutation happened, which is the guarantee that actually protects
-    // the terminal. It is simply not yet the receipt replay §5 asks for. The
-    // assertion below pins the current behavior so a change is visible, and
-    // this comment is why it must not be read as the target.
+    // Full receipt replay needs durable per-session receipt storage
+    // (idempotency key + request digest + the applied receipt). Without that,
+    // an identical replay is answered `stale` naming the revision in force.
+    // That answer is TRUTHFUL -- revision 7 really is current, and no second
+    // mutation happened, which is the guarantee that protects the terminal.
+    // It is not full receipt replay. The assertion below pins the current
+    // behavior so a change is visible, and must not be read as the target.
     const replayed = try server.round(&controller, request);
     defer allocator.free(replayed);
     try validateResizeResult(allocator, replayed);
@@ -276,8 +271,8 @@ fn proveResizeOverTheRealRoute(
     // The invariant that must hold either way: a replay never mutates again.
     if (pty.resizeRevision() != 7) return error.ResizeReplayMutatedAgain;
     if (std.mem.eql(u8, replay_parsed.value.state, "applied")) {
-        // Receipt replay landed (#108). That is the contract target, not a
-        // regression -- but it must be the SAME revision, not a new mutation.
+        // Receipt replay path: the contract target, not a regression -- but
+        // it must be the SAME revision, not a new mutation.
         return;
     }
     if (!std.mem.eql(u8, replay_parsed.value.state, "stale")) return error.ResizeReplayNotStale;

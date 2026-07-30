@@ -1,11 +1,10 @@
 //! Real broker → real host → real `/bin/sh` provider golden.
 //!
-//! This harness overrides `HIVE_HOME` to a private temp root before spawning
-//! the host role (see `setenv` in `runGolden`), so an ambient agent home is
-//! never in play. Expected stderr noise on a PASSING run: the host logs
-//! `host connection refused: AttachLocatorMismatch` once — that is the §06
-//! wrong-generation attach fence being exercised, not a failure. (An earlier
-//! theory blamed inherited HIVE_HOME for golden reds; that was refuted.)
+//! Overrides `HIVE_HOME` to a private temp root before spawning the host role
+//! (see `setenv` in `runGolden`), so an ambient agent home is never in play.
+//! Expected stderr noise on a PASSING run: the host logs
+//! `host connection refused: AttachLocatorMismatch` once — the wrong-generation
+//! attach fence being exercised, not a failure.
 const std = @import("std");
 const broker = @import("broker");
 const generated = @import("session_protocol_generated");
@@ -238,9 +237,9 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .hostKind = "sessiond",
         .engineBuildId = &engine_build_id,
     };
-    // §19/§20 broker attach issuance: ATTACH_REQUEST through the production
-    // dispatch path returns a schema-valid one-use ATTACH_GRANT whose endpoint
-    // names this host's socket. The token drives the replay re-attach leg.
+    // Broker attach issuance: ATTACH_REQUEST through the production dispatch
+    // path returns a schema-valid one-use ATTACH_GRANT whose endpoint names
+    // this host's socket. The token drives the replay re-attach leg.
     const attach_request_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
         .locator = wire_locator,
@@ -411,7 +410,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     {
         // stderr only — stdout may be a captured build-step pipe. The raw
         // payload names the failing condition; without it a red here is one
-        // opaque error for ~14 independent assertions (issue #54 history).
+        // opaque error for many independent assertions.
         std.debug.print(
             "real-host-golden: inspect content assertion failed; payload: {s}\n",
             .{inspected},
@@ -476,10 +475,10 @@ fn runGolden(allocator: std.mem.Allocator) !void {
 
     // The slot must come back after a real kill. TERMINATE answers entirely on
     // the control plane, so this in-memory entry is still `.live` right now and
-    // occupies capacity; the daemon loop's reap is what frees it, and this host
-    // is adopted (non-parent), the ownership the reap used to skip. Together
-    // those two gaps leaked one of the 32 slots on every real kill until the
-    // daemon restarted — which then re-adopted the survivors as non-parent.
+    // occupies capacity; the daemon loop's reap is what frees it. The host is
+    // adopted (non-parent), so the reap must still free the slot — skipping
+    // adopted hosts would leak one of the 32 slots on every real kill until
+    // the daemon restarts and re-adopts survivors as non-parent again.
     if (recovered.registry.reapExitedHosts() != 1) return error.TerminatedSlotNotFreed;
     switch (recovered.registry.lookup(locator) orelse return error.TerminatedSlotNotFreed) {
         .entry => |terminated_entry| if (terminated_entry.record.state != .exited)
@@ -779,7 +778,7 @@ fn waitForProcessAbsence(pid: i32) !void {
 }
 
 /// Viewer-side reader that accumulates unsolicited ordered OUTPUT frames while
-/// waiting for correlated responses, asserting §20 contiguity: every OUTPUT
+/// waiting for correlated responses, asserting stream contiguity: every OUTPUT
 /// frame's stream_seq must equal the accumulated exclusive high-water.
 const ViewerReader = struct {
     allocator: std.mem.Allocator,
@@ -909,16 +908,16 @@ fn readAttachReady(reader: *ViewerReader, request_id: u64) !void {
 }
 
 /// Issues the visibility renewal the production daemon sends on the
-/// Workspace's behalf every `limits.visibility_renewal_ms` (5 s), through the
+/// Workspace's behalf every `limits.visibility_renewal_ms`, through the
 /// same broker backend the golden already uses for LIST/INSPECT/TERMINATE.
-/// The host's visibility lease is only `limits.visibility_expiry_ms` (15 s)
-/// and a granted input claim is clamped to it, so a harness that never renews
+/// The host's visibility lease is only `limits.visibility_expiry_ms` and a
+/// granted input claim is clamped to it, so a harness that never renews
 /// embeds a wall-clock assumption: under a cold, fully parallel suite the
-/// claim lapsed before the §26 replay-supersede, `onViewerDetached` DROPPED
-/// it instead of orphaning it (expired arbiter lease), and the final INSPECT
-/// reported `inputOwner: null` — the historical `InvalidRealInspection` red
-/// (issue #54's trigger). Renewing at the harness's long-phase boundaries
-/// keeps the assertions about the protocol, not suite scheduling latency.
+/// claim can lapse before the replay-supersede, `onViewerDetached` DROPS it
+/// instead of orphaning it (expired arbiter lease), and the final INSPECT
+/// reports `inputOwner: null`. Renewing at the harness's long-phase
+/// boundaries keeps the assertions about the protocol, not suite scheduling
+/// latency.
 fn renewVisibility(
     allocator: std.mem.Allocator,
     backend: broker.BrokerBackend,
@@ -1069,7 +1068,7 @@ fn driveViewerWire(
     defer allocator.free(attach);
     try writeViewerRequest(stream, generated.frame_type.host_attach, 11, 0, attach);
 
-    // §20 replay: the pre-attach provider banner must arrive as ordered OUTPUT
+    // Replay: the pre-attach provider banner must arrive as ordered OUTPUT
     // beginning exactly at afterSeq 0.
     try reader.collectOutputUntilContains("GOLDEN-BANNER");
     try readAttachReady(&reader, 11);
@@ -1236,15 +1235,15 @@ fn driveViewerWire(
         return error.InputReplayChangedReceipt;
     try waitForSingleInputEffect(allocator, input_proof_path);
 
-    // §20 live push: the provider's stdout echo of the applied input arrives
-    // as ordered OUTPUT on the attached viewer, and the idempotent replay
+    // Live push: the provider's stdout echo of the applied input arrives as
+    // ordered OUTPUT on the attached viewer, and the idempotent replay
     // produced no duplicate echo.
     try reader.collectOutputUntilContains("OUT:wire-input");
     if (std.mem.count(u8, reader.output.items, "OUT:wire-input") != 1)
         return error.DuplicateLiveOutput;
 
-    // §20 APPLIED output acknowledgement: the frozen output branch advances
-    // the host's acknowledged high-water without disturbing the stream.
+    // APPLIED output acknowledgement: the frozen output branch advances the
+    // host's acknowledged high-water without disturbing the stream.
     var ack_storage: [32]u8 = undefined;
     const ack_through = try std.fmt.bufPrint(&ack_storage, "{d}", .{reader.next_seq});
     const output_ack = try std.json.Stringify.valueAlloc(allocator, .{
@@ -1392,7 +1391,7 @@ fn driveViewerWire(
         .absent, .unobservable => return error.CanonicalEofWasHangup,
     }
 
-    // §06/§20 locator fence: a wrong-generation HOST_ATTACH is a typed
+    // Locator fence: a wrong-generation HOST_ATTACH is a typed
     // GENERATION_MISMATCH refusal, receives zero OUTPUT bytes, and the
     // connection closes.
     {
@@ -1486,9 +1485,9 @@ fn driveViewerWire(
     // dropping an expired one.
     try renewVisibility(allocator, backend, wire_locator, 79);
 
-    // §26 retarget + §20 replay determinism: a second grant for this viewer
-    // re-attaches from afterSeq 0, replays the identical retained byte stream,
-    // and supersedes only this viewer's prior connection.
+    // Retarget + replay determinism: a second grant for this viewer re-attaches
+    // from afterSeq 0, replays the identical retained byte stream, and
+    // supersedes only this viewer's prior connection.
     {
         const replay_stream = try std.net.connectUnixSocket(socket_path);
         defer replay_stream.close();
@@ -1775,14 +1774,14 @@ fn executableBuildHash(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 
 const burst_session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000f7";
 
-/// #91 end to end: the host loop feeds PTY output into TerminalState and THEN
-/// pumps the attached viewer, so a checkpoint firing from inside feedOutput
-/// evicted the journal ahead of the viewer's sent_seq; the pump's next push
-/// read an evicted range and the host detached a live pane on the checkpoint
-/// cadence.
+/// End to end: the host loop feeds PTY output into TerminalState and THEN
+/// pumps the attached viewer. A checkpoint firing from inside feedOutput that
+/// evicts the journal ahead of the viewer's sent_seq would make the pump's
+/// next push read an evicted range and detach a live pane on the checkpoint
+/// cadence — this drill asserts that does not happen.
 ///
-/// The golden above cannot catch that and never could: it streams far under the
-/// 2 MiB checkpoint interval and finishes well inside the 30 s one, so no
+/// The golden above cannot catch that: it streams far under the 2 MiB
+/// checkpoint interval and finishes well inside the 30 s one, so no
 /// checkpoint — and therefore no eviction — ever fires during it. Its
 /// freeze-case-H resume rows in fact REQUIRE that: they attach at byte cursors
 /// inside the opening banners, which only resolve while start_seq is still 0.
@@ -1791,8 +1790,8 @@ const burst_session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000f7";
 ///
 /// The viewer attaches FIRST and only then releases the burst through a trigger
 /// file, so every byte crosses the checkpoint threshold with a viewer attached
-/// — which is the ordering the defect lived in. A detach surfaces as a closed
-/// stream or an OUTPUT sequence gap, and ViewerReader refuses both.
+/// — the ordering that would surface an eviction detach. A detach surfaces as
+/// a closed stream or an OUTPUT sequence gap, and ViewerReader refuses both.
 fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
     var root_storage: [64]u8 = undefined;
     const root = try std.fmt.bufPrint(
@@ -2055,7 +2054,7 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
     try readAttachReady(&reader, 11);
 
     // The host is single-threaded and about to sit in the burst; renew first so
-    // the drill carries no wall-clock assumption about the 15 s lease.
+    // the drill carries no wall-clock assumption about the visibility lease.
     try renewVisibility(allocator, backend, wire_locator, 12);
 
     const trigger = try std.fs.createFileAbsolute(trigger_path, .{});
@@ -2066,7 +2065,8 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
     // the viewer floor unclamped the host detaches here and the read fails on a
     // closed stream; contiguity is enforced frame by frame by consumeOutput.
     // Renewal rides along because the host is single-threaded: it only serves
-    // the control socket between PTY reads, and its lease is 15 s.
+    // the control socket between PTY reads, and its lease is
+    // `limits.visibility_expiry_ms`.
     var renewal_timer = try std.time.Timer.start();
     var renewal_request: u64 = 20;
     while (std.mem.indexOf(u8, reader.output.items, "BURST-DONE") == null) {

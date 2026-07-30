@@ -758,8 +758,8 @@ test "controller inspect degrades when the host is unreachable but propagates al
     // allocation is the session-identity copy the connection attempt makes
     // (registry.connect allocates from the registry's allocator) before any
     // socket I/O, while the controller's own allocator — the one the fallback
-    // would use — stays healthy. Before the fix this same call returned the
-    // degraded response.
+    // would use — stays healthy. Returning the degraded response here would
+    // hide the OOM as host-unavailability.
     var failing: FailOnceAllocator = .{ .backing = allocator, .countdown = 0 };
     registry.allocator = failing.allocator();
     var failing_controller: Controller = .{
@@ -771,10 +771,6 @@ test "controller inspect degrades when the host is unreachable but propagates al
     try testing.expectError(error.OutOfMemory, failing_controller.inspect(request_json));
 }
 
-/// Fails exactly ONE allocation: the first `succeed` allocations succeed, the
-/// next one returns null, and every allocation after that succeeds again.
-/// std.testing.FailingAllocator fails every allocation from its index onward,
-/// which cannot express "the host call fails but the fallback has memory".
 /// A terminal that ACCEPTS every revision and reports a readback deliberately
 /// unequal to the request. Both properties are load-bearing: a permissive
 /// terminal is the only way to prove the control plane enforces the revision
@@ -1039,11 +1035,11 @@ test "neutral resize reports an unusable terminal as unknown and mutates nothing
 }
 
 test "neutral resize reconciles a set whose commit never landed" {
-    // owen's repro: the terminal applied revision 5 and the commit that should
-    // have recorded it failed, leaving the record at 0. The retry used to pass
-    // the stale record floor, be refused by the terminal, and be answered
-    // `stale` with currentRevision "0" -- a revision in force NOWHERE, for a
-    // resize that had in fact applied.
+    // The terminal applied revision 5 and the commit that should have recorded
+    // it failed, leaving the record at 0. A retry that only trusts the stale
+    // record floor is refused by the terminal and answered `stale` with
+    // currentRevision "0" -- a revision in force NOWHERE, for a resize that
+    // had in fact applied. The control plane must recover the terminal's order.
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1121,6 +1117,10 @@ test "neutral resize is fenced by the session reference it names" {
     try std.testing.expectEqual(@as(usize, 0), terminal.calls);
 }
 
+/// Fails exactly ONE allocation: the first `countdown` allocations succeed, the
+/// next one returns null, and every allocation after that succeeds again.
+/// std.testing.FailingAllocator fails every allocation from its index onward,
+/// which cannot express "the host call fails but the fallback has memory".
 const FailOnceAllocator = struct {
     backing: std.mem.Allocator,
     countdown: usize,

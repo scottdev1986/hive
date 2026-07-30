@@ -127,9 +127,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
   const repoRoot = resolve(import.meta.dir, "../../..");
   // Keep runtime/sessiond/hosts/<session>/host.sock below macOS's 104-byte
   // AF_UNIX path limit. That per-session path is longer than the broker
-  // socket it replaced, so the ceiling on this directory is tighter than it
-  // used to be. Overrunning it dies as NameTooLong, which surfaces as a host
-  // that never dialed rather than as anything naming a path length.
+  // socket, so the ceiling on this directory is tighter. Overrunning it dies
+  // as NameTooLong, which surfaces as a host that never dialed rather than as
+  // anything naming a path length.
   const home = await mkdtemp("/tmp/hsd.");
   await chmod(home, 0o700);
   const previousHome = process.env.HIVE_HOME;
@@ -435,9 +435,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
         expect(neutralReadback.session).toEqual(neutralSession);
         expect(neutralReadback.lifecycle).toBe("running");
 
-        // The daemon no longer renews anything: a terminal is alive because
-        // its process is alive, and it observes that for itself. What the
-        // create bound stays bound.
+        // The daemon does not renew leases: a terminal is alive because its
+        // process is alive, and it observes that for itself. What the create
+        // bound stays bound.
         expect(
           db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
         ).toEqual(visibility);
@@ -448,13 +448,12 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
           openTerminalRevision: visibility.openTerminalRevision,
         });
 
-        // #68 real-engine inject: the daemon-side injector performs the
-        // actual viewer wire against the real spawned host — grant →
-        // HELLO(viewer) → HOST_ATTACH → CLAIM_ACQUIRE(automation) →
-        // INPUT_SUBMIT — and must come back with a real receipt. This is
-        // the discriminator the 2026-07-20 live proof lacked: green here
-        // means the wire works against the engine, so a live-instance
-        // stall is environmental and now names itself on the message row.
+        // Real-engine inject: the daemon-side injector performs the actual
+        // viewer wire against the real spawned host — grant → HELLO(viewer) →
+        // HOST_ATTACH → CLAIM_ACQUIRE(automation) → INPUT_SUBMIT — and must
+        // come back with a real receipt. Green here means the wire works
+        // against the engine, so a live-instance stall is environmental and
+        // names itself on the message row.
         const injector = new SessiondViewerAgentInput(
           host,
           `hive-daemon:${handshake.instanceId}`,
@@ -475,10 +474,10 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
           idempotencyKey,
         });
 
-        // #85 real-engine orphan discard: acquire a human claim on an
-        // attached viewer, then drop the viewer without CLAIM_RELEASE. The
-        // compiled host must accept INPUT_ORPHAN_DISCARD and return the
-        // matching ORPHAN_DISCARDED response through the shared decoder.
+        // Real-engine orphan discard: acquire a human claim on an attached
+        // viewer, then drop the viewer without CLAIM_RELEASE. The compiled
+        // host must accept INPUT_ORPHAN_DISCARD and return the matching
+        // ORPHAN_DISCARDED response through the shared decoder.
         const orphanViewerId = "sessiond-live-orphan";
         const orphanGrant = await host.issueAttach(sessiondLocator, {
           viewerId: orphanViewerId,
@@ -562,11 +561,10 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death surviv
             .filter((agent) => agent.sessionLocator?.hostKind === "sessiond"),
         ).toHaveLength(1);
 
-        // #70 moved the sessiond fan-out from stopHive into the daemon's
-        // POST /stop. This harness has no daemon, so the injected transport
-        // performs the same teardown the daemon's commit path would — the
-        // live proof (real host process absence, termination audit) is
-        // unchanged.
+        // Sessiond fan-out lives on the daemon's POST /stop. This harness has
+        // no daemon, so the injected transport performs the same teardown the
+        // daemon's commit path would — the live proof (real host process
+        // absence, termination audit) is unchanged.
         const stopped = { survivors: null as readonly unknown[] | null };
         const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
         await stopHive({

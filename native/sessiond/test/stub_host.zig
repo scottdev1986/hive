@@ -8,8 +8,8 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
-/// TEST DOUBLE ONLY. WP4 owns the shipped PTY/VT host role. This double exists
-/// solely to exercise WP3 registration, grants, adoption, lease expiry, and
+/// TEST DOUBLE ONLY. The shipped PTY/VT host role is separate. This double
+/// exists solely to exercise registration, grants, adoption, lease expiry, and
 /// positive exit reporting without ever opening a PTY.
 const StubHost = struct {
     secret: [32]u8,
@@ -130,8 +130,8 @@ const StubHost = struct {
     }
 };
 
-/// WP4 test double: models the host-owned §21 lease clock by writing immutable
-/// final evidence after the broker deliberately starves an unreadable record.
+/// Test double: models the host-owned lease clock by writing immutable final
+/// evidence after the broker deliberately starves an unreadable record.
 const LeaseStarvationHostDouble = struct {
     fn expire(directory: std.fs.Dir) !void {
         var final = try directory.createFile("final.json", .{
@@ -1171,11 +1171,11 @@ test "broker launch admits a host whatever lease it claims, and dates it from th
     var rejected_runtime = try broker.Runtime.open(std.testing.allocator, rejected_root);
     defer rejected_runtime.deinit();
     // A host that took longer to boot than the visibility window reports a
-    // lease with nothing left on it. It used to be rejected as unverifiable
-    // and killed — which at 31 wide is the common case, not the odd one, since
-    // a create measured 12–14 s against a 15 s window. Nothing enforces that
-    // lease now, so the host is admitted and the broker dates the record from
-    // its own clock.
+    // lease with nothing left on it. That must still admit: rejecting it as
+    // unverifiable would kill the common case under wide fan-out, where create
+    // can run for most of the visibility window. Nothing enforces that lease
+    // as a kill deadline, so the host is admitted and the broker dates the
+    // record from its own clock.
     var rejected_record = record;
     rejected_record.visibility.expires_mono_ns = 0;
     var rejected_host = fixtureHost(rejected_record);
@@ -1445,10 +1445,10 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
     try std.testing.expectEqual(@as(u64, 8), entry.record.visibility.open_terminal_revision);
     try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
 
-    // Long past the deadline the lease used to impose, with nothing having
-    // renewed in between: the host is still registered and still served. A
-    // late message is not evidence that a terminal died — treating it as such
-    // is what killed three fleets.
+    // Long past the visibility deadline, with nothing having renewed in
+    // between: the host is still registered and still served. A late message
+    // is not evidence that a terminal died — treating it as such kills
+    // working agents whose process is still alive.
     const late = try visibilityRenewalForTest(
         std.testing.allocator,
         record,
@@ -1760,8 +1760,8 @@ test "CREATE rejects a host whose registered geometry differs from the spec" {
     defer runtime.deinit();
 
     var record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
-    // The record stays internally consistent with its own json, so recordJsonMatches
-    // cannot catch this; only a spec-vs-record comparison can.
+    // The record stays internally consistent with its own json, so
+    // recordJsonMatches cannot catch this; only a schema-vs-record comparison can.
     record.geometry.columns += 1;
     var expiry_storage: [24]u8 = undefined;
     const expires_at = try broker.wallDeadline(
