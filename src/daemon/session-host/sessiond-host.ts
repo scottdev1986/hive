@@ -755,14 +755,17 @@ export class SessiondHost implements LandedTerminalHost {
       // boots from blocking unrelated creates on one shared accept loop.
       const adoptionSecret = new Uint8Array(randomBytes(32));
       const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
-      if (executablePath === null) {
+      // Only the real launcher needs the built binary on disk; an injected
+      // launcher owns its own launch story, including on a checkout that has
+      // never built the native host.
+      if (executablePath === null && this.launchHostProcess === launchHost) {
         throw new SessiondProtocolError("hive-sessiond binary was not found");
       }
       try {
         const launched = await this.launchHostProcess({
           hiveHome: this.hiveHome,
           sessionId: locator.sessionId,
-          executablePath,
+          executablePath: executablePath ?? "hive-sessiond",
           specJson: JSON.stringify(payload),
           initialInput,
           adoptionSecret,
@@ -782,7 +785,10 @@ export class SessiondHost implements LandedTerminalHost {
           sessionId: locator.sessionId,
           locator,
           adoptionSecret,
-          buildId: await executableBuildHash(executablePath),
+          buildId:
+            executablePath === null
+              ? "unbuilt"
+              : await executableBuildHash(executablePath),
         });
         return createResultFromRecord(launched.record, parsedSpec.argv);
       } finally {

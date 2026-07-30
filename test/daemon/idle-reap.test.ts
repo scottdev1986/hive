@@ -278,7 +278,6 @@ describe("idle-agent reap sweep", () => {
       await daemon.reapIdleAgents();
       // Same state on both ticks: the idempotency key collapses them, so a
       // stranded agent does not flood the orchestrator every 30 seconds.
-      // (orchestratorInbox is a consuming read — it drains what it returns.)
       const first = await daemon.delivery.orchestratorInbox();
       expect(first.length).toEqual(1);
       expect(first[0]?.body).toContain("1 unmerged commit(s)");
@@ -286,11 +285,11 @@ describe("idle-agent reap sweep", () => {
       unmergedCommits = 2;
       await daemon.reapIdleAgents();
 
-      // The work grew, so the agent is reported again rather than silenced by
-      // the alert it already sent.
+      // The work grew, so a second report joins the still-unacknowledged
+      // first — reading is pure, and only an acknowledgement clears a notice.
       const second = await daemon.delivery.orchestratorInbox();
-      expect(second.length).toEqual(1);
-      expect(second[0]?.body).toContain("2 unmerged commit(s)");
+      expect(second.length).toEqual(2);
+      expect(second.at(-1)?.body).toContain("2 unmerged commit(s)");
     } finally {
       await daemon.stop();
       db.close();
