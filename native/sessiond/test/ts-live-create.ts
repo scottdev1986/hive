@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { stopHive } from "../../../src/cli/control";
 import { HiveDatabase } from "../../../src/daemon/db";
@@ -81,25 +81,6 @@ function codexRoutingPolicy(): RoutingPolicy {
   };
 }
 
-async function waitForBrokerSocket(
-  socketPath: string,
-  exited: () => boolean,
-): Promise<void> {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    try {
-      if ((await stat(socketPath)).isSocket()) return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    if (exited()) {
-      throw new Error("sessiond exited before creating broker.sock");
-    }
-    await Bun.sleep(20);
-  }
-  throw new Error("sessiond did not create broker.sock within 10 seconds");
-}
-
 async function killExactProcess(
   pid: number,
   startToken: string,
@@ -143,7 +124,11 @@ async function waitForExactProcessAbsence(
 
 test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
-  // Keep runtime/sessiond/broker.sock below macOS's AF_UNIX path limit.
+  // Keep runtime/sessiond/hosts/<session>/host.sock below macOS's 104-byte
+  // AF_UNIX path limit. That per-session path is longer than the broker
+  // socket it replaced, so the ceiling on this directory is tighter than it
+  // used to be. Overrunning it dies as NameTooLong, which surfaces as a host
+  // that never dialed rather than as anything naming a path length.
   const home = await mkdtemp("/tmp/hsd.");
   await chmod(home, 0o700);
   const previousHome = process.env.HIVE_HOME;
@@ -192,545 +177,504 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
         startToken: daemonIdentity.startToken,
         executablePath: daemonIdentity.executablePath,
       });
-      const binary = join(
-        repoRoot,
-        "native/sessiond/zig-out/bin/hive-sessiond",
-      );
-      const broker = Bun.spawn([binary, "serve"], {
-        cwd: repoRoot,
-        env: { ...process.env, HIVE_HOME: home },
+      const db = new HiveDatabase(join(home, "hive.db"));
+      let spawnedHost: { pid: number; startToken: string } | null = null;
+      let spawnedProvider: { pid: number; startToken: string } | null = null;
+      const workspacePublisher = Bun.spawn(["/bin/sleep", "60"], {
         stdin: "ignore",
         stdout: "ignore",
-        stderr: "inherit",
+        stderr: "ignore",
       });
+      const workspace = macProcessIdentity(workspacePublisher.pid);
 
       try {
-        await waitForBrokerSocket(
-          join(home, "runtime/sessiond/broker.sock"),
-          () => broker.exitCode !== null,
-        );
-        const db = new HiveDatabase(join(home, "hive.db"));
-        let spawnedHost: { pid: number; startToken: string } | null = null;
-        let spawnedProvider: { pid: number; startToken: string } | null = null;
-        const workspacePublisher = Bun.spawn(["/bin/sleep", "60"], {
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
+        const host = new SessiondHost({
+          repoRoot,
+          hiveHome: home,
+          handshake: async () => handshake,
+          pendingBindings: db,
         });
-        const workspace = macProcessIdentity(workspacePublisher.pid);
-
-        try {
-          const host = new SessiondHost({
-            repoRoot,
-            hiveHome: home,
-            handshake: async () => handshake,
-            pendingBindings: db,
+        const adapter = new HiveTerminalHostAdapter(
+          host,
+          db,
+          handshake.instanceId,
+          { providerRuns: db },
+        );
+        const _engineBuildId = await host.discoverEngineBuildId();
+        const visibility = {
+          workspaceSessionId: "workspace-sessiond-live-harness",
+          workspacePid: workspacePublisher.pid,
+          workspaceStartToken: workspace.startToken,
+          openTerminalRevision: "1",
+        };
+        const visibilityAuthority = () =>
+          new WorkspaceVisibilityAuthority({
+            expectedInstanceId: handshake.instanceId,
+            observeProcess: (pid) => {
+              try {
+                return macProcessIdentity(pid);
+              } catch {
+                return null;
+              }
+            },
+            discoverEngineBuildId: () => host.discoverEngineBuildId(),
           });
-          const adapter = new HiveTerminalHostAdapter(
-            host,
-            db,
-            handshake.instanceId,
-            { providerRuns: db },
-          );
-          const _engineBuildId = await host.discoverEngineBuildId();
-          const visibility = {
-            workspaceSessionId: "workspace-sessiond-live-harness",
-            workspacePid: workspacePublisher.pid,
-            workspaceStartToken: workspace.startToken,
-            openTerminalRevision: "1",
-          };
-          const visibilityAuthority = () =>
-            new WorkspaceVisibilityAuthority({
-              expectedInstanceId: handshake.instanceId,
-              observeProcess: (pid) => {
-                try {
-                  return macProcessIdentity(pid);
-                } catch {
-                  return null;
-                }
+        let workspaceVisibility = visibilityAuthority();
+        let admittedAgentName = "maya";
+        let admittedVisibility = visibility;
+        const registerAndPublishEmptyWorkspace = () => {
+          expect(
+            workspaceVisibility.register({
+              sessionId: admittedVisibility.workspaceSessionId,
+              process: {
+                processId: admittedVisibility.workspacePid,
+                startToken: admittedVisibility.workspaceStartToken,
               },
-              discoverEngineBuildId: () => host.discoverEngineBuildId(),
-            });
-          let workspaceVisibility = visibilityAuthority();
-          let admittedAgentName = "maya";
-          let admittedVisibility = visibility;
-          const registerAndPublishEmptyWorkspace = () => {
-            expect(
-              workspaceVisibility.register({
+            }),
+          ).toMatchObject({ state: "accepted" });
+          expect(
+            workspaceVisibility.publish({
+              schemaVersion: 1,
+              source: {
                 sessionId: admittedVisibility.workspaceSessionId,
                 process: {
                   processId: admittedVisibility.workspacePid,
                   startToken: admittedVisibility.workspaceStartToken,
                 },
-              }),
-            ).toMatchObject({ state: "accepted" });
-            expect(
-              workspaceVisibility.publish({
-                schemaVersion: 1,
-                source: {
-                  sessionId: admittedVisibility.workspaceSessionId,
-                  process: {
-                    processId: admittedVisibility.workspacePid,
-                    startToken: admittedVisibility.workspaceStartToken,
-                  },
-                },
-                inventoryRevision: admittedVisibility.openTerminalRevision,
-                terminals: [],
-              }),
-            ).toMatchObject({ state: "accepted" });
-          };
-          registerAndPublishEmptyWorkspace();
-
-          const stopSpawnedSession = async (agent: AgentRecord) => {
-            return await stopSessiondAgentSession(agent, {
-              terminalHost: adapter,
-              readHostPid: async (record) =>
-                (await adapter.inspect(requireSessiondAgentLocator(record)))
-                  .hostPid,
-            });
-          };
-          let resolveAgentWorking!: () => void;
-          const nextAgentWorking = () =>
-            new Promise<void>((resolve) => {
-              resolveAgentWorking = resolve;
-            });
-          let agentWorking = nextAgentWorking();
-          const spawner = new HiveSpawner({
-            db,
-            repoRoot,
-            port: handshakePort,
-            config: {},
-            readRoutingPolicy: codexRoutingPolicy,
-            discoverCapabilities: async () => ({
-              status: "ok",
-              records: [codexCapability()],
-              effectiveDefault: {
-                provider: "codex",
-                model: known(
-                  "gpt-sessiond-live",
-                  "codex.model/list",
-                  observedAt,
-                ),
-                effort: known("medium", "codex.model/list", observedAt),
               },
+              inventoryRevision: admittedVisibility.openTerminalRevision,
+              terminals: [],
             }),
-            isModelEnabled: async () => true,
-            sessiond: {
-              terminalHost: adapter,
-              prepareAgentCreation: (candidate) =>
-                candidate.agentName === admittedAgentName
-                  ? workspaceVisibility.prepareAgentCreation()
-                  : Promise.resolve(null),
-              admit: (candidate) => workspaceVisibility.admit(candidate),
+          ).toMatchObject({ state: "accepted" });
+        };
+        registerAndPublishEmptyWorkspace();
+
+        const stopSpawnedSession = async (agent: AgentRecord) => {
+          return await stopSessiondAgentSession(agent, {
+            terminalHost: adapter,
+            readHostPid: async (record) =>
+              (await adapter.inspect(requireSessiondAgentLocator(record)))
+                .hostPid,
+          });
+        };
+        let resolveAgentWorking!: () => void;
+        const nextAgentWorking = () =>
+          new Promise<void>((resolve) => {
+            resolveAgentWorking = resolve;
+          });
+        let agentWorking = nextAgentWorking();
+        const spawner = new HiveSpawner({
+          db,
+          repoRoot,
+          port: handshakePort,
+          config: {},
+          readRoutingPolicy: codexRoutingPolicy,
+          discoverCapabilities: async () => ({
+            status: "ok",
+            records: [codexCapability()],
+            effectiveDefault: {
+              provider: "codex",
+              model: known("gpt-sessiond-live", "codex.model/list", observedAt),
+              effort: known("medium", "codex.model/list", observedAt),
             },
-            stopSession: stopSpawnedSession,
-            createWorktree: async (_root, name, slug) => {
-              const path = join(home, `worktree-${name}`);
-              await mkdir(path, { recursive: true });
-              return { path, branch: `hive/${name}-${slug}` };
-            },
-            removeWorktree: async () => {},
-            unavailableAgentNames: async () => new Set(),
-            listCodexMcpServers: async () => [],
-            readCodexActivity: async () => null,
-            sleep: async () => {
-              for (const agent of db.listAgents()) {
-                if (agent.status === "spawning") {
-                  if (agent.sessionLocator?.hostKind === "sessiond") {
-                    const locator = requireSessiondAgentLocator(agent);
-                    if (
-                      !workspaceVisibility
-                        .currentSnapshot()
-                        ?.terminals.some(
-                          (terminal) => terminal.agentId === agent.id,
-                        )
-                    ) {
-                      expect(
-                        workspaceVisibility.publish({
-                          schemaVersion: 1,
-                          source: {
-                            sessionId: admittedVisibility.workspaceSessionId,
-                            process: {
-                              processId: admittedVisibility.workspacePid,
-                              startToken:
-                                admittedVisibility.workspaceStartToken,
-                            },
+          }),
+          isModelEnabled: async () => true,
+          sessiond: {
+            terminalHost: adapter,
+            prepareAgentCreation: (candidate) =>
+              candidate.agentName === admittedAgentName
+                ? workspaceVisibility.prepareAgentCreation()
+                : Promise.resolve(null),
+            admit: (candidate) => workspaceVisibility.admit(candidate),
+          },
+          stopSession: stopSpawnedSession,
+          createWorktree: async (_root, name, slug) => {
+            const path = join(home, `worktree-${name}`);
+            await mkdir(path, { recursive: true });
+            return { path, branch: `hive/${name}-${slug}` };
+          },
+          removeWorktree: async () => {},
+          unavailableAgentNames: async () => new Set(),
+          listCodexMcpServers: async () => [],
+          readCodexActivity: async () => null,
+          sleep: async () => {
+            for (const agent of db.listAgents()) {
+              if (agent.status === "spawning") {
+                if (agent.sessionLocator?.hostKind === "sessiond") {
+                  const locator = requireSessiondAgentLocator(agent);
+                  if (
+                    !workspaceVisibility
+                      .currentSnapshot()
+                      ?.terminals.some(
+                        (terminal) => terminal.agentId === agent.id,
+                      )
+                  ) {
+                    expect(
+                      workspaceVisibility.publish({
+                        schemaVersion: 1,
+                        source: {
+                          sessionId: admittedVisibility.workspaceSessionId,
+                          process: {
+                            processId: admittedVisibility.workspacePid,
+                            startToken: admittedVisibility.workspaceStartToken,
                           },
-                          inventoryRevision: `${
-                            BigInt(admittedVisibility.openTerminalRevision) + 1n
-                          }`,
-                          terminals: [
-                            {
-                              agentId: agent.id,
-                              agentName: agent.name,
-                              locator,
-                              state: "pending",
-                            },
-                          ],
-                        }),
-                      ).toEqual({
-                        state: "accepted",
+                        },
                         inventoryRevision: `${
                           BigInt(admittedVisibility.openTerminalRevision) + 1n
                         }`,
-                      });
-                    }
+                        terminals: [
+                          {
+                            agentId: agent.id,
+                            agentName: agent.name,
+                            locator,
+                            state: "pending",
+                          },
+                        ],
+                      }),
+                    ).toEqual({
+                      state: "accepted",
+                      inventoryRevision: `${
+                        BigInt(admittedVisibility.openTerminalRevision) + 1n
+                      }`,
+                    });
                   }
-                  db.insertAgent({ ...agent, status: "working" });
-                  resolveAgentWorking();
                 }
+                db.insertAgent({ ...agent, status: "working" });
+                resolveAgentWorking();
               }
-            },
-          });
+            }
+          },
+        });
 
-          const sessiondAgent = await spawner.spawn({
-            task: "Exercise the admitted sessiond backend",
-            category: "complex_coding",
-            name: "maya",
-            tool: "codex",
-            model: "gpt-sessiond-live",
-          });
-          expect(sessiondAgent.sessionLocator?.hostKind).toBe("sessiond");
-          await agentWorking;
-          expect(db.getAgentById(sessiondAgent.id)?.status).toBe("working");
-          const sessiondLocator = requireSessiondAgentLocator(sessiondAgent);
-          const sessiondBinding =
-            db.getTerminalHostBindingByLocator(sessiondLocator);
-          if (!sessiondBinding?.createEvidence) {
-            throw new Error(
-              "sessiond spawner omitted terminal binding evidence",
-            );
-          }
-          expect(sessiondBinding.locator).toEqual(sessiondLocator);
-          expect(sessiondBinding.visibility).toEqual(visibility);
-          expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([
-            sessiondBinding,
-          ]);
-          expect(
-            db.database
-              .query(`
+        const sessiondAgent = await spawner.spawn({
+          task: "Exercise the admitted sessiond backend",
+          category: "complex_coding",
+          name: "maya",
+          tool: "codex",
+          model: "gpt-sessiond-live",
+        });
+        expect(sessiondAgent.sessionLocator?.hostKind).toBe("sessiond");
+        await agentWorking;
+        expect(db.getAgentById(sessiondAgent.id)?.status).toBe("working");
+        const sessiondLocator = requireSessiondAgentLocator(sessiondAgent);
+        const sessiondBinding =
+          db.getTerminalHostBindingByLocator(sessiondLocator);
+        if (!sessiondBinding?.createEvidence) {
+          throw new Error("sessiond spawner omitted terminal binding evidence");
+        }
+        expect(sessiondBinding.locator).toEqual(sessiondLocator);
+        expect(sessiondBinding.visibility).toEqual(visibility);
+        expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([
+          sessiondBinding,
+        ]);
+        expect(
+          db.database
+            .query(`
             SELECT locatorInstanceId, locatorSessionId, locatorGeneration
             FROM terminal_host_bindings
           `)
-              .all(),
-          ).toEqual([
-            {
-              locatorInstanceId: sessiondLocator.instanceId,
-              locatorSessionId: sessiondLocator.sessionId,
-              locatorGeneration: sessiondLocator.generation,
-            },
-          ]);
-
-          const sessiondInspection = await adapter.inspect(sessiondLocator);
-          expect(sessiondInspection.presence).toBe("present");
-          expect(sessiondInspection.complete).toBe(false);
-          expect(sessiondInspection.visibility.state).toBe("attaching");
-          expect(sessiondInspection.hostPid).not.toBeNull();
-          expect(sessiondInspection.hostStartToken).not.toBeNull();
-          expect(sessiondInspection.shellRoot).not.toBeNull();
-          if (
-            sessiondInspection.hostPid === null ||
-            sessiondInspection.hostStartToken === null ||
-            sessiondInspection.shellRoot === null
-          ) {
-            throw new Error(
-              "sessiond spawner omitted measured process identity",
-            );
-          }
-          spawnedHost = {
-            pid: sessiondInspection.hostPid,
-            startToken: sessiondInspection.hostStartToken,
-          };
-          spawnedProvider = sessiondInspection.shellRoot;
-          expect(spawnedHost.pid).not.toBe(process.pid);
-          expect(spawnedHost.pid).not.toBe(broker.pid);
-          expect(spawnedProvider.pid).not.toBe(process.pid);
-          expect(spawnedProvider.pid).not.toBe(broker.pid);
-          expect(spawnedProvider.pid).not.toBe(spawnedHost.pid);
-          expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
-            spawnedHost.startToken,
-          );
-          expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
-            spawnedProvider.startToken,
-          );
-          expect(sessiondInspection.expectedExecutable).toBe(
-            sessiondBinding.createEvidence.expectedExecutable,
-          );
-          expect(sessiondInspection.diagnosticIds).toContain(
-            "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
-          );
-          expect(sessiondInspection.diagnosticIds).toContain(
-            "SESSIOND_RESOURCES_UNAVAILABLE",
-          );
-
-          const neutralMatches = (await host.list()).filter(
-            (inspection) =>
-              inspection.session.key === sessiondLocator.sessionId,
-          );
-          expect(neutralMatches).toHaveLength(1);
-          const neutralSession = neutralMatches[0]?.session;
-          expect(neutralSession).toBeDefined();
-          if (neutralSession === undefined) return;
-          expect(neutralSession.incarnation).not.toBe(
-            String(sessiondLocator.generation),
-          );
-          const neutralReadback = await host.inspect(neutralSession);
-          expect(neutralReadback.session).toEqual(neutralSession);
-          expect(neutralReadback.lifecycle).toBe("running");
-
-          // The daemon no longer renews anything: a terminal is alive because
-          // its process is alive, and it observes that for itself. What the
-          // create bound stays bound.
-          expect(
-            db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
-          ).toEqual(visibility);
-          expect(
-            (await adapter.inspect(sessiondLocator)).visibility,
-          ).toMatchObject({
-            workspaceSessionId: visibility.workspaceSessionId,
-            openTerminalRevision: visibility.openTerminalRevision,
-          });
-
-          // #68 real-engine inject: the daemon-side injector performs the
-          // actual viewer wire against the real spawned host — grant →
-          // HELLO(viewer) → HOST_ATTACH → CLAIM_ACQUIRE(automation) →
-          // INPUT_SUBMIT — and must come back with a real receipt. This is
-          // the discriminator the 2026-07-20 live proof lacked: green here
-          // means the wire works against the engine, so a live-instance
-          // stall is environmental and now names itself on the message row.
-          const injector = new SessiondViewerAgentInput(
-            host,
-            `hive-daemon:${handshake.instanceId}`,
-          );
-          const providerRun =
-            db.getActiveProviderRunByTerminal(sessiondLocator);
-          if (providerRun === null) {
-            throw new Error("sessiond spawner omitted ProviderRun identity");
-          }
-          const automatedInput = (text: string, idempotencyKey: string) => ({
-            terminal: sessiondLocator,
-            expectedForeground: {
-              providerRunId: providerRun.runId,
-              pid: providerRun.pid,
-              startToken: providerRun.startToken,
-              processGroupId: providerRun.foregroundProcessGroupId,
-            },
-            bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
-            idempotencyKey,
-          });
-
-          // #85 real-engine orphan discard: acquire a human claim on an
-          // attached viewer, then drop the viewer without CLAIM_RELEASE. The
-          // compiled host must accept INPUT_ORPHAN_DISCARD and return the
-          // matching ORPHAN_DISCARDED response through the shared decoder.
-          const orphanViewerId = "sessiond-live-orphan";
-          const orphanGrant = await host.issueAttach(sessiondLocator, {
-            viewerId: orphanViewerId,
-            geometry: sessiondInspection.geometry,
-            operations: ["view", "human-input"],
-          });
-          const orphanViewer = await SessiondViewerAttachClient.attach({
-            locator: sessiondLocator,
-            grant: orphanGrant,
-            geometry: sessiondInspection.geometry,
-            viewerId: orphanViewerId,
-          });
-          await (
-            orphanViewer as unknown as {
-              request(
-                requestType: "CLAIM_ACQUIRE",
-                responseType: "CLAIM_RESULT",
-                flags: number,
-                payload: unknown,
-              ): Promise<unknown>;
-            }
-          ).request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, {
-            schemaVersion: 1,
-            session: {
-              key: sessiondLocator.sessionId,
-              incarnation: String(sessiondLocator.generation),
-            },
-            writer: orphanViewerId,
-            kind: "human",
-            leaseMilliseconds: 60_000,
-            idempotencyKey: "sessiond-live-orphan-claim",
-          });
-          orphanViewer.close();
-
-          let orphanDecline = "";
-          const orphanDeadline = Date.now() + 5_000;
-          while (Date.now() < orphanDeadline) {
-            const declined = await injector.writeAutomated(
-              automatedInput(
-                "LIVE-PROOF #85: orphan blocks automation",
-                "msg-85-orphan-blocked",
-              ),
-            );
-            if (declined.outcome === "declined")
-              orphanDecline = declined.reason;
-            if (orphanDecline.includes("HumanOrphaned")) break;
-            await Bun.sleep(20);
-          }
-          expect(orphanDecline).toContain("HumanOrphaned");
-          // The viewer dropped without CLAIM_RELEASE, so the draft is abandoned
-          // rather than held: `orphaned` is the non-destructive resolution.
-          const discarded = await host.discardInputOrphan(
-            sessiondLocator,
-            "orphaned",
-          );
-          // The result is a discriminated state, not a boolean: asserting
-          // `discarded` specifically is what keeps a destructive `preempted`
-          // from reading as an ordinary orphan discard.
-          expect(discarded).toMatchObject({
-            state: "discarded",
-            priorOwnerViewerId: orphanViewerId,
-          });
-          expect(discarded.priorClaimId).not.toBeNull();
-
-          const injected = await injector.writeAutomated(
-            automatedInput(
-              "LIVE-PROOF #68: real-engine inject",
-              "msg-68-live-proof",
-            ),
-          );
-          if (injected.outcome !== "injected") {
-            throw new Error(`real-engine inject declined: ${injected.reason}`);
-          }
-          expect(["accepted", "queued", "written-to-terminal"]).toContain(
-            injected.receipt.stage,
-          );
-          expect(injected.receipt.transactionId).toBe("msg-68-live-proof");
-
-          expect(
-            db
-              .listAgents()
-              .filter((agent) => agent.sessionLocator?.hostKind === "sessiond"),
-          ).toHaveLength(1);
-
-          // #70 moved the sessiond fan-out from stopHive into the daemon's
-          // POST /stop. This harness has no daemon, so the injected transport
-          // performs the same teardown the daemon's commit path would — the
-          // live proof (real host process absence, termination audit) is
-          // unchanged.
-          const stopped = { survivors: null as readonly unknown[] | null };
-          const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
-          await stopHive({
-            readPid: () => process.pid,
-            liveness: async () => daemonStates.shift() ?? "dead",
-            cleanup: () => {},
-            sleep: async () => {},
-            log: () => {},
-            invoker: {
-              pid: process.pid,
-              ppid: process.ppid,
-              argv: [],
-              cwd: home,
-              chain: [],
-              agentWorktree: false,
-            },
-            requestStop: async () => {
-              const teardown = await stopSpawnedSession(sessiondAgent);
-              stopped.survivors = teardown.survivors;
-              expect(stopped.survivors).toEqual([]);
-              return { state: "stopping", killed: [sessiondAgent.name] };
-            },
-          });
-          if (stopped.survivors === null) {
-            throw new Error("sessiond teardown did not run");
-          }
-          expect(stopped.survivors).toEqual([]);
-          expect(
-            db.getTerminalHostBindingByLocator(sessiondLocator)
-              ?.terminationAudit,
-          ).toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
-          await Promise.all([
-            waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
-            waitForExactProcessAbsence(
-              spawnedProvider.pid,
-              spawnedProvider.startToken,
-            ),
-          ]);
-          expect((await adapter.inspect(sessiondLocator)).presence).not.toBe(
-            "present",
-          );
-          spawnedHost = null;
-          spawnedProvider = null;
-
-          admittedAgentName = "lena";
-          admittedVisibility = {
-            ...visibility,
-            openTerminalRevision: "3",
-          };
-          workspaceVisibility = visibilityAuthority();
-          registerAndPublishEmptyWorkspace();
-          agentWorking = nextAgentWorking();
-          const expiryAgent = await spawner.spawn({
-            task: "Exercise publisher-death lease expiry",
-            category: "complex_coding",
-            name: "lena",
-            tool: "codex",
-            model: "gpt-sessiond-live",
-          });
-          await agentWorking;
-          const expiryLocator = requireSessiondAgentLocator(expiryAgent);
-          const expiryInspection = await adapter.inspect(expiryLocator);
-          if (
-            expiryInspection.hostPid === null ||
-            expiryInspection.hostStartToken === null ||
-            expiryInspection.shellRoot === null
-          ) {
-            throw new Error(
-              "publisher-death session omitted measured process identity",
-            );
-          }
-          spawnedHost = {
-            pid: expiryInspection.hostPid,
-            startToken: expiryInspection.hostStartToken,
-          };
-          spawnedProvider = expiryInspection.shellRoot;
-          expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
-            spawnedHost.startToken,
-          );
-          expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
-            spawnedProvider.startToken,
-          );
-
-          process.kill(workspacePublisher.pid, "SIGKILL");
-          await workspacePublisher.exited;
-          await Promise.all([
-            waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
-            waitForExactProcessAbsence(
-              spawnedProvider.pid,
-              spawnedProvider.startToken,
-            ),
-          ]);
-          const expired = await adapter.inspect(expiryLocator);
-          expect(expired.presence).not.toBe("present");
-          expect(expired.visibility.state).toBe("expired");
-        } finally {
-          await killExactProcess(
-            workspacePublisher.pid,
-            workspace.startToken,
-          ).catch(() => undefined);
-          if (spawnedProvider !== null) {
-            await killExactProcess(
-              spawnedProvider.pid,
-              spawnedProvider.startToken,
-            );
-          }
-          if (spawnedHost !== null) {
-            await killExactProcess(spawnedHost.pid, spawnedHost.startToken);
-          }
-          db.close();
-        }
-      } finally {
-        if (broker.exitCode === null) broker.kill(15);
-        const exited = await Promise.race([
-          broker.exited.then(() => true),
-          Bun.sleep(5_000).then(() => false),
+            .all(),
+        ).toEqual([
+          {
+            locatorInstanceId: sessiondLocator.instanceId,
+            locatorSessionId: sessiondLocator.sessionId,
+            locatorGeneration: sessiondLocator.generation,
+          },
         ]);
-        if (!exited && broker.exitCode === null) broker.kill(9);
-        await broker.exited;
+
+        const sessiondInspection = await adapter.inspect(sessiondLocator);
+        expect(sessiondInspection.presence).toBe("present");
+        expect(sessiondInspection.complete).toBe(false);
+        expect(sessiondInspection.visibility.state).toBe("attaching");
+        expect(sessiondInspection.hostPid).not.toBeNull();
+        expect(sessiondInspection.hostStartToken).not.toBeNull();
+        expect(sessiondInspection.shellRoot).not.toBeNull();
+        if (
+          sessiondInspection.hostPid === null ||
+          sessiondInspection.hostStartToken === null ||
+          sessiondInspection.shellRoot === null
+        ) {
+          throw new Error("sessiond spawner omitted measured process identity");
+        }
+        spawnedHost = {
+          pid: sessiondInspection.hostPid,
+          startToken: sessiondInspection.hostStartToken,
+        };
+        spawnedProvider = sessiondInspection.shellRoot;
+        expect(spawnedHost.pid).not.toBe(process.pid);
+        expect(spawnedProvider.pid).not.toBe(process.pid);
+        expect(spawnedProvider.pid).not.toBe(spawnedHost.pid);
+        expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
+          spawnedHost.startToken,
+        );
+        expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
+          spawnedProvider.startToken,
+        );
+        expect(sessiondInspection.expectedExecutable).toBe(
+          sessiondBinding.createEvidence.expectedExecutable,
+        );
+        expect(sessiondInspection.diagnosticIds).toContain(
+          "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
+        );
+        expect(sessiondInspection.diagnosticIds).toContain(
+          "SESSIOND_RESOURCES_UNAVAILABLE",
+        );
+
+        const neutralMatches = (await host.list()).filter(
+          (inspection) => inspection.session.key === sessiondLocator.sessionId,
+        );
+        expect(neutralMatches).toHaveLength(1);
+        const neutralSession = neutralMatches[0]?.session;
+        expect(neutralSession).toBeDefined();
+        if (neutralSession === undefined) return;
+        expect(neutralSession.incarnation).not.toBe(
+          String(sessiondLocator.generation),
+        );
+        const neutralReadback = await host.inspect(neutralSession);
+        expect(neutralReadback.session).toEqual(neutralSession);
+        expect(neutralReadback.lifecycle).toBe("running");
+
+        // The daemon no longer renews anything: a terminal is alive because
+        // its process is alive, and it observes that for itself. What the
+        // create bound stays bound.
+        expect(
+          db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility,
+        ).toEqual(visibility);
+        expect(
+          (await adapter.inspect(sessiondLocator)).visibility,
+        ).toMatchObject({
+          workspaceSessionId: visibility.workspaceSessionId,
+          openTerminalRevision: visibility.openTerminalRevision,
+        });
+
+        // #68 real-engine inject: the daemon-side injector performs the
+        // actual viewer wire against the real spawned host — grant →
+        // HELLO(viewer) → HOST_ATTACH → CLAIM_ACQUIRE(automation) →
+        // INPUT_SUBMIT — and must come back with a real receipt. This is
+        // the discriminator the 2026-07-20 live proof lacked: green here
+        // means the wire works against the engine, so a live-instance
+        // stall is environmental and now names itself on the message row.
+        const injector = new SessiondViewerAgentInput(
+          host,
+          `hive-daemon:${handshake.instanceId}`,
+        );
+        const providerRun = db.getActiveProviderRunByTerminal(sessiondLocator);
+        if (providerRun === null) {
+          throw new Error("sessiond spawner omitted ProviderRun identity");
+        }
+        const automatedInput = (text: string, idempotencyKey: string) => ({
+          terminal: sessiondLocator,
+          expectedForeground: {
+            providerRunId: providerRun.runId,
+            pid: providerRun.pid,
+            startToken: providerRun.startToken,
+            processGroupId: providerRun.foregroundProcessGroupId,
+          },
+          bytes: new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`),
+          idempotencyKey,
+        });
+
+        // #85 real-engine orphan discard: acquire a human claim on an
+        // attached viewer, then drop the viewer without CLAIM_RELEASE. The
+        // compiled host must accept INPUT_ORPHAN_DISCARD and return the
+        // matching ORPHAN_DISCARDED response through the shared decoder.
+        const orphanViewerId = "sessiond-live-orphan";
+        const orphanGrant = await host.issueAttach(sessiondLocator, {
+          viewerId: orphanViewerId,
+          geometry: sessiondInspection.geometry,
+          operations: ["view", "human-input"],
+        });
+        const orphanViewer = await SessiondViewerAttachClient.attach({
+          locator: sessiondLocator,
+          grant: orphanGrant,
+          geometry: sessiondInspection.geometry,
+          viewerId: orphanViewerId,
+        });
+        await (
+          orphanViewer as unknown as {
+            request(
+              requestType: "CLAIM_ACQUIRE",
+              responseType: "CLAIM_RESULT",
+              flags: number,
+              payload: unknown,
+            ): Promise<unknown>;
+          }
+        ).request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, {
+          schemaVersion: 1,
+          session: {
+            key: sessiondLocator.sessionId,
+            incarnation: String(sessiondLocator.generation),
+          },
+          writer: orphanViewerId,
+          kind: "human",
+          leaseMilliseconds: 60_000,
+          idempotencyKey: "sessiond-live-orphan-claim",
+        });
+        orphanViewer.close();
+
+        let orphanDecline = "";
+        const orphanDeadline = Date.now() + 5_000;
+        while (Date.now() < orphanDeadline) {
+          const declined = await injector.writeAutomated(
+            automatedInput(
+              "LIVE-PROOF #85: orphan blocks automation",
+              "msg-85-orphan-blocked",
+            ),
+          );
+          if (declined.outcome === "declined") orphanDecline = declined.reason;
+          if (orphanDecline.includes("HumanOrphaned")) break;
+          await Bun.sleep(20);
+        }
+        expect(orphanDecline).toContain("HumanOrphaned");
+        // The viewer dropped without CLAIM_RELEASE, so the draft is abandoned
+        // rather than held: `orphaned` is the non-destructive resolution.
+        const discarded = await host.discardInputOrphan(
+          sessiondLocator,
+          "orphaned",
+        );
+        // The result is a discriminated state, not a boolean: asserting
+        // `discarded` specifically is what keeps a destructive `preempted`
+        // from reading as an ordinary orphan discard.
+        expect(discarded).toMatchObject({
+          state: "discarded",
+          priorOwnerViewerId: orphanViewerId,
+        });
+        expect(discarded.priorClaimId).not.toBeNull();
+
+        const injected = await injector.writeAutomated(
+          automatedInput(
+            "LIVE-PROOF #68: real-engine inject",
+            "msg-68-live-proof",
+          ),
+        );
+        if (injected.outcome !== "injected") {
+          throw new Error(`real-engine inject declined: ${injected.reason}`);
+        }
+        expect(["accepted", "queued", "written-to-terminal"]).toContain(
+          injected.receipt.stage,
+        );
+        expect(injected.receipt.transactionId).toBe("msg-68-live-proof");
+
+        expect(
+          db
+            .listAgents()
+            .filter((agent) => agent.sessionLocator?.hostKind === "sessiond"),
+        ).toHaveLength(1);
+
+        // #70 moved the sessiond fan-out from stopHive into the daemon's
+        // POST /stop. This harness has no daemon, so the injected transport
+        // performs the same teardown the daemon's commit path would — the
+        // live proof (real host process absence, termination audit) is
+        // unchanged.
+        const stopped = { survivors: null as readonly unknown[] | null };
+        const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
+        await stopHive({
+          readPid: () => process.pid,
+          liveness: async () => daemonStates.shift() ?? "dead",
+          cleanup: () => {},
+          sleep: async () => {},
+          log: () => {},
+          invoker: {
+            pid: process.pid,
+            ppid: process.ppid,
+            argv: [],
+            cwd: home,
+            chain: [],
+            agentWorktree: false,
+          },
+          requestStop: async () => {
+            const teardown = await stopSpawnedSession(sessiondAgent);
+            stopped.survivors = teardown.survivors;
+            expect(stopped.survivors).toEqual([]);
+            return { state: "stopping", killed: [sessiondAgent.name] };
+          },
+        });
+        if (stopped.survivors === null) {
+          throw new Error("sessiond teardown did not run");
+        }
+        expect(stopped.survivors).toEqual([]);
+        expect(
+          db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit,
+        ).toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
+        await Promise.all([
+          waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
+          waitForExactProcessAbsence(
+            spawnedProvider.pid,
+            spawnedProvider.startToken,
+          ),
+        ]);
+        expect((await adapter.inspect(sessiondLocator)).presence).not.toBe(
+          "present",
+        );
+        spawnedHost = null;
+        spawnedProvider = null;
+
+        admittedAgentName = "lena";
+        admittedVisibility = {
+          ...visibility,
+          openTerminalRevision: "3",
+        };
+        workspaceVisibility = visibilityAuthority();
+        registerAndPublishEmptyWorkspace();
+        agentWorking = nextAgentWorking();
+        const expiryAgent = await spawner.spawn({
+          task: "Exercise publisher-death lease expiry",
+          category: "complex_coding",
+          name: "lena",
+          tool: "codex",
+          model: "gpt-sessiond-live",
+        });
+        await agentWorking;
+        const expiryLocator = requireSessiondAgentLocator(expiryAgent);
+        const expiryInspection = await adapter.inspect(expiryLocator);
+        if (
+          expiryInspection.hostPid === null ||
+          expiryInspection.hostStartToken === null ||
+          expiryInspection.shellRoot === null
+        ) {
+          throw new Error(
+            "publisher-death session omitted measured process identity",
+          );
+        }
+        spawnedHost = {
+          pid: expiryInspection.hostPid,
+          startToken: expiryInspection.hostStartToken,
+        };
+        spawnedProvider = expiryInspection.shellRoot;
+        expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
+          spawnedHost.startToken,
+        );
+        expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
+          spawnedProvider.startToken,
+        );
+
+        process.kill(workspacePublisher.pid, "SIGKILL");
+        await workspacePublisher.exited;
+        await Promise.all([
+          waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
+          waitForExactProcessAbsence(
+            spawnedProvider.pid,
+            spawnedProvider.startToken,
+          ),
+        ]);
+        const expired = await adapter.inspect(expiryLocator);
+        expect(expired.presence).not.toBe("present");
+        expect(expired.visibility.state).toBe("expired");
+      } finally {
+        await killExactProcess(
+          workspacePublisher.pid,
+          workspace.startToken,
+        ).catch(() => undefined);
+        if (spawnedProvider !== null) {
+          await killExactProcess(
+            spawnedProvider.pid,
+            spawnedProvider.startToken,
+          );
+        }
+        if (spawnedHost !== null) {
+          await killExactProcess(spawnedHost.pid, spawnedHost.startToken);
+        }
+        db.close();
       }
     } finally {
       handshakeServer.stop(true);
