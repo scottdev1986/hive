@@ -59,6 +59,12 @@ export function opencodeConfigDirectory(
   return Bun.env.OPENCODE_CONFIG_DIR ?? join(home, ".config", "opencode");
 }
 
+/** opencode's durable session store: one sqlite database holding every
+ * session's messages and tool-call parts, not per-session files. */
+export function opencodeDatabasePath(home = Bun.env.HOME ?? homedir()): string {
+  return join(home, ".local", "share", "opencode", "opencode.db");
+}
+
 /**
  * The effective default an unflagged launch runs: the `model` key of the
  * global config. The file is JSONC and `opencode models` never marks a

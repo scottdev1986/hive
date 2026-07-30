@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import {
   mkdirSync,
@@ -311,6 +312,84 @@ describe("grok session telemetry", () => {
   });
 });
 
+// Every kimi record is verbatim from real sessions (agent john,
+// session_bfdf3cdf-…, plus one built-in call of agent david's) except the
+// three graph calls, which reuse john's real record shape with only name and
+// args changed: no kimi agent on this rig has called graphify yet — the very
+// gap this counter exists to measure. The graphify call names themselves are
+// real: the fixture's llm.tools_snapshot line is the model-facing declaration
+// kimi actually wrote, and it names every graphify tool with exactly the
+// string a call would carry.
+const KIMI_WIRE = readFileSync(
+  join(import.meta.dir, "__fixtures__", "kimi-wire-john.jsonl"),
+  "utf8",
+);
+
+function writeKimiSession(
+  home: string,
+  sessionId: string,
+  wire: string,
+): string {
+  const directory = join(
+    home,
+    "sessions",
+    "wd_maya_0123456789ab",
+    sessionId,
+    "agents",
+    "main",
+  );
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, "wire.jsonl");
+  writeFileSync(path, wire);
+  return path;
+}
+
+// Real part rows from the live opencode database (sarah's hive_hive_send, and
+// the one hive_graph_locate any opencode agent has actually made) plus a
+// graphify_query_graph part in the identical shape — no opencode agent has
+// called the graphify server yet. The `<server>_<tool>` naming is proven by
+// the real rows, and the text part proves the type filter.
+const OPENCODE_PARTS = readFileSync(
+  join(import.meta.dir, "__fixtures__", "opencode-parts-sarah.jsonl"),
+  "utf8",
+)
+  .trimEnd()
+  .split("\n");
+
+function writeOpencodeDatabase(
+  home: string,
+  sessionId: string,
+  parts: string[],
+): string {
+  const directory = join(home, ".local", "share", "opencode");
+  mkdirSync(directory, { recursive: true });
+  const path = join(directory, "opencode.db");
+  const db = new Database(path, { create: true });
+  db.run(
+    "CREATE TABLE IF NOT EXISTS session (id text PRIMARY KEY, " +
+      "directory text NOT NULL, time_created integer NOT NULL)",
+  );
+  db.run(
+    "CREATE TABLE IF NOT EXISTS part (id text PRIMARY KEY, " +
+      "message_id text NOT NULL, session_id text NOT NULL, " +
+      "time_created integer NOT NULL, time_updated integer NOT NULL, " +
+      "data text NOT NULL)",
+  );
+  db.run(
+    "INSERT OR REPLACE INTO session (id, directory, time_created) VALUES (?, ?, ?)",
+    [sessionId, resolve(WORKTREE), 1],
+  );
+  parts.forEach((data, index) => {
+    db.run(
+      "INSERT INTO part (id, message_id, session_id, time_created, " +
+        "time_updated, data) VALUES (?, ?, ?, ?, ?, ?)",
+      [`prt_${sessionId}_${index}`, "msg_1", sessionId, 1, 1, data],
+    );
+  });
+  db.close();
+  return path;
+}
+
 describe("graphify call counting", () => {
   const toolUseLine = (name: string, sidechain = false): string =>
     JSON.stringify({
@@ -434,8 +513,109 @@ describe("graphify call counting", () => {
     ).toBeNull();
   });
 
-  // The positive control that catches a regression to all-null: the two
-  // vendors that already counted must keep counting. An all-null column reads
+  // The declaration trap is the load-bearing part of the kimi counter: the
+  // model-facing tools snapshot names every graphify tool with exactly the
+  // string a call carries, so a counter keyed on the name alone reads
+  // "adopted" off an agent that never touched the graph.
+  test("counts kimi tool.call events, never tool declarations", () => {
+    expect(countGraphifyCallLines(KIMI_WIRE, "kimi")).toEqual(3);
+    // The trap really is in the slice: the same call name appears once as a
+    // declaration and once as a call, and only the call may count.
+    expect(
+      KIMI_WIRE.split('"name":"mcp__graphify__query_graph"').length - 1,
+    ).toEqual(2);
+    // Neither a built-in call nor a non-graph MCP call counts.
+    expect(KIMI_WIRE).toContain('"name":"Grep"');
+    expect(KIMI_WIRE).toContain('"name":"mcp__hive__hive_send"');
+  });
+
+  test("counts kimi calls off the session's own wire.jsonl by session id", async () => {
+    const home = makeHome();
+    writeKimiSession(home, "session-1", KIMI_WIRE);
+    const cursor = await readGraphifyCalls(
+      "kimi",
+      WORKTREE,
+      "session-1",
+      undefined,
+      home,
+    );
+    expect(cursor?.count).toEqual(3);
+    expect(cursor?.path.endsWith(join("agents", "main", "wire.jsonl"))).toBe(
+      true,
+    );
+    // Nothing appended since: the cursor holds rather than recounting.
+    const again = await readGraphifyCalls(
+      "kimi",
+      WORKTREE,
+      "session-1",
+      cursor ?? undefined,
+      home,
+    );
+    expect(again).toEqual(cursor);
+  });
+
+  test("kimi without a session id or directory is unknown, never zero", async () => {
+    const home = makeHome();
+    expect(
+      await readGraphifyCalls("kimi", WORKTREE, undefined, undefined, home),
+    ).toBeNull();
+    // Session id known but nothing on disk yet: keep the measured cursor.
+    const stale = { path: "/dead/wire.jsonl", offset: 10, count: 3 };
+    expect(
+      await readGraphifyCalls("kimi", WORKTREE, "session-x", stale, home),
+    ).toEqual(stale);
+  });
+
+  test("counts opencode graph tool parts from the session database", async () => {
+    const home = makeHome();
+    writeOpencodeDatabase(home, "ses_1", OPENCODE_PARTS);
+    const cursor = await readGraphifyCalls(
+      "opencode",
+      WORKTREE,
+      "ses_1",
+      undefined,
+      home,
+    );
+    // hive_graph_locate + graphify_query_graph; hive_hive_send and the text
+    // part do not count.
+    expect(cursor?.count).toEqual(2);
+    expect(cursor?.path.endsWith("opencode.db")).toBe(true);
+  });
+
+  test("an opencode session the database has not seen is unknown, never zero", async () => {
+    const home = makeHome();
+    expect(
+      await readGraphifyCalls("opencode", WORKTREE, undefined, undefined, home),
+    ).toBeNull();
+    const stale = { path: "/dead/opencode.db", offset: 0, count: 2 };
+    // No database at all: keep the measured cursor.
+    expect(
+      await readGraphifyCalls("opencode", WORKTREE, "ses_1", stale, home),
+    ).toEqual(stale);
+    // The database exists but this agent's session is not in it yet: the CLI
+    // has not persisted the conversation, so there is still nothing measured.
+    writeOpencodeDatabase(home, "ses_other", OPENCODE_PARTS);
+    expect(
+      await readGraphifyCalls("opencode", WORKTREE, "ses_1", stale, home),
+    ).toEqual(stale);
+    // The session appears having made no graph calls: now zero is measured,
+    // not invented.
+    const sendOnly = OPENCODE_PARTS.filter((data) =>
+      data.includes('"hive_hive_send"'),
+    );
+    writeOpencodeDatabase(home, "ses_1", sendOnly);
+    const cursor = await readGraphifyCalls(
+      "opencode",
+      WORKTREE,
+      "ses_1",
+      stale,
+      home,
+    );
+    expect(cursor?.count).toEqual(0);
+  });
+
+  // The positive control that catches a regression to all-null: the vendors
+  // that already counted must keep counting. An all-null column reads
   // as "nobody uses the graph" when it actually means "the reader is broken".
   test("every vendor's counter still sees its own graph calls", () => {
     expect(
@@ -448,5 +628,6 @@ describe("graphify call counting", () => {
       countGraphifyCallLines(`${mcpEndLine("graphify")}\n`, "codex"),
     ).toEqual(1);
     expect(countGraphifyCallLines(GROK_UPDATES, "grok")).toBeGreaterThan(0);
+    expect(countGraphifyCallLines(KIMI_WIRE, "kimi")).toBeGreaterThan(0);
   });
 });

@@ -1,8 +1,11 @@
+import { Database } from "bun:sqlite";
 import { open, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { claudeProjectDirectory } from "../adapters/providers/claude-cli";
 import { findCodexRolloutBySessionId } from "../adapters/providers/codex-cli";
 import { findLatestGrokSessionDirectory } from "../adapters/providers/grok-cli";
+import { findKimiSessionDirectory } from "../adapters/providers/kimi-cli";
+import { opencodeDatabasePath } from "../adapters/providers/opencode-cli";
 import { type CapabilityProvider, unknownVendor } from "../schemas/capability";
 
 /**
@@ -366,13 +369,12 @@ export function countGraphifyCallLines(
     case "grok":
       return countGrokGraphifyCalls(slice);
     case "kimi":
-      // No kimi transcript artifact is wired: readGraphifyCalls returns the
-      // cursor untouched for kimi, so this counter is unreachable in
-      // practice. Kimi's session-transcript shape has not been measured.
-      return 0;
+      return countKimiGraphifyCalls(slice);
     case "opencode":
-      // No opencode transcript artifact is wired either (its session data
-      // lives in a sqlite database no reader has been written for).
+      // opencode's sessions live in a sqlite database, so its count is a
+      // query (countOpencodeGraphifyCalls below) and never a line scan:
+      // readGraphifyCalls returns from the opencode case before reaching
+      // this counter.
       return 0;
     default:
       return unknownVendor(tool, "countGraphifyCallLines");
@@ -446,6 +448,70 @@ function countGrokGraphifyCalls(slice: string): number {
 }
 
 /**
+ * Kimi's wire.jsonl wraps each loop event: a call is
+ * `{"type":"context.append_loop_event","event":{"type":"tool.call","name":
+ * "mcp__<server>__<tool>",...}}` — the record shape verified against a real
+ * session's hive MCP calls, the graphify names against the same session's
+ * model-facing tools snapshot. Tool *declarations* carry the same names
+ * (`llm.tools_snapshot` and `mcp.tools_discovered` records list every tool),
+ * so the counter keys on the tool.call event shape, or merely shipping the
+ * graph tools would read as using them.
+ */
+function countKimiGraphifyCalls(slice: string): number {
+  let count = 0;
+  for (const entry of parseJsonLines(slice)) {
+    if (!isRecord(entry) || entry.type !== "context.append_loop_event") {
+      continue;
+    }
+    const event = entry.event;
+    if (!isRecord(event) || event.type !== "tool.call") continue;
+    if (typeof event.name !== "string") continue;
+    if (
+      event.name.startsWith("mcp__graphify__") ||
+      event.name === "mcp__hive__graph_locate"
+    )
+      count++;
+  }
+  return count;
+}
+
+/**
+ * opencode's tool calls are `part` rows whose data is
+ * `{"type":"tool","tool":"<server>_<tool>",...}` — `hive_hive_send`,
+ * `graphify_query_graph` — verified against a real session's rows. Rows are
+ * indexed by session and a byte offset has no meaning inside a database, so
+ * each sweep recounts the session's own rows instead of advancing a cursor.
+ * A database without this session is unknown, never zero: the CLI has not
+ * persisted the conversation yet, so there is nothing measured to report.
+ */
+function countOpencodeGraphifyCalls(
+  path: string,
+  toolSessionId: string,
+): number | null {
+  const db = new Database(path, { readonly: true });
+  try {
+    const session = db
+      .query("SELECT 1 FROM session WHERE id = ?")
+      .get(toolSessionId);
+    if (session === null) return null;
+    let count = 0;
+    for (const row of db
+      .query(
+        "SELECT json_extract(data, '$.tool') AS tool FROM part " +
+          "WHERE session_id = ? AND json_extract(data, '$.type') = 'tool'",
+      )
+      .all(toolSessionId)) {
+      if (!isRecord(row) || typeof row.tool !== "string") continue;
+      if (row.tool.startsWith("graphify_") || row.tool === "hive_graph_locate")
+        count++;
+    }
+    return count;
+  } finally {
+    db.close();
+  }
+}
+
+/**
  * Advance a call-count cursor against the agent's own artifact. Every reader
  * requires `toolSessionId`: reused worktrees retain dead predecessors'
  * artifacts, so a latest-by-directory lookup cannot identify this agent.
@@ -497,13 +563,27 @@ export async function readGraphifyCalls(
       path = join(directory, "updates.jsonl");
       break;
     }
-    case "kimi":
-      // No kimi session-transcript reader is wired yet, so there is no
-      // artifact to advance a cursor against — unknown, not zero.
-      return cursor ?? null;
-    case "opencode":
-      // opencode's session data is a sqlite database with no reader wired.
-      return cursor ?? null;
+    case "kimi": {
+      if (toolSessionId === undefined) return null;
+      // The main agent's wire.jsonl is Kimi's durable transcript; subagents
+      // write their own wire files under agents/<id> and describe other
+      // conversations. No session directory yet is unknown, not zero.
+      const directory = await findKimiSessionDirectory(toolSessionId, home);
+      if (directory === null) return cursor ?? null;
+      path = join(directory, "agents", "main", "wire.jsonl");
+      break;
+    }
+    case "opencode": {
+      if (toolSessionId === undefined) return null;
+      const database = opencodeDatabasePath(home);
+      try {
+        const count = countOpencodeGraphifyCalls(database, toolSessionId);
+        if (count === null) return cursor ?? null;
+        return { path: database, offset: 0, count };
+      } catch {
+        return cursor ?? null;
+      }
+    }
     default:
       return unknownVendor(tool, "readGraphifyCalls");
   }

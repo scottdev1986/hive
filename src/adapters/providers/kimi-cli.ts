@@ -1,5 +1,12 @@
 import { type Dirent, readFileSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { shellQuote } from "../../daemon/session-host/shell-session";
@@ -288,6 +295,33 @@ export async function writeKimiAgentConfig(
 
 export function kimiSessionsDirectory(home = kimiHome()): string {
   return join(home, "sessions");
+}
+
+/**
+ * The session's own directory under the sessions root, or null when no project
+ * directory holds it. The layout is `sessions/<wd_key>/<session_id>/` and the
+ * `wd_<name>_<hash>` segment is the CLI's own derivation, so the id is found
+ * by scanning project directories rather than re-deriving the hash.
+ */
+export async function findKimiSessionDirectory(
+  toolSessionId: string,
+  home?: string,
+): Promise<string | null> {
+  const root = kimiSessionsDirectory(home);
+  let projects: Dirent[];
+  try {
+    projects = await readdir(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    const candidate = join(root, project.name, toolSessionId);
+    try {
+      if ((await stat(candidate)).isDirectory()) return candidate;
+    } catch {}
+  }
+  return null;
 }
 
 interface KimiSessionLocation {
