@@ -264,13 +264,17 @@ export class MessageDelivery {
   }
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
-    if (this.rootComposerActive() || this.rootProtocol?.isLive() !== true) {
+    if (this.rootComposerActive()) {
+      this.recordRootComposerHold();
       return [];
     }
+    if (this.rootProtocol?.isLive() !== true) return [];
     return this.withSessionLock("root", async () => {
-      if (this.rootComposerActive() || this.rootProtocol?.isLive() !== true) {
+      if (this.rootComposerActive()) {
+        this.recordRootComposerHold();
         return [];
       }
+      if (this.rootProtocol?.isLive() !== true) return [];
       const messages = await this.orchestratorInbox();
       const queued = messages.filter((message) => message.state === "queued");
       if (queued.length === 0) return [];
@@ -536,6 +540,21 @@ export class MessageDelivery {
     return orchestratorRecipientNames().some((name) =>
       this.composerActive(name),
     );
+  }
+
+  /** A held composer lease is a delivery veto like any other, so it must
+   * leave the reason blockedDeliveries reads — an unrecorded hold reads as
+   * "no mail" from the outside. Record-only: the lease itself still governs,
+   * and a successful delivery after release clears this entry. */
+  private recordRootComposerHold(): void {
+    const first = this.db
+      .getUnacknowledgedMessages(ORCHESTRATOR_NAME)
+      .find((message) => message.state === "queued");
+    if (first === undefined) return;
+    this.declines.set(ORCHESTRATOR_NAME, {
+      messageId: first.id,
+      reason: "root composer lease held; waiting for release",
+    });
   }
 
   private async providerIsRunning(agent: AgentRecord): Promise<boolean> {

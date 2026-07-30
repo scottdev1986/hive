@@ -79,7 +79,10 @@ function attemptDb(active: ProviderRun | null = providerRun) {
 }
 
 /** A MessageDelivery wired to a live root host that accepts every write. */
-function queenDeliveryHarness(db: HiveDatabase) {
+function queenDeliveryHarness(
+  db: HiveDatabase,
+  composerActive: (recipient: string) => boolean = () => false,
+) {
   const writes: Uint8Array[] = [];
   const rootDelivery = new SessiondOrchestratorRootDelivery({
     db,
@@ -104,7 +107,7 @@ function queenDeliveryHarness(db: HiveDatabase) {
     undefined,
     undefined,
     // Deterministic: never inherit a composer lease from the ambient rig.
-    () => false,
+    composerActive,
   );
   return { writes, delivery };
 }
@@ -293,6 +296,31 @@ describe("SessiondOrchestratorRootDelivery", () => {
     });
     // The trigger process-event fires on the root's turn-end hook.
     await delivery.flushQueued(ORCHESTRATOR_NAME);
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toBeUndefined();
+    db.close();
+  });
+
+  test("a held root composer lease records its hold and delivers on release", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    let leased = true;
+    const { writes, delivery } = queenDeliveryHarness(db, () => leased);
+
+    const message = await delivery.send("maya", ORCHESTRATOR_NAME, "Report.");
+
+    expect(writes).toHaveLength(0);
+    expect(db.getMessage(message.id)?.state).toBe("queued");
+    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toMatchObject({
+      messageId: message.id,
+      diagnostic: "root composer lease held; waiting for release",
+    });
+
+    leased = false;
+    // The maintenance sweep retries queued queen mail after the lease lifts.
+    await delivery.wakeOrchestrator();
 
     expect(writes).toHaveLength(1);
     expect(db.getMessage(message.id)?.state).toBe("notified");
