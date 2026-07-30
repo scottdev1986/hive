@@ -17,28 +17,20 @@ import {
 /**
  * Launches a terminal host and takes its registration, without a broker.
  *
- * The broker existed between Hive and its terminals as the only thing able to
- * hand a socketpair down to a forked child. It is not in the terminal data path
- * — a viewer already connects straight to `host.sock` — so what it actually
- * provided on this path was a descriptor handoff, and one process doing that
- * for thirty-one concurrent launches is the 31-wide bottleneck: its connection
- * threads park inside multi-second boots and stop accepting, so creates that
- * never started fail at HELLO.
- *
- * Here the direction is inverted. Hive listens on a socket named for exactly
+ * Hive listens on a socket named for exactly
  * one host, spawns the host pointing at it, and the host dials in. The path is
  * per-host, so accepting one connection on it is unambiguous without a
- * correlation token, and the accepted stream is private and identical to the
- * socketpair the broker used — every byte after this point is the same wire.
+ * correlation token. Per-host listeners also prevent multi-second boots from
+ * blocking unrelated launches on a shared accept loop.
  */
 
-/** HVB1, the private launcher-to-host bootstrap codec (`boot_envelope.zig`). */
+/** HVB1, the private launcher-to-host bootstrap codec. */
 const BOOT_MAGIC = "HVB1";
 const BOOT_HEADER_BYTES = 48;
 const ADOPTION_SECRET_BYTES = 32;
 
 /** The host answers its registration on this id, and expects the acknowledgement
- * to carry it back (`host_registration.zig`). */
+ * to carry it back. */
 const REGISTRATION_REQUEST_ID = 2n;
 
 function encodeBootMessage(
@@ -100,9 +92,7 @@ export type LaunchedHost = Readonly<{
   /**
    * The control stream, still open.
    *
-   * The broker closed this after acknowledging, which is why a host had no way
-   * to reach Hive afterward and why readiness had to be polled. Holding it is
-   * what lets a terminal report its own state.
+   * Holding it lets the terminal report its own state after registration.
    */
   control: Socket;
 }>;
@@ -233,9 +223,8 @@ export async function launchHost(
   // as NameTooLong, surfacing as a host that never dialed. The listener
   // therefore lives in its own short directory: unique per launch, 0700, and
   // removed as soon as the host is on the stream.
-  // The host writes its record under this tree and fails closed if it is not
-  // already there. The broker's Runtime.open used to create it; with no broker,
-  // it is the launcher's to make.
+  // The host writes its record under this tree and fails closed if it is absent,
+  // so the launcher creates it before starting the host.
   // A host whose working directory is gone fails deep inside its own boot as a
   // bare FileNotFound, naming nothing. The directory belongs to the caller, so
   // the check belongs here, where the answer can say which path was missing.

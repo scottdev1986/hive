@@ -48,10 +48,9 @@ const frameNames = new Map<number, FrameTypeName>(
 );
 
 /**
- * Stream-tolerant frame decoder for the viewer wire
- * (terminal-stack-transition.html#attach).
+ * Stream-tolerant frame decoder for the viewer wire.
  *
- * The daemon's control-only {@link SessiondFrameDecoder} rejects any frame with
+ * The control decoder rejects any frame with
  * `streamSeq != 0`; a HOST_ATTACH connection immediately receives SNAPSHOT/OUTPUT
  * stream frames that carry a nonzero byte offset in `streamSeq`. This decoder
  * accepts both and leaves ordering/correlation to the client.
@@ -205,8 +204,8 @@ export class SessiondViewerAttachClient {
     timeout: ReturnType<typeof setTimeout>;
   }> | null = null;
   private activeClaimToken: string | null = null;
-  /** The engine's own SessionRef for the held claim. Never derived from the
-   * Hive locator: incarnation is engine-assigned, not the generation (#68). */
+  /** The engine's own SessionRef for the held claim. Never derive it from the
+   * Hive locator: incarnation is engine-assigned, not the generation. */
   private activeClaimSession: SessionRef | null = null;
 
   private constructor(
@@ -235,17 +234,14 @@ export class SessiondViewerAttachClient {
    *
    * The cursor is 0 — everything the host still retains — and not the grant's
    * `checkpointSeq`. That field names the newest checkpoint, so attaching at it
-   * asks sessiond to replay only what FOLLOWS the base state
-   * (session_host.zig:601). A viewer that persisted between calls could add
+   * asks sessiond to replay only what follows the base state. A viewer that persisted between calls could add
    * that delta to a screen it already held; this one is opened per observation
    * and holds nothing, and it discards the SNAPSHOT_BYTES the host offers as
-   * the base. Asking to skip the base and then dropping the copy of it we are
-   * handed is how a queen came to hold 30KB of a Claude pane, report
-   * `complete`, and find none of the agent's words in it.
+   * the base. Skipping the base while dropping its snapshot can report a
+   * complete observation with none of the pane's existing text.
    *
    * Zero is also the one cursor sessiond will never refuse: above `output_seq`
-   * the host fails the attach outright rather than clamping
-   * (host_core.zig:1472).
+   * the host fails the attach outright rather than clamping.
    */
   static async observeOutput(deps: ViewerAttachDependencies): Promise<
     Readonly<{
@@ -274,15 +270,11 @@ export class SessiondViewerAttachClient {
    * Wait for the host's replay, without trusting the grant's sequence as the
    * whole story.
    *
-   * The grant carries the sequence the BROKER has on record, and the broker
-   * learns it when a host registers — not as the pane produces output. So a
+   * The grant carries the sequence recorded when a host registers, not live
+   * pane progress. A
    * pane that has been printing for minutes can still be advertised at
-   * `outputSeq: 0`, and `waitForOutput("0")` then resolves on the spot with an
-   * empty tail and reports `complete`. That is not a hypothetical: it is
-   * exactly what an operator hit when a grok agent wrote a story and the queen
-   * could only answer "outputThrough still 0 — there's no captured text to
-   * read". The observation succeeded; it just observed nothing, and because it
-   * succeeded nothing anywhere logged a problem.
+   * `outputSeq: 0`, and `waitForOutput("0")` would resolve immediately with an
+   * empty tail while reporting `complete`.
    *
    * A HOST_ATTACH connection is streamed SNAPSHOT/OUTPUT immediately, so the
    * bytes are already on their way. The honest wait is therefore: satisfy the
@@ -395,10 +387,8 @@ export class SessiondViewerAttachClient {
    * Acquire an automation claim and submit one input transaction on this
    * connection. Returns the frozen receipt, or a claim decline naming the
    * arbiter's own diagnostic when it refuses (a human owns or orphaned the
-   * claim) — never steal a held human claim (I3/I4). The caller marks
-   * `injected`, never `applied`. The decline detail exists because the #68
-   * live proof died guessing between three silent causes: every refusal on
-   * this wire must carry its reason out.
+   * claim). Never steal a held human claim. The caller marks `injected`, never
+   * `applied`; every refusal on this wire carries its reason out.
    */
   async injectAutomated(
     request: Readonly<{

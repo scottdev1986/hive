@@ -1,7 +1,6 @@
 /**
  * The MCP tool response shape every Hive tool handler returns.
  *
- * Lifted out of server.ts ahead of the per-tool-group extraction (audit §11).
  * All 34 tool handlers call it, so it has to be shared before the first group
  * moves — otherwise each extracted group carries its own copy and they drift.
  *

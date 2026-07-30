@@ -3,12 +3,9 @@
  *
  * The broker authenticates exactly one daemon-lock identity, so the daemon
  * that holds `$HIVE_HOME/daemon.lock` must spawn and supervise the broker.
- * Until this module existed, only the b22 proof harness ever started a broker
- * — the staged app's terminal panes could not render live content.
- *
  * Crash recovery is bounded: a dead broker is restarted a fixed number of
- * times inside a sliding window, then the supervisor fails visibly. Infinite
- * retry is never acceptable (issue #37).
+ * times inside a sliding window, then the supervisor fails visibly. Do not
+ * retry forever: persistent broker failure must remain visible.
  *
  * Ready-proof is kernel-bound on the service resource itself: the supervisor
  * connects to broker.sock, reads LOCAL_PEERPID (macOS), requires that peer
@@ -17,9 +14,8 @@
  * stdout announces) is not ready-evidence — broker.lock remains the broker's
  * internal mutual exclusion only.
  *
- * Adoption of a broker left running by a previous daemon is deliberately
- * carved out: a restarting daemon always spawns a fresh broker under its
- * current lock; a foreign peer on broker.sock fails startup visibly.
+ * A restarting daemon always spawns a fresh broker under its current lock;
+ * a foreign peer on broker.sock fails startup visibly.
  */
 
 import { dlopen, FFIType, suffix } from "bun:ffi";

@@ -32,9 +32,8 @@ export function encodeSubmittedText(text: string): Uint8Array {
  * the caller then leaves the envelope queued AND records the reason on the
  * message row. Never fabricates `applied`.
  *
- * The decline carries a reason because the #68 live proof failed exactly
- * here: a bare null left "claim denied" indistinguishable from "wire broken"
- * with the only diagnostic on a /dev/null stderr.
+ * A decline carries a reason because bare null cannot distinguish "claim
+ * denied" from "wire broken".
  */
 export type SessiondInjectResult =
   | Readonly<{ outcome: "injected"; receipt: InputReceipt; recovery?: string }>
@@ -49,8 +48,7 @@ export interface SessiondAgentInput {
   /**
    * Send raw keys to a session parked on a vendor prompt. Not a message: no
    * bracketed paste and no submit, because the bytes ARE the keystroke the
-   * widget is waiting for. Absent on hosts that predate #102, which means the
-   * decision cannot be delivered — never that it was.
+   * widget is waiting for. When absent, the decision cannot be delivered.
    */
   injectKeys?(
     agent: AgentRecord,
@@ -71,8 +69,7 @@ export interface SessiondRootInput {
 type BrokerFacade = Pick<SessionHost, "issueAttach"> &
   Pick<TerminalHost, "list">;
 
-/** Orphan discard, absent on hosts that predate it — an injector built
- * without it keeps the pre-fix behaviour: decline and stay queued. */
+/** Optional orphan discard. Without it, decline and stay queued. */
 type OrphanDiscarder = (
   locator: AutomatedInput["terminal"],
   mode: OrphanDiscardMode,
@@ -135,17 +132,14 @@ export class SessiondViewerAgentInput
     isPromptPending?: () => boolean,
     expectedForeground?: ExpectedForeground,
   ): Promise<SessiondInjectResult> {
-    // TWO SessionRef incarnation semantics meet here, and confusing them is
-    // exactly how the #68 live proof failed silently on every tick:
-    //   - BROKER RPCs (list/inspect) address sessions by the ENGINE-assigned
+    // Two SessionRef incarnation semantics meet here:
+    //   - Broker RPCs address sessions by the engine-assigned
     //     incarnation. A locator-generation ref gets NOT_FOUND.
     //   - VIEWER-WIRE frames (CLAIM_ACQUIRE/INPUT_SUBMIT/CLAIM_RELEASE) map
-    //     generation→incarnation (session_host.zig, and the Swift reference
-    //     client AttachReplayClient sends String(locator.generation)). An
+    //     generation to incarnation. An
     //     engine-assigned ref gets GENERATION_MISMATCH.
-    // So: discover lifecycle via the broker's own list, but speak to the
-    // host with the locator-derived ref. Both proven against the real engine
-    // in native/sessiond/test/ts-live-create.ts.
+    // Discover lifecycle through the broker list, but speak to the host with
+    // the locator-derived reference.
     const sessions = await this.broker.list();
     const matches = sessions.filter(
       (candidate) => candidate.session.key === locator.sessionId,
@@ -195,10 +189,9 @@ export class SessiondViewerAgentInput
    * never reaches this path: automation stays queued until the operator's turn
    * ends.
    *
-   * Run-bound writes retry here too. They used to return the orphan decline
-   * untouched, which left every real caller — both of them pass an
-   * `expectedForeground` — permanently deadlocked behind a departed human's
-   * draft. Run-binding is not weakened by retrying: the host revalidates
+   * Run-bound writes retry here too; otherwise callers with an
+   * `expectedForeground` remain blocked behind a departed human's draft.
+   * Run-binding is not weakened by retrying: the host revalidates
    * `expectedForeground` at INPUT_SUBMIT and rejects `foreground-changed`.
    */
   private async resolveOrphanedHumanClaim(

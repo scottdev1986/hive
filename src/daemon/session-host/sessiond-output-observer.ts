@@ -36,11 +36,8 @@ export async function observeSessiondOutput(
     });
     return { locator, ...observed };
   } catch (error) {
-    // SAY WHY. This catch used to return empty text and nothing else, which is
-    // how "the queen cannot read the pane" reached an operator as the single
-    // digit `outputThrough: 0` — no error, no log, no clue which of attach,
-    // replay, or decode had failed. An observation that could not be taken is
-    // reportable; a silent one is a capability that disappears without notice.
+    // Report why observation failed; empty text alone cannot distinguish an
+    // attach, replay, or decode failure from a genuinely empty pane.
     return {
       locator,
       outputThrough: grant.outputSeq,

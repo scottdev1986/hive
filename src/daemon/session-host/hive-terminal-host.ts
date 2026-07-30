@@ -508,11 +508,8 @@ export class HiveTerminalHostAdapter {
   ): Promise<TerminationResult> {
     // A host this instance owns but can no longer see is already terminated,
     // and saying so is the only answer that leaves a way out. Requiring a LIVE
-    // host to close a session made both close paths — hive_kill and
-    // hive_mark_dead — depend on the very thing whose absence they are called
-    // to clean up: once a host was gone, every close refused, the agent row
-    // stayed live forever, and it went on holding a quota reservation and
-    // collecting undeliverable messages. Fail-closed is right for a host that
+    // host to close a session would make both close paths depend on the thing
+    // whose absence they are called to clean up. Fail-closed is right for a host that
     // might still be running; absence is not that case. Ownership is still
     // enforced, so another instance's locator is still refused.
     this.requireBinding(locator);

@@ -73,7 +73,7 @@ export interface CrashRecoveryDependencies {
     launchGrantId: string,
     providerRunId: string,
   ) => Promise<void>;
-  /** PR5 wires the policy-backed full gate. Missing/unreadable refuses resume. */
+  /** Missing or unreadable policy refuses resume. */
   authorizeLaunch?: (
     identity: ExecutionIdentity,
     category: AgentRecord["category"],
@@ -90,9 +90,8 @@ export interface CrashRecoveryDependencies {
   resolveOpencodeSessionId?: SessionResolver;
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
-  /** #57: whether a subject's credential has authenticated against the
-   * daemon's /mcp at or after a launch baseline. Wired in production; when
-   * the seam is absent the reachability check does not run. */
+  /** Whether a subject's credential authenticated against the daemon's /mcp
+   * at or after a launch baseline. Without this check, reachability is unknown. */
   mcpClientSeen?: (subject: string, since: string) => boolean;
   /** Test seam to collapse the reachability wait's deadline. */
   mcpReportingTimeoutMs?: number;
@@ -146,11 +145,9 @@ export class CrashRecovery {
   // "no session", both bump recoveryAttempts, and both launch a session
   // for the same conversation.
   private readonly recovering = new Set<string>();
-  // Agents a deliberate kill is tearing down RIGHT NOW (#66). killAgentTeardown
-  // destroys the process before it writes the dead status, so for 2.5-34s
-  // (measured) the row reads live-status + session-absent — bit-for-bit the
-  // crash predicate below. A sweep tick inside that window used to resume the
-  // corpse (david, 2026-07-20). The marker is set
+  // Agents a deliberate kill is tearing down right now. killAgentTeardown
+  // destroys the process before it writes the dead status, so the row can match
+  // the crash predicate during that window. The marker is set
   // before the first destructive step and cleared only after the dead status
   // lands; if the teardown fails in between it stays set, because a
   // deliberately killed agent must never be resurrected by the sweep.
@@ -182,17 +179,15 @@ export class CrashRecovery {
     this.deliberateKills.delete(agentId);
   }
 
-  /** The durable half of the same consult (#66): a sessiond session that was
+  /** The durable half of the same consult: a sessiond session that was
    * torn down through the one kill path carries a termination audit on its
    * terminal-host binding. Recovery reads it before calling a death a crash —
    * this is what survives a daemon restart mid-teardown.
    *
    * Only an *operator* audit is deliberate. A `visibility-expiry` audit records
    * infrastructure protecting the visibility invariant — nobody asked for that
-   * agent to stop — so it must not suppress recovery: on 2026-07-21 the five
-   * expired agents were resumed, and treating that kill as deliberate would
-   * have made the incident strictly worse. Absent origin is `operator`, which
-   * is every row written before the field existed. */
+   * agent to stop — so it must not suppress recovery. Absent origin means
+   * `operator` for compatibility. */
   private deliberateTerminationAudit(
     agent: AgentRecord,
   ): HiveTerminalTerminationAudit | null {
@@ -274,7 +269,7 @@ export class CrashRecovery {
       if (sessionPresent) {
         continue;
       }
-      // #66: a deliberate kill must never be classified as a crash. The
+      // A deliberate kill must never be classified as a crash. The
       // in-memory marker covers the live teardown window; the binding's
       // termination audit covers a teardown the daemon did not survive.
       if (this.deliberateKills.has(agent.id)) {
@@ -407,9 +402,8 @@ export class CrashRecovery {
     _options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
     // A terminal is alive or it is dead. There is no third state to restore it
-    // to, so recovery observes and records what it saw — it never relaunches a
-    // conversation. Resuming used to mint a new generation and kill the old
-    // one, which is how a healthy agent got killed by its own recovery.
+    // to, so recovery observes and records what it saw. Do not relaunch the
+    // conversation: replacing its generation can kill a healthy agent.
     if (await this.sessionPresent(agent)) {
       return {
         agent: agent.name,
@@ -445,7 +439,7 @@ export class CrashRecovery {
         ? "No worktree was recorded."
         : `Worktree preserved at ${agent.worktreePath}` +
           (agent.branch === null ? "." : ` (branch ${agent.branch}).`);
-    // An audited kill is not a crash and must not be reported as one (#66):
+    // An audited kill is not a crash and must not be reported as one:
     // the closure is finished on the killer's behalf and said plainly.
     const headline =
       options.deliberate === true

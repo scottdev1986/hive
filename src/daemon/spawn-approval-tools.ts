@@ -25,7 +25,6 @@ export const ApprovalDecisionSchema = z.object({
 /**
  * The spawn-and-approval tool surface, with its dependencies named.
  *
- * Sixth tool-group extraction out of `createMcpServer` (audit §11).
  * `spawnAgent` crosses as a dependency rather than moving: it is a closure over
  * the daemon that the lifecycle tools share, and duplicating it here would give
  * two surfaces two different memory-pressure gates.

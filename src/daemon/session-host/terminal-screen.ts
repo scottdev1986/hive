@@ -5,10 +5,8 @@
  * A pane's output stream and its screen are the same thing only for a program
  * that prints and never revises. Every vendor TUI revises: it addresses the
  * cursor, erases regions, and swaps to an alternate screen. Reading the tail of
- * such a stream reports text the terminal has already replaced — which is how a
- * queen holding 6.7KB of a Claude pane could still not find a token the agent
- * had visibly written. The token was in the stream; it was not on the screen,
- * and it was not where the tail was looking.
+ * such a stream reports text the terminal has already replaced and can miss
+ * text that remains visible elsewhere on the screen.
  *
  * This is a deliberately small VT subset: the sequences a coding TUI actually
  * uses to paint. Anything else is consumed and dropped rather than passed

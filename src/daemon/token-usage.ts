@@ -395,10 +395,9 @@ export class TokenUsageStore {
         PRIMARY KEY(subjectId, eventKey)
       );
     `);
-    // A database from when profiling was tracked keeps its old table (CREATE ...
-    // IF NOT EXISTS is a no-op there): the role CHECK still admits 'profiler' and
-    // the profileRunId column survives. Narrow it before creating the subject
-    // indexes, because a rebuild drops the old table and its indexes with it.
+    // CREATE IF NOT EXISTS leaves profiler-shaped tables unchanged. Narrow the
+    // role CHECK and remove profileRunId before creating indexes, because the
+    // rebuild drops the table's indexes.
     this.migrateSubjects();
     this.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS token_usage_one_subject_per_agent
@@ -406,15 +405,12 @@ export class TokenUsageStore {
     `);
   }
 
-  /** Bring a database that still carries the removed profiler surface down to the
-   * current shape. That schema had a `profileRunId` column and a `role` CHECK
-   * that admitted 'profiler'; profiling has been deleted, so this drops any
+  /** Bring a profiler-shaped database to the current schema. Drops any
    * profiler subjects (and their child artifacts/events) and rebuilds the table
    * to the narrowed CHECK without `profileRunId`. SQLite cannot ALTER a CHECK
-   * constraint or drop a column in older builds, so the table is rebuilt (build
-   * the new table, copy, drop the old, rename into place). Keyed on the column's
-   * presence so it runs at most once, and it is a no-op on a database that never
-   * had the profiler surface. Foreign keys are disabled around the rebuild
+   * constraint or drop a column on every supported build, so the table is rebuilt
+   * (build, copy, drop, rename). Keyed on the column's
+   * presence so it runs at most once. Foreign keys are disabled around the rebuild
    * because artifacts/events reference this table, and restored in a finally even
    * if it throws. Non-profiler rows are copied through untouched. */
   private migrateSubjects(): void {
@@ -991,7 +987,7 @@ export class TokenUsageStore {
   }
 
   /** Maintained per-subject spend totals for the L0 token-spend projection
-   * (HiveMemory HM-1 WP2): one grouped query over the subjects/events tables
+   * with one grouped query over the subjects/events tables
    * with no provider refresh — projection reads must stay cheap. Only
    * subjects with at least one measured event are returned. */
   spendTotals(filter: { agentId?: string; since?: string } = {}): Array<{

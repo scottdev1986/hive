@@ -27,37 +27,15 @@ import {
 } from "./quota-sources";
 
 /**
- * What it costs this account to run a model, measured — never inferred from a
- * date, a name, or a table.
+ * Measures whether running a model would overflow its plan pool into paid
+ * usage credits. Model names and dates do not establish billing mode.
  *
- * The design this replaces encoded a billing belief as a calendar constant
- * (`FABLE_AUTO_ROUTING_CUTOFF`): *after this date, Fable costs extra, so stop
- * routing to it.* That is a proxy, and proxies fail silently. Driving the live
- * surface on 2026-07-12 — after that very date — shows why:
- *
- *   rate_limits.model_scoped: [{ display_name: "Fable", utilization: 12, resets_at: … }]
- *
- * Fable still has a live plan-scoped weekly pool with 88% of it unused. It is
- * drawing PLAN capacity, not credits. The constant's premise is not true, and a
- * router obeying it is wrong about the world in a direction nobody would notice.
- *
- * **Usage credits are not a per-model billing mode.** No vendor field anywhere
- * declares how a model is billed — I walked every key of `initialize` and
- * `get_usage`. What the vendor does say, in `spend.disclaimer`, is what credits
- * actually are: *"Usage credits cover you when you hit your plan limits."* They
- * are the **overflow**. So the question worth asking is not "has this model moved
- * to credits" (unanswerable, and the wrong shape) but the one the user actually
- * cares about:
- *
- *   **Would running this model right now spend real money?**
- *
- * The plan side is measurable. A model can spend money only once a plan pool
- * that gates it is exhausted; until then it is covered by the plan already paid
- * for. Whether overflow is disabled is provider-specific: Claude says so
- * directly, while Codex exposes a current balance but not its auto-top-up switch.
- * Hence `spendRisk()` below: plan headroom → free; exhausted + paid capacity →
- * ask; exhausted + proven-off overflow → nothing can pay; exhausted + an
- * unobservable overflow switch → ask rather than guess.
+ * A model can spend money only after a plan pool that gates it is exhausted.
+ * Whether paid overflow is disabled is provider-specific: Claude exposes it,
+ * while Codex exposes a current balance but not its auto-top-up switch.
+ * `spendRisk()` therefore treats plan headroom as free, exhausted paid capacity
+ * as requiring consent, proven-disabled overflow as unable to charge, and an
+ * unobservable overflow switch as unknown.
  *
  * Every field is `Discovered`. **An absent key is unknown, never `false`** — and
  * here that rule has teeth: a misspelled key would read back as "credits are
@@ -71,10 +49,8 @@ const CODEX_LIMITS = "codex.account/rateLimits/read" as const;
 const GROK_BILLING = "grok._x.ai/billing" as const;
 
 /**
- * `get_usage`'s billing blocks, as claude 2.1.207 sends them. The key names are
- * snake_case and came off the live wire with a positive control — `extra_usage`
- * carried a real boolean and `spend` a real currency block. A *guessed* key does
- * not raise; it reads back as `null`, and null here means "cannot run".
+ * `get_usage` billing blocks. The wire uses snake_case keys; an unrecognized
+ * key does not raise and instead reads as null, which means unknown here.
  */
 const CreditBlockSchema = z
   .object({
@@ -269,14 +245,10 @@ const CodexBillingSchema = z
 /**
  * Read Codex's billing facts from `account/rateLimits/read`.
  *
- * Positive controls from the live 0.144.1 payload are the populated plan type
- * and windows beside `credits = { hasCredits: false, unlimited: false,
- * balance: "0" }`. The two false booleans prove only that no credits are
- * sitting in the account. They do NOT prove auto-top-up is off: Codex exposes
- * no such setting, and OpenAI documents that an eligible account may purchase
- * credits automatically. Therefore false/zero is deliberately UNKNOWN as an
- * overflow switch. Headroom still resolves to no-spend; exhaustion resolves to
- * ASK with the unobservable auto-top-up state named.
+ * False `hasCredits` and `unlimited` values prove only that no paid capacity is
+ * currently present. Codex exposes no auto-top-up setting, so false or zero is
+ * deliberately unknown as an overflow switch. Headroom resolves to no-spend;
+ * exhaustion resolves to ask with the uncertainty named.
  */
 export function accountBillingFromCodexRateLimits(
   response: unknown,
@@ -375,8 +347,8 @@ const GrokBillingSchema = z
  * `creditUsagePercent` is the gauge (plan pool used). The money rails
  * (`onDemandCap` / `onDemandUsed` / `prepaidBalance`) answer whether paid
  * overflow is live. All three rails at zero is measured paid-overflow-off;
- * any positive rail is paid capacity. Never map a money-rail zero onto
- * utilization — that mistake is already recorded in Hive's memory.
+ * any positive rail is paid capacity. Do not map a money-rail zero onto
+ * utilization: the rails and the plan gauge measure different things.
  */
 export function accountBillingFromGrokBilling(
   response: unknown,
@@ -442,8 +414,8 @@ const KIMI_USAGES = "kimi.usages" as const;
 /**
  * One /usages response → an AccountBilling. The numbers arrive as strings.
  * The AccountBilling shape has room for exactly one window, so the SHORTEST
- * rate window is the one surfaced: it is the window that bites mid-session
- * (verified 2026-07-24: a 300-minute entry at 1/100). The weekly quota is
+ * rate window is the one surfaced because it is the first to bite mid-session.
+ * The weekly quota is
  * part of the same payload but has no field here — it stays unread rather
  * than being blended into a number that would misname it. The payload
  * carries no paid-overflow rail, so creditsEnabled is surface-silent
@@ -516,8 +488,7 @@ export type SpendRisk =
 /**
  * Would launching this model right now spend the user's real money?
  *
- * The guard keys on MONEY, not on a model's name. There is no special case for
- * Fable or for anything else: the thing worth protecting is his wallet.
+ * The guard keys on money, not on a model's name.
  *
  * **With usage credits proven OFF, nothing can silently spend money.** A request that
  * outruns the plan simply hits the plan limit and fails — the provider refuses,
@@ -525,20 +496,15 @@ export type SpendRisk =
  * pools say. A guard that nags a user who cannot be charged is a broken guard,
  * and one he learns to click through is worse than none.
  *
- * With credits ON, the vendor's own rule takes over — *"usage credits cover you
- * when you hit your plan limits"* — so an exhausted pool means the next spawn is
- * billed. That is the case to ask about, and it is measured, not guessed.
+ * With credits on, an exhausted pool means the next spawn is billed. That is
+ * the case to ask about.
  *
- * A DECLARED GAP, stated rather than papered over: a spawn that BEGINS with plan
- * headroom can still cross into credits mid-run, and no free surface predicts how
- * much a spawn will consume. Hive cannot ask in advance for that case. It is a
- * false negative it cannot close, and pretending otherwise — by asking on every
- * spawn — would trade a real gap for a prompt nobody reads.
+ * A spawn that begins with plan headroom can cross into credits mid-run, and no
+ * available surface predicts its eventual usage. Hive cannot ask in advance for
+ * that case without asking on every spawn.
  *
- * **Absence from `model_scoped` is not evidence of anything.** Opus is absent from
- * that list and is plainly plan-billed: the list holds models with an EXTRA
- * ceiling, not "the models on the plan". A model with no ceiling of its own is
- * judged by the account-wide pool.
+ * Absence from `model_scoped` is not billing evidence. The list holds models
+ * with an extra ceiling; models without one use the account-wide pool.
  */
 export function spendRisk(
   billing: AccountBilling,
@@ -604,19 +570,11 @@ export type PoolAvailability =
   | { state: "exhausted"; detail: string };
 
 /**
- * Can this model actually RUN — a question nobody was asking, and a different
- * question from whether it would cost anything.
+ * Can this model run? This differs from whether it would cost anything.
  *
- * `spendRisk` answers the MONEY question, and for an exhausted pool with credits
- * off it correctly answers "no charge: a request past the plan limit is REFUSED,
- * not billed". It says the word *refused* and then throws the fact away. Refused
- * is not free — it is UNAVAILABLE, and routing to it hands the user a dead agent
- * on a model the vendor was never going to run.
- *
- * That is exactly the state the user expects Fable to enter ("fable switches to
- * usage credits only tonight, and since we do not have credits, any time we want
- * deep it should automatically go to 4.8"). Without this, an exhausted-and-
- * unpayable model stays the router's first choice forever, because it is free.
+ * `spendRisk` answers the money question. An exhausted pool with credits off
+ * cannot charge, but the vendor also refuses it. Such a model is unavailable,
+ * not free.
  *
  * The rule keys on MONEY and METERING, never on a model's name: a model the vendor
  * meters separately, whose own pool is spent, with nothing that can pay the
@@ -706,13 +664,10 @@ const warnedStale = new Set<string>();
 /**
  * The billing reader that heals itself.
  *
- * `readAccountBilling` returns `null` — or a response in which every field is
- * unknown — whenever the vendor's telemetry endpoint goes quiet. That is a
- * TRANSIENT condition (Claude's `get_usage` fell silent at 01:40 on 2026-07-12 and
- * was answering again by 02:00, with the CLI healthy throughout), and treating it
- * as "Hive cannot rule out a charge" turned a hiccup in a telemetry endpoint into
- * an outage of every automatic Claude spawn. Refusing to launch protects the user
- * from a charge that, with credits off, is not merely unlikely but IMPOSSIBLE.
+ * `readAccountBilling` returns null, or only unknown fields, whenever the
+ * vendor's telemetry endpoint goes quiet. Treat this as transient: refusing
+ * every launch on a telemetry hiccup creates an outage even when credits are
+ * known off and a charge is impossible.
  *
  * So: retry, then fall back to the last reading that actually said something —
  * carried at its TRUE AGE, because the `Discovered<T>` fields keep their own

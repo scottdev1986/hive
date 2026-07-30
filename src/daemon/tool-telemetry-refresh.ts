@@ -16,13 +16,8 @@ import { unknownVendor } from "../schemas";
 /**
  * Everything the telemetry sweep reaches for, named explicitly.
  *
- * Extracted from `HiveDaemon` as the first step of the decomposition recorded in
- * planning/2026-07-25-repo-production-audit.md §11. The class is a
- * dependency-injection problem, not a file-splitting one: 84 of its 85 methods
- * touch instance state through `this`, so nothing can move until its
- * dependencies are written down. This sweep was the cleanest seam — 3 fields and
- * 5 injected readers, all readonly. `graphifyCalls` is passed by reference
- * because the sweep advances the cursor in place.
+ * `graphifyCalls` is passed by reference because the sweep advances the cursor
+ * in place.
  */
 export interface ToolTelemetryRefreshDeps {
   db: HiveDatabase;
@@ -43,12 +38,11 @@ export interface ToolTelemetryRefreshDeps {
 
 /**
  * Pull each live agent's context% and artifact freshness from its tool's
- * durable files (SPEC decision 2): Claude transcripts and Codex rollouts.
+ * durable files: Claude transcripts and Codex rollouts.
  * Hook traffic carries neither, so this sweep is what keeps the status
  * table's context column true. For a Codex TUI agent the rollout mtime is
  * also the only mid-turn liveness signal — a fresh rollout promotes a
- * stuck "spawning" row to working, which is exactly the row the field
- * test saw frozen while the agent had long since landed.
+ * stuck "spawning" row to working.
  */
 export async function refreshToolTelemetry(
   deps: ToolTelemetryRefreshDeps,
@@ -179,12 +173,8 @@ export async function refreshToolTelemetry(
         break;
       }
       case "codex": {
-        // The sweep writes what it *observed*, including "nothing" — a null
-        // used to be skipped as "no new information", which quietly meant the
-        // last number stood forever, and for an agent whose telemetry can
-        // never be read, the number that stood forever was the 0 it was born
-        // with. Unknown is a finding, not the absence of one, so it is
-        // recorded like any other.
+        // Write null observations so stale context values do not stand forever.
+        // Unknown is a finding, not the absence of one.
         if (telemetry !== null && telemetry.contextPct !== current.contextPct) {
           updates.contextPct = telemetry.contextPct;
         }
@@ -212,10 +202,7 @@ export async function refreshToolTelemetry(
           updates.contextPct = grokTelemetry.contextPct;
         }
         // The turn boundary nothing else reports. Grok drives no lifecycle
-        // hooks, so no turn-start ever promoted these rows off "spawning"
-        // and no turn-end ever settled them to "idle" — bridget sat at
-        // "spawning" long after her turn had ended with end_turn. The
-        // session's own updates.jsonl is the observable: its last record
+        // hooks, so the session's own updates.jsonl is the observable. Its last record
         // says whether a turn is streaming or finished. Unknown
         // (turnCompleted null) writes nothing rather than guessing a state.
         if (
@@ -243,11 +230,9 @@ export async function refreshToolTelemetry(
         break;
       }
       case "kimi":
-        // Nothing measured to fold into the row: no kimi telemetry
-        // artifact is wired (see the reader switch above).
+        // No Kimi telemetry artifact is wired.
         break;
       case "opencode":
-        // Nothing measured to fold into the row either.
         break;
       default:
         unknownVendor(current.tool, "refreshToolTelemetry");

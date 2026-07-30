@@ -85,11 +85,9 @@ export function clampPct(value: number): number {
  *
  * The transcript records how many tokens a turn carried but never the window
  * they fill, and the model id cannot supply the window either: the 1M upgrade
- * is a property of the account's plan, so `claude-opus-4-8` is 200k on one
- * plan and 1M on another with a byte-identical string. A previous version of
- * this file divided by a hardcoded 200_000 and reported live agents at ~22%
- * of a 1M window as 100% full; every decision downstream of that number was
- * made against a fiction. So this reader reports the numerator only — the
+ * is a property of the account's plan, so the same model id can have different
+ * windows. Do not divide by a hardcoded window: it can report a partially used
+ * context as full. This reader reports the numerator only — the
  * resident context in tokens, summed from the transcript — and the sweep
  * (server.ts) divides by the window the statusline payload measured, or
  * reports unknown when no window has ever been observed.
@@ -332,8 +330,7 @@ export async function readGrokTelemetry(
 }
 
 // ---------------------------------------------------------------------------
-// Graphify adoption telemetry (docs/graphify/integration.md,
-// layer 3): count the graphify MCP calls each agent actually made, from the
+// Count the graphify MCP calls each agent actually made, from the
 // same durable artifacts the context readers use. Measured, never assumed —
 // a shipped tool nobody calls is pure context cost, and only this number can
 // say which it is. Counts are cursor-incremental (each sweep reads only the

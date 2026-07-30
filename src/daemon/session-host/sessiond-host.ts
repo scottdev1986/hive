@@ -751,11 +751,8 @@ export class SessiondHost implements LandedTerminalHost {
     // that tell queueing apart from a slow launch are the only ones missing.
     const admittedAt = Date.now();
     try {
-      // Hive launches the host itself. There is no broker between them: it was
-      // never in the terminal data path, and one process handing descriptors to
-      // thirty-one concurrent launches was the 31-wide ceiling — its connection
-      // threads parked inside multi-second boots and stopped accepting, so
-      // creates that never started failed at HELLO.
+      // Hive launches the host directly. Per-host connections keep multi-second
+      // boots from blocking unrelated creates on one shared accept loop.
       const adoptionSecret = new Uint8Array(randomBytes(32));
       const executablePath = resolveSessiondBinary({ repoRoot: this.repoRoot });
       if (executablePath === null) {
@@ -809,8 +806,7 @@ export class SessiondHost implements LandedTerminalHost {
   /**
    * Each terminal's control stream, held open after registration.
    *
-   * The broker closed this the moment it acknowledged, which is why a host had
-   * no way to reach Hive afterwards and readiness had to be polled out of it.
+   * Keeping it open lets the host report state to Hive after registration.
    */
   private readonly hostControl = new Map<string, Socket>();
   private readonly hostProcess = new Map<
@@ -822,9 +818,8 @@ export class SessiondHost implements LandedTerminalHost {
   /**
    * The engine build the hosts will actually run.
    *
-   * This used to be read from a broker's HELLO. It belongs to the linked VT
-   * engine, not to any running process, so it is asked of the binary that will
-   * be executed — which is the same answer without needing a broker to be up.
+   * The build belongs to the linked VT engine, not a running process, so ask the
+   * binary that will be executed without requiring a broker.
    */
   async discoverEngineBuildId(): Promise<string> {
     const cached = this.engineBuildIdCache;
@@ -850,8 +845,7 @@ export class SessiondHost implements LandedTerminalHost {
   /**
    * INPUT_ORPHAN_DISCARD: ask the host for a typed, authorized resolution
    * of an orphaned or held human claim. The host alone may preempt a held claim,
-   * and reports that distinct from an orphan discard. See
-   * docs/incidents/2026-07-21-messaging-regression.md.
+   * and reports that distinctly from an orphan discard.
    */
   async discardInputOrphan(
     locator: SessionLocator,
@@ -877,15 +871,7 @@ export class SessiondHost implements LandedTerminalHost {
   /**
    * The bounded visible-text read behind `hive_terminal_observe`.
    *
-   * `capture` is deliberately absent from `LandedTerminalHost`, so nothing ever
-   * supplied one and the queen's explicit "show me the screen" tool refused
-   * every call with "SessionHost terminal observation is unavailable" — for
-   * every vendor, in every deployment. That left observation with no CONTENT
-   * path at all: the activity summary carries a derived one-liner, and the pane
-   * itself was reachable only by interrupting the agent to ask what it did,
-   * which is the one thing observation exists to avoid.
-   *
-   * It rides the same viewer attach the activity observer uses, because that is
+   * It uses the same viewer attach as the activity observer because that is
    * the surface that already streams a pane's bytes to a reader who never takes
    * input. This does not focus, claim, resize, or type.
    */
@@ -1042,11 +1028,8 @@ export class SessiondHost implements LandedTerminalHost {
   /**
    * Asks the terminal directly.
    *
-   * This used to travel daemon → broker → host, with the broker opening a fresh
-   * connection to `host.sock` per request and relaying the answer. The spawn
-   * path alone polls this dozens of times per agent, so at thirty-one wide
-   * every poll queued behind other launches on one accept loop. The answer was
-   * always the host's; now it is asked for directly.
+   * The spawn path polls this dozens of times per agent. Asking the host directly
+   * prevents those requests from queuing behind launches on a shared accept loop.
    */
   async inspect(session: SessionRef): Promise<SessionInspection> {
     const secret = await this.readControlSecret(this.hiveHome, session);

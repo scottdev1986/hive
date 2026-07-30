@@ -8,7 +8,7 @@
  *
  * So the kill walks the real tree from real roots and SIGKILLs it, and then it
  * LOOKS AGAIN. A signal delivered is an act; a process gone is a state, and
- * this repo has paid repeatedly for reading the first as the second. Whatever
+ * treating the first as the second can leak processes. Whatever
  * is still standing after the second look is reported as a survivor rather
  * than rounded down to success.
  */
@@ -79,20 +79,16 @@ const REAP_SETTLE_MS = 250;
 /**
  * Snapshot every process under `rootPids` before its parent links disappear.
  *
- * A detached child — anything an agent `nohup`ed or backgrounded, which SPEC
- * §12 says they do routinely — can survive terminal teardown and be REPARENTED
- * TO INIT. Its ppid becomes 1. From that
+ * A detached child created with `nohup` or backgrounding can survive terminal
+ * teardown and be REPARENTED TO INIT. Its ppid becomes 1. From that
  * moment it is not a descendant of the pane, of the agent, or of anything else
  * Hive can name: the parent links that made it findable are gone, and no
  * later `ps` walk can ever attribute it again.
  *
- * So the tree is captured while those links still exist, and the captured pid
- * list — not a live query — is what gets killed afterwards. This was measured,
- * not reasoned: an earlier version of this file captured only the ROOT pids
- * before the kill and walked the tree afterwards. It reported "1 process
- * reaped" and left the `nohup`ed child running with ppid 1, which is precisely
- * the leak the whole path exists to close. Every unit test passed, because a
- * fake process table does not reparent anything.
+ * Capture the tree while those links still exist, then kill the captured pid
+ * list rather than walking live descendants after teardown. Do not defer the
+ * walk: reparenting makes detached children impossible to attribute, and fake
+ * process tables do not reproduce it.
  */
 /** The root pid given to captureProcessTree is positively absent from the
  * process table. Distinct from an invalid root (pid <= 1, self): there is no
@@ -205,13 +201,8 @@ export async function stopSessiondAgentSession(
       selfPid,
     );
   } catch (error) {
-    // An absent root is not an unknown tree — it is a positively dead one.
-    // The 2026-07-27 collapse recorded sixteen agents `stuck` on exactly this
-    // misclassification: their hosts had already self-terminated (lease
-    // expiry), the probe correctly found no root, and teardown reported
-    // "could not be verified" over a tree that was simply gone
-    // (planning/2026-07-27-spawn-collapse-root-cause.md). The terminate
-    // readback below remains the verification leg for survivors.
+    // An absent root is a positively dead tree, not an unknown one. The
+    // terminate readback below remains the verification leg for survivors.
     if (!(error instanceof ProcessTreeRootAbsentError)) throw error;
     rootAbsent = true;
     captured = [];

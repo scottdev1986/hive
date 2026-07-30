@@ -1,11 +1,8 @@
-// Resource watchdog: the 2026-07-10 incident proved one runaway process
-// inside an agent session (a hung `bun test` allocating ~1.5 GB/s) can drive
-// the whole machine into jetsam and kill every agent. The daemon therefore
-// samples the process tree under every Hive-owned terminal session on each
-// maintenance tick, hard-kills anything past a per-process memory ceiling,
-// and pauses new spawns while system memory is scarce. Detection is pure
-// functions over `ps`/`vm_stat` text so the policy is testable without
-// spawning anything.
+// A runaway process inside one agent session can exhaust system memory and
+// kill every agent. The daemon samples each Hive-owned process tree, kills
+// processes over the per-process ceiling, and pauses spawns while memory is
+// scarce. Parsing `ps` and `vm_stat` output keeps detection testable without
+// spawning processes.
 
 export interface ProcessSample {
   pid: number;

@@ -20,15 +20,14 @@ import { hostDirectory, HostOperationError } from "./host-operations";
 /**
  * The host's own control wire, spoken directly.
  *
- * A terminal serves two sockets: neutral operations (see `host-operations.ts`)
- * and this one, which carries adoption and viewer-grant registration. The
- * broker was the only speaker of it; with the broker gone, Hive speaks it.
+ * A terminal serves one socket for neutral operations and this socket for
+ * adoption and viewer-grant registration. Hive speaks this protocol directly.
  *
  * Every exchange is one connection, one request, one response. There is no
  * handshake and no session, so a slow host delays only its own caller.
  */
 
-/** The host correlates a control exchange on this id (`broker_host_client.zig`). */
+/** The host correlates a control exchange on this id. */
 const CONTROL_REQUEST_ID = 2n;
 
 /** Unused attach grants expire after this long. */
@@ -287,8 +286,7 @@ export function executableBuildHash(path: string): Promise<string> {
  *
  * The policy is the host's alone: it decides whether a claim is orphaned or
  * needs an explicit preemption, and reports those as different outcomes. Hive
- * adds nothing to that judgement — it only carries the question, which the
- * broker used to relay.
+ * adds nothing to that judgement; it only carries the question.
  */
 export async function discardHostInputOrphan(options: {
   hiveHome: string;

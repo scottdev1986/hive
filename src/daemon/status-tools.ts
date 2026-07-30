@@ -58,10 +58,8 @@ export const PreserveBranchRequestSchema = z.object({
 /**
  * The observability tool surface, with its dependencies named.
  *
- * Fifth tool-group extraction out of `createMcpServer` (audit §11). The widest
- * dependency set of the four groups (15), which is itself the finding: status is
- * the surface that reads from everything, so it is the group that most wanted
- * its inputs written down rather than reached for through `this`.
+ * Status reads across many daemon subsystems, so its inputs are explicit rather
+ * than reached through `this`.
  *
  * `memoryEmbeddingsStatusSection` is typed `() => unknown` because its result is
  * only nested into a response object — naming its inferred union here would
@@ -129,12 +127,11 @@ export function registerStatusTools(
         false,
       );
       // graphifyCalls says whether the graph tools are earning their context
-      // cost (integration doc, layer 3). Null is unknown — no observation —
+      // cost. Null is unknown — no observation —
       // never zero; only rendered at all when this daemon runs graphify.
       // A recipient whose mail is not arriving reads as an ordinary idle agent
       // in every other field here. deliveryBlocked is the one place the
-      // orchestrator can see it without knowing to look (2026-07-21 messaging
-      // regression: hours of silence that looked exactly like "nothing to say").
+      // orchestrator can see it without knowing to look.
       const blocked = deps.delivery.blockedDeliveries();
       // A sessiond row is Hive's private cleanup ownership until host creation
       // completes. Publishing it earlier gives Workspace a locator that cannot

@@ -21,7 +21,7 @@ import type { HiveDatabase } from "./db";
 
 /**
  * The policy store: one revisioned document in hive.db, the daemon its sole
- * writer. SQLite was the ruling (governing doc §3.1) because policy writes
+ * writer. SQLite provides compare-and-set policy writes
  * need compare-and-set plus an audit trail, and Hive already runs this
  * database; the document is stored whole — one row, canonical JSON — because
  * every reader and writer handles the whole policy, and a whole-document
@@ -29,7 +29,7 @@ import type { HiveDatabase } from "./db";
  * permissive.
  *
  * THIS IS THE CONSENT RECORD, not a preferences blob: with the approval
- * prompts retired (user directive 2026-07-12), a model enabled here IS the
+ * model enablement is the
  * user's standing authorization to spend on it. Every write path below is a
  * safety surface.
  *
@@ -38,7 +38,7 @@ import type { HiveDatabase } from "./db";
  * row that exists but does not parse THROWS; it never degrades to the empty
  * document, because "I could not read your policy" and "you have no policy"
  * are different facts and only one of them may be answered with defaults
- * (repo memory: unknown-read-as-permission).
+ * without granting permission.
  */
 
 /** A write raced another writer: the caller's revision is stale. The current
@@ -82,18 +82,16 @@ export class RoutingPolicyStore {
         after TEXT NOT NULL
       );
     `);
-    // Strip retired keys before any schema-strict parse: an unknown category
-    // key — or a retired selection.categories map — makes
+    // Strip unsupported keys before any schema-strict parse: an unknown category
+    // key or selection.categories map makes
     // RoutingPolicySchema.safeParse throw on load.
     this.migrateStoredStripRetiredKeys();
     this.migrateStoredV1();
   }
 
   /**
-   * Two retired shapes, stripped the same way. The `profiling` routing
-   * category was removed (product decision), and per-category selection
-   * overrides were removed on 2026-07-27 (user directive) — a stored policy
-   * may still carry either. RoutingPolicySchema rejects unknown keys — it does
+   * Strip stored `profiling` categories and per-category selection overrides
+   * before parsing. RoutingPolicySchema rejects unknown keys; it does
    * not drop them — so load would throw RoutingPolicyCorruptError. Strip and
    * rewrite, same defensive style as v1 migrate: unparseable JSON is left
    * alone for the corrupt-row path to surface.
@@ -387,8 +385,7 @@ export class RoutingPolicyStore {
   /**
    * First-boot seeding: when NO policy row exists, write provisional route
    * suggestions without granting launch consent. Every chain entry names an
-   * EXACT model id (user ruling 2026-07-13: "we are specific on the models
-   * that we choose"): `vendorDefaults` carries each vendor's then-current
+   * exact model id. `vendorDefaults` carries each vendor's current
    * default AS READ FROM ITS LIVE CATALOG by the caller — frozen here as a
    * specific id, never re-resolved, never a training-memory guess. A vendor
    * whose catalog could not be read is simply absent from seeded chains
@@ -627,9 +624,8 @@ function applyMutation(
         });
       }
       // Authoring a chain says which models may do this work, in what order.
-      // It deliberately says NOTHING about selection: writing one here is how
-      // a preference the user never expressed used to outrank the control they
-      // did set (user directive 2026-07-27).
+      // It deliberately says nothing about selection. Do not infer a preference
+      // that could outrank the user's explicit selection control.
       return { ...policy, chains, models };
     }
     case "set-selection":
@@ -662,7 +658,7 @@ const leadWith = (leader: CapabilityProvider): CapabilityProvider[] => [
 ];
 
 /**
- * The provisional baseline (governing doc §2.8): every entry is an EXACT
+ * The provisional baseline uses an exact
  * model id — the vendor's own current default, read live at seed time and
  * frozen — in an assumed order per category: strong-reasoning vendor first
  * for deep work, the coding specialist first for code-shaped work, the
@@ -708,7 +704,7 @@ function provisionalBaselineChains(
 }
 
 /**
- * Deterministic serialization — the inspectability half of the SQLite ruling.
+ * Deterministic serialization keeps policy exports inspectable.
  * Key order is fixed (providers in union order, models sorted, chains in
  * category order; entry order is the user's and is preserved), so identical
  * policy is byte-identical output and two exports diff cleanly.
@@ -789,17 +785,15 @@ export function policyModelEnablement(
 }
 
 /**
- * routing.toml is dead as a policy source (user directive 2026-07-12: "i dont
- * care about legacy router"). It is renamed aside, not deleted — dropping a
- * routing preference was the user's call; destroying his file is not ours.
- * Nothing reads the renamed file, and nothing interprets the old contents.
+ * Rename an existing routing.toml aside instead of deleting user data. Nothing
+ * reads the renamed file or interprets its contents as policy.
  */
 export function retireLegacyRoutingToml(hiveHome: string): string | null {
   const source = join(hiveHome, "routing.toml");
   if (!existsSync(source)) return null;
   let target = join(hiveHome, "routing.toml.legacy");
   if (existsSync(target)) {
-    // A .legacy from an earlier retirement is itself preserved.
+    // Preserve any existing target rather than overwriting user data.
     let suffix = 2;
     while (existsSync(`${target}.${suffix}`)) suffix += 1;
     target = `${target}.${suffix}`;

@@ -7,11 +7,9 @@ import { join } from "node:path";
  * Speaks the neutral host operation protocol directly to a terminal's own
  * socket, with no broker in between.
  *
- * The broker's role here was relay: it opened `host.sock` per request and
- * proxied the answer back. Hive already opens that socket itself for viewer
- * attach, so the relay bought nothing and cost the 31-wide accept loop — the
- * spawn path alone polls INSPECT dozens of times per agent, and every poll was
- * a fresh broker-to-host connection queued behind thirty other launches.
+ * Hive opens `host.sock` per request instead of routing frequent INSPECT polls
+ * through a shared accept loop. This keeps one slow host from delaying other
+ * terminals.
  *
  * NHOP is a private per-request protocol: connect, write one request, read one
  * response, close. There is no session, so a slow host delays only its own
@@ -25,7 +23,7 @@ const RESPONSE_HEADER_BYTES = 9;
 const SCHEMA_VERSION = 1;
 const ADOPTION_SECRET_BYTES = 32;
 
-/** `neutral_runtime.zig` Operation. */
+/** Operation accepted by the neutral host runtime. */
 export const HOST_OPERATIONS = {
   submitInput: 1,
   resize: 2,
@@ -251,9 +249,9 @@ export async function callHost(options: {
  * Finds a live host's neutral endpoint: its session reference and the secret
  * that authorises operations on it.
  *
- * Neither is derivable. The incarnation is ENGINE-assigned, not the locator's
- * generation — building a reference from the generation is the #68 mistake and
- * fails as NOT_FOUND — and the operation capability is `control.cap`, which is
+ * Neither is derivable. The incarnation is engine-assigned, not the locator's
+ * generation; building a reference from the generation fails as NOT_FOUND. The
+ * operation capability is `control.cap`, which is
  * a different secret from the launch-time `adopt.cap`. Both are published by
  * the host in its own directory, so both are read from there.
  */

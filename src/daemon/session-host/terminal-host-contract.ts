@@ -288,7 +288,7 @@ export type SubscriptionCapabilities = Readonly<{
   protocolVersions: readonly string[];
 }>;
 
-/** §11 retained events are bounded and released by acknowledgement. Events are
+/** Retained events are bounded and released by acknowledgement. Events are
  * counted rather than measured, so every bound but the frame cap is a count. */
 export type SubscriptionLimits = Readonly<{
   maxEventFrameBytes: number;
@@ -297,7 +297,7 @@ export type SubscriptionLimits = Readonly<{
   unacknowledgedEventHighWater: number;
 }>;
 
-/** §11 both positions in the one session order, so a delivered event and the
+/** Both positions use one session order, so a delivered event and the
  * output around it are comparable without a second clock. */
 export type SubscriptionCursor = Readonly<{
   eventSequence: Sequence;
@@ -391,7 +391,7 @@ export interface TerminalHost {
   ): Promise<OutputAcknowledgement>;
   inspect(session: SessionRef): Promise<SessionInspection>;
   list(): Promise<readonly SessionInspection[]>;
-  /** §11 a subscription is a resumable cursor, not a boolean: it negotiates
+  /** A subscription is a resumable cursor, not a boolean: it negotiates
    * capabilities and event flow-control limits and begins at a caller-supplied
    * event position or at the current end. A position outside retention is a
    * gap, never silent loss. */
@@ -403,7 +403,7 @@ export interface TerminalHost {
       from: SubscriptionStart;
     }>,
   ): Promise<SubscribeResult>;
-  /** §11 delivery for one subscription. Subscribers are independent, so this
+  /** Delivery for one subscription. Subscribers are independent, so this
    * is keyed by subscription and never by session alone. */
   events(
     request: Readonly<{
@@ -411,7 +411,7 @@ export interface TerminalHost {
       subscriptionId: string;
     }>,
   ): AsyncIterable<TerminalEvent>;
-  /** §11 retained events are released by acknowledgement on the same terms as
+  /** Retained events are released by acknowledgement on the same terms as
    * output; the release names WHICH subscription it releases. */
   acknowledgeEvents(
     request: Readonly<{

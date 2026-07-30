@@ -24,7 +24,6 @@ import { ORCHESTRATOR_NAME } from "../schemas";
 /**
  * The resource watchdog, with its dependencies named.
  *
- * Fourth extraction of the `HiveDaemon` decomposition (audit §11).
  * `memoryPressure` is daemon-owned mutable state read by an unrelated endpoint,
  * so it crosses as a setter rather than a field: the sweep must be able to raise
  * the flag without owning it, and a copied boolean would strand the reader on a
@@ -155,12 +154,9 @@ export async function sweepResources(deps: SweepResourcesDeps): Promise<void> {
           { idempotencyKey: `resource-kill:${kill.process.pid}` },
         )
         .catch(logAlertDeliveryFailure);
-      // The agent whose child died sees only an opaque failed command, so it
-      // reads the death as "my command was wrong" and retries — the 2026-07-12
-      // incident was three escalating OOM kills in 90 seconds, each a wider
-      // search than the last. A killed process cannot report its own cause of
-      // death; only the killer can, and it must tell the agent, not just the
-      // orchestrator watching it.
+      // A killed process cannot report its own cause of death. Tell the agent,
+      // not just the orchestrator, so it does not treat an opaque failure as a
+      // reason to retry with a more expensive command.
       if (kill.owner !== ORCHESTRATOR_NAME) {
         await deps.delivery
           .send(

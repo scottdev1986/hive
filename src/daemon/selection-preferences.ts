@@ -15,10 +15,9 @@ type SelectionMutation = Extract<
   { op: "set-selection" }
 >;
 
-/** Per-category overrides were removed on 2026-07-27; a file written before
- * that still carries the map. Accept it by name and drop it — the global is
- * the only selection intent now — while anything else stays a loud parse
- * failure rather than a silently tolerated key. */
+/** Accept and discard `categoryOverrides` while reading persisted settings;
+ * the global is the only selection intent. Any other unknown key remains a
+ * loud parse failure. */
 const StoredSelectionPreferenceSchema = z.strictObject({
   schemaVersion: z.literal(1),
   selection: z

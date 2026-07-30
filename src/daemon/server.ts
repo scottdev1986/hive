@@ -281,13 +281,6 @@ const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const WORKSPACE_OWNER_WATCH_MS = 5_000;
 export const WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS = 15_000;
 
-/**
- * A capability escalation is a typed claim with evidence, not a vibe: the
- * reason says why the task exceeds the model, and `failedApproaches` must name at least one
- * concrete attempt — an agent that has tried nothing has nothing to escalate.
- * The remaining fields are the handoff the replacement resumes from.
- */
-
 const TokenUsageSessionRequestSchema = z.object({
   repoRoot: z.string().min(1),
 });
@@ -297,32 +290,14 @@ const TokenUsageOrchestratorRequestSchema = z.object({
   cwd: z.string().min(1),
 });
 
-// A fact id is a filename stem interpolated into `join(root, `${id}.md`)` by
-// the memory adapter, so the daemon boundary must refuse anything that could
+// A fact id becomes a filename under the memory root, so the daemon boundary
+// must refuse anything that could
 // name a path component: no slashes, no leading dot, nothing outside the
 // slug-plus-punctuation charset slugify and hand-authored facts actually use.
 
-// The focused pitfall surface (HiveMemory HM-2 WP5): search lists/searches
-// pitfall-kind articles only; get reads one and refuses non-pitfall ids.
-
-// memory_note (HiveMemory plan §5): the lightweight episodic fact write.
-// Episodic topics are free-form (no wiki kebab-case constraint); source is
-// always the caller's own capability subject, never caller-supplied.
-
-// memory_recall (HiveMemory plan §5): the trigger protocol's ranked bundle
-// as a tool. budget may only lower the server-enforced ceiling.
-
-// Server-enforced memory_recall token ceiling (chars/4 estimation, the same
-// accounting memory_query uses).
-
-// memory_promote (HiveMemory plan D3): names a REPO-scope pitfall article to
-// copy into the global wiki. There is deliberately no scope parameter —
-// repo→global is the only direction promotion exists.
-
 export type { LandBranch };
 
-// The land-grant re-arm flow (SPEC decision 4's capability discipline without
-// the integrator round-trip): a refused land on a spent one-shot files an
+// A refused land on a spent one-shot files an
 // approval, and approving it re-arms exactly one landing. The prefix is the
 // contract between the filing site and the approval hook.
 // How many landings past the first Hive will re-arm on its own evidence, per
@@ -333,9 +308,6 @@ export type { LandBranch };
 export const AUTO_REARM_BUDGET = 3;
 export const AUTO_REARM_REASON = "capability.auto-rearm";
 
-/** An agent whose work is already on main is not blocked by a spent grant — it
- * is finished. Saying so, and filing nothing, is the whole fix for the no-op
- * re-arms a human kept being asked to clear. */
 // Claude's `notification_type` when the CLI is holding a native permission
 // dialog open and waiting on a human. Measured against claude 2.1.207, where
 // the only other type an agent emits is `idle_prompt` — so this string, and not
@@ -354,7 +326,7 @@ export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
   statusStore?: StatusStore;
-  /** The per-project episodic memory store (HiveMemory HM-1). The daemon
+  /** The per-project episodic memory store. The daemon
    * projects its status/observation events into it and closes it in stop().
    * Production opens it via EpisodicStore.forProjectRoot so the store's
    * location comes from the daemon's own project identity. */
@@ -393,8 +365,7 @@ export interface HiveDaemonOptions {
   autonomy?: AutonomyControl;
   /** Ordinary Workspace selection persistence; absent for named/default homes. */
   selectionPreferences?: SelectionPreferenceControl;
-  /** The per-repo graphify MCP server, when this repo opted in
-   * (docs/graphify/integration.md). The daemon owns its
+  /** The per-repo graphify MCP server, when this repo opted in. The daemon owns its
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
   graphify?: GraphifyService;
@@ -422,7 +393,7 @@ export interface HiveDaemonOptions {
   hostname?: string;
   manageLifecycle?: boolean;
   /** How POST /stop takes the daemon itself down once every agent is torn
-   * down (#70). Defaults to SIGTERMing this process when it manages its own
+   * down. Defaults to SIGTERMing this process when it manages its own
    * lifecycle — the exact path the signal handlers already own — and to a
    * no-op for embedded daemons, whose host process owns its own lifetime.
    * Injectable so a test can prove the sequence without dying. */
@@ -442,12 +413,12 @@ export interface HiveDaemonOptions {
   /** Root wake transport override for tests; defaults to terminal delivery. */
   rootProtocol?: RootProtocolDeliverer;
   /** Daemon→idle-sessiond-agent input override for tests; defaults to the
-   * neutral viewer-attach wire over the landed terminal host (#68/#16). */
+   * neutral viewer-attach wire over the landed terminal host. */
   sessiondInput?: SessiondAgentInput;
   /** Context/activity artifact readers, injectable for tests; default to the
    * real transcript and rollout sensors. `liveModel` reads the model an agent is
    * *running* out of its transcript, and returns null when there is nothing to
-   * observe (see ./live-model). */
+   * observe. */
   telemetryReaders?: {
     claude?: ClaudeTelemetryReader;
     codex?: TelemetryReader;
@@ -467,17 +438,17 @@ export interface HiveDaemonOptions {
   /** Idle-agent reap sweep (config `[lifecycle]`); stays off when omitted so
    * embedded daemons (tests, tooling) never close an agent unasked. */
   lifecycle?: LifecycleConfig;
-  /** Memory retention sweep (config `[memory.retention]`, HiveMemory HM-2
-   * WP3); stays off when omitted so embedded daemons never age out memory
+  /** Memory retention sweep configured by `[memory.retention]`; stays off when
+   * omitted so embedded daemons never age out memory
    * state unasked. Also inert without an episodic store. */
   retention?: MemoryRetentionConfig;
-  /** Wake-delta memory injection budget (config `[memory]
-   * wake_budget_tokens`, HiveMemory HM-3 WP6, plan D6). The delta rides the
+  /** Wake-delta memory injection budget configured by `[memory]
+   * wake_budget_tokens`. The delta rides the
    * send lane only when a budget AND an episodic store (the high-water
    * marks) are both present, so embedded daemons never inject unasked. */
   wakeBudgetTokens?: number;
-  /** Semantic recall leg (config `[memory] embedding_provider` /
-   * `embedding_model`, HiveMemory HM-5, board #122). Active only with an
+  /** Semantic recall leg configured by `[memory] embedding_provider` and
+   * `embedding_model`. Active only with an
    * episodic store (the vector table lives there); the model loads lazily on
    * first use and a load failure degrades recall to the FTS-only bundle —
    * it never crashes the daemon. */
@@ -485,7 +456,7 @@ export interface HiveDaemonOptions {
   /** Test seam: substitute the embedder factory so daemon-level tests never
    * load a real model. */
   memoryEmbeddingLoad?: MemoryEmbedderLoad;
-  /** Durable warning sink (defect D2): startup config lines, embedding state
+  /** Durable warning sink: startup config lines, embedding state
    * transitions, sweep reports, and trigger/delta failures are appended here
    * in addition to the console. Defaults to $HIVE_HOME/logs/daemon.log with
    * a size-capped rollover; tests substitute to capture lines. */
@@ -571,9 +542,8 @@ export class HiveDaemon {
   private readonly tokenUsage: TokenUsageStore;
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
   private routingPolicy: RoutingPolicyStore | null = null;
-  /** The same daemon→session input wire delivery uses, kept here because an
-   * approval decision for a TUI-hosted vendor session is a keystroke, not a
-   * message (#102). */
+  /** The same daemon→session input wire delivery uses; a TUI-hosted vendor
+   * approval is a keystroke, not a message. */
   private readonly sessiondInput: SessiondAgentInput &
     Partial<SessiondRootInput>;
   /** Approval ids currently crossing an awaited vendor delivery boundary. */
@@ -581,12 +551,12 @@ export class HiveDaemon {
   private readonly autonomy: AutonomyControl | undefined;
   private readonly selectionPreferences: SelectionPreferenceControl | undefined;
   private readonly graphify: GraphifyService | undefined;
-  /** Per-agent graphify MCP call counts (integration doc, layer 3). Keyed by
+  /** Per-agent graphify MCP call counts. Keyed by
    * AgentUUID, in memory on purpose: the transcripts are durable, so a
    * restart recounts from offset zero instead of trusting a stale number. */
   private readonly graphifyCalls = new Map<string, GraphifyCallCursor>();
   /** Subjects whose credential has authenticated against /mcp, last-seen
-   * timestamp per subject (#57). In memory on purpose: it answers "has this
+   * timestamp per subject. In memory on purpose: it answers "has this
    * incarnation reported since its launch", which a restart re-asks anyway. */
   private readonly mcpClientsSeen = new Map<string, string>();
   private readonly land: LandBranch;
@@ -611,7 +581,7 @@ export class HiveDaemon {
   private readonly wakeBudgetTokens: number | null;
   private readonly embeddingService: MemoryEmbeddingService | null;
   readonly embeddingIndex: MemoryEmbeddingIndex | null;
-  /** The durable warning sink (defect D2) — console lines that must survive
+  /** Console lines that must survive
    * past the detached daemon's unread stdout. */
   private readonly writeDaemonLog: (line: string) => void;
   private readonly psSample: CommandOutput;
@@ -650,7 +620,7 @@ export class HiveDaemon {
     const daemonLogFile = new DaemonLog();
     this.writeDaemonLog =
       options.daemonLog ?? ((line) => daemonLogFile.write(line));
-    // The semantic leg (HiveMemory HM-5): wired only with an episodic store
+    // The semantic leg is wired only with an episodic store
     // (its vector table lives there) and an embedding config. Lazy — nothing
     // loads here; the surface reports itself at start and on first use.
     this.embeddingService =
@@ -659,7 +629,7 @@ export class HiveDaemon {
             ...(options.memoryEmbeddingLoad === undefined
               ? {}
               : { load: options.memoryEmbeddingLoad }),
-            // Load transitions persist to the daemon log (defect D2) — the
+            // Load transitions persist to the daemon log because the
             // console line alone has no reader on the deployed daemon.
             log: (message) => this.writeDaemonLog(message),
           })
@@ -834,7 +804,7 @@ export class HiveDaemon {
           } catch (error) {
             const current = this.db.getAgentById(agent.id) ?? agent;
             if (current.status === "stuck") throw error;
-            // The old writer is already gone, so rolling back across the OS
+            // The writer is already gone, so rolling back across the OS
             // boundary is impossible. Finish the control into a coherent,
             // terminal fail-closed state and release what the ledger says this
             // agent still holds; a queued control must not strand capacity or
@@ -877,11 +847,11 @@ export class HiveDaemon {
       {},
       (agent) => this.agentProcessState(agent),
       undefined,
-      // #68/#16 interim: daemon→idle-sessiond-agent input over the neutral
+      // Daemon-to-idle-sessiond-agent input uses the neutral
       // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
       // the viewer wire is the interim addition.
       deliverySessiondInput,
-      // Wake-delta memory injection (HiveMemory HM-3 WP6): every delivery to
+      // Wake-delta memory injection: every delivery to
       // an agent — an ordinary message, a queued flush, or the resume wake —
       // carries the bounded delta since the agent's high-water mark, over the
       // send lane so no vendor hook is required. repoRoot is read lazily
@@ -894,7 +864,7 @@ export class HiveDaemon {
             budgetTokens: options.wakeBudgetTokens,
           })
         : undefined,
-      // Trigger protocol (HiveMemory HM-3 WP7): queen/operator trigger words
+      // Queen and operator trigger words
       // execute memory recall/writes at the daemon and their labeled result
       // replaces the delivered body. repoRoot is read lazily because it is
       // assigned later in this constructor; writes ride the daemon's
@@ -1007,7 +977,7 @@ export class HiveDaemon {
       db: this.db,
       terminalHost: this.terminalHost,
       port: () => this.listeningPort ?? this.port,
-      // #57: a resume whose hive MCP never answers is refused, not recorded.
+      // A resume whose Hive MCP never answers is refused, not recorded.
       mcpClientSeen: (subject, since) => this.mcpClientSeen(subject, since),
       revokeCapabilities: (agentName) => {
         this.capabilities.revokeSubject(agentName);
@@ -1020,9 +990,7 @@ export class HiveDaemon {
         }),
       // Called on the spawner, never as a detached reference: the method body
       // uses `this`, and a hoisted `const fn = this.spawner.method` type-checks
-      // while silently losing the receiver — which is how every crash resume
-      // came to die on `undefined is not an object (evaluating
-      // 'this.createSession')`. Presence is still probed on the spawner, so an
+      // while silently losing the receiver. Presence is still probed on the spawner, so an
       // implementation that does not offer the method stays absent here.
       ...(this.spawner.createRecoverySession === undefined
         ? {}
@@ -1267,7 +1235,7 @@ export class HiveDaemon {
     return this.terminalHost;
   }
 
-  /** #57: has this subject's credential authenticated against /mcp at or
+  /** Has this subject's credential authenticated against /mcp at or
    * after `since`? The spawn/resume reachability check reads exactly this —
    * the agent's own reporting channel, proven on the receiving side. */
   mcpClientSeen(subject: string, since: string): boolean {
@@ -1312,8 +1280,8 @@ export class HiveDaemon {
       writeLifecycleFiles(listeningPort);
     }
     // Spawn-name reservations belong to spawns in flight inside one daemon
-    // process; any row present at startup was stranded by a crash and would
-    // make its agent look forever in-flight to crash recovery.
+    // process. Clear startup rows so crash recovery does not treat their agents
+    // as forever in flight.
     this.db.clearAgentNameReservations();
     this.reconciliationTimer = setInterval(() => {
       void this.runMaintenance().catch((error) => {
@@ -1362,11 +1330,10 @@ export class HiveDaemon {
         }
       }, WORKSPACE_OWNER_REGISTRATION_TIMEOUT_MS);
     }
-    // Memory retention (HiveMemory HM-2 WP3): a periodic timer on
+    // Memory retention uses a periodic timer on
     // sweep_interval_hours, plus one sweep at start so a daemon that was down
     // past its cadence does not wait a full interval to age anything out.
-    // The effective config is logged every start — retention policy changes
-    // are loud (S3.7 DoD 5).
+    // Log the effective config every start so retention policy changes are loud.
     if (this.retentionConfig !== null && this.episodic !== null) {
       const retention = this.retentionConfig;
       const line =
@@ -1382,8 +1349,7 @@ export class HiveDaemon {
       this.retentionTimer.unref?.();
       this.triggerMemoryRetentionSweep("startup");
     }
-    // Wake-delta injection (HiveMemory HM-3 WP6, plan D6): the effective
-    // budget is logged every start — recall-budget changes are loud, the
+    // Log the effective wake-delta budget every start so changes are loud, the
     // same posture as the retention config.
     if (this.wakeBudgetTokens !== null && this.episodic !== null) {
       const line =
@@ -1393,8 +1359,7 @@ export class HiveDaemon {
       console.log(line);
       this.writeDaemonLog(line);
     }
-    // Semantic recall leg (HiveMemory HM-5, board #122): the effective
-    // provider+model is logged every start — same loud-change posture as the
+    // Log the effective semantic-recall provider and model every start, matching the
     // other memory config. The model itself loads lazily on first embed; an
     // already-known unavailable state (the api knob) is reported here, a
     // load failure is reported when it happens.
@@ -1458,8 +1423,7 @@ export class HiveDaemon {
     return this.bunServer;
   }
 
-  // Memory writes/deletes/reindexes are serialized through one promise
-  // chain (SPEC.md decision 5: "the daemon serializes writes") so concurrent
+  // Memory writes, deletes, and reindexes share one promise chain so concurrent
   // MCP calls never race on slug generation or interleave a rebuild with an
   // in-flight upsert.
   private serializeMemory<T>(operation: () => Promise<T>): Promise<T> {
@@ -1476,8 +1440,8 @@ export class HiveDaemon {
     return run;
   }
 
-  /** The semantic leg of the recall bundle (HiveMemory HM-5, board #122):
-   * undefined when the leg is unwired — buildMemoryRecallBundle then renders
+  /** The semantic leg of the recall bundle. When unwired,
+   * buildMemoryRecallBundle renders
    * byte-identical FTS-only output. */
   private semanticRecall():
     | ((
@@ -1604,14 +1568,14 @@ export class HiveDaemon {
   }
 
   /**
-   * §03: the boot refresh is a gate, not a background task. The first spawn
+   * The boot refresh is a gate, not a background task. The first spawn
    * awaits this before it routes — one settled promise, no retry framework.
    */
   async quotaReady(): Promise<void> {
     await this.quotaBootRefresh;
   }
 
-  /** §07: vendor rate-limit failures route to the drain handler, never the
+  /** Vendor rate-limit failures route to the drain handler, never the
    * launch-failure quarantine. */
   async onVendorDrainError(agent: AgentRecord, failure: string): Promise<void> {
     await this.drainHandler.onVendorError(agent, failure);
@@ -1622,21 +1586,13 @@ export class HiveDaemon {
   /**
    * The daemon's one recurring sweep: every 30s, and once at startup.
    *
-   * Public because it is the seam a test drives. That is not a cosmetic detail —
-   * the reconciliation below hung off the interval callback instead of living
-   * here, which put it in the one place no test can reach, and so the only thing
-   * standing between "injected" and a state nothing ever reads again was a line
-   * that could be deleted without turning anything red. It is inside maintenance
-   * now, and a test drives maintenance.
+   * Public so tests drive the same reconciliation path as the recurring timer.
    */
   /**
    * Self-check of the two wake paths, on daemon start and on every tick.
    *
-   * Both have failed silently in the field: a launcher/daemon split once sent
-   * every root wake to an endpoint nobody was listening on, and the
-   * 2026-07-21 messaging regression left agent sessions
-   * unreachable with the only diagnostic on a /dev/null stderr. A wake path
-   * that is broken says so BEFORE somebody sends a message into it.
+   * Check before delivery so a launcher/daemon endpoint mismatch or unreachable
+   * agent session is visible instead of leaving its diagnostic on discarded stderr.
    *
    * Faults alert once through the same hive-control → queen wire as the
    * stuck-delivery check, and re-arm when the fault clears, so a persistent
@@ -1756,7 +1712,7 @@ export class HiveDaemon {
         });
       }
       await this.recoverQuotaReservations();
-      // §07: poke held agents past their reset, then handle newly drained
+      // Poke held agents past their reset, then handle newly drained
       // running agents. Runs on the existing sweep — no new timers.
       await this.drainHandler.sweep().catch((error) => {
         console.error(
@@ -1802,10 +1758,8 @@ export class HiveDaemon {
           }`,
         );
       });
-      // An idle agent makes no tool calls and reaches no turn boundaries, and
-      // those are the only things that ever triggered a redelivery — so mail
-      // queued at a busy agent stayed queued once it went quiet. The daemon
-      // knows the agent is idle and knows the message is waiting; it wakes it
+      // An idle agent makes no tool calls and reaches no turn boundaries. The
+      // daemon knows the agent is idle and a message is waiting, so it wakes it
       // rather than waiting for an event that is not coming. Runs after the
       // telemetry sweep, because for a vendor with no hook stream that sweep is
       // what makes the row say "idle" in the first place.
@@ -1866,9 +1820,7 @@ export class HiveDaemon {
    *
    * - `nothing-to-land`: the branch has no commit the primary lacks. There is
    *   nothing to merge, so there is nothing to grant, so no approval is filed.
-   *   This is the no-op re-arm Hive kept asking humans to clear — agents
-   *   checked `main..branch`, found it empty, and correctly refused the grant
-   *   Hive had just filed for them.
+   *   Do not file a no-op re-arm for an empty `main..branch` range.
    * - `rearmed`: Hive measured, in the primary checkout, the two things the
    *   human was being asked to eyeball — the branch has work (`pending > 0`)
    *   and it is rebased on current main, so the merge is a real fast-forward —
@@ -1946,12 +1898,11 @@ export class HiveDaemon {
 
   /**
    * Pull each live agent's context% and artifact freshness from its tool's
-   * durable files (SPEC decision 2): Claude transcripts and Codex rollouts.
+   * durable files: Claude transcripts and Codex rollouts.
    * Hook traffic carries neither, so this sweep is what keeps the status
    * table's context column true. For a Codex TUI agent the rollout mtime is
    * also the only mid-turn liveness signal — a fresh rollout promotes a
-   * stuck "spawning" row to working, which is exactly the row the field
-   * test saw frozen while the agent had long since landed.
+   * stuck "spawning" row to working.
    */
   async refreshToolTelemetry(): Promise<void> {
     return refreshToolTelemetrySweep({
@@ -1967,7 +1918,7 @@ export class HiveDaemon {
   }
 
   /**
-   * The memory watchdog (SPEC.md "Resource safety"): hard-kill any process
+   * The memory watchdog hard-kills any process
    * under a Hive-owned terminal session that exceeds the per-process ceiling,
    * pause spawning while the system is low on reclaimable memory. Every action
    * lands as a durable orchestrator message, so degradation is visible.
@@ -2025,9 +1976,8 @@ export class HiveDaemon {
   /**
    * A dead agent may not hold capacity. This asks the reservations themselves
    * who is still running, rather than trusting each agent row to have named its
-   * live booking correctly — the pointer is what went stale before, and the TTL
-   * that eventually caught it is six hours wide, long enough for the leak to
-   * refuse a spawn Hive had room for.
+   * live booking correctly. A stale pointer otherwise leaves capacity reserved
+   * until the six-hour TTL and can refuse a valid spawn.
    *
    * A reservation whose agent has no row at all is a spawn still in flight: the
    * booking is made before the row is written, so settling it here would cancel
@@ -2079,7 +2029,7 @@ export class HiveDaemon {
    * discardWork.
    */
   /** Can this agent's process tree be positively read as gone? Fail closed:
-   * an unreachable host or broker proves nothing (#70). */
+   * an unreachable host or broker proves nothing. */
   private async agentTreeAbsent(agent: AgentRecord): Promise<boolean> {
     try {
       const inspection = await this.terminalHost.inspect(
@@ -2200,11 +2150,9 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
-    // #66: the deliberate-kill intent is registered BEFORE the first
-    // destructive step. Between the process dying and markAgentDead landing
-    // (measured 2.5-34s), the row reads live-status + session-absent — the
-    // recovery sweep's crash predicate — and a tick in that window used to
-    // resume the corpse. The marker is cleared only after the dead status is
+    // Register deliberate-kill intent BEFORE the first destructive step. While
+    // the process is dead but markAgentDead has not landed, the row matches the
+    // recovery sweep's crash predicate. The marker is cleared only after dead status is
     // durable; a teardown that fails in between leaves it set, because a
     // deliberately killed agent must never be resurrected by the sweep.
     this.recovery.noteDeliberateKill(agent.id);
@@ -2220,10 +2168,8 @@ export class HiveDaemon {
       try {
         reaped = await this.stopAgentProcesses(agent, revoke);
       } catch (error) {
-        // #70 (lucas, 2026-07-20): a teardown that throws AFTER the processes
-        // are gone used to leave the row `working` forever — an audited-allow
-        // kill whose victim hive_status still reported as alive. If the tree is
-        // provably absent the agent IS dead; record that and finish the
+        // If teardown throws after the processes are gone, the agent is dead;
+        // record that and finish the
         // teardown. A tree whose absence cannot be proved keeps the failure:
         // unreachable is not dead.
         if (!(await this.agentTreeAbsent(agent))) throw error;
@@ -2243,7 +2189,7 @@ export class HiveDaemon {
     this.recovery.clearDeliberateKill(agent.id);
     const closedAssignment = this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
-    // §03: an agent's last spend lands on the provider's counter only when it
+    // An agent's last spend lands on the provider's counter only when it
     // closes, so a close is a refresh trigger for that provider.
     void this.refreshQuota({ force: true, providers: [agent.tool] }).catch(
       (error) => {
@@ -2383,7 +2329,7 @@ export class HiveDaemon {
     // top of that is how a kill that obeyed reads as a kill that refused.
     await this.reportKill(agent, reaped, preserved, stranded, targetBranch);
 
-    // A session end is a digest activity boundary (HiveMemory HM-2 WP4;
+    // A session end is a digest activity boundary;
     // S3.7 DoD 1-2): re-synthesize the agent's session digest from the typed
     // record BEFORE the retention sweep runs, so the digest's provenance
     // pins its drill-down events against the hot-tier cutoff. Failure-isolated
@@ -2395,7 +2341,7 @@ export class HiveDaemon {
       "agent session end",
     );
     // The mistake harvest rides the same boundary, strictly after the digest
-    // compile (HiveMemory HM-2 WP5): failure clusters become unverified
+    // compile: failure clusters become unverified
     // pitfall candidates citing the digest's provenance.
     this.harvestSessionPitfalls(
       agent.id,
@@ -2556,23 +2502,14 @@ export class HiveDaemon {
   /**
    * Stopping the daemon stops the MACHINE, not just the process.
    *
-   * This used to stop only the queen and exit, which left every agent — its
-   * vendor CLI, its Codex host, its MCP children — running
-   * with nothing left alive to supervise, message, meter or reap them. Quitting
-   * the app is the ordinary way a user ends a session, so that was the ordinary
-   * way Hive orphaned processes that go on spending money against the account.
-   *
-   * So: close every agent first, through the same one kill path the pane X
+   * Close every agent first, through the same kill path the pane X
    * uses, and only then take the daemon down. Agents are reaped before the
    * timers stop, because teardown needs delivery and quota to still be alive.
    */
   async stop(): Promise<void> {
-    // A refusal is a REPORT to the caller, not a reason to stay half-alive. The
-    // refusal used to be thrown from here, so the reconciliation timer was never
-    // cleared: the daemon kept ticking against whatever made teardown fail and
-    // printed the same failure every 30s forever, with no further Ctrl-C able to
-    // reach it. The daemon's own resources are released either way; the error is
-    // rethrown at the end so a failed teardown is still a failed quit.
+    // A refusal is a report to the caller, not a reason to stay half-alive.
+    // Release daemon resources either way, then rethrow so teardown failure is
+    // still a failed quit.
     let refusal: unknown;
     this.orchestratorSessiond?.cancel("Hive daemon shutdown");
     if (this.manageLifecycle) {
@@ -2647,8 +2584,8 @@ export class HiveDaemon {
   }
 
   /**
-   * The memory retention sweep (HiveMemory HM-2 WP3; config
-   * `[memory.retention]`, off entirely when the daemon is not given a
+   * The memory retention sweep is configured by `[memory.retention]` and stays
+   * off when the daemon is not given a
    * retention config or an episodic store — embedded daemons in tests and
    * tooling must never age out memory state unasked). Aged hot-tier events
    * are deleted (digest-referenced rows survive), facts and digests are kept
@@ -2666,7 +2603,7 @@ export class HiveDaemon {
     this.retentionRunning = true;
     try {
       // The demotion half writes article files, so the sweep takes the same
-      // serialized memory write path as memory_write (SPEC decision 5) — a
+      // serialized memory write path as memory_write; a
       // retention pass must never interleave with an agent's write. The FTS
       // rebuild below re-enters the lock after this one releases, so it
       // cannot live inside.
@@ -2718,8 +2655,8 @@ export class HiveDaemon {
     });
   }
 
-  /** Rolling digest re-synthesis at an activity boundary (HiveMemory HM-2
-   * WP4; S3.7 DoD 1-2): agent session end/kill and landing/completion
+  /** Rolling digest re-synthesis at an activity boundary: agent session end,
+   * kill, and landing/completion
    * events. The compiler is a deterministic fold over the typed episodic
    * record — daemon code, never the session's own agent, never an LLM on
    * the hot path — and it REPLACES the agent+session digest row rather than
@@ -2742,13 +2679,13 @@ export class HiveDaemon {
     }
   }
 
-  /** The mistake harvest (HiveMemory HM-2 WP5): runs at the same session
+  /** The mistake harvest runs at the same session
    * boundaries as the digest compile, strictly AFTER it, so the harvested
    * candidate's provenance can cite the digest id. Fire-and-forget like the
    * retention sweep: the harvester already captures per-candidate failures
    * in its report, and anything that escapes is maintenance noise, never a
    * failure of the lifecycle path that triggered it. Writes go through the
-   * serialized memory write path (SPEC decision 5) so a harvest can never
+   * serialized memory write path so a harvest can never
    * interleave with an agent's own memory_write. */
   private harvestSessionPitfalls(
     agentId: string,
@@ -3046,11 +2983,8 @@ export class HiveDaemon {
     name: string,
     capabilityEpoch: number,
   ): Promise<{ commit: string }> {
-    // Each refusal below names the one thing that is wrong and, where a person
-    // has to act, says so in a single labeled line. "Landing capability revoked
-    // or stale" told an agent neither which of the two it was nor what to do,
-    // and they need opposite things: a stale epoch is the agent's own to fix by
-    // re-reading it, while a revocation is authority it no longer has.
+    // Name one failure per refusal because stale epochs and revoked authority
+    // require opposite actions: re-read the former and stop for the latter.
     const agent = this.db.getAgentByName(name);
     if (agent === null) {
       throw new Error(
@@ -3120,11 +3054,8 @@ export class HiveDaemon {
    * TUI prompt, and report whether it actually landed.
    *
    * Codex is sitting on its terminal approval popup, and the only thing that
-   * advances it is the keystroke that popup advertises. Without this an
-   * approved request left
-   * the agent exactly as blocked as a denied one — #102, where the approval
-   * queue, steer, urgent, and the pane were dead ends simultaneously and the
-   * agent had to be killed with committed work stranded.
+   * advances it is the keystroke that popup advertises. Delivering through any
+   * other queue leaves an approved request blocked.
    *
    * Never claims delivery it did not make: a host with no key channel, or a
    * declined injection, returns false and says why on the daemon's stderr.
@@ -3277,7 +3208,7 @@ export class HiveDaemon {
       return json(await this.handshake(), { headers: { connection: "close" } });
     }
     // Everything below mutates state or reads another tenant's data, so every
-    // one of them authenticates first. See the capability rights matrix.
+    // one of them authenticates first.
     if (url.pathname === "/event" && request.method === "POST") {
       return this.receiveEvent(request);
     }
@@ -3566,18 +3497,6 @@ export class HiveDaemon {
   }
 
   /**
-   * Point the agent row at the reservation the run is actually holding.
-   *
-   * A model re-key releases the booking the row names and writes a fresh one.
-   * The row kept naming the released id, and every terminal path dereferences
-   * exactly that id — `markStarted`, the turn-end reconcile, and the cancel on
-   * kill/death/recovery/restart all early-return on a settled reservation. So
-   * the replacement was never started, never reconciled, and never released: it
-   * sat `active` until its six-hour TTL, and `reserved` counted it the whole
-   * time. Spawning with a model alias (`sonnet`) re-keys on the first statusLine
-   * report — the live model is the canonical id — so this leaked once per agent.
-   */
-  /**
    * Land Claude Code's own occupancy figure and its measured context window
    * onto the agent row.
    *
@@ -3625,19 +3544,12 @@ export class HiveDaemon {
   /**
    * The model `agent` is actually running, observed and persisted onto its row.
    *
-   * Two things were wrong and they were the same thing: quota was observed
-   * against the spawn-time model, and `hive status` reported the spawn-time
-   * model to the orchestrator, which routes off it. Fixing only the ledger
-   * would leave the display lying.
-   *
    * The observation is written to `liveModel`, never over `model`. They are
-   * different facts and the difference is load-bearing: `model` is decision 6's
+   * different facts and the difference is load-bearing: `model` is the
    * immutable execution identity, and `restartForControl` refuses to restart an
    * agent whose recorded identity and row disagree — so overwriting `model`
-   * would have left every agent whose user typed `/model` permanently
-   * unrestartable, capability revoked, on the next critical control. The bug was
-   * born of conflating an intention with an observation; the fix does not repeat
-   * it in the other direction.
+   * would leave an agent that changed models permanently unrestartable after a
+   * critical control. Do not conflate launch intention with live observation.
    *
    * No observation — a Codex rollout, which records no model name, or a Claude
    * session that has not answered yet — leaves `liveModel` untouched, and the
@@ -3744,12 +3656,9 @@ export class HiveDaemon {
   /**
    * `GET /orchestrator-status` — what the root is doing, for the Workspace dot.
    *
-   * The root has no agents-table row, so it is absent from `hive_status` by
-   * construction and the Workspace had nothing to render; it invented a status
-   * word instead, and got a permanently gray (unknown) dot for it. This is the
-   * honest surface: derived from the root's own turn-boundary events, and
-   * `{"status": null}` whenever they cannot be trusted — an absent status is
-   * unknown, never a flattering guess. See orchestrator-status.ts.
+   * The root has no agents-table row, so derive this surface from its own
+   * turn-boundary events. Return `{"status": null}` whenever they cannot be
+   * trusted; an absent status is unknown, never a flattering guess.
    *
    * Gated on `status:read`, the same action `hive_status` needs: this is the
    * root's status, not a new kind of authority, and the feed already holds it.
@@ -3808,13 +3717,9 @@ export class HiveDaemon {
     // nothing about which terminals exist: a terminal is alive because its
     // process is alive, and it observes that for itself.
     //
-    // This endpoint used to renew a 15 s lease per published terminal. The
-    // reply then cost one broker round trip PER TERMINAL under the Workspace's
-    // fixed 5 s timeout, so at a 31-agent burst it could not arrive in time
-    // and the whole fleet self-terminated while the daemon itself stayed
-    // responsive (measured: 1.1 s worst loop lag through the same burst).
-    // Making a terminal's life depend on a message arriving on time is what
-    // killed three fleets; nothing here may reintroduce it.
+    // Do not make terminal lifetime depend on publish latency. Per-terminal
+    // round trips can exceed the Workspace timeout during a launch burst even
+    // while the daemon remains responsive.
     return json(result, { status: 200 });
   }
 
@@ -3852,9 +3757,8 @@ export class HiveDaemon {
   /** The Workspace's own liveness is policy the daemon owns: a Hive with no
    * Workspace has nobody to serve, so it shuts down. Nothing a terminal needs
    * rides on this check — terminals observe their own supervisor and outlive
-   * any number of missed ticks. Before 2026-07-28 this same tick renewed one
-   * 15 s lease per visible terminal, which made every agent's survival depend
-   * on a message landing on time and killed three fleets when it could not. */
+   * any number of missed ticks. Do not renew terminal lifetime here: agent
+   * survival must not depend on a liveness message arriving on time. */
   checkWorkspaceOwnerAlive(): void {
     const workspaceVisibility = this.workspaceVisibility;
     if (workspaceVisibility == null) return;
@@ -4055,8 +3959,8 @@ export class HiveDaemon {
    * `GET`/`POST /routing/policy` — the Model Control Center's contract, via
    * the `hive routing …` CLI. GET returns the whole policy document; POST
    * applies one validated mutation with compare-and-set and returns the
-   * updated document. Operator-only in BOTH directions: with the approval
-   * prompts retired, an enabled model here IS consent to spend, and an agent
+   * updated document. Operator-only in both directions: an enabled model here
+   * is consent to spend, and an agent
    * granting itself consent would be self-authorization.
    */
   private async routingPolicyEndpoint(request: Request): Promise<Response> {
@@ -4182,10 +4086,8 @@ export class HiveDaemon {
     const parsed = z
       .strictObject({
         sessionLocator: SessionLocatorSchema,
-        // Who asked for this kill: CLI subcommand + argv + parent pid, written
-        // onto the allow-decision audit row (#64). Every kill row used to carry
-        // an empty reason, which is why the 2026-07-20 pane-close kills needed a
-        // full forensic reconstruction. Free-form and truncated rather than
+        // Who asked for this kill: CLI subcommand, argv, and parent pid, written
+        // onto the allow-decision audit row. Free-form and truncated rather than
         // validated: a kill must never be refused because its provenance string
         // is long.
         origin: z.string().optional(),
@@ -4251,18 +4153,15 @@ export class HiveDaemon {
   }
 
   /**
-   * POST /stop — fleet shutdown as ONE atomic-or-abortive daemon request (#70).
+   * POST /stop — fleet shutdown as one atomic-or-abortive daemon request.
    *
-   * `hive stop` used to fan kills out client-side (`/agents/:name/kill` per
-   * agent) and only then SIGTERM the daemon. Any mid-flight failure — or the
-   * caller dying, which is guaranteed when the caller is itself an agent the
-   * stop kills — left partial kills under a live daemon: the 2026-07-20
-   * incident, twice. Here every gate is evaluated before anything dies:
+   * Evaluate every gate before anything dies so a mid-flight failure or dead
+   * requesting client cannot leave a partially killed fleet under a live daemon:
    *
    *   1. operator authorization (the same agent:kill the pane X needs);
    *   2. the invoker must not be an agent worktree shell — client-reported and
    *      therefore accident prevention, not a security boundary (a same-UID
-   *      process can read the operator credential; credentials.ts says so);
+   *      process can read the operator credential);
    *   3. unlanded work refuses the stop unless explicitly confirmed, naming
    *      the agents and their unlanded state.
    *
@@ -4715,7 +4614,7 @@ export class HiveDaemon {
         { status: authenticated.status },
       );
     }
-    // #57: an authenticated request is the one truthful proof that this
+    // An authenticated request is the truthful proof that this
     // subject's vendor MCP client reached the right port with a working
     // credential. The launch path waits on this marker rather than trusting
     // a redrawing pane; a stale token or dead port simply never lands here.

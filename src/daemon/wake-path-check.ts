@@ -13,7 +13,6 @@ import { type AgentRecord, ORCHESTRATOR_NAME } from "../schemas";
 /**
  * The wake-path check, with its dependencies named.
  *
- * Third extraction of the `HiveDaemon` decomposition (audit §11).
  * `alertedWakeFaults` passes by reference: the check de-duplicates its own
  * alerts across sweeps by remembering what it has already reported, so the set
  * has to be the daemon's, not a fresh one per call.

@@ -21,7 +21,7 @@ export const SpawnRequestSchema = z.strictObject({
   // substituted — pass it only when the user named a model. Routine spawns
   // resolve through the category's policy chain.
   model: z.string().min(1).optional(),
-  // A user directive, passed verbatim after validation against the resolved
+  // An explicit user choice, passed verbatim after validation against the resolved
   // model's discovered capability record. No default is implied.
   effort: z
     .string()
@@ -44,10 +44,8 @@ export const SpawnRequestSchema = z.strictObject({
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
 export const SpawnBatchRequestSchema = z.strictObject({
-  // 32, matching the measured spawn-collapse ceiling work
-  // (planning/2026-07-27-spawn-collapse-root-cause.md): the admission bound in
-  // SessiondHost.create, not this schema, is what keeps a burst inside the
-  // broker's budget, so the cap only needs to clear the 31-agent target.
+  // SessiondHost.create enforces the admission bound that keeps a burst within
+  // the host budget; this schema cap only needs to clear the supported agent target.
   requests: z.array(SpawnRequestSchema).min(1).max(32),
 });
 
