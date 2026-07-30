@@ -108,7 +108,7 @@ export const grokAgentAdapter: AgentAdapter = {
       if (trust === "untrusted") {
         // Not a warning. Trust withholds the MCP server, not just the hooks —
         // and an agent that cannot reach Hive's MCP surface is refused anyway
-        // (readiness.ts #57), 15 seconds after a launch that already looked
+        // after a launch that already looked
         // alive. Refusing here costs a spawn that was never going to work and
         // reports the gate instead of the symptom.
         throw new Error(

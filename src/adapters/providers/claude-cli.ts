@@ -43,8 +43,8 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Grant a read-only session the queen's orchestrator role (#12): `gh` in
-   * Bash plus Edit/Write scoped to her memory and planning docs
+  /** Grant a read-only session the queen's orchestrator role: `gh` in
+   * Bash plus Edit/Write scoped to her memory and planning files
    * (orchestrator-role.ts). Every other command and path still raises a
    * prompt, and NotebookEdit stays denied. Must stay off for the read-only
    * restart of a revoked writer, which shares the same deny list. */
@@ -483,9 +483,8 @@ export async function writeClaudeAgentConfig(
   // bypass mode; the permission mode alone does not make a session read-only.
   // Every built-in tool the vendor marks "Permission required: Yes" that can
   // run a shell command or mutate the filesystem must appear here, because
-  // under bypassPermissions nothing else stops it. Checked against
-  // https://code.claude.com/docs/en/tools-reference — re-check on CLI upgrade;
-  // a tool added upstream silently punches a hole in this list (Monitor did).
+  // under bypassPermissions nothing else stops it. Re-check on CLI upgrades:
+  // a tool added upstream silently punches a hole in this list.
   // Skill and Agent are deliberately absent: a skill's shell still goes through
   // Bash, and a subagent's tool calls are checked against these same rules.
   const readOnlyDeny = [
@@ -497,7 +496,7 @@ export async function writeClaudeAgentConfig(
     "Monitor",
     "EnterWorktree",
   ];
-  // A board-tools session is the queen's orchestrator role (#12): she keeps
+  // An orchestrator session keeps
   // the shell for gh and gains Edit/Write scoped to her own memory and
   // planning docs (orchestrator-role.ts) — every other command and path
   // still raises a prompt. The constant above is shared with the read-only
@@ -576,8 +575,8 @@ export async function writeClaudeAgentConfig(
       UserPromptSubmit: hook(eventCommand("turn-start")),
       Stop: hook(eventCommand("turn-end")),
       Notification: hook(eventCommand("notification")),
-      // The mid-turn safe boundary for urgent injection (SPEC decision 1):
-      // without it a busy agent's queued urgent controls wait for the end of
+      // This is the mid-turn safe boundary for urgent injection. Without it,
+      // a busy agent's queued urgent controls wait for the end of
       // a possibly hour-long turn. The daemon treats it as a delivery tick,
       // never a status change or an events-table row.
       PostToolUse: hook(eventCommand("tool-boundary")),

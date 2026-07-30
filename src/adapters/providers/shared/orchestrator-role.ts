@@ -1,10 +1,9 @@
 /**
- * The queen's role (#12): `orchestrator` as a permission set, defined once.
+ * The queen's `orchestrator` permission set, defined once.
  *
  * The role is three facts:
  *
- * - She may edit her own memory (`.hive/`) and the planning/board-adjacent
- *   docs (`planning/`) — these globs, relative to the repository she runs in.
+ * - She may edit `.hive/` and `planning/` within the repository she runs in.
  * - She may use the GitHub CLI (`gh`) in Bash for board management.
  * - She never authors implementation code: implementation is always
  *   delegated to workers. No vendor's permission language can scope "docs"
@@ -13,7 +12,7 @@
  *   in cli/orchestrator-brief.ts.
  *
  * Each vendor expresses this natively where the grant is written: claude in
- * writeClaudeAgentConfig's boardTools branch, opencode in
+ * writeClaudeAgentConfig's orchestrator branch, opencode in
  * writeOpencodeAgentConfig's orchestrator branch. Codex (sandbox flags),
  * grok, and kimi have no path- or command-scoped grant channel, so their
  * mapping is chosen at the launch arm in cli/orchestrator.ts.

@@ -46,8 +46,8 @@ const isAlive = (pid: number): boolean => {
  *
  * The owner is written to a private staging file and only then given the lock's
  * name, because `link` fails rather than replaces. Creating the lock and then
- * writing into it — which is what this used to do — leaves a window in which the
- * lock file exists and is empty, and a process that dies inside that window
+ * writing into it leaves a window in which the lock file exists and is empty.
+ * A process that dies inside that window
  * leaves an empty lock behind: no owner to check for liveness, so nothing ever
  * reclaims it, so the lock is held by nobody until a human deletes it. Here the
  * name and the complete contents appear in the same instant. */
@@ -72,8 +72,8 @@ async function publish(
 /** Reclaim a lock whose owner is provably dead, without ever unlinking the
  * lock's name.
  *
- * The old code compared the file's contents to what it had read and then called
- * `unlink(path)` — but the comparison and the unlink are two steps, and a live
+ * Do not compare the file's contents and then call `unlink(path)`: the
+ * comparison and unlink are two steps, and a live
  * owner can publish in between. The contender would then delete a lock that
  * somebody was holding, and two processes would be inside the same critical
  * section believing they were alone.
@@ -87,8 +87,8 @@ async function publish(
  * to overwrite whatever may now be there.
  *
  * This is only ever called for a lock whose owner pid is dead, so there is no
- * live original owner to strand. What it narrows, versus the old unconditional
- * unlink, is the case where the dead owner's slot was reused by a live one
+ * live original owner to strand. It narrows the case where the dead owner's
+ * slot is reused by a live owner
  * between our inspection and our rename.
  *
  * THREE RESIDUALS REMAIN, and none is closable with the primitives a POSIX
@@ -180,7 +180,7 @@ export async function withFileLock<T>(
     // time out: a lock unowned until a human clears it is a liveness failure,
     // strictly safer than a mutual-exclusion failure. This protocol's own
     // `publish` never creates an unreadable lock (the name and its contents
-    // appear together), so this can only be an artifact of an older build.
+    // appear together), so treat this as an invalid persisted state.
     if (current !== null && !isAlive(current.pid)) {
       await reclaim(path, source, owner.token);
       continue;

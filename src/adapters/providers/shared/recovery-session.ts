@@ -75,12 +75,12 @@ export function recoveryArtifactTimestamp(
  * The one session belonging to this agent, or null if it never started one.
  *
  * The agent's own creation time is the filter: a worktree gets reused, so the
- * same directory can hold transcripts from agents that came before this one,
- * and they are indistinguishable by anything except when they began.
+ * the same directory can hold transcripts from other agents. Creation time is
+ * the only evidence that distinguishes them.
  *
  * More than one survivor throws rather than picking the newest. Two artifacts
- * dated after this agent was created means the assumption behind the whole
- * lookup — one agent, one conversation — did not hold here, and a tiebreak
+ * dated after this agent was created violates the lookup's one-agent,
+ * one-conversation assumption, and a tiebreak
  * would be inventing an answer that the caller could not tell from a real one.
  */
 export function selectRecoverySessionId(

@@ -184,8 +184,8 @@ function buildCodexConfigArgs(
     // The vendor's own "I am parked on an approval popup" event. Without it a
     // TUI-hosted codex agent that hits an on-request approval is invisible:
     // hive_approvals stays empty, no tool boundary is ever reached, and every
-    // control surface is a dead end at once (#102). Measured against codex-cli
-    // 0.145.0: the hook fires the moment the popup renders and its stdin
+    // control surface is a dead end at once. The hook fires when the popup
+    // renders and its stdin
     // carries the tool and command being decided. Residual: if a future vendor
     // popup raises no PermissionRequest hook, it remains silent to Hive; pixels
     // are deliberately not used as status truth or an approval source.
@@ -281,9 +281,8 @@ export function codexSessionsDirectory(home = homedir()): string {
 }
 
 // Codex records every conversation as a rollout file whose first line is a
-// session_meta entry carrying the session id and cwd. When a crashed agent's
-// thread id was never captured from a notify payload, the newest rollout
-// whose cwd is the agent's worktree is the session to resume.
+// session_meta entry carrying the session id and cwd. If hook traffic provides
+// no thread id, resume the newest rollout for the agent's worktree.
 const ROLLOUT_SCAN_LIMIT = 100;
 
 export interface CodexRolloutLocation {
@@ -508,9 +507,8 @@ export async function writeCodexAgentConfig(
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
     writeGraphifyHook(graphifyPath, options.graphifyUrl),
-    // Hive used to keep the agent's bearer here. A worktree created by an older
-    // Hive still holds that live token in the project tree; this is where it
-    // goes away.
+    // Remove any bearer left in the project tree so the live token cannot
+    // survive reconciliation.
     rm(join(codexDirectory, "capability-token"), { force: true }),
   ]);
   // writeFile's mode only applies at creation, and both files are rewritten at

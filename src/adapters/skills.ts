@@ -130,7 +130,7 @@ async function discoverSkills(root: string): Promise<Map<string, string>> {
  * Role is always the first segment. There is no unbucketed skill and no
  * top-level vendor bucket: a directory that does not say who it is for is not
  * addressed to anyone, and "everyone" is not an audience — it is the absence of
- * a decision, which is what the old bare form encoded.
+ * a decision.
  *
  * Order is precedence: a later directory overwrites a name an earlier one
  * staged, so the most specific address wins. Vendor precedes category because
@@ -214,8 +214,8 @@ function addressableDirectories(): Set<string> {
 /**
  * Skills nobody can be given: a `SKILL.md` sitting at a path no audience reads.
  *
- * Every skill written before roles existed is one of these, and so is every
- * mis-ordered path (`agent/planning/claude/` rather than
+ * This includes every unaddressed skill and every mis-ordered path
+ * (`agent/planning/claude/` rather than
  * `agent/claude/planning/`). They are returned rather than skipped because a
  * skill someone wrote that quietly stops loading is the worst failure this
  * grammar can produce — the caller's job is to say so, with the path.
@@ -419,11 +419,9 @@ export interface BaseSkillInstallReport {
 /**
  * Put Hive's own skills where the user's own skills live.
  *
- * `.hive/skills` is the one place a person looks to answer "what do my agents
- * know", and until now Hive's half of that answer was invisible — inside the
- * binary, appearing only inside a worktree nobody reads. Installing here makes
- * the base skills ordinary: addressed by the same grammar, editable in place,
- * and beaten by an edit exactly like every other skill in the tree.
+ * `.hive/skills` lets a person answer "what do my agents know". Installing
+ * Hive's skills here makes them ordinary: addressed by the same grammar,
+ * editable in place, and overridden by an edit like every other skill.
  *
  * No vendor directory is touched and no vendor needs to be installed for this
  * to be right, because an address carries its own vendor: `agent/claude/` is
@@ -551,7 +549,7 @@ export async function installShippedSkillsInto(
 /**
  * Make one worktree's vendor skill directory true, at spawn.
  *
- * There is one story for how a skill reaches an agent, and it is this function
+ * This function is the single path by which a skill reaches an agent,
  * plus `installShippedSkills` — which is the same install, run at a different
  * moment. Hive's own skills are *in the binary*, so they are laid down here for
  * every agent regardless of what the user's repo happens to contain; the user's

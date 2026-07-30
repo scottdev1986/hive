@@ -594,7 +594,7 @@ export async function deleteMemoryFact(
   // Deleting an article another article still supersedes would dangle a
   // provenance pointer: the supersession chain is how readers trace current
   // truth back through its raw evidence.
-  // TODO(#18): also check WorkManifest references when the manifest store lands
+  // TODO: also check WorkManifest references when the manifest store lands.
   const blockers = (await discoverMemoryFacts(root, scope)).filter(
     (other) => other.id !== id && other.supersedes.includes(id),
   );

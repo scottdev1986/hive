@@ -31,7 +31,7 @@ export interface OpencodeAgentConfigOptions {
    * leaves the agent already on disk untouched. */
   instructionPath?: string;
   readOnly?: boolean;
-  /** The queen's role (#12): Edit scoped to her memory and planning docs and
+  /** The queen's role: Edit scoped to her memory and planning files and
    * Bash scoped to gh (orchestrator-role.ts), instead of the read-only
    * barrier. */
   orchestrator?: boolean;

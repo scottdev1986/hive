@@ -8,9 +8,7 @@
  * the queen whether Hive writes there or not.
  *
  * So each vendor is asked for an out-of-tree path instead, and each answers
- * differently. Every mechanism below was verified against the installed CLI by
- * provisioning a probe skill and asking the running session to list what it
- * had — not read off documentation:
+ * differently:
  *
  * - **claude** — `--plugin-dir`. The only mechanism that survives
  *   `--setting-sources user`, which the queen's launch passes to keep the
@@ -20,14 +18,12 @@
  * - **kimi** — `--skills-dir`, which *replaces* user and project discovery
  *   rather than adding to it. That is the strongest isolation of the five: what
  *   Hive provisions is exactly what she has.
- * - **grok** — `$GROK_HOME/skills`. Hive already redirects `GROK_HOME` for the
- *   queen, so the directory was already hers and was simply empty.
- * - **opencode** — `skills.paths` in the `opencode.json` Hive already writes.
+ * - **grok** — `$GROK_HOME/skills`, under the redirected queen home.
+ * - **opencode** — `skills.paths` in Hive's generated configuration.
  * - **codex** — nothing. `CODEX_HOME` is the only isolated path codex offers
  *   and auth lives inside it, so redirecting it would make Hive responsible for
- *   the queen's ability to log in. That trade was declined deliberately: the
- *   codex queen reads the checkout's own `.agents/skills`, and this module says
- *   so out loud rather than reporting a provisioning that did not happen.
+ *   the queen's ability to log in. The Codex queen therefore reads the
+ *   checkout's native skill directory and reports degraded isolation.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -58,7 +54,7 @@ const CLAUDE_PLUGIN_MANIFEST = {
   name: "hive",
   description: "Skills Hive provisions for the queen",
   // The build's own version, never a literal: this repo keeps exactly one
-  // source of semver and a second copy is what drifts (release/contract.test.ts).
+  // source of semver; a second copy would drift.
   version: HIVE_VERSION,
 };
 

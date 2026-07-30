@@ -191,8 +191,8 @@ export async function branchOwner(
  * carry no marking at all, and there is no way to tell them from another
  * instance's. The default instance adopts them — it is the one that would have
  * made them — and every other instance leaves them alone. A non-default
- * instance therefore cannot clean up legacy branches, which is the intended
- * trade: the cost is manual cleanup, and the alternative cost is one instance
+ * instance therefore cannot clean up unmarked branches. The cost is manual
+ * cleanup; the alternative is one instance
  * deleting another's unlanded work.
  */
 async function assertBranchMutationAllowed(
@@ -608,9 +608,8 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
  * The *user's* own skills, symlinked in from `~/.hive/skills` and
  * `<repo>/.hive/skills` under the same parents, are covered too — but by
  * `isStagedSkillLink` below rather than this constant, because their names are
- * whatever the user wrote. They were once described as permanently unsweepable
- * for that reason; they are not. Hive knows which links it created, because
- * each worktree records them at spawn.
+ * whatever the user wrote. Hive identifies those links through the manifest
+ * each worktree records at spawn.
  *
  * The union over every agent audience, not one audience's set: a worktree may
  * have been provisioned for any category, and reconciliation asks "could Hive

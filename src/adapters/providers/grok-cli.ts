@@ -199,8 +199,8 @@ export function buildGrokResumeCommand(
   sessionId: string,
 ): string[] {
   const argv = grokLaunchArgs(options);
-  // After the executable AND `--no-auto-update`, so the update-suppression flag
-  // stays adjacent to argv[0] on both the spawn and resume paths.
+  // Keep the update-suppression flag adjacent to argv[0] on both spawn and
+  // resume paths.
   argv.splice(2, 0, "-r", sessionId);
   return argv;
 }
@@ -208,8 +208,8 @@ export function buildGrokResumeCommand(
 /**
  * Grok can otherwise inherit the operator's Claude/Cursor skills, rules,
  * agents, MCPs, and hooks. These process-local switches disable those imports.
- * They do not stop Grok ingesting the repository's own `CLAUDE.md` or
- * `.claude/settings.local.json`; no switch that does was found.
+ * They do not stop Grok ingesting repository-local Claude instructions or
+ * settings; Grok exposes no switch for those sources.
  */
 export function wrapGrokSpawnWithCompatibilityEnv(command: string): string {
   const environment = Object.entries(GROK_COMPATIBILITY_ENV)
@@ -280,9 +280,9 @@ export function grokHookFilename(instanceId = hiveInstanceSuffix()): string {
  * determined.
  *
  * This exists for one sentence in one error message, and that sentence is the
- * whole value of the message. Grok's folder trust INHERITS: a decision recorded
- * for an ancestor covers every folder beneath it, worktrees included (measured
- * — `prototypes/live/grok-mcp-trust.ts`). Telling a user to trust the agent
+ * whole value of the message. Grok's folder trust inherits: a decision recorded
+ * for an ancestor covers every folder beneath it, worktrees included. Telling a
+ * user to trust the agent
  * worktree would be advice they cannot act on, because that directory is minted
  * per spawn and deleted after; telling them to trust the repository is one
  * action that covers every agent they will ever run there.
@@ -315,8 +315,7 @@ export function repositoryRootForWorktree(worktreePath: string): string | null {
  * folder — its own `grok mcp doctor` says so verbatim — and Hive's MCP server
  * is exactly that. An agent that cannot reach it can still paint a screen and
  * hold a process, so every liveness signal Hive has reads healthy, and the
- * spawn still dies ~30s later when `waitForMcpReporting` gives up. The old
- * behaviour promised the agent "will run normally"; it never could.
+ * spawn still dies when `waitForMcpReporting` gives up.
  *
  * Hive does not write `~/.grok/trusted_folders.toml`. The trust contract is the
  * user's, and this message hands them the one action that settles it for good.
@@ -558,14 +557,12 @@ function renderTrustedFolders(
  *
  * Grok will not start repo-local MCP servers — Hive's included — in an
  * untrusted folder, and Hive's own config write is what makes a fresh agent
- * worktree untrusted. Without this every grok agent looked healthy for ~30
- * seconds and then died on the MCP reporting deadline
- * (`prototypes/live/grok-mcp-trust.ts` reproduces that against a real daemon).
+ * worktree untrusted. Without this a Grok agent can look healthy until it dies
+ * on the MCP reporting deadline.
  *
  * The grant is the REPOSITORY, not the worktree, and that is not a choice:
  * grok ignores a trust entry keyed to a nested git root, so an entry for the
- * agent worktree has no effect at all (measured — same store, same format,
- * `Project trusted: no`). The narrowest grant that works is the repository the
+ * agent worktree has no effect. The narrowest grant that works is the repository the
  * user pointed Hive at, and it is therefore also broader than Hive's own
  * worktrees: the user's own manual `grok` runs in that repository become
  * trusted too. That is the cost of the assumption "opening Hive here is the

@@ -156,10 +156,9 @@ export function buildKimiResumeCommand(
  * Kimi has no interactive `--append-system-prompt`/`--rules` flag, and its TUI
  * rejects a positional prompt ("unknown command"). Kimi 0.29.1 does offer
  * `-p`/`--prompt`, but that runs one non-interactive turn and exits, so it
- * cannot launch Hive's persistent agent. The TUI's project instruction surface
- * is `<project>/.kimi-code/AGENTS.md`, which loads the shared 0600 prompt file
- * into system context. The opening user turn is submitted separately through
- * sessiond after the TUI is ready.
+ * cannot launch Hive's persistent agent. The TUI loads its project instruction
+ * file into system context. The opening user turn is submitted separately
+ * through sessiond after the TUI is ready.
  */
 export function wrapKimiWithInstructionFile(
   command: string,
