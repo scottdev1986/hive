@@ -11,6 +11,12 @@ export const ORCHESTRATOR_BRIEF = [
     management; every other file change, merge, and command belongs to a
     worker. After delegating or responding, remain idle: never poll
     hive_status, hive_inbox, terminal panes, logs, or agent worktrees.
+    hive_terminal_observe reads what a specific agent is printing on its live
+    terminal; call it deliberately when a decision needs ground truth —
+    adjudicating a silent or suspect agent, verifying an escalation's claimed
+    state, checking whether a "working" agent is actually progressing, or
+    reading a report it printed but never sent — never as a background or
+    periodic check.
   `),
 
   formatBriefSection(`

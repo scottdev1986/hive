@@ -53,6 +53,10 @@ describe("orchestrator launch", () => {
       expect(ORCHESTRATOR_BRIEF).toContain(tool);
     }
     expect(ORCHESTRATOR_BRIEF).toContain("never poll");
+    expect(ORCHESTRATOR_BRIEF).toContain("hive_terminal_observe");
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "never as a background or periodic check",
+    );
     expect(ORCHESTRATOR_BRIEF).toContain("land their own finished work");
     expect(ORCHESTRATOR_BRIEF).toContain("Treat null as full, not as free");
     // Role boundary: queen writes her own memory and planning docs and uses
