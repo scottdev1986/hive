@@ -143,10 +143,17 @@ export async function fetchGraphifyRelease(
   if (local !== undefined) return localRelease(local);
 
   const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${GRAPHIFY_CHANNEL_TAG}`;
+  // Anonymous GitHub API calls share a 60/hour per-IP budget, which a CI
+  // runner's polling loop exhausts by itself; a provided token lifts that
+  // without changing what is fetched or trusted.
+  const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
   const response = await fetcher(releaseUrl, {
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
+      ...(token === undefined || token === ""
+        ? {}
+        : { Authorization: `Bearer ${token}` }),
     },
     signal: AbortSignal.timeout(10_000),
   });

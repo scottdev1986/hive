@@ -132,6 +132,9 @@ jobs:
         env:
           HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
           EXPECTED_GRAPHIFY_SOURCE: ${{ needs.changes.outputs.graphify_commit }}
+          # The polling loop outruns the anonymous per-IP API budget on shared
+          # runners; the workflow token keeps the same read within its limits.
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun run scripts/graphify/wait-channel.ts
 
       # The Gate 6 lock restores every lib-vt-authored split through the
