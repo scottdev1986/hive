@@ -175,8 +175,8 @@ const expectedHookOverrides = (worktreePath: string): string[] =>
   [
     ["SessionStart", "session-start"],
     ["UserPromptSubmit", "turn-start"],
-    // #102: the vendor's approval popup is the one blocking state no other
-    // hook reports, so it must ride the same override channel as the rest.
+    // The vendor's approval popup is the one blocking state no other hook
+    // reports, so it must ride the same override channel as the rest.
     ["PermissionRequest", "approval-request"],
     ["PostToolUse", "tool-boundary"],
     ["Stop", "turn-end"],
@@ -599,9 +599,10 @@ describe("Codex adapter", () => {
     expect(readFile(hookPath, "utf8")).rejects.toThrow();
   });
   test("puts no capability in the worktree, and clears a legacy token file", async () => {
-    // Hive used to keep the bearer in .codex/capability-token, inside the
-    // project tree an ordinary `git add -A` stages. It now travels only in the
-    // launch environment, and the config never carried it.
+    // The bearer must never sit in .codex/capability-token (staged by an
+    // ordinary `git add -A`). It travels only in the launch environment, and
+    // the config never carries it. A leftover file from an older layout is
+    // cleared on write.
     const tokenPath = join(worktreePath, ".codex", "capability-token");
     await mkdir(join(worktreePath, ".codex"), { recursive: true });
     await writeFile(tokenPath, "hv1.abc.secret-token");

@@ -249,14 +249,13 @@ describe("installGraphify", () => {
     const [untar, probe, mcpProbe] = calls as [string[], string[], string[]];
     expect(untar[0]).toBe("/usr/bin/tar");
     expect(untar).toContain("--strip-components");
-    // Probes run the bundle binaries by absolute path, never a PATH lookup.
+    // Absolute paths into the bundle, never a PATH lookup.
     expect(probe[0]).toContain(
       join("tools", "graphify", "versions", "0.9.25-hive.1", "graphify"),
     );
     expect(mcpProbe[0]).toContain(
       join("tools", "graphify", "versions", "0.9.25-hive.1", "graphify-mcp"),
     );
-    // The downloaded tarball is cleaned up either way.
     expect(untar[2]).toContain(".download");
     expect(
       await readFile(untar[2] as string, "utf8").catch(() => null),
@@ -477,12 +476,11 @@ describe("buildTargetedGraphBrief", () => {
       "where does the api render an invoice",
     );
     expect(brief).not.toBeNull();
-    // Cited NODE lines for both files, including the symbol that matched.
     expect(brief).toContain("NODE api.ts [src=src/api.ts loc=L1 community=1]");
     expect(brief).toContain(
       "NODE renderInvoice() [src=src/billing.ts loc=L7 community=1]",
     );
-    // The relational skeleton rides in upstream's EDGE grammar, module↔module first.
+    // EDGE grammar is module↔module first.
     const edges = (brief as string)
       .split("\n")
       .filter((l) => l.startsWith("EDGE "));

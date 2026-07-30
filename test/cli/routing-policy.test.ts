@@ -156,8 +156,7 @@ describe("Model Control Center daemon pinning", () => {
     try {
       await setSelectionMode("choice", { port: 4483 }, "0");
       await setSelectionMode("auto", { port: 4483 }, "1");
-      // "unset" was only ever a spelling for clearing a per-category override.
-      // With those gone it must fail locally rather than reach the daemon.
+      // "unset" is not a live mode; refuse locally rather than reach the daemon.
       await expect(
         setSelectionMode("unset", { port: 4483 }, "2"),
       ).rejects.toThrow(/never-configured, auto, or choice/);

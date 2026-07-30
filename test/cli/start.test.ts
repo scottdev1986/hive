@@ -46,10 +46,8 @@ async function repoWithSpec(): Promise<string> {
   return root;
 }
 
-// The Workspace session boundary. The daemon
-// bring-up itself is a subprocess concern (covered end-to-end in
-// e2e-real.test.ts); here the seams prove the boundary's shape: order, the
-// returned port, and the best-effort steps staying best-effort.
+// Seams for the Workspace session boundary: order, returned port, and
+// best-effort steps staying best-effort. Daemon bring-up is end-to-end elsewhere.
 describe("startSession", () => {
   test("checks for updates before selecting an instance and bringing its daemon up", async () => {
     const root = await repoWithSpec();
@@ -77,8 +75,6 @@ describe("startSession", () => {
         write: (line) => steps.push(`write:${line.slice(0, 5)}`),
       });
       expect(session).toEqual({ port: 45_017, cwd: root });
-      // The update check ran first and its failure stopped nothing; the daemon
-      // came up after instance selection, and the returned port is the gate's.
       expect(steps).toEqual([
         "check",
         "graphify",

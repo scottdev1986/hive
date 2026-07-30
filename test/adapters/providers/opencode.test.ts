@@ -177,7 +177,6 @@ describe("opencode adapter", () => {
     // The agent block alone is not the barrier. A subagent spawned through the
     // `task` tool runs as a different agent and falls back to the global block,
     // so read-only has to be global or the subagent keeps bash and edit.
-    // Source: https://opencode.ai/docs/permissions/ (checked 2026-07-25).
     expect(written.permission).toEqual({ edit: "deny", bash: "deny" });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 

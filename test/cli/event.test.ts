@@ -209,11 +209,9 @@ describe("hive event", () => {
     ).toEqual({ toolSessionId: "grok-session", ignore: true });
   });
 
-  // Verbatim Notification payloads from claude 2.1.207 — captured from a real
-  // CLI parked on a real WebFetch dialog, and from a real idle session. The
-  // notification_type is the ONLY field separating an agent blocked on a vendor
-  // permission dialog from one merely waiting, and dropping it here is what let
-  // a blocked agent report "working" indefinitely.
+  // Verbatim Notification payloads from claude 2.1.207. notification_type is
+  // the only field separating a permission-dialog block from idle wait; without
+  // it a blocked agent reports "working" indefinitely.
   test("captures the notification type that says an agent is blocked", () => {
     expect(
       parseHookStdin(
@@ -247,10 +245,9 @@ describe("hive event", () => {
     });
   });
 
-  // Verbatim PermissionRequest payload from codex-cli 0.145.0, captured from a
-  // real session parked on its approval popup. #102: without the command this
-  // carries, the bridged approval reads "Approval requested", which names
-  // neither what the agent wants to do nor how risky it is.
+  // Verbatim PermissionRequest from codex-cli 0.145.0. Without the command this
+  // carries, the bridged approval reads "Approval requested" and names neither
+  // what the agent wants nor how risky it is.
   test("captures what a codex approval popup is asking about", () => {
     expect(
       parseHookStdin(
@@ -274,8 +271,7 @@ describe("hive event", () => {
       description: "Bash: curl -sS -o /dev/null https://example.com",
     });
 
-    // A non-shell tool has no command, so the vendor's own description is the
-    // thing being decided.
+    // Non-shell tool: the vendor's description is what is being decided.
     expect(
       parseHookStdin(
         JSON.stringify({
@@ -286,7 +282,7 @@ describe("hive event", () => {
       ),
     ).toEqual({ description: "WebFetch: Fetch https://example.com" });
 
-    // A lifecycle payload carries no tool, so it contributes no description.
+    // Lifecycle payload carries no tool — no description field.
     expect(
       parseHookStdin(
         JSON.stringify({
@@ -322,14 +318,14 @@ describe("hive event", () => {
         text: async () => JSON.stringify({ session_id: "abc" }),
       }),
     ).toEqual({ toolSessionId: "abc" });
-    // A TTY is a human, not a hook runner.
+    // TTY means a human, not a hook runner.
     expect(
       await readHookStdin({
         isTTY: true,
         text: async () => JSON.stringify({ session_id: "abc" }),
       }),
     ).toEqual({});
-    // A stream that never closes hits the timeout and yields nothing.
+    // Stream that never closes: timeout yields nothing.
     expect(
       await readHookStdin(
         {

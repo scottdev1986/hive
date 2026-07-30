@@ -55,8 +55,8 @@ describe("orchestrator launch", () => {
     expect(ORCHESTRATOR_BRIEF).toContain("never poll");
     expect(ORCHESTRATOR_BRIEF).toContain("land their own finished work");
     expect(ORCHESTRATOR_BRIEF).toContain("Treat null as full, not as free");
-    // The #12 role boundary: the queen writes her own memory and planning
-    // docs and uses gh, but implementation is always delegated.
+    // Role boundary: queen writes her own memory and planning docs and uses
+    // gh, but implementation is always delegated.
     expect(ORCHESTRATOR_BRIEF).toContain("never author implementation code");
     expect(ORCHESTRATOR_BRIEF).not.toContain(
       "never write code or modify files",

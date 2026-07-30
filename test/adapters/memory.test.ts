@@ -250,10 +250,8 @@ describe("raw observations and compiled articles", () => {
         '"Quota: Token Spend!". Re-issue as an update to that id: write with ' +
         'id "quota-token-spend" and supersedes: ["quota-token-spend"].',
     );
-    // Nothing was written for the rejected duplicate.
     expect(await readMemoryFact(root, "repo", "spend-notes")).toBeNull();
 
-    // Re-issued as an update to the named id, the write goes through.
     const updated = await writeMemoryFact(
       root,
       input({
@@ -309,8 +307,7 @@ describe("raw observations and compiled articles", () => {
     );
     expect(await readMemoryFact(root, "repo", "old-fact")).not.toBeNull();
 
-    // Once the referencing article is itself superseded away, the pointer is
-    // gone and the delete goes through.
+    // After the referring article is superseded away, the pointer is gone.
     await writeMemoryFact(
       root,
       input({

@@ -58,10 +58,8 @@ describe("hive opens the installed release Workspace", () => {
   });
 
   test("an instance launch keeps the app's stderr instead of discarding it", () => {
-    // `open` sends the app's stderr to /dev/null by default, and the app's
-    // NSLog output is the only record of a pane renderer's attach failures and
-    // its bounded give-up. Losing it made "renderer disconnected" undiagnosable
-    // from the machine it happened on.
+    // `open` discards stderr by default; the app's NSLog is the only record of
+    // pane-renderer attach failures and bounded give-up. Keep it on the instance.
     expect(
       workspaceOpenArguments(
         "/Applications/HiveWorkspace.app",

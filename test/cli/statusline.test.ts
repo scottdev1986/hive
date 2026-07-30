@@ -120,12 +120,9 @@ describe("the one parse", () => {
     });
   });
 
-  // THE REGRESSION. The quota block and the context window are independent
-  // facts riding the same payload. An API-key account, a third-party provider,
-  // and any session before its first API response all have NO rate_limits --
-  // and gating the report on them threw the window away for exactly those
-  // sessions, silently, with no error anyone would ever see. A payload carrying
-  // independent facts must never be discarded wholesale because one is missing.
+  // Quota and context window are independent facts on the same payload.
+  // Sessions without rate_limits (API-key, third-party, pre-first-response)
+  // must still report the window; missing one field must not discard the rest.
   test("reports the window even when the payload carries no rate limits", () => {
     const report = parseStatuslineReport(
       "lena",
@@ -141,7 +138,7 @@ describe("the one parse", () => {
     expect(report?.fiveHour).toBeUndefined();
   });
 
-  // ...and the same in the other direction: quota with no window still reports.
+  // Other direction: quota with no window still reports.
   test("reports the quota block even when the payload carries no window", () => {
     const report = parseStatuslineReport("maya", payload, observedAt);
     expect(report?.fiveHour?.usedPct).toEqual(23.5);
@@ -160,9 +157,8 @@ describe("the one parse", () => {
     ).toBeNull();
   });
 
-  // A window we were not told is a window we do not know. Substituting a
-  // plausible 200_000 is the bug: it reported live agents at ~22% of a 1M
-  // window as 100% full, and every decision downstream was made against that.
+  // Absent window stays absent. Inventing a default (e.g. 200_000) reports a
+  // 1M-window agent at 100% full when it is only ~22% used.
   test("never defaults a window it was not given", () => {
     for (const bad of [
       { context_window: {} },
@@ -199,10 +195,8 @@ describe("the one parse", () => {
 });
 
 // The catch in runStatusline must stay silent to the agent's terminal — it
-// renders on every keystroke. But it used to be silent EVERYWHERE: a hard
-// ReferenceError in the parse was indistinguishable from "nothing to report
-// this render", so the transport was dead and nothing anywhere said so. Silent
-// to the terminal is right; silent to us is how the next one hides too.
+// renders on every keystroke. Silent to the terminal is right; silent to us
+// hides a dead transport (a parse error is not "nothing to report").
 describe("a swallowed failure still leaves a trace", () => {
   test("records the error where a human can find it, and still renders", async () => {
     const home = mkdtempSync(join(tmpdir(), "hive-sl-err-"));
@@ -218,7 +212,6 @@ describe("a swallowed failure still leaves a trace", () => {
         },
       );
 
-      // The agent's terminal sees a clean status line, never the exception.
       expect(line).toBe("🐝 maya · 5h 24% · 7d 41%");
 
       const trace = JSON.parse(readFileSync(statuslineErrorPath(), "utf8"));

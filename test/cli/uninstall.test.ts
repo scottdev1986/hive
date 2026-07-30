@@ -214,7 +214,6 @@ describe("hive uninstall --repo", () => {
       expect(stops).toEqual([1]);
       expect(leaseEvents).toEqual([]);
 
-      // Hive's footprint is gone…
       expect(existsSync(join(root, ".claude", "skills", ours.name))).toBe(
         false,
       );
@@ -244,7 +243,6 @@ describe("hive uninstall --repo", () => {
       };
       expect(mcp.mcpServers.hive).toBeUndefined();
 
-      // …and the human's is not.
       expect(mcp.mcpServers.keepers).toBeDefined();
       expect(existsSync(join(root, ".hive", "skills", "mine"))).toBe(true);
       expect(

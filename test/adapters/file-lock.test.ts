@@ -68,9 +68,7 @@ describe("withFileLock", () => {
 
     let clearedAt = 0;
     const clearer = (async () => {
-      // Longer than any grace a timed reclaim would have used (the build under
-      // review reclaimed at 1s): if this lock is stolen, it is stolen before
-      // here, and the ordering assertion below catches it.
+      // Longer than a 1s timed reclaim: a steal would land before this sleep.
       await Bun.sleep(1_500);
       clearedAt = Date.now();
       await unlink(path);
@@ -78,8 +76,6 @@ describe("withFileLock", () => {
 
     const acquiredAt = await withFileLock(path, async () => Date.now());
     await clearer;
-    // The only way in was to wait for the unreadable lock to be cleared, never
-    // to reclaim it.
     expect(acquiredAt).toBeGreaterThanOrEqual(clearedAt);
   }, 15_000);
 
@@ -88,14 +84,9 @@ describe("withFileLock", () => {
     roots.push(root);
     const path = join(root, "state.lock");
 
-    // An invariant check, NOT an atomicity proof. It reads only after
-    // acquisition returns, so it does not exercise the publication window and
-    // would pass under the old create-then-write protocol too. The atomicity of
-    // that window is structural, not tested here: the owner record is fully
-    // written to a staging file before the single atomic link() that gives it
-    // the lock's name, so `path` never exists in an empty state. What this
-    // asserts is only the weaker invariant a held lock must satisfy — its record
-    // is present and parseable while held.
+    // Weaker than atomicity: after acquisition returns, the owner record is
+    // present and parseable while held. Publication-window atomicity is
+    // structural (staging file + atomic link) and is not exercised here.
     await withFileLock(path, async () => {
       const source = await readFile(path, "utf8");
       expect(source.trim().length).toBeGreaterThan(0);

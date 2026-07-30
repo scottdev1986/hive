@@ -454,8 +454,8 @@ describe("git worktree manager", () => {
 
 describe("unmerged hive branch inventory", () => {
   test("finds a branch holding commits that never reached main", async () => {
-    // Built the way david's branch was: a hive/* branch with a commit on it,
-    // whose worktree is long gone. The ref is the only surviving trace.
+    // A hive/* branch with a commit whose worktree is gone: the ref is the only
+    // surviving trace.
     await git("branch", "hive/david-widgets", "main");
     const worktree = join(tempRoot, "david-wt");
     await git("worktree", "add", worktree, "hive/david-widgets");
@@ -572,12 +572,11 @@ describe("hive wiring", () => {
     }
   });
 
-  // The user's own skills are symlinked in at every spawn under names only the
-  // user knows. Before the links were derived, they read as dirty files, and a
-  // worktree that always looks dirty is never swept.
+  // User skills are symlinked in at every spawn under names only the user
+  // knows. Those links must not count as stranded work, or the worktree never
+  // sweeps.
   test("discounts the user's own skills every vendor spawn links in", async () => {
-    // Uncommitted in the primary checkout, which is the whole point: this is
-    // what a person gets for dropping a directory into .hive/skills.
+    // Uncommitted in the primary checkout — the usual shape of a dropped skill.
     for (const name of ["agent/zig-best-practices", "agent/grok/only-grok"]) {
       await mkdir(join(repoRoot, ".hive", "skills", name), { recursive: true });
       await writeFile(
@@ -597,12 +596,11 @@ describe("hive wiring", () => {
     }
   });
 
-  // Codex, Grok and Kimi all read `.agents/skills`. A link the agent made
-  // itself, pointing at a skill only Grok can see, is the agent's work — and
-  // calling it Hive's wiring is what lets reconciliation delete the worktree.
-  // The expectation is written out, not re-derived from the live skill roots:
-  // a baseline read from the same source as the code under test agrees with a
-  // broken implementation.
+  // Codex, Grok and Kimi share `.agents/skills`. A link the agent made itself
+  // (pointing at a skill only Grok can see) is the agent's work — treating it
+  // as Hive wiring lets reconciliation delete the worktree. Expectation is a
+  // literal path list, not re-derived from the same roots the code under test
+  // uses.
   test("does not adopt a foreign vendor's skill link as its own wiring", async () => {
     for (const name of ["agent/grok/grok-only", "agent/every-vendor"]) {
       await mkdir(join(repoRoot, ".hive", "skills", name), { recursive: true });

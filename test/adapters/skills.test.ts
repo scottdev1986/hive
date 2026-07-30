@@ -180,12 +180,11 @@ describe("skill provisioning", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-skills-unaddressed-"));
     tempRoots.push(root);
     const skills = join(root, "skills");
-    // Every skill written before roles existed looks like this one.
+    // Flat path with no role/vendor segments — unaddressed.
     await makeSkill(skills, "written-before-roles", "orphan");
-    // The old top-level vendor bucket: addressed to a vendor, to no role.
+    // Vendor-only path (no role segment) — unaddressed.
     await makeSkill(join(skills, "claude"), "vendor-no-role", "orphan");
-    // The right three segments in the wrong order: vendor precedes category,
-    // so this path is read by nobody.
+    // Three segments in the wrong order (vendor before category) — unaddressed.
     await makeSkill(
       join(skills, "agent", "planning", "claude"),
       "backwards",
@@ -430,8 +429,7 @@ describe("skill provisioning", () => {
       },
     );
 
-    // The no-regression, asserted on disk rather than on the report: a machine
-    // with both of today's CLIs installs exactly what it always did.
+    // Coresident Claude shares no skill directory with Codex: withhold nothing.
     expect(report.withheld).toEqual([]);
     for (const skill of shippedSkillsFor({ role: "agent", tool: "codex" })) {
       expect(

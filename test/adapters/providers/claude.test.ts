@@ -251,7 +251,6 @@ describe("Claude adapter", () => {
       PATH: "/definitely-missing-dir-a:/definitely-missing-dir-b",
       HOME: "/definitely-missing-home",
     });
-    // Every candidate must exist on disk; none of these do.
     expect(candidates).toEqual([]);
   });
 
@@ -378,16 +377,10 @@ describe("Claude adapter", () => {
     });
   });
 
-  // Every hook event name Claude Code 2.1.220 actually dispatches, read out of
-  // the shipped binary itself:
-  //   strings -a ~/.local/share/claude/versions/2.1.220 \
-  //     | grep -o 'hook_event_name:"[A-Za-z]*"' | sort -u
-  // This list is a checked-in literal ON PURPOSE. Deriving it from the settings
-  // Hive writes, or from a vendor list read at test time, would make the test
-  // agree with whatever it was handed and prove nothing. A name Claude does not
-  // dispatch is a hook that silently never fires and reports no error — the
-  // failure mode that put Grok's non-existent TaskCreated/TaskCompleted into a
-  // widely-cited event list.
+  // Checked-in literal of hook events Claude Code 2.1.220 dispatches. Do not
+  // derive this from Hive's settings or a live vendor list — that would agree
+  // with whatever it was handed. A name Claude does not dispatch is a hook
+  // that silently never fires.
   const CLAUDE_HOOK_EVENTS = new Set([
     "ConfigChange",
     "CwdChanged",
@@ -542,17 +535,13 @@ describe("Claude adapter", () => {
       "Monitor",
       "EnterWorktree",
     ]);
-    // No allow list: an allow list is what broke this, by having to name every
-    // readable tool up front. Under bypass there is nothing left to gate.
+    // Under bypass there is nothing left to gate; an allow list is not used.
     expect(settings.permissions.allow).toBeUndefined();
   });
 
-  // The deny list is the whole read-only barrier under bypassPermissions, where
-  // nothing prompts. It is a denylist against a moving vendor tool table, so it
-  // fails open: Monitor shipped upstream, took an arbitrary shell command, and
-  // silently punched a hole that four tool names did not cover. This asserts the
-  // property rather than the literal, so the next such tool fails the build.
-  // Source: https://code.claude.com/docs/en/tools-reference (checked 2026-07-25).
+  // Under bypassPermissions the deny list is the whole read-only barrier.
+  // Assert the property (dangerous tools denied), not a frozen name list — a
+  // new shell-capable tool must fail the build.
   test.each([
     ["Bash", "executes shell commands"],
     ["PowerShell", "executes shell commands on Windows"],

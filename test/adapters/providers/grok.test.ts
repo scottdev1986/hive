@@ -331,12 +331,9 @@ describe("Grok adapter", () => {
     );
   });
 
-  // This test used to assert the opposite — that an untrusted worktree "still
-  // launches and reports its evidence fallback". That was measured false:
-  // trust withholds repo-local MCP servers, not just hooks, so the agent could
-  // never reach the daemon and the spawn was killed 15s later by the reporting
-  // deadline. `prototypes/live/grok-mcp-trust.ts` reproduces the whole chain
-  // against a real daemon and a real grok.
+  // Trust withholds repo-local MCP servers, not just hooks: an untrusted
+  // worktree never reaches the daemon and dies on the reporting deadline.
+  // Refuse up front, naming the gate and the one-time remedy.
   test("an untrusted worktree is REFUSED, naming the gate and the one-time remedy", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-grok-untrusted-"));
     roots.push(root);

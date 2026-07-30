@@ -27,11 +27,10 @@ describe("buildModelControlSnapshot", () => {
     );
     const grok = snapshot.providers.grok;
     if (grok.status !== "ok") throw new Error("grok discovery should be ok");
-    // Positive control: the vendor's stated no-effort-axis fact survives.
+    // Positive control: vendor's no-effort-axis fact survives.
     expect(grok.records[0]?.supportsEffort).toEqual(
       known(false, "grok.models_cache", AT),
     );
-    // And the level list stays separately unknown with its measured reason.
     expect(grok.records[0]?.supportedEffortLevels).toEqual(
       unknown("field-absent", "grok.models_cache", AT),
     );
@@ -52,7 +51,7 @@ describe("buildModelControlSnapshot", () => {
     if (pool === undefined || !("origin" in pool))
       throw new Error("expected a pool");
     expect(pool.fiveHour.used).toBe(63);
-    // A never-observed window stays null. Null is unknown, not zero.
+    // Never-observed window: null is unknown, not zero.
     expect(pool.weekly.used).toBeNull();
   });
 

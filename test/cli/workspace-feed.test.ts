@@ -254,8 +254,7 @@ describe("runWorkspaceFeed", () => {
         {
           observeProcess: () => ({ startToken: "7210:500" }),
           timeoutMs: 20,
-          // Never resolves: the 2026-07-21 stall, where the request simply
-          // never came back and renewal stopped for every pane.
+          // Never resolves: a hung request must not stall renewal forever.
           post: (_input, init) =>
             new Promise<Response>((_resolve, reject) => {
               init?.signal?.addEventListener("abort", () => {
@@ -304,7 +303,7 @@ describe("runWorkspaceFeed", () => {
             const body = (await new Request("http://x", init).json()) as {
               inventoryRevision: string;
             };
-            // The first attempt hangs forever, exactly as on 2026-07-21.
+            // The first attempt hangs forever.
             if (attempts === 1) return await new Promise<Response>(() => {});
             published.push(body.inventoryRevision);
             return Response.json({
@@ -447,7 +446,6 @@ describe("runWorkspaceFeed", () => {
       { v: 1, error: "handshake mismatch" },
       { v: 1, agents: [JSON.parse(JSON.stringify(maya)) as unknown] },
     ]);
-    // Backoff doubles from the poll interval and caps.
     expect(run.sleeps.slice(0, 3)).toEqual([
       Math.min(FEED_POLL_MS * 2, FEED_RETRY_MAX_MS),
       Math.min(FEED_POLL_MS * 4, FEED_RETRY_MAX_MS),
@@ -463,7 +461,6 @@ describe("runWorkspaceFeed", () => {
       last(snapshot(maya)), // back before the deadline: keep going
     ]);
     expect(run.exitCode).toEqual(0);
-    // error line, then the recovery snapshot.
     expect(run.lines.map((line) => "error" in line)).toEqual([
       false,
       true,
@@ -547,21 +544,16 @@ describe("runWorkspaceFeed", () => {
       async () => orchestrator("working"),
     );
     expect(run.lines[0]?.orchestrator).toEqual(orchestrator("working"));
-    // Beside, never inside: the root has no AgentRecord, and inventing one
-    // would break the no-row invariant the daemon relies on in four places.
+    // Root sits beside the agent list, never as a fabricated AgentRecord.
     expect(run.lines[0]?.agents).toHaveLength(1);
   });
 
   /**
-   * The load-bearing one. When the daemon cannot honestly say what the root is
-   * doing, the field must be ABSENT — not "idle", not a stale last value, not a
-   * placeholder. The Workspace renders a missing status as unknown/gray, so
-   * omission is how the wire says "nobody knows", and an absent field is unknown,
-   * never false.
-   *
-   * A test that only covered the happy path would let a future change quietly
-   * default this to a status word, which is precisely the bug being fixed here:
-   * a fabricated status that looks like a measurement.
+   * When the daemon cannot honestly say what the root is doing, the field must
+   * be ABSENT — not "idle", not a stale last value, not a placeholder. The
+   * Workspace renders a missing status as unknown/gray, so omission is how the
+   * wire says "nobody knows", and an absent field is unknown, never false.
+   * Defaulting to a status word fabricates a measurement.
    */
   test("omits the field entirely when the root's status is unknown", async () => {
     const run = await runScript(
@@ -570,8 +562,7 @@ describe("runWorkspaceFeed", () => {
       async () => null,
     );
     expect(run.lines[0]).not.toHaveProperty("orchestrator");
-    // The agent list must still arrive: an unknowable root never takes the
-    // rest of the snapshot down with it.
+    // Unknowable root status must not drop the rest of the snapshot.
     expect(run.lines[0]?.agents).toHaveLength(1);
   });
 

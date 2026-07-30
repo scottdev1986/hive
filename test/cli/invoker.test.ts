@@ -26,7 +26,7 @@ describe("invoker identity (#70)", () => {
     expect(isAgentWorktreePath("/repo/.hive/worktrees/maya")).toBe(true);
     expect(isAgentWorktreePath("/repo/.hive/worktrees/maya/src")).toBe(true);
     expect(isAgentWorktreePath("/repo/.hive/worktrees")).toBe(true);
-    // Positive control: the detector must not flag everything.
+    // Positive control: ordinary paths are not worktrees.
     expect(isAgentWorktreePath("/repo")).toBe(false);
     expect(isAgentWorktreePath("/repo/.hive/memory")).toBe(false);
   });
@@ -47,7 +47,7 @@ describe("invoker identity (#70)", () => {
   });
 
   test("this very process is recognized as a test runner", () => {
-    // bun test stamps NODE_ENV=test; the #70 ambient-kill guard keys on it.
+    // bun test stamps NODE_ENV=test; the ambient-kill guard keys on it.
     expect(isTestRunnerEnv()).toBe(true);
   });
 });

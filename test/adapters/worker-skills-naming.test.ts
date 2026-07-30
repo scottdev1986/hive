@@ -4,11 +4,10 @@ import { join } from "node:path";
 
 /**
  * Worker vendor skills ship with every spawn and are the progressive-disclosure
- * contract for agents that open them. Codex QA at b8135cb found a systematic
- * omission: every operational address said "orchestrator" and none taught queen.
- * These skills must match spawn-prompt wording and David's docs contract:
- * queen is preferred; orchestrator remains a compatibility synonym and
- * architectural role word.
+ * contract for agents that open them. Operational addresses must prefer queen;
+ * orchestrator remains a compatibility synonym and architectural role word.
+ * Matching spawn-prompt wording keeps agents from addressing a name the live
+ * system no longer treats as primary.
  */
 const WORKER_SKILLS = [
   "skills/agent/claude/hive-claude/SKILL.md",

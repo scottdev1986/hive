@@ -293,7 +293,7 @@ describe("ensureEmbeddingsRuntimeForRelease — hive update's step, keyed to the
 
   test("a version bump re-provisions from the new release — a healthy old install does not skip", async () => {
     await withRuntimeHome(async (runtimeDir) => {
-      // A healthy install of the OLD version: the pin moved, so it is replaced.
+      // Healthy install for a different pin: a version bump must re-provision.
       await mkdir(join(runtimeDir, "dist"), { recursive: true });
       await writeFile(join(runtimeDir, "dist", "entry.js"), "// old bundle\n");
       const calls: Array<[string, string]> = [];
@@ -315,7 +315,7 @@ describe("ensureEmbeddingsRuntimeForRelease — hive update's step, keyed to the
         detail: "runtime from hive 9.9.9 installed",
       });
       expect(calls).toEqual([[runtimeDir, "9.9.9"]]);
-      // No skip-path probe: a version bump never trusts the old install.
+      // Version bump must not skip via the probe-healthy path.
       expect(probes).toBe(0);
     });
   });

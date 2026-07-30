@@ -1,24 +1,16 @@
-// #70 regression: the 2026-07-20 fleet kills.
+// stopHive with partial deps must not kill through ambient HIVE_HOME.
 //
-// Twice on 2026-07-20 every live agent of instance /tmp/hv-a27e3d322a died
-// under an operator-credentialed `hive stop` audited as
-// `reason="hive stop ppid=<gone> argv=[]"` while the daemon survived. The
-// killer was not a human shell: `argv=[]` is `process.argv.slice(2)` under
-// `bun test`, and the ppid was an agent's ephemeral Bash shell. A test that
-// called stopHive with PARTIAL dependencies (liveness/kill/cleanup mocked,
-// readAgents/readSessiondBinding/stopSessiond left to defaults) reached
-// through the ambient environment: the worktree shell had inherited the real
-// instance's HIVE_HOME, so the defaults read the real agent list, the real
-// daemon.port and the real operator credential — and killed the real fleet,
-// while the mocked `kill` meant the daemon was never signalled.
+// A call that mocks only liveness/kill/cleanup while leaving
+// readAgents/readSessiondBinding/stopSessiond on defaults can inherit a real
+// instance's HIVE_HOME from the worktree shell. Those defaults then read the
+// real agent list, daemon.port, and operator credential and POST kill
+// requests (`reason="hive stop ppid=<gone> argv=[]"` under `bun test`), while
+// the mocked `kill` never signals the daemon.
 //
-// This test IS that scenario, sandboxed: a scratch HIVE_HOME with a live
-// sessiond agent row, a terminal-host binding, an operator credential and a
-// daemon.port pointing at a local capture server. It asserts the fixed
-// behavior — no kill request may escape a stopHive whose caller did not
-// explicitly provide the lethal dependency. Before the fix it fails by
-// reproducing the incident byte-for-byte (a captured POST /agents/maya/kill
-// with origin "hive stop ppid=... argv=[]").
+// This suite sandboxes that scenario: scratch HIVE_HOME, a live sessiond
+// agent row, terminal-host binding, operator credential, and daemon.port
+// aimed at a local capture server. No kill request may escape a stopHive
+// whose caller did not explicitly provide the lethal dependency.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -71,9 +63,8 @@ beforeEach(() => {
   previousHome = process.env.HIVE_HOME;
   process.env.HIVE_HOME = home;
 
-  // The ambient instance the incident shell had inherited: a live sessiond
-  // agent, its terminal-host binding (so the #65 preflight passes), an
-  // operator credential, and a daemon.port aimed at the capture server.
+  // Ambient instance shape: live sessiond agent, terminal-host binding
+  // (required preflight), operator credential, daemon.port at the capture server.
   const db = new HiveDatabase(join(home, "hive.db"));
   try {
     db.insertAgent(liveSessiondAgent());
@@ -121,8 +112,7 @@ afterEach(() => {
 });
 
 test("stopHive with partial deps cannot reach through ambient HIVE_HOME and kill the fleet (#70)", async () => {
-  // Exactly the dependency shape control.test.ts's daemon-liveness tests used
-  // on 2026-07-20: liveness/kill/cleanup mocked, everything lethal defaulted.
+  // Partial deps: liveness/kill/cleanup mocked; lethal readers left on defaults.
   const states: Array<"live" | "dead"> = ["live", "dead"];
   const error = await stopHive({
     readPid: () => 4242,
@@ -136,19 +126,17 @@ test("stopHive with partial deps cannot reach through ambient HIVE_HOME and kill
     (thrown: unknown) => thrown,
   );
 
-  // The incident signature is a captured kill request with a stop origin.
-  // Surface it in the failure output so the reproduction is self-evident.
+  // A leaked kill would show up here with a stop origin.
   expect(
     killRequests.map((request) => `${request.url} origin=${request.origin}`),
   ).toEqual([]);
-  // And the refusal must be loud, not a silent no-op.
+
   expect(error).toBeInstanceOf(Error);
   expect((error as Error).message).toMatch(/refus/i);
 });
 
-// In-suite positive control: the capture server DOES observe a kill request
-// when one is deliberately sent over the exact HTTP path the incident used.
-// A broken instrument would make the assertion above vacuous.
+// Positive control: the capture server records a deliberate kill on this path.
+// A broken instrument would make the no-leak assertion above vacuous.
 test("positive control: the capture server records a deliberately sent kill", async () => {
   const agent = liveSessiondAgent();
   await killAgentCli(

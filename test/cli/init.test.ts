@@ -91,7 +91,7 @@ async function tsRepo(): Promise<string> {
   return root;
 }
 
-describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
+describe("seedInitFacts — the memory seam", () => {
   test("writes source:init + verified, scope repo, and upserts idempotently", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-init-seed-"));
     try {
@@ -110,7 +110,7 @@ describe("seedInitFacts — the memory seam (SPEC §14 ↔ §5)", () => {
       const facts = await discoverMemoryFacts(root, "repo");
       expect(facts).toHaveLength(1);
       const fact = required(facts[0]);
-      // Re-read the raw file: provenance is persisted per david's contract.
+      // Re-read the raw file: source/verified/scope must be on disk, not only in memory.
       const raw = await readFile(fact.path, "utf8");
       const parsed = parseMemoryFile(fact.id, "repo", fact.path, raw);
       expect(parsed.source).toBe("init");
@@ -153,7 +153,6 @@ describe("scaffoldAgentsMd", () => {
     expect(md).toContain("## Stack");
     expect(md).not.toContain("## Design");
     expect(md).not.toContain("SPEC.md");
-    // A starting point, explicitly framed as such (every vendor's /init does).
     expect(md).toContain("Review and fill these in");
   });
 });
@@ -175,7 +174,7 @@ describe("runInit", () => {
       );
       expect(result.agentsScaffolded).toBe(true);
       expect(result.factsSeeded).toEqual(["flaky-login-test"]);
-      // AGENTS.md really written — a generic starter, not invented commands.
+      // Scaffold is a generic starter, not invented project-specific commands.
       const agents = await readFile(join(root, "AGENTS.md"), "utf8");
       expect(agents).toContain("Starter conventions scaffolded by `hive init`");
       expect(agents).toContain("## Commands");
@@ -206,8 +205,7 @@ describe("runInit", () => {
     try {
       await runInit(root, {}, testDeps());
       const result = await runInit(root, {}, testDeps());
-      // The old init ended with "pass --refresh to re-scan". There is no such
-      // flag and no re-scan: init never names a next command.
+      // Init never names a next command; there is no --refresh re-scan path.
       expect(result.messages.some((m) => m.includes("--refresh"))).toBe(false);
       expect(result.messages.every((m) => !m.includes("Run `"))).toBe(true);
     } finally {
@@ -232,8 +230,7 @@ describe("runInit", () => {
       );
       expect(result.factsSeeded).toEqual(["a-gotcha"]);
       expect(reindexed).toBe(1);
-      // The old init printed "Run `hive memory reindex` ... to index the seeded
-      // facts", which is Hive asking to be finished by hand.
+      // Seeded facts are indexed in-process; init must not hand that back as a chore.
       expect(
         result.messages.every((m) => !m.includes("hive memory reindex")),
       ).toBe(true);
@@ -286,7 +283,7 @@ describe("runInit", () => {
   });
 });
 
-describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
+describe("runInit — gitignoring Hive's local state", () => {
   test("creates a missing .gitignore with the exact required entries", async () => {
     const root = await tsRepo();
     try {
@@ -295,7 +292,7 @@ describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
       expect(gitignore).toBe(
         `# Hive local state\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
       );
-      // The #78 ruling: never a bare parent-dir entry.
+      // Never a bare parent-dir entry — that would ignore all of .hive.
       expect(gitignore).not.toContain("\n.hive/\n");
       expect(
         result.messages.some((m) => m.includes("Created .gitignore")),
