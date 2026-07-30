@@ -50,7 +50,7 @@ import {
   writeLaunchPrompt,
 } from "../daemon/launch-prompt";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
-import { orchestratorSessionKey } from "../daemon/orchestrator-lifecycle";
+import { orchestratorSessionKey } from "../daemon/instance-identity";
 import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
 import { shellJoin } from "../daemon/session-host/shell-session";
