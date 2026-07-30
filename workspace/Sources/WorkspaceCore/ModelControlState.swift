@@ -4,10 +4,10 @@ import Foundation
 /// (snapshot, policy) → view state, so every honesty rule here is testable
 /// without AppKit:
 ///
-/// - a window with no reading derives `.unknown`, never a 0% meter (§2.2)
-/// - a provider with no capacity surface derives `.unmetered`, never meters (§2.3)
-/// - effort derives three distinct values (§2.4)
-/// - provider-off dominates every model row beneath it (§7.4)
+/// - a window with no reading derives `.unknown`, never a 0% meter
+/// - a provider with no capacity surface derives `.unmetered`, never meters
+/// - effort derives three distinct values
+/// - provider-off dominates every model row beneath it
 
 // MARK: - Meters
 
@@ -26,7 +26,7 @@ public enum MeterState: Equatable, Sendable {
     /// not a failed read, and a different thing from `.unknown`: one is "the
     /// vendor has no such window", the other is "the vendor has one and we could
     /// not read it". Rendered as a statement with NO track at all, the way an
-    /// unmetered vendor gets no gauge (§2.3, §7.6).
+    /// unmetered vendor gets no gauge.
     case notMetered
 }
 
@@ -42,7 +42,7 @@ public struct MeterWindow: Equatable, Sendable {
 
 /// A provider card's usage block. `.unmetered` and `.silent` are different
 /// states with different copy: one vendor has nothing to report by design,
-/// the other normally reports and did not (§7.4).
+/// the other normally reports and did not.
 public enum ProviderUsage: Equatable, Sendable {
     case metered([MeterWindow])
     /// Normally-metered vendor, no reading anywhere (e.g. Claude's
@@ -55,8 +55,9 @@ public enum ProviderUsage: Equatable, Sendable {
     case unknown(reason: String)
 }
 
-/// Near-limit severity, computed from *remaining* fraction per live config
-/// thresholds — never a hardcoded "80% used" (§3.3).
+/// Near-limit severity, computed from *remaining* fraction against the
+/// caller's live `warningRemainingPct` / `criticalRemainingPct` config —
+/// never a threshold hardcoded here.
 public enum MeterSeverity: Equatable, Sendable {
     case healthy
     case nearLimit
@@ -82,7 +83,7 @@ public enum MeterDerivation {
     ) -> MeterState {
         guard window.unit == "percent" else {
             // Manual unit pools are operator planning tools; this screen
-            // renders discovered percent meters only (§2.1).
+            // renders discovered percent meters only.
             return .unknown(reason: "manual-unit pool — not a discovered percent meter")
         }
         let resetsAt = parseDate(window.resetsAt)
@@ -112,7 +113,7 @@ public enum MeterDerivation {
     ///
     /// - A provider whose `usageSurfaces` entry is `.none` is UNMETERED —
     ///   deliberately, structurally — and never gets meters even if a stray
-    ///   number exists somewhere (§2.3: money rails are not gauges).
+    ///   number exists somewhere: money rails are not gauges.
     /// - A metered provider with discovered percent pools maps each window.
     /// - A metered provider with no reading at all is SILENT with the measured
     ///   reason.
@@ -146,32 +147,27 @@ public enum MeterDerivation {
             // Not every plan meters both windows. Codex's `prolite` reports a
             // single weekly window (`secondary` is null on the wire), so its
             // five-hour slot is empty because the vendor HAS no five-hour
-            // window — not because a read failed. Rendering that as .unknown
-            // says "no reading for this window", the copy §7.4 reserves for a
-            // probe that failed closed, and the probe did not fail. It derives
-            // .notMetered instead: absent by the vendor's design, and SAID so,
-            // because a deliberate absence has to look deliberate (§2.3).
+            // window — not because a read failed. That must derive .notMetered,
+            // never .unknown: "no reading for this window" is the copy reserved
+            // for a probe that failed closed, and a deliberate absence has to
+            // look deliberate.
             //
-            // The daemon now states this outright, per window: "available",
-            // "not-metered", or "unknown" (ac0979f). MEASURE, DO NOT INFER — a
-            // window's existence is the provider's fact to report, and we read it
-            // rather than deducing it from a missing duration.
+            // MEASURE, DO NOT INFER: a window's existence is the provider's own
+            // fact, stated per window as "available", "not-metered", or
+            // "unknown". Read it rather than deducing it from a missing duration.
             //
-            // The fallback below exists only for a daemon older than ac0979f,
-            // which omits the field. An ABSENT availability is not "available"
-            // (an absent field is unknown, never false), so we fall back to the
-            // old inference rather than assuming the window is fine: a missing
-            // duration on a pool that ANSWERED (a reading on the other window is
-            // the positive control) and is AUTHORITATIVE about plan structure.
-            //
-            // Both gates are load-bearing in that path. Claude's get_usage emits a
-            // pool when EITHER window parses, so a partial read yields fiveHour:
-            // null and the ledger's upsert overwrote a previously-known 300 with
-            // it — leaving a pool byte-identical to Codex's not-metered one. Only
-            // an authoritative source may assert a plan LACKS a window; a merely
-            // "reported", experimental feed (§2.2) that omits one means "we did
-            // not get it", never "it does not exist". Delete this fallback once no
-            // supported daemon predates ac0979f.
+            // The nil branch below is only for a daemon older than ac0979f, which
+            // omits that field. An ABSENT availability is not "available" (an
+            // absent field is unknown, never false), so it falls back to
+            // inference gated on a pool that both ANSWERED (a reading on the
+            // other window is the positive control) and is AUTHORITATIVE about
+            // plan structure. Do not drop either gate: Claude's get_usage emits a
+            // pool when EITHER window parses, so a partial read yields
+            // fiveHour: null, which is byte-identical to Codex's genuinely
+            // not-metered pool. Only an authoritative source may assert a plan
+            // LACKS a window; a merely "reported" experimental feed that omits
+            // one means "we did not get it", never "it does not exist". Delete
+            // this branch once no supported daemon predates ac0979f.
             let answered = pool.fiveHour.used != nil || pool.weekly.used != nil
             let authoritative = pool.confidence == "authoritative"
             func state(_ window: QuotaWindow) -> MeterState {
@@ -219,7 +215,7 @@ public enum MeterDerivation {
     }
 
     /// Whether a MEASURED model-scoped pool says this model's own ceiling is
-    /// exhausted (§7.4 `pool-exhausted`). Unknown is not exhausted: a window
+    /// exhausted (`pool-exhausted`). Unknown is not exhausted: a window
     /// with no reading never trips this.
     public static func modelPoolExhausted(
         provider: ProviderID, canonicalId: String, quota: [QuotaEntry]?
@@ -250,7 +246,7 @@ public enum MeterDerivation {
 
 // MARK: - Effort
 
-/// The three-valued effort axis (§2.4). `known-none` (the vendor STATED there
+/// The three-valued effort axis. `known-none` (the vendor STATED there
 /// is no effort axis) and `unknown` (we could not read it) are different facts
 /// and must never share a rendering.
 public enum EffortAxis: Equatable, Sendable {
@@ -285,7 +281,7 @@ public enum EffortAxis: Equatable, Sendable {
 
 // MARK: - Model rows
 
-/// The visually distinct model-row states (§7.4, consent-is-enablement).
+/// The visually distinct model-row states, under consent-is-enablement.
 /// The override rule is non-negotiable: effectiveEnabled = providerEnabled &&
 /// modelEnabled && available, and when effective and preference differ the UI
 /// shows both. The three OFF reasons never collapse: shipped-off-awaiting-
@@ -350,7 +346,7 @@ public enum SpendCaveat {
 
 // MARK: - Billing chips
 
-/// The billing strip's chip (§3.4). Paid-overflow-off is CALM — the wallet is
+/// The billing strip's chip. Paid-overflow-off is CALM — the wallet is
 /// safe and a plan limit is a wall, not a bill. Unknown says unknown.
 public enum BillingChip: Equatable, Sendable {
     case paidOverflowOff

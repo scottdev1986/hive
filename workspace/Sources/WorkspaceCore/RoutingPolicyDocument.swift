@@ -120,9 +120,9 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
     /// How Hive selects a model: never-configured / auto / choice, exactly as
     /// `SelectionModeSchema` spells them. Strings stay verbatim so a newer
     /// daemon's mode costs only this control, never the whole document.
-    /// One mode governs every category. Per-category overrides were removed on
-    /// 2026-07-27; a daemon old enough to still send them decodes fine, because
-    /// this type simply ignores the retired key.
+    /// One mode governs every category; there are no per-category overrides.
+    /// A daemon still sending a per-category key decodes fine, because this
+    /// type ignores it.
     public struct Selection: Codable, Equatable, Sendable {
         public var global: String
 

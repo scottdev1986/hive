@@ -10,8 +10,8 @@ import Foundation
 
 // MARK: - Task categories
 
-/// The settled category vocabulary (governing doc §2.4). `long_context` is
-/// deliberately NOT here — it is a requirement modifier, not a category.
+/// The settled category vocabulary. `long_context` is deliberately NOT here —
+/// it is a requirement modifier, not a category.
 public enum TaskCategory: String, CaseIterable, Codable, Sendable {
     case lightResearch = "light_research"
     case heavyResearch = "heavy_research"
@@ -52,7 +52,7 @@ public enum EffortTarget: Equatable, Codable, Sendable {
 // MARK: - Chain entries
 
 /// How sure Hive is about a provisional chain entry. Nothing claims
-/// `measured` until outcome telemetry exists (governing doc §2.8).
+/// `measured` until outcome telemetry exists.
 public enum ChainConfidence: String, Equatable, Codable, Sendable {
     case documented
     case assumed
@@ -71,7 +71,7 @@ public struct ChainEntry: Equatable, Codable, Sendable {
     /// The canonical model id — the daemon store's grain (no variant; a
     /// context-window entitlement is not a different routing target).
     public var model: String
-    /// Effort is per chain LINK, not per model (§8.2). NIL = no effort choice
+    /// Effort is per chain LINK, not per model. NIL = no effort choice
     /// this build can name — the wire's never-configured/hive-decides, or a
     /// mode a newer daemon added. It renders as unchosen; it is never
     /// silently promoted to an effort the user did not pick.
@@ -167,7 +167,7 @@ public struct ModelPolicy: Equatable, Codable, Sendable {
 
 public struct ProviderPolicy: Equatable, Codable, Sendable {
     /// The master toggle. Off = Hive will not invoke this CLI at all, and
-    /// every model row beneath it is overridden (§7.4).
+    /// every model row beneath it is overridden.
     public var enabled: Bool
     /// Keyed by canonical model id (the policy store's grain). A model with no entry
     /// inherits `absentModelEnablement` — newly discovered models are
@@ -195,7 +195,7 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
     /// The global fallback chain. Never deletable; the one chain that must
     /// not be empty.
     public var defaultChain: [ChainEntry]
-    /// True until the user edits — drives the provisional banner (§8.5).
+    /// True until the user edits — drives the provisional banner.
     public var provisional: Bool
     /// How Hive selects a model, app-wide; categories may override.
     public var globalSelection: SelectionMode
@@ -382,8 +382,8 @@ public enum PolicyWarning: Equatable, Sendable {
 
 /// PLACEHOLDER POLICY SOURCE — NOT the durable store.
 ///
-/// The daemon-side SQLite policy store (governing doc §2.3, PR4) does not
-/// exist yet; when it lands, enablement and its seeded-off reason come from
+/// The daemon-side SQLite policy store does not exist yet; when it lands,
+/// enablement and its seeded-off reason come from
 /// the daemon's contract and this seam is replaced with a read. Until then
 /// this seeds an in-memory policy from the LIVE discovery catalog and the
 /// same billing facts the daemon will use:
@@ -427,8 +427,8 @@ public enum ProvisionalPolicyStore {
         return policy
     }
 
-    /// The provisional routing table (governing doc §2.8): every category gets
-    /// an ordered chain of (model @ effort) atoms resolved from the LIVE
+    /// The provisional routing table: every category gets an ordered chain of
+    /// (model @ effort) atoms resolved from the LIVE
     /// catalog — never ids frozen in the binary — with a note saying why.
     /// Only consented (billing-verified) providers are seeded; an unconsented
     /// vendor's models must never be pre-wired into spending positions.
@@ -436,7 +436,7 @@ public enum ProvisionalPolicyStore {
         from snapshot: ModelControlSnapshot,
         providers: [String: ProviderPolicy]
     ) -> [String: CategoryPolicy] {
-        // (effort intent, why this order) per category — the §2.8 intents.
+        // (effort intent, why this order) per category.
         let plans: [(TaskCategory, String, String)] = [
             (.complexCoding, "high", "Strongest available at high effort for hard code."),
             (.debugging, "high", "Coding-capable models at high effort; kept separate from complex coding for future evidence."),

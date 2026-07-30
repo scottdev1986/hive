@@ -3,8 +3,7 @@ import Foundation
 /// The wire contract for `hive model-control-snapshot` — one JSON document the
 /// Workspace reads over the same CLI-subprocess transport as the feed.
 ///
-/// Honesty rules baked into these types (docs/routing/model-control-center.md
-/// §2–3):
+/// Honesty rules baked into these types:
 ///
 /// - Every discovered fact is three-valued at the source: known(value),
 ///   or unknown(reason). A consumer must branch to read a value, so an
@@ -126,7 +125,7 @@ public struct DiscoveredModel: Codable, Equatable, Sendable {
     public var hidden: DiscoveredFact<Bool>
     /// The vendor's `supportsEffort` boolean and its level list stay two
     /// separate facts. Merging them is how "vendor said no effort axis" and
-    /// "we could not read the effort axis" collapse into one lie (§2.4).
+    /// "we could not read the effort axis" collapse into one lie.
     public var supportsEffort: DiscoveredFact<Bool>
     public var supportedEffortLevels: DiscoveredFact<[String]>
     public var defaultEffort: DiscoveredFact<String>
@@ -253,7 +252,7 @@ extension ProviderCatalog: Codable {
 // MARK: - Billing
 
 /// The money guard, not a gauge. `creditsEnabled` answers "could a spawn cost
-/// real money"; it says nothing about how full any plan window is (§3.4).
+/// real money"; it says nothing about how full any plan window is.
 public struct BillingSnapshot: Codable, Equatable, Sendable {
     public var creditsEnabled: DiscoveredFact<Bool>
     public var disabledReason: String?
