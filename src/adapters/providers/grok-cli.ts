@@ -16,6 +16,7 @@ import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { shellQuote } from "../../daemon/session-host/shell-session";
 import { withFileLock } from "../file-lock";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import { graphifyHookPath, writeGraphifyHook } from "./shared/graphify-hook";
 import { resolveProviderExecutable } from "./shared/provider-executable";
 import {
   invalidRecoveryArtifactEvidence,
@@ -424,10 +425,12 @@ export async function writeGrokAgentConfig(
           "enabled = true",
         ]),
   ].join("\n");
+  const graphifyHook = graphifyHookPath(worktreePath, ".grok");
   const writes = [
     writeFile(path, `${prefix.length === 0 ? "" : `${prefix}\n\n`}${owned}\n`, {
       mode: 0o600,
     }),
+    writeGraphifyHook(graphifyHook, options.graphifyUrl),
   ];
   const name = options.name;
   const providerRunId = options.providerRunId;
@@ -456,7 +459,15 @@ export async function writeGrokAgentConfig(
       hooks: {
         SessionStart: hook(eventCommand("session-start")),
         UserPromptSubmit: hook(eventCommand("turn-start")),
-        PreToolUse: hook(eventCommand("tool-start")),
+        // No matcher: Grok's own tool names are the filter, and the script
+        // needs to see every tool call anyway — a graph call is what tells it
+        // this session has already gone graph-first.
+        PreToolUse: [
+          ...hook(eventCommand("tool-start")),
+          ...(options.graphifyUrl === undefined
+            ? []
+            : hook(`${shellQuote(graphifyHook)} grok`)),
+        ],
         PostToolUse: hook(eventCommand("tool-boundary")),
         PostToolUseFailure: hook(eventCommand("tool-boundary")),
         Stop: hook(eventCommand("turn-end")),

@@ -7,6 +7,7 @@ import {
   readFile,
   realpath,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -284,6 +285,48 @@ describe("Grok adapter", () => {
         "'/opt/Hive App/bin/hive' event",
       );
     }
+  });
+
+  test("attaches the graphify gate hook only when graphify is on", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-grok-graphify-"));
+    roots.push(root);
+    const base = {
+      daemonPort: 4318,
+      name: "maya",
+      providerRunId: "018f1e90-7b5a-7cc0-8000-000000000222",
+    };
+    const readHooks = async () =>
+      JSON.parse(
+        await readFile(
+          join(root, ".grok", "hooks", grokHookFilename()),
+          "utf8",
+        ),
+      ) as {
+        hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      };
+
+    await writeGrokAgentConfig(root, base);
+    expect(JSON.stringify((await readHooks()).hooks.PreToolUse)).not.toContain(
+      "hive-graphify-hook.sh",
+    );
+    expect(
+      stat(join(root, ".grok", "hive-graphify-hook.sh")),
+    ).rejects.toThrow();
+
+    await writeGrokAgentConfig(root, {
+      ...base,
+      graphifyUrl: "http://127.0.0.1:4319/mcp",
+    });
+    const entries = (await readHooks()).hooks.PreToolUse ?? [];
+    // The lifecycle hook keeps its slot; the gate is a second entry, and Grok's
+    // own tool names — not a matcher — are what it filters on.
+    expect(entries[0]?.hooks[0]?.command).toContain(" event tool-start");
+    expect(entries[1]?.hooks[0]?.command).toBe(
+      `'${join(root, ".grok", "hive-graphify-hook.sh")}' grok`,
+    );
+    expect(
+      await readFile(join(root, ".grok", "hive-graphify-hook.sh"), "utf8"),
+    ).toContain("*read_file*|*search_tool*|*list_dir*");
   });
 
   test("preserves a user's colliding hook file instead of overwriting it", async () => {

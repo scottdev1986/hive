@@ -1100,6 +1100,17 @@ const GRAPHIFY_DIRECTIVE =
   "no strong leads, or a graph lead that turned out empty when you verified it. " +
   "Every graph answer is a lead — confirm it in source before building on it.";
 
+/** Claude defers MCP tools: the graph tools above are real but have no schema
+ * until ToolSearch loads them, and transcripts show agents loading them by name
+ * and then reaching for Read/Grep anyway. Naming the two steps is the
+ * difference between a tool the model recognises and one it can call. */
+const CLAUDE_GRAPH_ACTIVATION =
+  " Your harness defers these MCP tools, so activate them in two steps before " +
+  "the first one: call ToolSearch with " +
+  "select:mcp__hive__graph_locate,mcp__graphify__get_neighbors,mcp__graphify__query_graph,mcp__graphify__shortest_path, " +
+  "then invoke the tool reference it returns. Naming a graph tool without that " +
+  "first step does not call it.";
+
 /** Grok-specific facts measured from the CLI and carried in the prompt because
  * safety cannot depend on an agent electing to open a shipped skill. */
 export const GROK_SAFETY_DIRECTIVE =
@@ -1207,7 +1218,13 @@ export function buildAgentPrompt(
     ...(options.graphBrief === undefined || options.graphBrief === ""
       ? []
       : [options.graphBrief]),
-    ...(options.graphifyTools === true ? [GRAPHIFY_DIRECTIVE] : []),
+    ...(options.graphifyTools === true
+      ? [
+          options.tool === "claude"
+            ? GRAPHIFY_DIRECTIVE + CLAUDE_GRAPH_ACTIVATION
+            : GRAPHIFY_DIRECTIVE,
+        ]
+      : []),
     ...(options.tool === "grok" ? [GROK_SAFETY_DIRECTIVE] : []),
     ...(memoryIndex === "" ? [] : [memoryIndex]),
   ].join("\n\n");

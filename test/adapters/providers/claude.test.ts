@@ -743,7 +743,10 @@ describe("Claude adapter", () => {
     });
     expect(
       withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher),
-    ).toEqual(["Bash", "Read|Glob|Grep"]);
+    ).toEqual([
+      "Bash",
+      "Read|Glob|Grep|mcp__hive__graph_locate|mcp__graphify__.*",
+    ]);
     // The gap that let a whole agent run search the repo without one nudge:
     // Claude Code's NATIVE Grep tool was in no matcher, and Bash only ever saw
     // shelled-out search — the route the harness steers models away from. Assert
@@ -752,7 +755,16 @@ describe("Claude adapter", () => {
     // than reading as covered.
     const matchers =
       withGraphSettings.hooks.PreToolUse?.map((entry) => entry.matcher) ?? [];
-    for (const tool of ["Bash", "Read", "Glob", "Grep"]) {
+    // The graph tools are matched for the gate, not for a nudge: the hook can
+    // only skip declining a graph-first agent if its own hook saw that call.
+    for (const tool of [
+      "Bash",
+      "Read",
+      "Glob",
+      "Grep",
+      "mcp__hive__graph_locate",
+      "mcp__graphify__get_neighbors",
+    ]) {
       expect(
         matchers.some((matcher) => new RegExp(`^(${matcher})$`).test(tool)),
       ).toBe(true);

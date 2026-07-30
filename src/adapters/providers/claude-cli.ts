@@ -604,8 +604,13 @@ export async function writeClaudeAgentConfig(
               // matcher whatsoever. This branch suppresses nothing but reads of
               // graph output, which is the correct rule for Grep too: an agent
               // already grepping inside graphify-out/ needs no nudge.
+              // The graph tools are in this matcher for the gate, not for a
+              // nudge: the hook declines the first structural search of a
+              // session, and it can only know an agent already went graph-first
+              // if its own hook saw that call.
               {
-                matcher: "Read|Glob|Grep",
+                matcher:
+                  "Read|Glob|Grep|mcp__hive__graph_locate|mcp__graphify__.*",
                 hooks: [
                   { type: "command", command: graphifyCommand("claude-read") },
                 ],
