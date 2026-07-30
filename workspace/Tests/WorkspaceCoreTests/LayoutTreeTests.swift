@@ -19,11 +19,18 @@ final class LayoutTreeTests: XCTestCase {
     }
 
     func testMasterRatioStaysInBlueprintBand() {
-        for requested in [0.3, 0.55, 0.58, 0.60, 0.9] {
+        for requested in [0.1, 0.3, 0.40, 0.55, 0.60, 0.9] {
             let metrics = LayoutMetrics(masterRatio: requested)
-            XCTAssertGreaterThanOrEqual(metrics.masterRatio, 0.55)
+            XCTAssertGreaterThanOrEqual(metrics.masterRatio, 0.40)
             XCTAssertLessThanOrEqual(metrics.masterRatio, 0.60)
         }
+    }
+
+    func testMasterDefaultsToFortyPercentSoSatellitesGetTheRest() {
+        // The default is the whole point of the change: a wide fleet divides
+        // whatever the master leaves, so this value is what decides whether an
+        // agent pane is readable.
+        XCTAssertEqual(LayoutMetrics().masterRatio, 0.40, accuracy: 0.001)
     }
 
     func testMasterOccupiesConfiguredRatioWithSatellites() {
@@ -31,7 +38,7 @@ final class LayoutTreeTests: XCTestCase {
         let frames = tree.frames(in: bounds)
         let masterWidth = frames[PaneID("orchestrator")]!.width
         let ratio = masterWidth / (bounds.width - 8) // one gap between columns
-        XCTAssertEqual(ratio, 0.58, accuracy: 0.01)
+        XCTAssertEqual(ratio, 0.40, accuracy: 0.01)
         XCTAssertEqual(frames[PaneID("orchestrator")]!.height, bounds.height)
     }
 

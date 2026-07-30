@@ -81,14 +81,19 @@ public indirect enum LayoutNode: Equatable, Codable {
 
 /// Geometry constants for the deterministic solver.
 public struct LayoutMetrics: Equatable {
-    /// Fraction of the usable width the master pane occupies while satellites exist.
-    /// The blueprint fixes the band at 55–60%.
+    /// Fraction of the usable width the master pane occupies while satellites
+    /// exist. The band is 40–60%: the blueprint's original 55–60% floor was
+    /// raised off 40% by operator decision, because every point the master gives
+    /// up is divided among ALL the satellites at once. At sixteen agents the old
+    /// 58% default left the satellite column handing out eleven columns per
+    /// pane, and the queen does not need three fifths of the window to be
+    /// readable.
     public var masterRatio: Double
     /// Gap between panes, in points.
     public var gap: Double
 
-    public init(masterRatio: Double = 0.58, gap: Double = 8) {
-        self.masterRatio = min(max(masterRatio, 0.55), 0.60)
+    public init(masterRatio: Double = 0.40, gap: Double = 8) {
+        self.masterRatio = min(max(masterRatio, 0.40), 0.60)
         self.gap = gap
     }
 }
