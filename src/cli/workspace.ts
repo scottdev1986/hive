@@ -106,7 +106,7 @@ export function workspaceOpenArguments(
     // `open` wires the app's stderr to /dev/null unless told otherwise, and
     // the app's NSLog diagnostics are the ONLY record of why a pane's renderer
     // gave up — every attach failure, every recovery tick, and the bounded
-    // give-up itself are written there and were being discarded. Keyed to the
+    // give-up itself are written there. Keyed to the
     // instance home already in `args`, so a Dock launch with no instance keeps
     // the default.
     ...(instanceHome(args) === undefined

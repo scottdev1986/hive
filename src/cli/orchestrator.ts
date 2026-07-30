@@ -129,8 +129,8 @@ export async function prepareOrchestratorConfig(
     case "codex":
       // Nothing on disk, and that is the whole configuration: the Codex
       // orchestrator carries its hive server and sandbox on the `-c` flags
-      // `buildOrchestratorCommand` builds. An empty arm is a decision, not an
-      // omission — which is exactly what the old `if (claude)` could not say.
+      // `buildOrchestratorCommand` builds. An empty arm explicitly means no
+      // on-disk configuration.
       return;
     case "grok":
       await writeGrokAgentConfig(orchestratorConfigRoot(), {
@@ -146,7 +146,7 @@ export async function prepareOrchestratorConfig(
     case "opencode": {
       // opencode's project config is read from the process cwd, so the
       // config lands where the root runs; the brief rides the hive agent's
-      // {file:} prompt in it, and the queen's role (#12) rides the agent's
+      // {file:} prompt in it, and the queen's role rides the agent's
       // permission set.
       const skills = queenSkillDelivery("opencode", orchestratorConfigRoot());
       await writeOpencodeAgentConfig(cwd, {
@@ -249,7 +249,7 @@ export function buildOrchestratorCommand(
               "-c",
               `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(HIVE_CAPABILITY_TOKEN_ENV)}`,
             ]),
-        // The queen's role (#12) needs writes for her memory and planning
+        // The queen's role needs writes for her memory and planning
         // docs. workspace-write is the finest sandbox codex offers — it
         // cannot scope subpaths of the workspace — so the
         // no-implementation-code boundary rides her brief. Network stays on
@@ -268,7 +268,7 @@ export function buildOrchestratorCommand(
       return [
         "sh",
         "-lc",
-        // The queen's role (#12) as grok can express it: --allow/--deny are
+        // Grok can express the queen's role only through --allow/--deny, which are
         // per-tool only — no per-command gh scope, no per-path write scope —
         // so the role's grant is a full tool approval and the
         // no-implementation-code boundary rides her brief.
@@ -294,7 +294,7 @@ export function buildOrchestratorCommand(
       return [
         "sh",
         "-lc",
-        // The queen's role (#12) as kimi can express it: kimi has no
+        // Kimi has no
         // per-launch permission scoping at all (the kimi-adapter gap), so
         // --yolo auto-approves her tool calls and the
         // no-implementation-code boundary rides her brief.

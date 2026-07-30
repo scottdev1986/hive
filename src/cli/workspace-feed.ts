@@ -53,15 +53,12 @@ export const FEED_GIVE_UP_MS = 30_000;
 export const FEED_STATUS_TIMEOUT_MS = 5_000;
 /** Bounds one visibility publish. sessiond expires a visibility lease after
  * `visibility_expiry_ms` (15 s) and then terminates the host, so an unbounded
- * publish is a fleet-wide kill switch: on 2026-07-21 one stalled publish froze
- * renewal for every pane and sessiond terminated all five hosts 4 s after the
- * common deadline (docs/incidents/2026-07-21-fleet-visibility-expiry.md).
+ * publish can freeze renewal for every pane until sessiond terminates their
+ * hosts at the common deadline.
  * At 5 s a stall costs one renewal, leaving two further attempts inside the
  * lease. */
 export const FEED_VISIBILITY_PUBLISH_TIMEOUT_MS = 5_000;
-/** A publish slower than this is reported while it is still only a warning.
- * The incident had no latency signal at all, so a stall was only visible
- * afterwards, as a gap between recorded lease deadlines. */
+/** Report a slow publish before it becomes a missed lease renewal. */
 export const FEED_VISIBILITY_PUBLISH_SLOW_MS = 1_000;
 
 export interface WorkspaceOrchestratorSnapshot {
@@ -190,8 +187,7 @@ export async function publishWorkspaceVisibility(
     timer = setTimeout(() => {
       // Reject before aborting. `abort()` runs its listeners synchronously, so
       // aborting first lets the request's own AbortError win the race and the
-      // operator sees "aborted" instead of the measured duration — which is
-      // precisely the signal 2026-07-21 lacked.
+      // operator sees "aborted" instead of the measured duration.
       reject(new WorkspaceVisibilityPublishTimeoutError(timeoutMs));
       controller.abort();
     }, timeoutMs);
@@ -251,11 +247,10 @@ export async function publishWorkspaceVisibility(
  *
  * Each inventory is a *full* snapshot, so a queued one is worthless the moment
  * a newer one arrives: only the latest is kept and the rest are dropped. The
- * at-most-one-in-flight rule is load-bearing and predates this — concurrent
- * publishes race the daemon's revision check and produce the 409 loop of #48 —
- * but chaining every publication onto the previous one (fde93610) made a
- * single hung request block renewal for the whole fleet indefinitely (#98).
- * Superseding keeps the serialization without the queue.
+ * at-most-one-in-flight rule is load-bearing: concurrent publishes race the
+ * daemon's revision check and loop on conflicts, while chaining every
+ * publication lets one hung request block fleet renewal indefinitely.
+ * Superseding keeps serialization without the queue.
  *
  * A competing live Workspace source cannot be displaced safely, so one
  * recorded conflict halts this child rather than continuously retrying the
@@ -348,7 +343,7 @@ export class WorkspaceVisibilityPublisher {
 }
 
 /** `GET /autonomy` with the operator credential: the live dial, or null when
- * the daemon predates the endpoint or has no control configured. */
+ * the daemon has no compatible control configured. */
 async function getAutonomy(port: number): Promise<Autonomy | null> {
   const response = await operatorFetch(`http://127.0.0.1:${port}/autonomy`);
   if (!response.ok) return null;

@@ -71,10 +71,8 @@ function readDaemonPid(): number | null {
  * orchestrator — so the caller has nothing to ask the user about.
  */
 /**
- * Request a one-use viewer attach grant for a pane's EXACT sessiond session
- * (terminal-stack-transition.html#visibility and
- * terminal-stack-transition.html#attach). The Workspace's HiveTerminalView
- * shells out to this and connects
+ * Request a one-use viewer attach grant for a pane's EXACT sessiond session.
+ * The Workspace's HiveTerminalView shells out to this and connects
  * directly to the returned host endpoint; a stale or superseded generation is
  * refused by the daemon before the broker is contacted. Prints the grant as
  * JSON on stdout — machine-readable, nothing else.
@@ -121,7 +119,7 @@ export async function attachGrantCli(
   console.log(JSON.stringify(body.grant));
 }
 
-/** The provenance string a kill carries to the daemon's audit log (#64/#70):
+/** The provenance string a kill carries to the daemon's audit log:
  * full invoker identity — pid, parent chain with process names, argv, cwd and
  * the agent-worktree flag. Captured at the origin because the audit row is
  * the only record that survives the teardown cascade — the 2026-07-20 fleet
@@ -328,8 +326,8 @@ export async function readMemoryCli(
   id: string,
 ): Promise<void> {
   const fact = await readMemory(requireDaemonPort(), scope, id);
-  // Provenance surfaces on read (SPEC decision 5), where the load-bearing
-  // check happens: show source and verification, and flag a fact whose
+  // Provenance surfaces on read, where the load-bearing check happens: show
+  // source and verification, and flag a fact whose
   // concrete claims must be re-checked against the repo before acting.
   const flag = factVerificationFlag(fact);
   const provenance = [
@@ -434,7 +432,7 @@ export type StopResponseBody =
 
 const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 30_000;
 
-/** POST /stop — the daemon's own atomic-or-abortive shutdown (#70). One
+/** POST /stop — the daemon's own atomic-or-abortive shutdown. One
  * request; every gate (agent-worktree invoker and unlanded work) is evaluated
  * daemon-side before anything dies, and past the
  * commit point the daemon drives kills and its own exit to completion whether
@@ -477,10 +475,9 @@ export interface StopHiveDependencies {
   /** TTY confirmation for the unlanded-work gate; defaults to asking the
    * terminal (default no), refusing outright without one. */
   readonly confirm?: ConfirmFn;
-  /** The daemon `/stop` transport. Deliberately the ONLY lethal dependency:
-   * under a test runner it must be injected explicitly — a defaulted
-   * transport reaching through ambient HIVE_HOME is exactly how `bun test`
-   * killed the real fleet twice on 2026-07-20 (#70). */
+  /** The daemon `/stop` transport. This is the only lethal dependency.
+   * Under a test runner it must be injected explicitly because a defaulted
+   * transport can reach the live fleet through ambient HIVE_HOME. */
   readonly requestStop?: (body: StopRequestBody) => Promise<StopResponseBody>;
   /** Set only by the `hive stop` CLI action: a real CLI subprocess is a
    * process boundary, not an in-process test caller, even when the test
@@ -501,9 +498,8 @@ function formatUnlanded(unlanded: readonly StopUnlandedAgent[]): string {
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
   const invoker = deps.invoker ?? captureInvokerIdentity();
-  // #70 gate 1: an agent worktree shell carries no fleet-kill authority. Both
-  // 2026-07-20 waves were launched from agent shells; refuse before touching
-  // anything, daemon contacted or not.
+  // An agent worktree shell carries no fleet-kill authority. Refuse before
+  // touching anything, daemon contacted or not.
   if (invoker.agentWorktree) {
     throw new Error(
       "Hive refused `hive stop`: it was invoked from inside an agent worktree " +
@@ -526,11 +522,9 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
   }
   const daemonWasLive = state === "live";
   if (daemonWasLive) {
-    // #70 gate 2: inside a test-runner process, the stop transport must be an
-    // explicit injection. A defaulted transport would resolve the ambient
-    // HIVE_HOME's daemon.port and operator credential — which, inherited from
-    // a live instance, is the fleet-kill this command audited twice on
-    // 2026-07-20 as `hive stop ppid=<gone> argv=[]`.
+    // Inside a test-runner process, the stop transport must be an explicit
+    // injection. A defaulted transport would resolve the ambient HIVE_HOME's
+    // daemon port and operator credential and could kill the live fleet.
     if (
       isTestRunnerEnv() &&
       deps.requestStop === undefined &&
@@ -565,8 +559,8 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     };
     let response = await requestStop(body);
     if (response.state === "refused-unlanded") {
-      // #70 gate 3: unlanded work stops the stop. Name the agents and their
-      // state, ask a real terminal, and refuse everywhere else.
+      // Unlanded work stops the stop. Name the agents and their state, ask a
+      // real terminal, and refuse everywhere else.
       const summary = formatUnlanded(response.unlanded);
       const confirm = deps.confirm ?? confirmOnTty;
       (deps.log ?? console.log)(

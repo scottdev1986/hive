@@ -295,16 +295,10 @@ async function stopStaleDaemonAfterActivation(): Promise<void> {
  * Hive performs three independent integrity checks on every update — the Ed25519
  * signature over the manifest, the SHA-256 of each artifact against that signed
  * manifest, and executing the staged binary to make it state its own version
- * before it can ever be `current` — and for a long time told the user about none
- * of them. "Downloaded and verified" names no check and so cannot be wrong,
- * which is exactly what was wrong with it: it neither earns trust nor risks
- * anything. The answer to a trust complaint is not a stronger adjective, it is
- * saying plainly what already happens. So the line lists the three checks.
+ * before it can ever be `current`. The line names all three checks because
+ * "Downloaded and verified" gives the user no evidence for the trust claim.
  *
- * The rejected alternative was to keep the vague line and let `hive update
- * status` carry the detail. It loses because the moment of the claim is the
- * moment the user is deciding, and nobody audits an install afterwards.
- *
+ * Keep that detail at the moment of the claim, when the user is deciding.
  */
 function verifiedLine(staged: StageOutcome): string {
   const how = staged.reused ? "already staged" : "staged";
@@ -444,9 +438,8 @@ export async function runUpdate(requested?: string): Promise<void> {
   const source = await githubReleaseSource(target);
   const version = source.manifest.version;
 
-  // One way in, whether the bytes arrive now or are already on disk. `isStaged()`
-  // used to short-circuit staging entirely, which skipped all three checks — an
-  // interrupted earlier run was enough to walk a binary past a fail-closed path.
+  // Always run staged bytes through all three checks. Do not short-circuit on
+  // their presence: an interrupted run may have left them incomplete.
   const staged = await ensureStaged({
     manifest: source.manifest,
     manifestBytes: source.manifestBytes,

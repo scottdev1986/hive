@@ -25,23 +25,22 @@ import type {
   MemoryWriteInput,
 } from "../schemas";
 
-// HiveMemory HM-6 (plan D2): golden-canary recall probe. The friendly health
-// check lies (plan A5), so this plants real articles in a throwaway fixture
+// This golden-canary recall probe plants real articles in a throwaway fixture
+// because a shallow health check cannot prove that recall works
 // and performs actual recalls against the same adapter + FTS index layers the
 // daemon uses. Deterministic, no LLM, no daemon, no network. It NEVER touches
 // the real .hive/memory or ~/.hive/memory: runMemorySelfTest points HIVE_HOME
 // at its own temp dir for the duration and restores it afterwards.
 //
-// HM-5 (board #122) added two degradation-honest semantic assertions —
-// semantic-recall (a paraphrase canary only the embedding leg can find) and
+// Two degradation-honest semantic assertions cover semantic recall (a
+// paraphrase canary only the embedding leg can find) and
 // consolidation-dry-run (a reworded-fact pair the offline consolidation pass
 // must bucket without modifying anything). They run only with a real
 // embedder (HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 or an injected service) and
 // SKIP otherwise: SKIP is not failure, because the exit code may only
 // reflect what was provable in the environment the probe ran in.
 //
-// Defect D4: that honesty made the semantic leg opt-in for CI too — a green
-// default run says nothing about embeddings. `--strict` is the gate form:
+// A green default run says nothing about embeddings. `--strict` is the gate:
 // every SKIP is re-rendered as a FAIL (exit nonzero), so a strict green run
 // proves the semantic assertions genuinely executed. CI provisions the model
 // and runs strict; developer machines without the model keep the default

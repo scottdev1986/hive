@@ -186,10 +186,8 @@ export function createProductionTerminalComposition(
     daemonDependencies: {
       terminalHost,
       sessiondInput,
-      // The queen's explicit "show me the screen" read. Production never
-      // supplied this, so `hive_terminal_observe` refused every call with
-      // "SessionHost terminal observation is unavailable" — the tool existed,
-      // was authorized, was documented, and could not run.
+      // Supplies the queen's explicit "show me the screen" read. Without this
+      // callback, `hive_terminal_observe` must refuse the request.
       sessionHost: terminalHost,
       observeTerminalOutput: (locator, geometry) =>
         observeSessiondOutput(
@@ -215,10 +213,9 @@ export async function runDaemon(): Promise<void> {
         "or set HIVE_SESSIOND_BIN.",
     );
   }
-  // No broker process. Hive launches each terminal host itself and speaks to
-  // it on its own socket, so there is nothing left for a broker to mediate:
-  // it was never in the terminal data path, and one process relaying every
-  // launch and every inspect was the 31-wide ceiling.
+  // Hive launches each terminal host itself and speaks to it on its own socket.
+  // A broker would only relay every launch and inspect, imposing a shared
+  // concurrency ceiling without participating in the terminal data path.
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const claudeExecutable = resolveWorkingClaudeExecutable().path;
@@ -238,8 +235,8 @@ export async function runDaemon(): Promise<void> {
     getAgentAdapter(provider).discover(discoveryExecutables[provider]);
   const db = new HiveDatabase();
   const statusStore = new StatusStore(db, hiveInstanceSuffix());
-  // routing.toml is dead as a policy source (user directive 2026-07-12); the
-  // file is renamed aside, never deleted and never interpreted.
+  // routing.toml is not a policy source. Rename it aside without deleting or
+  // interpreting it.
   const retiredToml = retireLegacyRoutingToml(
     Bun.env.HIVE_HOME ?? join(homedir(), ".hive"),
   );
@@ -318,7 +315,7 @@ export async function runDaemon(): Promise<void> {
   });
   const port = readConfiguredPort();
   let daemon: HiveDaemon;
-  // The per-repo graphify MCP server (docs/graphify/integration.md).
+  // The per-repo graphify MCP server.
   // Constructed unconditionally — start() reads the repo's opt-in state and is
   // a no-op for the repos that never enabled it.
   const graphify = new GraphifyService(repoRoot);
@@ -358,11 +355,11 @@ export async function runDaemon(): Promise<void> {
     // to the agent process through its environment.
     issueCredential: (name, role, epoch) =>
       daemon.issueCredential(name, role, epoch),
-    // #57: a spawn whose hive MCP never answers is refused, not recorded.
+    // Refuse rather than record a spawn whose Hive MCP never answers.
     mcpClientSeen: (subject, since) => daemon.mcpClientSeen(subject, since),
-    // §03: the first quota-aware spawn waits for the boot refresh to settle.
+    // The first quota-aware spawn waits for the boot refresh to settle.
     quotaReady: () => daemon.quotaReady(),
-    // §07: a spawn that dies of a vendor rate limit is a drain, not a crash.
+    // A spawn that dies of a vendor rate limit is a drain, not a crash.
     drainError: (agent, failure) => daemon.onVendorDrainError(agent, failure),
     assignments: {
       open: (agentId, openedAt) =>

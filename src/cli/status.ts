@@ -18,12 +18,11 @@ export function formatStatusTable(agents: AgentRecord[]): string {
     // The model it is *running*, not the one it was spawned with. A user who
     // types `/model` mid-session changes the first and not the second, and the
     // orchestrator reads this table to decide what to route where — so showing
-    // the spawn-time intention here is how Hive came to report four agents as
-    // running models none of them were.
+    // the spawn-time intention would report a model the agent is not running.
     agent.liveModel ?? agent.model,
     agent.status,
     // Unknown renders as "—", never as a number and never as 0%. `Math.round(null)`
-    // is 0, which is how an agent Hive cannot see came to look like an empty one.
+    // is 0, which would make an unobservable agent look like an empty one.
     agent.contextPct === null ? "—" : `${Math.round(agent.contextPct)}%`,
     truncate(agent.taskDescription.replaceAll(/\s+/g, " ").trim(), TASK_WIDTH),
     truncate(

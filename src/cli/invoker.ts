@@ -1,8 +1,7 @@
 // Who is invoking this CLI process — captured at the origin because the audit
-// row is the only record that survives a teardown cascade (#64), and a bare
-// ppid is useless once the parent exits (#70: both 2026-07-20 fleet-kill waves
-// were audited as `hive stop ppid=<gone> argv=[]` and needed a day of
-// forensics to attribute).
+// row is the only record that survives a teardown cascade. A bare ppid is
+// useless once the parent exits, so record enough identity to attribute a
+// teardown from the audit row alone.
 //
 // This is accident prevention, not a security boundary: a same-UID process can
 // read the operator credential and lie about all of it (credentials.ts says
@@ -21,8 +20,8 @@ export interface InvokerIdentity {
   /** Parent chain as `pid:command`, nearest first, bounded depth. A pid whose
    * parent cannot be resolved ends the chain honestly rather than guessing. */
   readonly chain: readonly string[];
-  /** Whether the invoking process runs inside a Hive agent worktree — the
-   * path-prefix check #70 prescribes. Agent shells hold no fleet authority. */
+  /** Whether the invoking process runs inside a Hive agent worktree.
+   * Agent shells hold no fleet authority. */
   readonly agentWorktree: boolean;
 }
 
@@ -90,7 +89,7 @@ export function formatInvokerOrigin(
 }
 
 /** `bun test` stamps NODE_ENV=test. Inside a test-runner process, a lethal
- * default must never reach through the ambient environment (#70). */
+ * default must never reach through the ambient environment. */
 export function isTestRunnerEnv(): boolean {
   return process.env.NODE_ENV === "test";
 }

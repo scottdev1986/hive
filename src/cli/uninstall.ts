@@ -242,10 +242,9 @@ async function removeBaseSkills(
   }
 }
 
-/** Remove the shipped skills Hive installed into one vendor directory of the
- * primary checkout. Only byte-identical copies are Hive's to remove; an
- * edited skill is the human's and is reported instead. Older builds installed
- * here rather than into `.hive/skills`, and those copies are still Hive's. */
+/** Remove shipped skills from one vendor directory of the primary checkout.
+ * Only byte-identical copies are Hive's to remove; an edited skill is the
+ * human's and is reported instead. */
 async function removeShippedSkills(
   root: string,
   tool: SkillTool,
@@ -254,10 +253,8 @@ async function removeShippedSkills(
   const nativeDirectory = nativeSkillDirectory(tool);
   const nativeRoot = join(root, nativeDirectory);
   if (!existsSync(nativeRoot)) return;
-  // Every skill Hive ships for this vendor, not the set one audience would be
-  // given today: uninstall removes Hive's own files, and a copy installed by an
-  // older build — before roles narrowed who receives what — is still Hive's to
-  // take back. Filtering by audience here is how a directory gets orphaned.
+  // Check every skill Hive ships for this vendor, not one audience's subset.
+  // Filtering by audience can orphan Hive-owned copies.
   for (const skill of SHIPPED_SKILLS.filter((skill) =>
     skill.tools.includes(tool),
   )) {
@@ -316,8 +313,8 @@ async function removeWorktreesAndBranches(
       timeoutMs: 30_000,
     });
     if (removed.exitCode !== 0 && allowLegacy && worktree === undefined) {
-      // A directory that is not a registered worktree (stale leftovers) is
-      // only safely attributable to the legacy default instance.
+      // An unregistered worktree directory is safely attributable only when
+      // the caller explicitly allows the default-instance fallback.
       await rm(path, { recursive: true, force: true });
     } else if (removed.exitCode !== 0) {
       throw commandFailure(
@@ -411,8 +408,7 @@ export async function runUninstallRepo(
     return 1;
   }
   await removeBaseSkills(root, deps.log);
-  // Vendor directories too: builds before `.hive/skills` became the base
-  // skills' home installed there, and those copies are still Hive's to remove.
+  // Remove byte-identical Hive skills from vendor directories too.
   for (const tool of CAPABILITY_PROVIDERS) {
     await removeShippedSkills(root, tool, deps.log);
   }

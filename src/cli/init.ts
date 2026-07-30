@@ -1,5 +1,5 @@
 /**
- * `hive init` — the gated enrichment pass (SPEC.md decision 14).
+ * `hive init` — the gated enrichment pass.
  *
  * `hive init` is the work that *must* be asked for, because it writes into the
  * user's repo or spends their tokens:
@@ -7,11 +7,10 @@
  *     never blind — Codex caps the AGENTS.md chain at 32 KiB and truncates
  *     silently, so we never append to a human's existing instructions).
  *   - Seed a small set of narrative memory articles with `source: "init"` and a
- *     `verified` date (decision 5's provenance), derived and re-derivable —
+ *     `verified` date, derived and re-derivable —
  *     distinct from the earned facts an agent learns.
- *   - Ensure `.gitignore` covers Hive's exact derived-state paths (board issue
- *     #78), never the `.hive/` parent because that also contains user-authored
- *     project skills.
+ *   - Ensure `.gitignore` covers Hive's exact derived-state paths, never the
+ *     `.hive/` parent because that also contains user-authored project skills.
  *
  * Running the command is the authorization, and every action it takes is
  * printed. Seeded facts are indexed immediately when a daemon is available;
@@ -169,9 +168,8 @@ function slugify(title: string): string {
  * Seed narrative facts as `source: "init"`, `verified: <today>`, scope `repo`.
  * Every fact gets a stable id (explicit, or a slug of its title) so a later
  * `hive init` re-run upserts it in place — the id-overwrite path is exactly the
- * dedup-before-write policy decision 5 requires, and re-confirming a fact bumps
- * its `verified` date while leaving earned facts untouched. Returns the ids
- * written.
+ * dedup-before-write policy requires, and re-confirming a fact bumps its
+ * `verified` date while leaving earned facts untouched. Returns the ids written.
  */
 export async function seedInitFacts(
   root: string,
@@ -201,8 +199,8 @@ export async function seedInitFacts(
   return seeded;
 }
 
-/** The exact derived-state entries board issue #78 settled on. Never collapse
- * the first two into `.hive/`: that directory also contains project skills. */
+/** Never collapse the first two entries into `.hive/`: that directory also
+ * contains project skills. */
 export const HIVE_GITIGNORE_ENTRIES = [
   ".hive/memory/",
   ".hive/worktrees/",

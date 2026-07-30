@@ -42,10 +42,9 @@ import { agentFetch } from "./credential";
 // response) must still yield the window and the model. Losing them alongside
 // the quota block is how we would end up inferring again.
 //
-// Rejected alternative: the undocumented api.anthropic.com/api/oauth/usage
-// endpoint the CLI itself calls. It is not a published contract, it needs the
-// OAuth token, and building routing on it would make hive break silently when
-// Anthropic changes it. statusLine is a documented input to a documented hook.
+// Do not build routing on the CLI's private OAuth usage endpoint: it requires
+// the OAuth token and can change without notice. statusLine is the supported
+// hook input.
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -116,13 +115,10 @@ function parseEffort(value: unknown): string | undefined {
     : undefined;
 }
 
-// The live model is deliberately NOT taken from here, though this payload does
-// carry `model.id`. The daemon reconciles it from the transcript instead
-// (server.ts), because the transcript stamps every assistant turn with the model
-// that produced it and is ALWAYS present — while this payload is absent entirely
-// on an API-key account, and was for a long time discarded whenever the session
-// had no `rate_limits` block. A source that cannot fail beats one that can, and
-// one fact with two sources is two facts waiting to disagree.
+// Do not take the live model from this payload even though it carries
+// `model.id`. The daemon uses the transcript because it stamps every assistant
+// turn with its model and remains available when this payload is absent. One
+// fact with two sources is two facts waiting to disagree.
 
 /**
  * The real context window, in tokens, and Claude Code's own occupancy figure.
@@ -195,10 +191,8 @@ export async function postStatuslineReport(
  *
  * The catch below has to stay silent — this renders on every keystroke and an
  * exception here would land in the agent's terminal. But silent to the terminal
- * and silent everywhere are different things, and this function used to be the
- * latter: a hard ReferenceError in the parse presented, indistinguishably, as
- * "no observation this render". The transport was dead and nothing anywhere
- * said so.
+ * and silent everywhere are different things. Record failures so a parse error
+ * cannot look indistinguishable from "no observation this render."
  *
  * So the failure is recorded rather than merely dropped. The file is
  * OVERWRITTEN, never appended: a status line that fails once fails on every

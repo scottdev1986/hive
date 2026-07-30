@@ -21,7 +21,7 @@ import { operatorFetch } from "./credential";
  * carries the revision the caller read, so concurrent edits conflict loudly
  * instead of clobbering.
  *
- * Enablement here IS consent to spend (the approval prompts are retired), so
+ * Enablement here IS consent to spend, so
  * these commands are a safety surface: they validate locally, the daemon
  * validates again, and success prints the full updated document — the UI
  * never has to guess what state it produced.
