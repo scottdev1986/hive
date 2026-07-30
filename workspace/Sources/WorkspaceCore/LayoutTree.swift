@@ -82,12 +82,11 @@ public indirect enum LayoutNode: Equatable, Codable {
 /// Geometry constants for the deterministic solver.
 public struct LayoutMetrics: Equatable {
     /// Fraction of the usable width the master pane occupies while satellites
-    /// exist. The band is 40–60%: the blueprint's original 55–60% floor was
-    /// raised off 40% by operator decision, because every point the master gives
-    /// up is divided among ALL the satellites at once. At sixteen agents the old
-    /// 58% default left the satellite column handing out eleven columns per
-    /// pane, and the queen does not need three fifths of the window to be
-    /// readable.
+    /// exist. `init` clamps it to the 40–60% band and defaults to the floor — a
+    /// deliberate operator choice, because every point the master gives up is
+    /// divided among ALL the satellites at once: at sixteen agents a 58% master
+    /// leaves each satellite about eleven columns, and the queen does not need
+    /// three fifths of the window to stay readable.
     public var masterRatio: Double
     /// Gap between panes, in points.
     public var gap: Double
@@ -103,8 +102,8 @@ public struct LayoutMetrics: Equatable {
 /// Invariants:
 /// - The master pane is rendered as the left column at `metrics.masterRatio`
 ///   whenever at least one satellite exists; alone it fills the bounds.
-/// - Satellites live in a binary split tree; traversal order is the
-///   deterministic "ordered pane tree" the blueprint refers to.
+/// - Satellites live in a binary split tree; depth-first traversal order is the
+///   deterministic pane order every layout decision is resolved against.
 /// - All mutations are pure tree operations; the same operation sequence with
 ///   the same geometry always yields the same tree and the same frames.
 public struct LayoutTree: Equatable, Codable {
