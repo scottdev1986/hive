@@ -108,9 +108,10 @@ export type AuditRow = z.infer<typeof AuditRowSchema>;
  * around an identifier the caller already has (the model id, the agent name).
  * Re-listed unchanged on every poll, so these are trimmed.
  *
- * An unrecognized or legacy row reads as `tool-permission`: the failure that
- * loses information is truncating something we could not classify, never
- * printing a boilerplate line in full.
+ * An unrecognized kind — including rows written before the enum existed —
+ * reads as `tool-permission`: the failure that loses information is
+ * truncating something we could not classify, never printing a boilerplate
+ * line in full.
  */
 export const ApprovalKindSchema = z.enum([
   "tool-permission",
@@ -143,7 +144,7 @@ export const EscalationSchema = z.object({
   id: z.string().min(1),
   agentId: z.string().min(1),
   agentName: z.string().min(1),
-  /** The launch identity (decision 6), so the count joins the routing that chose it. */
+  /** The immutable launch identity, so the count joins the routing that chose it. */
   model: z.string().min(1),
   category: z.string().min(1),
   reason: z.string().min(1),
@@ -369,10 +370,9 @@ function parseEventRow(row: unknown): HookEvent {
  *
  * SQLite cannot relax a NOT NULL column in place, so a schema change like
  * "contextPct must be able to say *unknown*" is a table rebuild: create, copy,
- * drop, rename. There were three hand-maintained copies of this DDL — the
- * constructor's and two rebuilds — and a column added to one and forgotten in
- * another is silently dropped the next time a rebuild runs. One definition, used
- * by all three, is the only version of this that stays correct.
+ * drop, rename. Keep exactly one definition of this DDL: with several
+ * hand-maintained copies, a column added to one and forgotten in another is
+ * silently dropped the next time a rebuild runs.
  */
 function agentsTableDdl(table: string, ifNotExists = false): string {
   return `
@@ -447,9 +447,9 @@ const columnDefinition = (column: AgentColumn): string => {
   return `${quoteIdentifier(column.name)} ${type}${notNull}${dflt}`;
 };
 
-/** Rename a legacy `tier` column to `category` and map the four dead tier
- * names onto the categories that inherited their work (§2.10 mapping). Tables
- * created fresh already use `category`; this touches only pre-cutover files. */
+/** Rename an old `tier` column to `category` and map the four retired tier
+ * names onto the categories that inherited their work. Tables created fresh
+ * already use `category`; this touches only older database files. */
 function migrateTierColumn(database: Database, table: string): void {
   const columns = database.query(`PRAGMA table_info(${table})`).all() as {
     name: string;
@@ -715,9 +715,9 @@ export class HiveDatabase {
     if (!capabilityColumns.some((column) => column.name === "subjects")) {
       this.database.exec("ALTER TABLE capabilities ADD COLUMN subjects TEXT");
     }
-    // 2026-07-13 cutover: tiers died; existing databases carry a `tier`
-    // column whose values are the old tier names. Renamed and mapped once,
-    // here, so every reader sees only categories.
+    // Older databases carry a `tier` column whose values are the retired
+    // tier names. Renamed and mapped once, here, so every reader sees only
+    // categories.
     for (const table of ["agents", "escalations", "quota_reservations"]) {
       migrateTierColumn(this.database, table);
     }
@@ -840,11 +840,11 @@ export class HiveDatabase {
       );
     }
     // The model an agent is *observed* running, which is a different fact from
-    // `model` — the immutable launch identity decision 6 records so a control
-    // restart reproduces the launch it is interrupting. A user who types `/model`
-    // mid-session changes the first and must not touch the second. They were one
-    // column, and the cost of conflating them was that quota was charged to a
-    // model nobody was running and `hive status` reported it back as truth.
+    // `model` — the immutable launch identity, recorded so a control restart
+    // reproduces the launch it is interrupting. A user who types `/model`
+    // mid-session changes the first and must not touch the second. Conflating
+    // them charges quota to a model nobody is running and has `hive status`
+    // report it back as truth.
     // Null means "not observed", never "same as spawn".
     if (!agentColumnNames.has("liveModel")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN liveModel TEXT");
@@ -858,10 +858,11 @@ export class HiveDatabase {
       this.database.exec(
         "ALTER TABLE agents ADD COLUMN readOnly INTEGER NOT NULL DEFAULT 0",
       );
-      // Before readOnly had its own representation, fresh readers were stored
-      // as revoked writers. Critical revocation advances the capability epoch
-      // before its replacement launches (and then records the control message),
-      // so only the untouched epoch-zero legacy reader shape is safe to unpark.
+      // Rows written before readOnly had its own representation store fresh
+      // readers as revoked writers. Critical revocation advances the
+      // capability epoch before its replacement launches (and then records
+      // the control message), so only the untouched epoch-zero reader rows
+      // are safe to unpark.
       this.database.exec(`
         UPDATE agents
         SET readOnly = 1,
@@ -926,7 +927,7 @@ export class HiveDatabase {
       ON messages("from", idempotencyKey)
       WHERE idempotencyKey IS NOT NULL
     `);
-    // Created after the column migrations above: on a legacy database the
+    // Created after the column migrations above: on an older database the
     // priority/state/sequence columns do not exist until they run. Critical-
     // control recovery hits this on every session-start and maintenance tick
     // and must never pay for the full message history.
@@ -1012,12 +1013,12 @@ export class HiveDatabase {
   }
 
   /**
-   * Hive originally declared `name TEXT NOT NULL UNIQUE`, which forced a
-   * respawn onto a recycled name to overwrite the dead holder's row — the very
-   * closure history the daemon now has to show. SQLite cannot drop a table
-   * constraint in place, so the table is rebuilt once, without it. Existing
-   * rows are safe to copy: a UNIQUE name means there was never more than one
-   * holder to collide.
+   * An agents table that declares `name TEXT NOT NULL UNIQUE` forces a
+   * respawn onto a recycled name to overwrite the dead holder's row —
+   * destroying the closure history the daemon must show. SQLite cannot drop
+   * a table constraint in place, so the table is rebuilt once, without it.
+   * Existing rows are safe to copy: a UNIQUE name means there was never more
+   * than one holder to collide.
    */
   private dropLegacyUniqueAgentName(): void {
     const indexes = z
@@ -1058,11 +1059,11 @@ export class HiveDatabase {
    * has never heard of. A rebuild that copied only a hand-maintained list of
    * known columns would permanently drop the rest and their values with them — a
    * newer Hive's column erased by an older one, or a hand-added column erased by
-   * any of them — and it had already started doing exactly that to `liveModel`.
-   * So neither table is described from memory: the old one's columns come from
-   * SQLite, the new one's come from SQLite, and any column the new table lacks is
-   * recreated on it from the old one's own declaration. `droppedColumns` is the
-   * explicit record of a removal; omission from current DDL is never enough.
+   * any of them. So neither table is described from memory: the old one's
+   * columns come from SQLite, the new one's come from SQLite, and any column
+   * the new table lacks is recreated on it from the old one's own declaration.
+   * `droppedColumns` is the explicit record of a removal; omission from current
+   * DDL is never enough.
    *
    * The rebuild runs before the agents indexes are created, so dropping the table
    * takes no index of Hive's with it.
@@ -1130,12 +1131,11 @@ export class HiveDatabase {
    * 0% does not mean "empty", it means "no idea", while reading like an invitation
    * to load more work on.
    *
-   * Every existing value is discarded rather than carried across, and that is a
-   * deliberate backfill decision, not laziness: those numbers were computed
-   * against a hardcoded 200k window while agents ran 1M ones, so they are wrong
-   * by up to 5x — the reason two agents sat pinned at 100% while actually near
-   * 22%. Migrating known-wrong numbers forward would preserve exactly the lie
-   * this column is being reshaped to stop telling. Null is honest, and the next
+   * Every existing value is discarded rather than carried across, and that is
+   * deliberate: those numbers were computed against a hardcoded 200k window
+   * while agents run 1M ones, so they are wrong by up to 5x. Migrating
+   * known-wrong numbers forward would preserve exactly the lie this column is
+   * being reshaped to stop telling. Null is honest, and the next
    * telemetry sweep re-observes every agent it can see.
    */
   private relaxContextPctNullability(): void {
@@ -2116,9 +2116,9 @@ export class HiveDatabase {
   /**
    * Every message still waiting to be handed over at all. The stalled-message
    * sweep reads this alongside the injected list, because a genuinely deaf
-   * recipient never lets its messages *reach* injected — the historical codex
-   * deafness blocked delivery outright, and a watchdog that only reads
-   * "injected" is blind to exactly that incident.
+   * recipient never lets its messages *reach* injected — a vendor that cannot
+   * accept input blocks delivery outright, and a watchdog that only reads
+   * "injected" is blind to exactly that case.
    */
   listQueuedMessages(): AgentMessage[] {
     return this.database
@@ -2240,11 +2240,11 @@ export class HiveDatabase {
   /**
    * The last moment the agent actually started or finished a turn.
    *
-   * Delivery used to ask for `lastEventAt` and call it a turn boundary, but
-   * that is the newest event of *any* kind — and `notification` is an event.
-   * An idle agent emits notifications while doing nothing at all, so a paste
-   * that the TUI never submitted could be "confirmed" by the recipient sitting
-   * there. Only turn-start and turn-end mean the model actually ran.
+   * Not `lastEventAt`: that is the newest event of *any* kind — and
+   * `notification` is an event. An idle agent emits notifications while
+   * doing nothing at all, so a paste that the TUI never submitted could be
+   * "confirmed" by the recipient sitting there. Only turn-start and turn-end
+   * mean the model actually ran.
    */
   latestTurnBoundaryAt(agentName: string): string | null {
     const row = this.database
@@ -2332,9 +2332,9 @@ export class HiveDatabase {
 
   /**
    * Re-anchor a control's acknowledgement deadline to the moment it was actually
-   * injected. Anchoring it to send time charged the recipient for however long
-   * the message spent queued — in one observed case seventeen minutes — so it
-   * could expire before the agent could physically see it.
+   * injected. Anchoring it to send time would charge the recipient for however
+   * long the message spent queued, so a control could expire before the agent
+   * can physically see it.
    */
   setMessageDeadline(id: string, deadlineAt: string): AgentMessage | null {
     this.database
@@ -2489,9 +2489,9 @@ export class HiveDatabase {
   }
 
   /** The durable answer to "why is this message still queued": the last
-   * delivery attempt's failure or decline, readable straight off the row
-   * (#68 — the live proof failed with the only diagnostic on a /dev/null
-   * stderr, leaving three silent causes indistinguishable from disk). */
+   * delivery attempt's failure or decline, readable straight off the row —
+   * a diagnostic that only reaches a /dev/null stderr leaves silent causes
+   * indistinguishable from disk. */
   recordMessageDeliveryDiagnostic(
     id: string,
     diagnostic: string,

@@ -20,11 +20,10 @@ const json = (value: unknown, init?: ResponseInit): Response =>
 /**
  * The viewer attach-grant endpoint, with its dependencies named.
  *
- * Fifth extraction of the `HiveDaemon` decomposition (audit §11). The three
- * authorization callbacks cross as functions rather than the capability store
- * itself: this route needs the daemon's audited decisions, not the ability to
- * mint its own, and passing the store would hand a route the authority to
- * decide what it is allowed to do.
+ * The three authorization callbacks cross as functions rather than the
+ * capability store itself: this route needs the daemon's audited decisions,
+ * not the ability to mint its own, and passing the store would hand a route
+ * the authority to decide what it is allowed to do.
  */
 export interface AttachGrantDeps {
   db: HiveDatabase;

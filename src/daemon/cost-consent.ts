@@ -34,10 +34,10 @@ const PREFIX = "cost-consent:";
  * That subject is the PROVIDER. When billing IS readable, the charge is a fact
  * about a specific model, and the subject is that model's canonical id.
  *
- * Keying the unreadable-billing question on a model id was a livelock: the
- * vendor's default model can move between the ask and the spawn (grok's did,
- * silently, on 2026-07-12), which orphans the answer the user already gave and
- * refuses the spawn against a question nobody can answer.
+ * Keying the unreadable-billing question on a model id livelocks: the
+ * vendor's default model can move between the ask and the spawn, which
+ * orphans the answer the user already gave and refuses the spawn against a
+ * question nobody can answer.
  */
 export type ConsentSubject = string;
 

@@ -1,4 +1,4 @@
-// The daemon's durable warning sink (defect D2). Daemon warnings and
+// The daemon's durable warning sink. Daemon warnings and
 // lifecycle lines go to console.log/console.error — but the deployed daemon
 // is a detached compiled binary whose stdout has no reader and no file
 // anywhere under ~/.hive captures it. A loud warning with no readable sink

@@ -1,6 +1,5 @@
-// The Hive authorization boundary. See docs/daemon/authorization.md
-// for the binding contract; this file is its implementation and must not drift
-// from it.
+// The Hive authorization boundary. Four roles — operator, orchestrator,
+// writer, reader — and the action allowlists each holds are defined here.
 //
 // Two rules carry the whole design:
 //
@@ -113,8 +112,8 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   "routing-policy:write",
   "workspace-visibility:write",
   // The one sanctioned token issuance outside the daemon's own spawn path:
-  // the launcher mints the Codex root's capability (SPEC decision 4's "no
-  // delegation" rule carves out exactly this exchange).
+  // the launcher mints the Codex root's capability — the single carve-out
+  // the no-delegation rule permits.
   "root-token:mint",
 ];
 
@@ -568,13 +567,9 @@ export function permitsTerminalObservation(
   }
   // The orchestrator reads any agent in her own fleet, metadata or text.
   //
-  // Hive promises the queen can see what an agent is doing without disturbing
-  // it. Restricting cross-agent reads to an operator credential that names the
-  // subject in advance meant she could not: an agent's work was observable only
-  // through a derived one-line summary, and the actual content only by sending
-  // the agent a message and interrupting it. She already spawns, kills and
-  // recovers these agents unnamed; being unable to look at them was the odd
-  // one out. This does not widen what an AGENT may see — a peer still cannot
+  // She already spawns, kills and recovers these agents unnamed, so looking
+  // at one takes no new authority; observation takes no input, no focus, and
+  // no claim. This does not widen what an AGENT may see — a peer still cannot
   // read a peer, and self-reads still require the content constraint.
   if (capability.role === "orchestrator") return true;
   return (

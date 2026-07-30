@@ -3,8 +3,7 @@
  * orchestrator; a failed alert send must not crash the sweep, but it must not
  * vanish either.
  *
- * Lifted out of server.ts by the decomposition (audit §11) once a second module
- * needed it — shared by the hook-event ingress and the resource sweep.
+ * Shared by the hook-event ingress and the resource sweep.
  */
 export function logAlertDeliveryFailure(error: unknown): undefined {
   console.error(

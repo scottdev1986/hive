@@ -24,11 +24,10 @@ export const KillRequestSchema = z.object({
 /**
  * The agent-control tool surface, with its dependencies named.
  *
- * Fourth tool-group extraction out of `createMcpServer` (audit §11). The
- * teardown result is typed to the one field this surface reads (`agent`) rather
- * than the caller's full outcome shape: these tools report which agent was torn
- * down, and importing the reap/preserve/strand detail would couple the tool
- * layer to a result it never inspects.
+ * The teardown result is typed to the one field this surface reads (`agent`)
+ * rather than the caller's full outcome shape: these tools report which agent
+ * was torn down, and importing the reap/preserve/strand detail would couple
+ * the tool layer to a result it never inspects.
  */
 export interface AgentControlToolDeps {
   db: HiveDatabase;

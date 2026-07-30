@@ -66,12 +66,11 @@ export interface SessionSender {
 /**
  * Why a root wake did not land, or that it did.
  *
- * This was a bare `boolean`, and the boolean is what made the 2026-07-21
- * acceptance run unreadable: the deliverer knows precisely which gate refused —
- * a changed foreground, an input claim held by someone else, a host that is not
- * running — and returning one bit threw all of it away one call before the row
- * that exists to record it. A refusal must carry its reason; a delivery has
- * none to carry, so the shape makes that unrepresentable.
+ * Not a bare `boolean`: the deliverer knows precisely which gate refused —
+ * a changed foreground, an input claim held by someone else, a host that is
+ * not running — and one bit would throw all of it away one call before the
+ * row that exists to record it. A refusal must carry its reason; a delivery
+ * has none to carry, so the shape makes that unrepresentable.
  */
 export type RootDeliveryOutcome =
   | { delivered: true }
@@ -95,24 +94,20 @@ export interface SendOptions {
 /**
  * What "queued" means for THIS recipient right now — measured, not implied.
  *
- * A sender reading state "queued" has taken it as "will arrive shortly", told
- * the user an agent was directed, and been wrong: a normal message to a
- * busy recipient mid-turn is delivered only at its next turn boundary,
- * and a deep agent's next boundary routinely falls AFTER the work the message
- * was trying to steer. That is how a migration shipped without the three
- * safety requirements sent nine minutes earlier (aurora, 2026-07-12 16:55Z —
- * queued mid-turn, delivered at her turn boundary 17:04:45, seconds after she
- * landed). The note rides the send result so the sender learns the recipient's
- * real state at the only moment it can still act, not from a post-mortem.
+ * A sender reading state "queued" can take it as "will arrive shortly" and
+ * be wrong: a normal message to a busy recipient mid-turn is delivered only
+ * at its next turn boundary, and a deep agent's next boundary routinely
+ * falls AFTER the work the message was trying to steer. The note rides the
+ * send result so the sender learns the recipient's real state at the only
+ * moment it can still act, not from a post-mortem.
  */
 export function queuedDeliveryNote(
   message: AgentMessage,
   recipient: AgentRecord | null,
 ): string | undefined {
   if (message.state !== "queued") return undefined;
-  // Root recipient (queen) has no agent row. A bare "queued" here is what made
-  // james retry his ack on 2026-07-21: say what queued means for the root and
-  // where the wake's failure cause is recorded.
+  // Root recipient (queen) has no agent row. Say what queued means for the
+  // root and where the wake's failure cause is recorded.
   if (recipient === null && isOrchestratorName(message.to)) {
     return (
       "NOT received: queen was not woken. The daemon injects a wake " +
@@ -141,11 +136,9 @@ export function queuedDeliveryNote(
     case "spawning":
       return `NOT received yet: ${name} is still spawning; the message is delivered when its session starts.`;
     case "idle":
-      // #68: the sessiond viewer wire exists now; the wake loop retries every
-      // maintenance tick. The pre-#68 text ("has no daemon delivery wire yet")
-      // sent the live-proof investigation hunting a wiring gap that did not
-      // exist — say what actually happens and where the cause of a stuck row
-      // is recorded.
+      // The sessiond viewer wire delivers to an idle sessiond-hosted agent;
+      // the wake loop retries every maintenance tick. Say what actually
+      // happens and where the cause of a stuck row is recorded.
       if (recipient.sessionLocator?.hostKind === "sessiond") {
         return (
           `NOT received yet: ${name} is idle in a sessiond-hosted terminal; the daemon ` +
@@ -190,12 +183,10 @@ export interface CriticalControlRuntime {
  * How long a busy agent gets to acknowledge an urgent control, measured from the
  * moment it was injected rather than sent.
  *
- * Thirty seconds was a guess sized for an idle agent, and it false-alarmed on
- * agents that were merely working: real acknowledgement latencies recorded in
- * the field were 41s, 54s, 61s, 64s and 109s, every one of them an agent that
- * simply had to finish a tool call first. Three minutes clears the slowest
- * observed ack with margin while still catching an agent that has genuinely
- * stopped listening.
+ * The budget must cover an agent that is merely working: acknowledgement
+ * waits on the in-flight tool call finishing, and a working agent routinely
+ * exceeds a minute. Three minutes clears that with margin while still
+ * catching an agent that has genuinely stopped listening.
  */
 const DEFAULT_URGENT_DEADLINE_MS = 180_000;
 const DEFAULT_CRITICAL_DEADLINE_MS = 10_000;
@@ -220,9 +211,9 @@ const DELIVERY_CONFIRM_DEADLINE_MS = 5 * 60_000;
  * (the tool-boundary tick), so this gap is only ever the length of one
  * in-flight call — and one legitimate call can run a full test suite. Thirty
  * minutes clears any suite this repo has seen while still surfacing a wedged
- * process hours before the historical codex deafness (~2h unconfirmable)
- * would have been noticed. Deaf-from-birth agents never open a turn at all
- * and are alerted at the five-minute deadline, not this one.
+ * process within the half hour rather than hours later. Deaf-from-birth
+ * agents never open a turn at all and are alerted at the five-minute
+ * deadline, not this one.
  */
 const OPEN_TURN_SILENCE_CAP_MS = 30 * 60_000;
 
@@ -237,10 +228,10 @@ const SUBMIT_POLL_MS = 100;
 
 /**
  * How long a message may sit queued behind a recorded delivery failure before
- * the orchestrator is told. The 2026-07-21 messaging regression stayed silent
- * for hours because every non-delivery only ever reached a /dev/null stderr:
- * the row carried its diagnostic and nobody read it. Five minutes is long
- * enough that ordinary turn-boundary waiting never trips it and short enough
+ * the orchestrator is told. A non-delivery that only ever reaches a
+ * /dev/null stderr stays silent for hours: the row carries its diagnostic
+ * and nobody reads it. Five minutes is long enough that ordinary
+ * turn-boundary waiting never trips it and short enough
  * that a wedged recipient is a visible event rather than an archaeology
  * exercise.
  */
@@ -271,25 +262,24 @@ export class MessageDelivery {
     private readonly composerActive: (
       recipient: string,
     ) => boolean = isComposerLeased,
-    /** Daemon→idle-sessiond-agent input over the neutral viewer wire (#16
-     * interim, #68). Absent → sessiond recipients stay durably queued, the
-     * pre-wire behaviour. */
+    /** Daemon→idle-sessiond-agent input over the neutral viewer wire.
+     * Absent → sessiond recipients stay durably queued. */
     private readonly sessiondInput?: SessiondAgentInput,
-    /** Wake-delta memory injection (HiveMemory HM-3 WP6): when present, a
-     * delivered message carries the bounded memory delta since the
-     * recipient's high-water mark, so recall is summoned on every wake over
-     * the send lane — no vendor hook required (Grok has none). Absent
-     * (embedded daemons, tests), delivery is byte-identical to before. */
+    /** Wake-delta memory injection: when present, a delivered message
+     * carries the bounded memory delta since the recipient's high-water
+     * mark, so recall is summoned on every wake over the send lane — no
+     * vendor hook required (Grok has none). Absent (embedded daemons,
+     * tests), delivery proceeds without a delta. */
     private readonly wakeDelta?: WakeDeltaProvider,
-    /** Trigger protocol (HiveMemory HM-3 WP7): queen/operator trigger words
-     * ("recall:", "note this:", "document this:") execute at the daemon and
-     * their labeled result replaces the delivered body — user-turn invocation
-     * outranks ambient context (article lesson A1). Agent senders carry no
-     * trigger authority; their trigger-shaped text is delivered verbatim.
-     * Absent (embedded daemons, tests), delivery is byte-identical to before. */
+    /** Trigger protocol: queen/operator trigger words ("recall:",
+     * "note this:", "document this:") execute at the daemon and their
+     * labeled result replaces the delivered body — user-turn invocation
+     * outranks ambient context. Agent senders carry no trigger authority;
+     * their trigger-shaped text is delivered verbatim. Absent (embedded
+     * daemons, tests), delivery proceeds without trigger execution. */
     private readonly memoryTriggers?: MemoryTriggerExecutor,
-    /** Durable warning sink (defect D2): trigger and wake-delta failures
-     * persist here in addition to the console. */
+    /** Durable warning sink: trigger and wake-delta failures persist here
+     * in addition to the console. */
     private readonly log?: (line: string) => void,
   ) {}
 
@@ -590,7 +580,7 @@ export class MessageDelivery {
               continue;
             }
           }
-          // deliver() can honestly decline (sessiond recipients, #67);
+          // deliver() can honestly decline (sessiond recipients);
           // only a message whose delivery actually landed counts.
           const result = await this.deliver(message, latestRecipient);
           if (result.deliveredAt !== null) delivered.push(result);
@@ -610,7 +600,7 @@ export class MessageDelivery {
     });
   }
 
-  /** Legacy urgent rows remain queued; terminal-first has no cancel proof. */
+  /** Urgent rows remain queued; terminal-first has no cancel proof. */
   async flushUrgent(_agentName: string): Promise<AgentMessage[]> {
     return [];
   }
@@ -675,21 +665,20 @@ export class MessageDelivery {
   /**
    * Wake every live idle agent that still has mail waiting.
    *
-   * Redelivery used to hang entirely off the recipient's own activity:
-   * flushQueued on its session-start/turn-end hook, flushUrgent at a tool
-   * boundary. Both are things a WORKING agent does. An agent that has finished
-   * its task makes no more tool calls and reaches no more turn boundaries — so
-   * a message enqueued while it was busy was retried by nothing once it went
-   * quiet, and the agent an orchestrator most needs to redirect (the one with
-   * free capacity) was the one it could not reach. Grok made it total: driving
-   * no lifecycle hooks, it never fires ANY of those triggers, so its mail sat
-   * queued forever (cesar, 2026-07-12: two controls queued, alive, idle, deaf,
-   * killed to be stopped).
+   * Redelivery must not hang off the recipient's own activity. flushQueued
+   * fires on the recipient's session-start/turn-end hook and flushSteer at a
+   * tool boundary — all things a WORKING agent does. An agent that has
+   * finished its task makes no more tool calls and reaches no more turn
+   * boundaries, so a message enqueued while it was busy would be retried by
+   * nothing once it went quiet — and the agent an orchestrator most needs to
+   * redirect (the one with free capacity) would be the one it cannot reach.
+   * Grok drives no lifecycle hooks at all, so none of those triggers ever
+   * fires for it.
    *
-   * The daemon already knows both halves — this agent is idle, this message is
-   * queued — so it stops waiting to be told and does the waking itself, on the
-   * maintenance tick. Each vendor is woken through its terminal session, the
-   * same paste-and-submit path flushQueued uses.
+   * The daemon already knows both halves — this agent is idle, this message
+   * is queued — so it does the waking itself, on the maintenance tick. Each
+   * vendor is woken through its terminal session, the same paste-and-submit
+   * path flushQueued uses.
    */
   async wakeIdleRecipients(): Promise<AgentMessage[]> {
     const woken: AgentMessage[] = [];
@@ -703,11 +692,10 @@ export class MessageDelivery {
         continue;
       woken.push(...(await this.flushQueued(agent.name)));
     }
-    // The root has no agents row, so this sweep used to skip it entirely: a
-    // root wake that failed at send time was retried by NOTHING until the
-    // next send or queen turn boundary happened to come along (2026-07-21 —
-    // zoe's report sat queued behind a transient terminal failure with no
-    // ticker). A failed wake now self-heals on the next maintenance tick.
+    // The root has no agents row, so the loop above skips it: without this
+    // sweep, a root wake that failed at send time would be retried by nothing
+    // until the next send or queen turn boundary happened to come along. A
+    // failed wake self-heals on the next maintenance tick.
     if (
       orchestratorRecipientNames().some(
         (name) => this.db.getUndeliveredMessages(name).length > 0,
@@ -727,12 +715,12 @@ export class MessageDelivery {
     const claim = () => {
       const deliveredAt = new Date().toISOString();
       // Handing a row to a poller proves injection and nothing more, exactly as
-      // on the push path (see markInjected). Marking a normal message "applied"
-      // here claimed the recipient had acted on it when the only evidence was
-      // that it had been FETCHED — and it wrote that claim with injectedAt still
-      // null, a state the lifecycle cannot otherwise produce. That combination
-      // also hid the row from listInjectedUnapplied (which requires injectedAt),
-      // so it could never be reconciled or alerted on. "applied" is earned in
+      // on the push path (see markInjected). Do not mark a normal message
+      // "applied" here: the only evidence is that the row was FETCHED, and
+      // "applied" with injectedAt still null is a state the lifecycle cannot
+      // otherwise produce — one that also hides the row from
+      // listInjectedUnapplied (which requires injectedAt), so it could never
+      // be reconciled or alerted on. "applied" is earned in
       // reconcileInjected, on a real turn boundary.
       return this.db
         .claimUndeliveredMessages(agentName, deliveredAt)
@@ -754,10 +742,10 @@ export class MessageDelivery {
         this.db.claimUndeliveredMessages(name, deliveredAt),
       );
       // Same rule for the root: a drained row is injected, not applied.
-      // reconcileInjected confirms these against `turnBoundaryAt`, which is the
-      // surface that actually records the root's turns — the 105-of-107 case in
-      // its own comment. Claiming "applied" here bypassed that confirmation and
-      // left injectedAt null, which is what made the outage unreadable.
+      // reconcileInjected confirms these against `turnBoundaryAt`, the surface
+      // that actually records the root's turns. Claiming "applied" here would
+      // bypass that confirmation and leave injectedAt null, hiding the row
+      // from every reconciliation path.
       return claimed.map((message) => {
         const injected = this.requireMessageTransition(
           message.id,
@@ -783,11 +771,10 @@ export class MessageDelivery {
         for (const message of this.db.getUndeliveredMessages(name)) {
           if (this.rootComposerActive()) return delivered;
           // Per-message isolation: one message whose wake throws must not
-          // starve every message behind it. On 2026-07-21 the root wake
-          // delivered 0 of 4 queued messages with no error anywhere — a
-          // single unisolated failure at the head of this loop reproduces
-          // exactly that, and the caller's catch buries it. The failure is
-          // recorded on the row instead of thrown past the queue.
+          // starve every message behind it — a single unisolated failure at
+          // the head of this loop delivers the whole queue as zero, and the
+          // caller's catch buries it. The failure is recorded on the row
+          // instead of thrown past the queue.
           let injected: AgentMessage | null = null;
           try {
             injected = await this.deliverRoot(message);
@@ -818,10 +805,9 @@ export class MessageDelivery {
   private async deliverRoot(
     message: AgentMessage,
   ): Promise<AgentMessage | null> {
-    // Every non-delivery records WHY on the row. The 2026-07-21 acceptance
-    // run failed with the root wake silently declining or dying on all four
-    // queued messages; between a /dev/null stderr and a blind catch there was
-    // no surface left that could say which gate refused.
+    // Every non-delivery records WHY on the row: between a /dev/null stderr
+    // and a blind catch there is no surface left that can say which gate
+    // refused.
     if (this.rootComposerActive()) {
       this.db.recordMessageDeliveryDiagnostic(
         message.id,
@@ -902,7 +888,7 @@ export class MessageDelivery {
   }
 
   /**
-   * Execute an authorized memory trigger (HiveMemory HM-3 WP7) and return
+   * Execute an authorized memory trigger and return
    * the text that should replace this message's formatted body: the labeled
    * recall results or write confirmation. Null means deliver the body as
    * formatted — no trigger phrase, or a sender without trigger authority
@@ -934,7 +920,7 @@ export class MessageDelivery {
   }
 
   /**
-   * Compose the recipient's wake-delta block (HiveMemory HM-3 WP6). A delta
+   * Compose the recipient's wake-delta block. A delta
    * failure must never block message delivery — the plain message goes out
    * and the failure is logged, the same failure-isolation posture as every
    * other memory maintenance path.
@@ -1113,13 +1099,13 @@ export class MessageDelivery {
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to))
       return this.getStoredMessage(message.id);
-    // Trigger protocol (HiveMemory HM-3 WP7): an authorized queen/operator
+    // Trigger protocol: an authorized queen/operator
     // trigger executes at the daemon and its labeled result REPLACES the
     // message body — the trigger is a command, not content for the agent.
     const replacement = await this.composeTriggerReplacement(message);
     const base =
       replacement === null ? this.formatAgentMessage(message) : replacement;
-    // Wake-delta injection (HiveMemory HM-3 WP6): the delta rides whatever
+    // Wake-delta injection: the delta rides whatever
     // text this delivery sends, visibly labeled as system-injected memory so
     // it can never be mistaken for the sender's words. Composed once per
     // attempt; the high-water mark advances only after the delivery lands.
@@ -1151,10 +1137,10 @@ export class MessageDelivery {
           return this.getStoredMessage(message.id);
         }
       }
-      // Every non-delivery on this branch records WHY on the message row.
-      // The #68 live proof failed with the only diagnostic on a /dev/null
-      // stderr: ~24 silent retries, three indistinguishable causes. A row
-      // that stays queued must carry its own explanation.
+      // Every non-delivery on this branch records WHY on the message row:
+      // a diagnostic that only reaches a /dev/null stderr leaves silent
+      // retries with indistinguishable causes. A row that stays queued must
+      // carry its own explanation.
       const attempt = this.db.beginMessageAttempt({
         attemptId: crypto.randomUUID(),
         messageId: message.id,
@@ -1242,10 +1228,10 @@ export class MessageDelivery {
     // one. So if no turn begins, the paste did not take: the pane swallowed it
     // (a modal, a permission prompt, a composer that never pressed Enter).
     //
-    // Claiming "injected" on that exit code is the lie this whole bug is made
-    // of: an orchestrator was told a stop order had landed, believed it, and
-    // the agent kept working and landed the commit. A busy TUI is different and
-    // is not checked here — it holds the paste in its composer until its next
+    // Claiming "injected" on that exit code would be a lie: the orchestrator
+    // would believe a control had landed while the agent keeps working. A
+    // busy TUI is different and is not checked here — it holds the paste in
+    // its composer until its next
     // tool call, so there is no new turn to wait for and "injected" is already
     // the honest maximum.
     //
@@ -1355,32 +1341,21 @@ export class MessageDelivery {
   /**
    * Close the loop on every message we handed over.
    *
-   * "Injected" used to be a shrug: a transport accepted the message, Hive
-   * honestly declined to claim it had been applied — and then nothing ever looked
-   * at it again. Ninety messages accumulated in that state, including twenty of
-   * Hive's own control alerts. Hive *knew* they were unconfirmed, which is
-   * exactly what the null appliedAt means, and told nobody, forever.
+   * "Injected" is a promise with a deadline, and it resolves one of two ways.
+   * Either the recipient reaches a turn boundary after the injection — which
+   * is the moment the TUI actually submits a queued message, so it is real
+   * evidence the message reached the model, not an exit code — or the message
+   * is still waiting after long enough that someone should be told. It is
+   * never silent and never forever: work is either merged or explicitly
+   * surfaced, and a message is work.
    *
-   * Now "injected" is a promise with a deadline, and it resolves one of two ways.
-   * Either the recipient reaches a turn boundary after the injection — which is
-   * the moment the TUI actually submits a queued message, so it is real evidence
-   * the message reached the model, not an exit code — or the message is still
-   * waiting after long enough that someone should be told. It is never silent and
-   * never forever. SPEC §3 promises work is either merged or explicitly
-   * surfaced; a message is work, and this is what extends that promise to it.
-   *
-   * The trap is *where you look for that boundary*, and the first version of this
-   * fell straight into it: it asked `agents.lastEventAt`, which the orchestrator
-   * does not have, because the orchestrator is not a spawned agent and has no
-   * agents row at all. So every root-bound message was unconfirmable by
-   * construction — and root-bound is not an edge case, it is the overwhelming
-   * majority. Measured against the live database: of 107 messages stuck in
-   * "injected", 105 were addressed to the orchestrator. Reading the wrong surface
-   * would therefore have surfaced all 105 as never-confirmed, which is the ninety
-   * lines this function exists to *not* dump into the one context that has to stay
-   * clear, and every one of them would have been a lie: the root had reached a turn
-   * boundary after all 105, and reading the surface that actually records the root's
-   * turns confirms all 105 and surfaces none. `turnBoundaryAt` is that surface.
+   * The trap is *where you look for that boundary*. The orchestrator is not a
+   * spawned agent and has no agents row, so `agents.lastEventAt` does not
+   * exist for it — and root-bound mail is the overwhelming majority, not an
+   * edge case. Read the agents table and every root-bound message is
+   * unconfirmable by construction: each would surface as never-confirmed and
+   * each would be a lie. The root's turns live in the events table;
+   * `turnBoundaryAt` reads the right surface per recipient.
    */
   async reconcileInjected(now = new Date().toISOString()): Promise<number> {
     let confirmed = 0;
@@ -1408,12 +1383,11 @@ export class MessageDelivery {
       // No boundary since. Give it the deadline — and then distinguish BUSY
       // from DEAF before telling anyone. A recipient mid-turn and alive is
       // not stalled: its TUI holds the paste until the turn's own boundary,
-      // and a deep build turn routinely outlives any fixed deadline. This
-      // alert fired seven times in one evening for agents that were simply
-      // working, and a wolf-cry on the very alert path that reveals genuine
-      // deafness trains the one reader it has to ignore it. A busy message
-      // stays unalerted (alertAt null), so every later sweep re-judges it and
-      // still fires the moment its recipient stops showing signs of life.
+      // and a deep build turn routinely outlives any fixed deadline. A false
+      // alarm on the very alert path that reveals genuine deafness trains the
+      // one reader it has to ignore it. A busy message stays unalerted
+      // (alertAt null), so every later sweep re-judges it and still fires the
+      // moment its recipient stops showing signs of life.
       if (injectedAt < cutoff && message.alertAt === null) {
         const reason = await this.stalledReason(message.to, now);
         if (reason !== null) stalled.push({ message, reason });
@@ -1421,9 +1395,9 @@ export class MessageDelivery {
     }
 
     // Queued messages get the same triage, because a genuinely deaf recipient
-    // never lets a message reach "injected" at all: the historical codex
-    // deafness BLOCKED delivery, and a watchdog reading only the injected
-    // state is blind to the one incident it exists for. Queued-while-busy is
+    // never lets a message reach "injected" at all: a vendor that cannot
+    // accept input BLOCKS delivery, and a watchdog reading only the injected
+    // state is blind to the one case it exists for. Queued-while-busy is
     // routine (ordinary traffic waits for the turn boundary) and stays
     // silent; queued at a recipient that shows no signs of life is the alarm.
     // Root-bound messages are exempt: the root's queue is its inbox, drained
@@ -1435,12 +1409,11 @@ export class MessageDelivery {
         if ((await this.stalledReason(message.to, now, "queued")) === null) {
           continue;
         }
-        // The sweep runs on its own timer, and twice in one day (aubrey
-        // 16:27Z, aurora 17:04Z, 2026-07-12) it fired inside the second
-        // between a recipient's turn-end and the flush completing that very
-        // delivery — diagnosing a swallowed paste for a message that was
-        // mid-paste under the session lock, and sending the orchestrator
-        // chasing a loss that never happened. Serialize behind the
+        // The sweep runs on its own timer and can fire in the second between
+        // a recipient's turn-end and the flush completing that very delivery
+        // — diagnosing a swallowed paste for a message that is mid-paste
+        // under the session lock, and sending the orchestrator chasing a
+        // loss that never happened. Serialize behind the
         // recipient's delivery lane and re-judge: only a message still
         // queued once any in-flight delivery has finished is stalled.
         const recipient = this.db.getAgentByName(message.to);
@@ -1464,10 +1437,10 @@ export class MessageDelivery {
       // Both obvious answers are wrong. Replaying every stalled message into the
       // orchestrator's next turn is a denial of service on the one context that
       // has to stay clear, and most of them are stale anyway. Dropping them is
-      // precisely the silent loss SPEC §3 forbids. So we surface the FACT and
-      // preserve the DETAIL: the count and each recipient's measured state go
-      // in one line, every message stays queryable by id, and none is
-      // discarded.
+      // precisely the silent loss the merge-or-surface rule forbids. So we
+      // surface the FACT and preserve the DETAIL: the count and each
+      // recipient's measured state go in one line, every message stays
+      // queryable by id, and none is discarded.
       const reasons = new Map<string, string>();
       for (const { message, reason } of stalled) {
         reasons.set(message.to, reason);
@@ -1490,9 +1463,10 @@ export class MessageDelivery {
 
       // The sweep must never surface its own output. This alert is itself a
       // message to the root, so if it can stall, the next sweep reports it, and
-      // *that* report stalls too: a loop with no fixed point, feeding on the one
-      // context §3 says must stay clear, and it grows by one message every time
-      // the root is quiet. Born already alerted, it can never be surfaced again.
+      // *that* report stalls too: a loop with no fixed point, feeding on the
+      // one context that must stay clear, and it grows by one message every
+      // time the root is quiet. Born already alerted, it can never be surfaced
+      // again.
       // Nothing is lost by that — the alert IS the surface, and an alert nobody
       // read is not a new fact, it is the same fact, louder.
       if (alert !== undefined) this.db.markMessageAlerted(alert.id, now);
@@ -1507,10 +1481,10 @@ export class MessageDelivery {
    *
    * A spawned agent carries `lastEventAt` on its own row. The orchestrator has no
    * row (db.ts is explicit: "not a spawned agent and has no agents-table row"), so
-   * asking for one returns null, and null read as "never took a turn" is what made
+   * asking for one returns null, and null read as "never took a turn" would make
    * every root-bound message permanently unconfirmable. Its turns are in the events
-   * table, posted by its own hooks. Same question, different surface, and the rule
-   * from §2 applies exactly: read what the tool measures and hands you.
+   * table, posted by its own hooks. Same question, different surface: read what
+   * the tool measures and hands you.
    */
   private turnBoundaryAt(recipient: string): string | null {
     if (isOrchestratorName(recipient)) {
@@ -1522,9 +1496,10 @@ export class MessageDelivery {
       }
       return newest;
     }
-    // Was `lastEventAt`, which is the newest event of any kind. An idle agent
-    // emits `notification` events while doing nothing, so an unsubmitted paste
-    // got "confirmed" by the recipient sitting still. Only a real turn counts.
+    // Not `lastEventAt` — the newest event of any kind. An idle agent
+    // emits `notification` events while doing nothing, which would
+    // "confirm" an unsubmitted paste from a recipient sitting still. Only a
+    // real turn counts.
     const boundary = this.db.latestTurnBoundaryAt(recipient);
     if (boundary !== null) return boundary;
     // Third surface, for the vendor that writes to neither of the first two: a
@@ -1549,8 +1524,8 @@ export class MessageDelivery {
    * the turn closes, and its process keeps proving itself alive (every tool
    * call refreshes the agent row's lastEventAt; the root's events do the same
    * in the events table). That is healthy work and earns silence. A DEAF
-   * recipient has nothing to show: no turn events at all (the historical
-   * codex deafness — five agents, zero hooks, ~2h unconfirmable), or a closed
+   * recipient has nothing to show: no turn events at all (a vendor whose
+   * hook stream went silent), or a closed
    * turn it never followed (an idle TUI that swallowed the paste), or a dead
    * process, or an open turn that has gone silent past any legitimate single
    * tool call. Each of those states is named in the alert, so the reader
@@ -1570,7 +1545,7 @@ export class MessageDelivery {
     ) {
       return `${recipient} is ${agent.status} and will never reach a boundary`;
     }
-    // Root events may be keyed under queen (preferred) or orchestrator (legacy).
+    // Root events may be keyed under queen (preferred) or orchestrator (synonym).
     const boundary = isOrchestratorName(recipient)
       ? orchestratorRecipientNames().reduce<
           ReturnType<HiveDatabase["latestTurnBoundary"]>
@@ -1584,10 +1559,10 @@ export class MessageDelivery {
     if (boundary === null) {
       // "No turn events at all" is a diagnosis about a vendor that HAS a hook
       // stream and has gone silent on it. Said about grok, which has none, it
-      // is true of every grok agent that ever lived and means nothing — and it
-      // was said, about a healthy one (cesar, 2026-07-12). Judge that vendor on
-      // the surface it does write: the transcript activity the telemetry sweep
-      // carries into lastEventAt. Quiet past the open-turn cap is the same
+      // is true of every grok agent, healthy or not, and means nothing. Judge
+      // that vendor on the surface it does write: the transcript activity the
+      // telemetry sweep carries into lastEventAt. Quiet past the open-turn
+      // cap is the same
       // finding this alert exists for; anything fresher is an agent working or
       // waiting, not a deaf one.
       if (agent !== null && !reportsTurnEvents(agent.tool)) {
@@ -1602,7 +1577,7 @@ export class MessageDelivery {
     }
     if (boundary.kind === "turn-end") {
       // "Swallowed paste" is a diagnosis about a paste that happened; a queued
-      // message was never pasted, and the alert that conflated the two sent
+      // message was never pasted, and an alert that conflates the two sends
       // the orchestrator hunting a terminal loss that never occurred.
       return phase === "queued"
         ? `${recipient} went idle without receiving it — delivery at its turn boundaries has not landed`
@@ -1788,14 +1763,12 @@ export class MessageDelivery {
   /**
    * Record that a message was handed over — and nothing more than that.
    *
-   * This used to mark a normal message "applied", the strongest claim in the
-   * system, meaning the recipient acted on it. The entire evidence for that
-   * claim was that the input write did not throw. Measured against a real busy
-   * pane: the paste succeeds, exit 0, and the TUI then prints "Messages to be
-   * submitted after next tool call" and holds the text — unsubmitted for over
-   * two minutes while the model reasoned. Hive recorded "applied" at the exact
-   * moment the screen said the opposite. That is measuring bytes written to a
-   * pane and reporting that a mind changed.
+   * Do not mark a normal message "applied" — the strongest claim in the
+   * system, meaning the recipient acted on it — on the evidence that the
+   * input write did not throw. A busy pane accepts the paste, exit 0, and
+   * the TUI then prints "Messages to be submitted after next tool call" and
+   * holds the text, unsubmitted, while the model reasons: bytes written to a
+   * pane are not a mind that changed.
    *
    * So delivery claims only what it can prove: the message was injected. It
    * becomes "applied" in `reconcileInjected`, when the recipient produces a
@@ -1810,8 +1783,8 @@ export class MessageDelivery {
     const stored = this.requireMessageTransition(message.id, "injected", now);
 
     // The acknowledgement clock starts when the agent could first have seen it,
-    // not when the sender pressed send. Charging a recipient for time its message
-    // spent queued is how a control expired seventeen minutes before it arrived.
+    // not when the sender pressed send: charging a recipient for time its
+    // message spent queued can expire a control before it arrives.
     const ackBudgetMs = this.ackBudgetMs(stored);
     if (stored.deadlineAt !== null && ackBudgetMs !== null) {
       const deadline = new Date(

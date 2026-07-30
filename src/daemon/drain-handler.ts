@@ -12,20 +12,20 @@ const isTerminal = (agent: AgentRecord): boolean =>
   agent.status === "held" || isTerminalAgentStatus(agent.status);
 
 /**
- * The drain handler (§07–§09, docs/design/quota-lifecycle-redesign.html) —
- * the one muscle the quota redesign adds. A mid-work agent whose provider's
- * usage is spent is handled by exactly one of three arms:
+ * The drain handler: a mid-work agent whose provider's usage is spent is
+ * handled by exactly one of three arms:
  *
- * - HOLD (§08): the drained window resets within the hour. The agent is
- *   marked `held`; the daemon's existing 30-second maintenance sweep pokes
- *   it with a continue message once the reset has passed. No new timers.
- * - REPLACEMENT (§09): C4 freezes and retains the source run, then reports the
- *   replacement seam. C5 owns the handoff and replacement itself.
- * - ALL-DRAINED (§07): no provider has usage — every metered pool is spent
- *   AND every unmetered route has errored. Wait for the nearest 5-hour
- *   reset, or the 7-day reset if it lands within 5 hours; otherwise the
- *   branch is preserved and a memory written so work resumes when
- *   availability returns.
+ * - HOLD: the drained window resets within the hour. The agent is marked
+ *   `held`; the daemon's 30-second maintenance sweep pokes it with a
+ *   continue message once the reset has passed. No new timers.
+ * - REPLACEMENT: the source run is frozen and retained, then the
+ *   replacement seam is reported; the handoff and replacement itself are
+ *   owned outside this handler.
+ * - ALL-DRAINED: no provider has usage — every metered pool is spent AND
+ *   every unmetered route has errored. Wait for the nearest 5-hour reset,
+ *   or the 7-day reset if it lands within 5 hours; otherwise the branch is
+ *   preserved and a memory written so work resumes when availability
+ *   returns.
  *
  * Unmetered providers (opencode today) are never held — there is no reset
  * to wait for — and their drain is known only through a vendor rate-limit
@@ -45,7 +45,7 @@ const VENDOR_DRAIN_PATTERNS: Record<CapabilityProvider, readonly RegExp[]> = {
   // Codex surfaces "Rate limit reached" and usage-limit errors verbatim.
   codex: [/rate.?limit/i, /\b429\b/, /usage.?limit/i, /quota/i],
   grok: [/rate.?limit/i, /\b429\b/, /quota/i],
-  // Kimi's provider errors carry provider.rate_limit (asyncapi spec).
+  // Kimi's provider errors carry provider.rate_limit.
   kimi: [/rate.?limit/i, /rate_limit/, /\b429\b/, /quota/i],
   opencode: [/rate.?limit/i, /\b429\b/, /quota/i],
 };
@@ -103,10 +103,10 @@ export class DrainHandler {
     this.drainErrors.delete(provider);
   }
 
-  /** A spawn or turn failed with a vendor rate-limit error (§07). Routes
-   * here INSTEAD of the launch-failure quarantine: the route is not broken,
+  /** A spawn or turn failed with a vendor rate-limit error. Routes here
+   * INSTEAD of the launch-failure quarantine: the route is not broken,
    * the meter is empty. The agent is already terminal at this point — a hold
-   * is meaningless for a corpse, so C4 reports the replacement seam without
+   * is meaningless for a corpse, so this reports the replacement seam without
    * destroying its terminal or worktree. */
   async onVendorError(agent: AgentRecord, failure: string): Promise<void> {
     this.drainErrors.set(agent.tool, new Date(this.clock()).toISOString());
@@ -168,7 +168,7 @@ export class DrainHandler {
         drained.resetsAt !== null &&
         new Date(drained.resetsAt).getTime() - now.getTime() <= HOLD_WINDOW_MS
       ) {
-        // §08: a reset within the hour is a hold, never a handoff.
+        // A reset within the hour is a hold, never a handoff.
         if (!(await this.hold(agent, reason, drained.resetsAt))) {
           await this.deps.requestReplacement(agent, {
             ...drain,
@@ -195,7 +195,7 @@ export class DrainHandler {
     await this.deferReplacement(agent, drain);
   }
 
-  /** Every metered provider drained AND every unmetered route errored (§07). */
+  /** Every metered provider drained AND every unmetered route errored. */
   private allDrained(): boolean {
     const quota = this.deps.quota;
     if (quota === undefined) return false;
@@ -210,7 +210,7 @@ export class DrainHandler {
     return this.deps.quota?.isMetered(provider) ?? false;
   }
 
-  /** §07: wait for the nearest reset, or preserve and remember. */
+  /** Wait for the nearest reset, or preserve and remember. */
   private async allDrainedArm(
     agent: AgentRecord,
     drain: ReplacementDrain,

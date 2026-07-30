@@ -1,27 +1,21 @@
-// Session digests — the L2 layer of the per-project episodic store
-// (HiveMemory HM-2 WP4, board #72; planning/story-m3-s37-digests-lifecycle.md
-// DoD 1-3, 9-11).
+// Session digests — the L2 layer of the per-project episodic store.
 //
-// DESIGN DECISION (ratified before this WP started, recorded here so later
-// readers do not reopen it): the digest compiler is DETERMINISTIC and
-// STRUCTURED — a pure fold over typed episodic records — not an LLM
-// summarizer. The local 7-8B distiller of S3.7 DoD 8 stays a measured,
-// gated upgrade (plan D-note: the distiller AC is exercised only when its
-// floor-machine numbers exist). A deterministic fold is the stronger choice
-// on the two axes this layer lives or dies by: provenance (every line is
-// emitted from the row it cites, never "recalled") and drift-audit (the
-// audit below is recompute-and-compare, which only works because
-// compilation has no sampling noise). It also satisfies the "fresh
-// summarizer, never the session's own agent, never on the hot path" rule
-// trivially: the compiler is daemon code running at lifecycle boundaries.
+// The digest compiler is DETERMINISTIC and STRUCTURED — a pure fold over
+// typed episodic records — not an LLM summarizer. A deterministic fold is
+// the stronger choice on the two axes this layer lives or dies by:
+// provenance (every line is emitted from the row it cites, never
+// "recalled") and drift-audit (the audit below is recompute-and-compare,
+// which only works because compilation has no sampling noise). The compiler
+// is daemon code running at lifecycle boundaries — never the session's own
+// agent, never on the hot path.
 //
 // The digest is a navigation aid labeled hint-not-authority: every
 // load-bearing line carries its [eN] event-id pointer, and exact values
 // (SHAs, paths, error strings, exit codes) are extracted into a typed side
-// table because prose provably drops them (S3.7 DoD 3). Persisted
-// provenance is `{ eventIds: [...], sessionId, agent }` — the shape the WP3
-// retention reference-check recognizes, so a digest pins its drill-down
-// rows against the hot-tier sweep.
+// table because prose provably drops them. Persisted provenance is
+// `{ eventIds: [...], sessionId, agent }` — the shape the retention
+// reference-check recognizes, so a digest pins its drill-down rows against
+// the hot-tier sweep.
 import { z } from "zod";
 import { estimateTokens } from "./episodic-projections";
 import type {
@@ -32,7 +26,7 @@ import type {
 
 /** Same landing/completion classification as the what-landed query class. */
 const OUTCOME_PATTERN = /land|complete/i;
-/** Failure rows feed the WP5 mistake harvester; keep the pattern deliberate. */
+/** Failure rows feed the mistake harvester; keep the pattern deliberate. */
 const FAILURE_PATTERN = /error|fail|blocked|kill/i;
 
 // Bounds: a digest answers "catch me up" at O(hundreds of tokens), so the
@@ -54,15 +48,15 @@ export const MemoryDigestInputSchema = z.object({
   sessionId: z.string().min(1).optional(),
   digestId: z.number().int().positive().optional(),
   /** Drill-down: also return the exact source event row(s) behind this
-   * event-id pointer — the hint-to-authority path (S3.7 DoD 10). */
+   * event-id pointer — the hint-to-authority path. */
   eventId: z.number().int().positive().optional(),
   /** May only lower the server-enforced ceiling. */
   budget: z.number().int().positive().optional(),
 });
 export type MemoryDigestInput = z.infer<typeof MemoryDigestInputSchema>;
 
-/** A landing/completion workspace event is a digest activity boundary
- * (S3.7 DoD 2): the daemon re-synthesizes the agent's rolling digest when
+/** A landing/completion workspace event is a digest activity boundary:
+ * the daemon re-synthesizes the agent's rolling digest when
  * the ingested event kind says so, or a status report declares the work
  * complete. */
 export function isDigestBoundaryEvent(
@@ -80,7 +74,7 @@ interface ExactValue {
 
 export type { ExactValue };
 
-// Exact-value extraction (S3.7 DoD 3): SHAs, file paths, error strings,
+// Exact-value extraction: SHAs, file paths, error strings,
 // exit codes, and typed counts are pulled out of the event's summary AND
 // its provenance JSON into typed rows — never trusted to prose. Patterns
 // are deliberately conservative: a false row costs a table line, a missed
@@ -93,7 +87,7 @@ const EXIT_CODE_PATTERN =
 const ERROR_PATTERN = /\b(\w*(?:Error|Exception))\s*:?\s*([^\n;.]{0,100})/g;
 const COUNT_PATTERN = /\b(\d+)\s+(commits?|files?|tests?|events?)\b/g;
 
-// Exported for the WP5 pitfall harvester: a candidate's exact-values table is
+// Exported for the pitfall harvester: a candidate's exact-values table is
 // extracted with the exact same patterns the digest side table uses, so a
 // pitfall and its session digest never disagree about what the values were.
 export function extractExactValues(
@@ -295,7 +289,7 @@ export interface DigestDriftReport {
   detail: string;
 }
 
-/** The digest-drift audit (S3.7 DoD 2): because compilation is a
+/** The digest-drift audit: because compilation is a
  * deterministic fold, the stored digest must equal a fresh recompile from
  * the exact source rows its provenance names (compiled_at excepted — it is
  * metadata, not body). Any difference is drift: a tampered body, swept

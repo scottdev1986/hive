@@ -5,7 +5,7 @@
 // not survive an exec.
 //
 // This does not stop a same-UID process that knows the path from reading the
-// file — nothing at this layer can, and the blueprint says so. What it does is
+// file — nothing at this layer can. What it does is
 // guarantee that a process which merely *descends* from a credential holder
 // inherits nothing usable.
 import {

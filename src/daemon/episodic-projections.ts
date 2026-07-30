@@ -1,11 +1,11 @@
-// The read side of the per-project episodic store (HiveMemory HM-1 WP2):
+// The read side of the per-project episodic store:
 // L0 typed projections over the daemon's status/token/episodic stores, an L1
 // bounded-excerpt FTS index over episodic events + facts, and the
 // `memory_query` class dispatcher every MCP caller goes through.
 //
 // Every projection is a maintained query — SQL or a left-fold over rows the
 // stores already hold; no LLM, no ranking, no journal scans. Each row carries
-// its own source/freshness labels and an `asOf` anchor, per the S3.6 sketch.
+// its own source/freshness labels and an `asOf` anchor.
 //
 // Two disciplines are enforced here, not in the transport:
 //  - Token ceilings: every class has a server-side default budget; a caller

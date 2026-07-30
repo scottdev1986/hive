@@ -1,4 +1,4 @@
-// The per-project episodic store (HiveMemory HM-1 WP1): the daemon's typed
+// The per-project episodic store: the daemon's typed
 // record of what happened and what is currently believed, for exactly one
 // project. The store file lives under the per-project state directory keyed by
 // the project registry's hiveUuid, so two projects can never share a store and
@@ -82,13 +82,13 @@ export const EpisodicDigestSchema = z.object({
   compiledAt: IsoTimestampSchema,
   body: z.string(),
   /** JSON: `{ eventIds: [...], sessionId, agent }` — the exact rows the digest
-   * was folded from, in the WP3 retention reference-check shape. */
+   * was folded from, in the shape the retention reference-check recognizes. */
   provenance: z.string(),
 });
 export type EpisodicDigest = z.infer<typeof EpisodicDigestSchema>;
 
 /**
- * Wake-delta high-water mark (HiveMemory HM-3 WP6): how much of each scope's
+ * Wake-delta high-water mark: how much of each scope's
  * wiki ingest log an agent has already been shown, persisted in the meta
  * table so it survives daemon restart.
  *
@@ -140,7 +140,7 @@ const DigestRowSchema = z.object({
   provenance: z.string(),
 });
 
-/** One row of the semantic leg's vector store (HiveMemory HM-5, board #122).
+/** One row of the semantic leg's vector store.
  * The vector decodes from the BLOB as little-endian Float32 — the exact
  * bytes the embedder produced, no re-normalization at rest. */
 export interface MemoryEmbeddingRow {
@@ -267,7 +267,7 @@ export class EpisodicStore {
         provenance TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS events_agent_ts ON events(agent, ts);
-      -- Session digests (HiveMemory HM-2 WP4): one row per agent+session,
+      -- Session digests: one row per agent+session,
       -- replaced on every rolling re-synthesis. Digests and facts are never
       -- swept; the retention sweep reads provenance to spare referenced
       -- events.
@@ -279,7 +279,7 @@ export class EpisodicStore {
         body TEXT NOT NULL,
         provenance TEXT NOT NULL
       );
-      -- The semantic recall leg's vector store (HiveMemory HM-5, board #122):
+      -- The semantic recall leg's vector store:
       -- one row per embedded source — a wiki article (kind 'article', scope
       -- repo/global) or an episodic fact (kind 'fact', scope ''). The vector
       -- is the model's Float32 embedding as raw bytes; corpora are small, so
@@ -476,7 +476,7 @@ export class EpisodicStore {
       .map((row) => EpisodicEventSchema.parse(EventRowSchema.parse(row)));
   }
 
-  /** Raw provenance JSON of every digest row (HiveMemory HM-2 WP3): the
+  /** Raw provenance JSON of every digest row: the
    * retention sweep parses these to learn which event rows are still a
    * digest's drill-down target and must survive the hot-tier cutoff. */
   digestProvenanceBlobs(): string[] {
@@ -486,7 +486,7 @@ export class EpisodicStore {
       .map((row) => z.object({ provenance: z.string() }).parse(row).provenance);
   }
 
-  /** Write a compiled digest (HiveMemory HM-2 WP4). Rolling re-synthesis is
+  /** Write a compiled digest. Rolling re-synthesis is
    * replace, not merge: any existing row for the same agent+session is
    * deleted first, so naive-merge drift is impossible by construction and
    * there is at most one digest per agent+session. */
@@ -589,7 +589,7 @@ export class EpisodicStore {
   }
 
   /**
-   * The agent's wake-delta high-water mark (HiveMemory HM-3 WP6), or null
+   * The agent's wake-delta high-water mark, or null
    * when none was ever seeded — a fresh agent whose spawn-time baseline was
    * not recorded. A corrupt mark also reads as null: re-baselining silently
    * is the safe degradation, because the alternative is flooding every
@@ -623,7 +623,7 @@ export class EpisodicStore {
   }
 
   // -------------------------------------------------------------------------
-  // Vector store (HiveMemory HM-5, board #122). These rows are a projection,
+  // Vector store. These rows are a projection,
   // never truth: maintained on the memory write paths and pruned when the
   // source article/fact disappears.
   // -------------------------------------------------------------------------
@@ -700,7 +700,7 @@ export class EpisodicStore {
   }
 
   /** Per-kind vector-row counts without deserializing the vectors — the
-   * status surface's cheap projection-health read (defect D2). */
+   * status surface's cheap projection-health read. */
   memoryEmbeddingCounts(): { articles: number; facts: number } {
     const rows = this.database
       .query(

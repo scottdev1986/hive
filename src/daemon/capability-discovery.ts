@@ -21,7 +21,7 @@ import { pendingControlResponses, pendingResponses } from "./quota-sources";
 /**
  * Runtime capability discovery.
  *
- * Both vendors publish, for free, what the signed-in account may launch and
+ * Every vendor publishes, for free, what the signed-in account may launch and
  * which effort values each model accepts. Hive reads those catalogs here and
  * turns them into capability records. Nothing in this file spends a prompt:
  *
@@ -32,11 +32,15 @@ import { pendingControlResponses, pendingResponses } from "./quota-sources";
  * - **Codex** answers `model/list` after the mandatory `initialize` +
  *   `initialized` handshake. No `thread/start` and no `turn/start`, so nothing
  *   bills.
+ * - **Grok** prints its catalog with `grok models` and refreshes a local
+ *   cache; Hive reads both, and requires positive liveness evidence before
+ *   trusting either.
+ * - **Kimi** prints its catalog with `kimi provider list --json`; the
+ *   unflagged default comes from the config file's `default_model`.
+ * - **opencode** prints its catalog with `opencode models`; the unflagged
+ *   default comes from the global config's `model` key.
  *
- * Verified by driving the binaries on 2026-07-11: claude 2.1.207 and
- * codex-cli 0.144.1.
- *
- * The two surfaces are not symmetric, and this file refuses to pretend they are.
+ * The surfaces are not symmetric, and this file refuses to pretend they are.
  * Claude reports `supportsEffort` and an effort list but no per-model default
  * effort and no hidden flag. Codex reports a default effort and a hidden flag
  * but no `supportsEffort` boolean. Every gap is recorded as `unknown` with the
@@ -1024,10 +1028,10 @@ export class KimiCliCapabilityTransport implements KimiCapabilityTransport {
  * The canonical id IS the alias. Every consumer downstream of this record —
  * first-boot chain seeds, the picker's chain entries, the flagship lookup,
  * and the spawn itself — carries canonicalId verbatim into `kimi -m`, which
- * accepts an alias and never the raw model id (`entry.model`). An earlier
- * shape used the raw id as canonicalId, and every seeded kimi chain entry
- * derived "model no longer offered" while every fresh entry spawned an
- * alias kimi could not resolve.
+ * accepts an alias and never the raw model id (`entry.model`). Do not use the
+ * raw id as canonicalId: `kimi -m` cannot resolve it, so seeded chain entries
+ * would read as "model no longer offered" and fresh spawns would target an
+ * unresolvable model.
  */
 export function recordsFromKimiProviderList(
   payload: KimiCapabilityPayload,
