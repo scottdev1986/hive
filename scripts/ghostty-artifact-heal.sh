@@ -6,12 +6,12 @@
 #
 # This MUST run while make is PARSING, not as a prerequisite of the stamp rule.
 # GNU Make 3.81 (what macOS ships) stats a target once and decides then whether
-# to remake it, so a recipe that deletes the stamp afterwards — even an
-# order-only prerequisite's, which is where this check first landed — changes
-# nothing: the rebuild recipe never runs, the staging rule never runs, make
-# exits 0, and the stamp is silently gone. That shipped a Workspace app whose
-# embedded engine build id no longer matched sessiond's, so every pane viewer
-# attach failed the M3 engine fence and the pane read "renderer disconnected".
+# to remake it, so a recipe that deletes the stamp later — even from an
+# order-only prerequisite — changes nothing: the rebuild never runs, make
+# exits 0, and the stamp is silently gone. Without a parse-time heal, a stale
+# cached artifact stages a Workspace app whose embedded engine build id
+# disagrees with sessiond, every pane attach fails the engine fence, and the
+# pane reads "renderer disconnected".
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)

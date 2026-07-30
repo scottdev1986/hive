@@ -1,22 +1,15 @@
 #!/usr/bin/env bun
 /**
- * Prove the release we are about to publish is one that `hive update` will
- * actually accept.
+ * Prove the release we are about to publish is one `hive update` will accept.
  *
  * `bun run scripts/signing/verify-manifest.ts dist/hive-release.json`
  *
- * This is the gate that catches a mismatched key pair, and it matters more than
- * it looks. Verification is fail-closed: a binary that embeds a public key
- * refuses any manifest that key cannot vouch for. So if `HIVE_RELEASE_PUBLIC_KEY`
- * and `HIVE_RELEASE_PRIVATE_KEY` ever disagree — a bad paste into a secret, a
- * half-finished rotation — the pipeline would happily sign, tag, and publish a
- * release that *every installed Hive on earth refuses to install*, including the
- * ones that would have carried the fix. The failure is silent at build time and
- * total at update time.
- *
- * So we check it here, before the tag exists, using the same `verifyManifest`
- * the client uses and the same public key the binary embedded. A mismatch fails
- * the release instead of burning a version number on an uninstallable one.
+ * Catches a mismatched key pair before the tag exists. Verification is
+ * fail-closed: a binary with an embedded public key refuses any manifest that
+ * key cannot vouch for. If `HIVE_RELEASE_PUBLIC_KEY` and
+ * `HIVE_RELEASE_PRIVATE_KEY` disagree, the pipeline would publish a release
+ * every installed Hive refuses to install. Uses the same `verifyManifest` and
+ * public key the client embeds.
  */
 import { readFileSync } from "node:fs";
 import {

@@ -1,29 +1,20 @@
 #!/usr/bin/env bash
-# Build Hive's graphify bundles: the per-platform standalone artifacts
-# `hive init` downloads (`hive graphify enable` repairs).
+# Build per-platform graphify bundles that `hive init` downloads
+# (`hive graphify enable` repairs).
 #
 #   scripts/graphify/build.sh [--build-number N] [--arch arm64|x64] [--out DIR]
 #
-# From the repo's graphify.lock (the freeze input, regenerated only from
-# scripts/graphify/graphify.in), this produces for each platform slice:
-#   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst        the artifact
-#   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst.sha256 its hash
+# From graphify.lock (regenerated only from graphify.in), each platform slice:
+#   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst
+#   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst.sha256
 #
-# Signing rides the same environment contract as src/release/build.ts:
-#   MACOS_SIGN_IDENTITY   set → every Mach-O in each bundle is signed with the
-#                         hardened runtime and scripts/graphify/entitlements.plist
-#   MACOS_NOTARY_KEY_PATH/_KEY_ID/_ISSUER_ID
-#                         set (with the identity) → each signed bundle is
-#                         zipped and submitted to notarytool; a rejection
-#                         fails the build. Bare Mach-Os cannot staple; the
-#                         ticket is server-side (same posture as the CLI
-#                         slices, docs/release/versioning-and-release.md).
-# With neither set the bundles are ad-hoc-signed by PyInstaller and the build
-# says so — same graceful degradation as an unsigned Hive release.
+# Signing matches src/release/build.ts:
+#   MACOS_SIGN_IDENTITY set → hardened runtime + graphify entitlements
+#   MACOS_NOTARY_* set (with identity) → notarytool; bare Mach-Os cannot staple
+# With neither set, PyInstaller ad-hoc signs (same as an unsigned Hive release).
 #
-# Requires: uv, zstd, /usr/bin/tar; Rosetta 2 for the darwin-x64 slice on an
-# arm64 host. The interpreter and PyInstaller pins below are part of the
-# reproducibility contract — bump them deliberately, like the graphify pin.
+# Requires: uv, zstd, tar; Rosetta 2 for darwin-x64 on arm64 hosts. Interpreter
+# and PyInstaller pins below are part of the reproducibility contract.
 set -euo pipefail
 
 PYTHON_KEY_ARM64="cpython-3.12.8-macos-aarch64-none"

@@ -55,11 +55,11 @@ mkdir -p "$TMP/native/include" "$TMP/workspace/Vendor"
   printf 'symbol_list_sha256=%s\n' "$(lock_value ghostty.symbolListSha256)"
 } >"$EVIDENCE/provenance.txt" 2>&1
 
-# Patch-series digest controls. Green control: the real series digests to the
-# locked value. Missing-patch positive control: deleting one series entry from
-# a copied fake repo root must make the digest command fail with NO digest on
-# stdout — this is the guard that a dropped entry can never silently digest a
-# partial payload (the pre-fix pipeline subshell swallowed the failure).
+# Patch-series digest controls. Green: the real series digests to the locked
+# value. Missing-patch positive control: deleting one series entry from a
+# copied fake repo root must fail with NO digest on stdout. Do not digest a
+# partial payload when a series entry is missing (a pipeline subshell can
+# swallow the failure and still exit 0).
 expected_series_sha=$(lock_value ghostty.patchSeriesSha256)
 green_series_sha=$("$ROOT/scripts/vendor-ghostty.sh" patch-series-sha256)
 if [[ "$green_series_sha" != "$expected_series_sha" ]]; then

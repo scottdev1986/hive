@@ -4,17 +4,14 @@
  *
  * `bun run scripts/signing/sign-manifest.ts dist/hive-release.json`
  *
- * Reads the private key from `HIVE_RELEASE_PRIVATE_KEY` (base64 of the PKCS#8
- * DER, exactly what `openssl pkey -outform DER | base64` prints) and writes
- * `<manifest>.sig` — the base64 Ed25519 signature over the manifest's *exact*
- * bytes. Key order and whitespace are part of what is signed, so this signs the
- * file on disk rather than a re-serialization.
+ * Private key from `HIVE_RELEASE_PRIVATE_KEY` (base64 PKCS#8 DER from
+ * `openssl pkey -outform DER | base64`). Writes `<manifest>.sig` — base64
+ * Ed25519 over the manifest's exact on-disk bytes (key order and whitespace
+ * are part of the signed surface).
  *
- * This is the one small script the private key ever touches. The build never
- * sees it; the key lives offline and reaches CI only as a secret consumed here.
- * The public half is embedded in the binary via `build.ts --public-key`, and the
- * moment it is embedded `verifyManifest` becomes mandatory and fail-closed — a
- * stripped `.sig` is then a refusal, not a downgrade.
+ * Only script the private key ever touches. Public half is embedded via
+ * `build.ts --public-key`; once embedded, `verifyManifest` is fail-closed —
+ * a stripped `.sig` is a refusal, not a downgrade.
  */
 import { createPrivateKey, sign as edSign } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";

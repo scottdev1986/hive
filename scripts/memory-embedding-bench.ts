@@ -1,13 +1,12 @@
-// Floor measurement for the HiveMemory HM-5 semantic leg (board #122, plan
-// D4 acceptance criterion): the REAL local embedding model (fastembed,
-// bge-small-en-v1.5 by default) on this machine —
+// Floor measurement for the real local embedding model (fastembed,
+// bge-small-en-v1.5 by default) on this machine:
 //
 //   1. model load time and RSS delta (the ~100–300 MB warm budget),
 //   2. per-embed latency for short memory records,
 //   3. brute-force cosine search latency over a 5k-record synthetic corpus
 //      (the vector store's full-scan design point).
 //
-// Runnable script, NOT a bun test: `bun scripts/memory-embedding-bench.ts`.
+// Runnable script, not a bun test: `bun scripts/memory-embedding-bench.ts`.
 // The model downloads (~90 MB, once) into the Hive-owned models dir. Override
 // the model with BENCH_MODEL=all-MiniLM-L6-v2.
 import { EpisodicStore } from "../src/daemon/episodic-store";

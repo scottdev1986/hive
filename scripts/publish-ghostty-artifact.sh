@@ -1,7 +1,6 @@
 #!/bin/bash
-# Atomic publish of a freshly built GhosttyKit artifact into the shared cache
-# (#46), extracted from build-ghosttykit.sh so the incumbent decision is
-# unit-testable.
+# Atomic publish of a freshly built GhosttyKit artifact into the shared cache.
+# Separated from build-ghosttykit.sh so the incumbent decision is unit-testable.
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -14,14 +13,14 @@ OUT=$1
 FINAL_OUT=$2
 LOCK=$3
 
-# Atomic publish into the shared artifact cache (#46). The cache key
-# (ghostty-<commit>-zig-<version>) omits the patch series and the other locked
-# inputs, so a same-key incumbent is kept ONLY when its manifest records the
-# same locked source identity — then it was built from identical inputs by a
-# concurrent build and must not be deleted out from under a consumer. A
+# The cache key (ghostty-<commit>-zig-<version>) omits the patch series and
+# other locked inputs, so a same-key incumbent is kept ONLY when its manifest
+# records the same locked source identity — then a concurrent build produced
+# identical inputs and must not be deleted out from under a consumer. A
 # mismatched incumbent is stale (patch-series change without a commit bump)
-# and the fresh build replaces it: keeping it shipped a Workspace renderer
-# whose engine build id no longer matched sessiond's (689bc0a0).
+# and the fresh build replaces it. Do not keep a mismatched incumbent: a
+# Workspace renderer whose engine build id disagrees with sessiond fails every
+# pane attach at the engine fence.
 if "$ROOT/scripts/ghostty-artifact-lock-check.sh" "$FINAL_OUT" "$LOCK"; then
   /bin/rm -rf "$OUT"
 else

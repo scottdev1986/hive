@@ -1,26 +1,19 @@
 #!/bin/sh
-# Gatekeeper verification gate for the signed release artifacts.
+# Gatekeeper verification gate for signed release artifacts.
 #
 #   scripts/signing/verify.sh dist [--require-notarization]
 #
-# Every check here is a release blocker: any signing defect exits non-zero, and
-# in CI this runs before the tag is pushed, so a bad signature can never mint a
-# version number. It verifies the exact bytes a user downloads — the CLI slices
-# on disk and the .app extracted from its tarball — not some intermediate.
+# Release blocker: any signing defect exits non-zero. CI runs this before the
+# tag is pushed. Verifies the exact bytes a user downloads — CLI slices on disk
+# and the .app from its tarball.
 #
-# Two levels:
-#   default              signature must be valid and hardened (a local dry run,
-#                        before notarization exists).
-#   --require-notarization  additionally, Gatekeeper must *accept* the artifact,
-#                        which only holds once Apple has notarized it. This is
-#                        what CI passes.
+#   default                 signature valid and hardened (local dry run).
+#   --require-notarization  Gatekeeper must *accept* the artifact (CI path).
 #
-# Standalone CLI binaries cannot be stapled, and `spctl --assess --type execute`
-# rejects ANY bare Mach-O — notarized or not — with "does not seem to be an app"
-# (verified against Anthropic's and Docker's notarized CLIs). Their notarization
-# is instead proven by `codesign --check-notarization -R="notarized"`, which
-# looks the CDHash up against Apple's ticket service online. Only the .app is a
-# bundle, so only it gets `spctl --assess` and a stapled-ticket check.
+# Bare Mach-O CLIs cannot be stapled; `spctl --assess --type execute` rejects
+# them regardless of notarization. Their notarization is proven by
+# `codesign --check-notarization -R="notarized"` against Apple's ticket service.
+# Only the .app gets `spctl --assess` and a stapled-ticket check.
 set -eu
 
 DIST="${1:?usage: verify.sh <dist-dir> [--require-notarization]}"
@@ -30,21 +23,19 @@ REQUIRE_NOTARIZATION=0
 fail() { printf 'verify: %s\n' "$1" >&2; exit 1; }
 note() { printf 'verify: %s\n' "$1"; }
 
-# codesign --verify --strict: the deterministic gate. Catches the truncated
-# signature a mis-built Bun binary produces, a broken seal, a missing runtime.
+# Deterministic gate: truncated Bun signature, broken seal, missing runtime.
 verify_signature() {
   path="$1"
   note "codesign --verify --strict $path"
   codesign --verify --strict --verbose=2 "$path" \
     || fail "$path failed strict signature verification"
-  # Hardened runtime must actually be on; notarization requires it and a plain
-  # Developer ID signature without it would pass --verify but fail notarization.
+  # Notarization requires hardened runtime; plain Developer ID would pass
+  # --verify and fail notarization.
   codesign --display --verbose=2 "$path" 2>&1 | grep -q "flags=.*runtime" \
     || fail "$path is not signed with the hardened runtime"
 }
 
-# spctl --assess: what Gatekeeper itself decides. Bundles only — it rejects any
-# bare Mach-O regardless of notarization, so this is reserved for the .app.
+# Gatekeeper's own decision. Bundles only — rejects bare Mach-O always.
 assess_gatekeeper() {
   path="$1"
   note "spctl --assess --type execute $path"
@@ -57,8 +48,7 @@ assess_gatekeeper() {
   fi
 }
 
-# The notarization proof for a standalone binary: codesign resolves its CDHash
-# against Apple's ticket service. Rejects a signed-but-unnotarized binary.
+# Standalone binary notarization: CDHash against Apple's ticket service.
 check_notarized_binary() {
   path="$1"
   note "codesign --check-notarization $path"
@@ -78,8 +68,7 @@ for arch in arm64 x64; do
   [ "$REQUIRE_NOTARIZATION" = 1 ] && check_notarized_binary "$sessiond"
 done
 
-# Prove the arm64 slice still runs after signing — a hardened-runtime crash from
-# a missing JIT entitlement would surface here, not on a user's machine.
+# Signed arm64 must still run — missing JIT entitlement crashes here, not later.
 note "running hive-darwin-arm64 --version"
 chmod +x "$DIST/hive-darwin-arm64"
 "$DIST/hive-darwin-arm64" --version >/dev/null || fail "signed hive-darwin-arm64 did not run"
@@ -99,23 +88,13 @@ if [ -f "$TARBALL" ]; then
   fi
 fi
 
-# The embedding runtime is not Developer-ID-signed (its Mach-Os are upstream
-# napi binaries, not ours to re-sign) — its trust anchor is the manifest
-# SHA-256, verified at download time, plus a SECOND anchor at load time: the
-# release build stages this tree BEFORE compiling the CLI and compiles the
-# digest of its loaded surface (dist/ and bin/ in full; node_modules, which is
-# not loaded, and INSTALL.json, which is not stable across machines, are
-# excluded) into the binary as HIVE_EMBEDDINGS_DIGEST. The daemon refuses to
-# import a runtime that does not match, which is what stops attacker-written
-# JavaScript in dist/entry.js from executing inside a signed, notarized process.
-# A build with no release key embeds no digest and does not verify: such a host
-# is itself unsigned and rewritable, so verification there would prove nothing.
-# That split must stay a property of the build — never add a flag or env var to
-# turn verification off, because a check that can be switched off is not one.
-# What this gate proves is that the published tarball has the layout the
-# installer and the daemon's loader expect: the bundled ESM, INSTALL.json, and
-# the native onnxruntime bin/ for BOTH darwin slices (the asset is universal,
-# listed for arm64 and x64 in the manifest).
+# Embedding runtime is not Developer-ID-signed (upstream napi binaries). Trust
+# anchors: manifest SHA-256 at download, plus HIVE_EMBEDDINGS_DIGEST of the
+# loaded surface (dist/ + bin/; not node_modules or INSTALL.json) compiled into
+# the CLI. The daemon refuses a mismatched runtime. Builds with no release key
+# embed no digest and skip verification — those hosts are themselves unsigned.
+# Never add a switch to turn verification off. This gate checks layout only:
+# bundled ESM, INSTALL.json, and onnxruntime natives for both darwin slices.
 RUNTIME_TARBALL="$DIST/embeddings-runtime.tar.gz"
 if [ -f "$RUNTIME_TARBALL" ]; then
   RUNTIME_WORK="$(mktemp -d)"

@@ -1,26 +1,17 @@
 #!/bin/sh
-# Prove your Developer ID and entitlements work — locally, before trusting CI.
+# Prove Developer ID + entitlements locally before trusting CI.
 #
 #   scripts/signing/dry-run.sh              # sign + verify the CLI slices (fast)
 #   scripts/signing/dry-run.sh --full       # also build, sign, notarize the .app
 #   scripts/signing/dry-run.sh --notarize   # notarize the CLI slices too
 #
-# This runs the *exact* production path: it sets the same environment variables
-# CI sets, calls the same `src/release/build.ts`, and runs the same
-# `verify.sh` gate. If this passes with your certificate, CI will too — the only
-# difference is where the certificate comes from (your keychain vs a secret).
+# Same production path as CI: same env vars, src/release/build.ts, verify.sh.
+# A `bun --compile` binary embeds a JIT; the hardened runtime kills it without
+# the right entitlements. This builds, signs, and *runs* a real Hive CLI so
+# signing mistakes show up here, not after release.
 #
-# The reason to run it: a `bun --compile` binary embeds JavaScriptCore, a JIT,
-# and the hardened runtime kills a JIT without the right entitlements. This
-# builds a real Hive CLI, signs it with your cert and Hive's entitlements, and
-# *runs it* — so a signing or entitlement mistake shows up on your machine now,
-# not on a user's machine after release.
-#
-# Prerequisites:
-#   - Xcode command-line tools (codesign, xcrun notarytool, stapler).
-#   - Your "Developer ID Application" certificate in the login keychain.
-#   - For notarization: an App Store Connect API key (.p8) and its ids, passed
-#     through MACOS_NOTARY_KEY_PATH / MACOS_NOTARY_KEY_ID / MACOS_NOTARY_ISSUER_ID.
+# Prerequisites: Xcode CLT; Developer ID Application cert in login keychain;
+# for notarization, MACOS_NOTARY_KEY_PATH / _KEY_ID / _ISSUER_ID.
 set -eu
 
 cd "$(dirname "$0")/../.."

@@ -1,7 +1,7 @@
 # Local dev build of Hive: consumer-shaped, unsigned, isolated from any
 # installed hive.
 #
-# The whole command surface (user ruling, 2026-07-21):
+# Public commands:
 #
 #   make clean   stop the dev instance, then delete all dev artifacts
 #   make build   build + stage the standalone dev release under .dev/
@@ -34,14 +34,14 @@ DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 
 DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
 # The dev home's memory state (memory/, projects/, project-registry.json,
 # models/) is SHARED with the real ~/.hive via symlinks that run's
-# scripts/dev-memory-setup.ts creates, so dev testing learns from live
-# lessons (user ruling 2026-07-23). Nothing in this Makefile may recursively
-# delete through those links: clean's rm -rf only ever receives the literal
-# $(DEV) / $(DEV_HOME) paths, and rm unlinks symlinks without following
-# them — keep it that way. Daemon runtime state (daemon.port, credentials,
-# runtime/, logs/, hive.db) stays per-home, never linked.
+# scripts/dev-memory-setup.ts creates, so dev testing reuses live lessons.
+# Nothing in this Makefile may recursively delete through those links: clean's
+# rm -rf only ever receives the literal $(DEV) / $(DEV_HOME) paths, and rm
+# unlinks symlinks without following them — keep it that way. Daemon runtime
+# state (daemon.port, credentials, runtime/, logs/, hive.db) stays per-home,
+# never linked.
 LOCK := $(ROOT)/native/toolchain-lock.json
-# Shared per-user cache (#46): zig caches and lock-keyed Ghostty artifacts live
+# Shared per-user cache: zig caches and lock-keyed Ghostty artifacts live
 # outside the checkout so worktrees share them. Correctness comes from content
 # keys, never the path.
 NATIVE_CACHE ?= $(HOME)/.cache/hive/native
@@ -83,8 +83,8 @@ $(if $(GHOSTTY_ARTIFACT_HEAL),$(info make: $(GHOSTTY_ARTIFACT_HEAL)))
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
 GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
 # Deliberately NOT SwiftPM's name: a debug build's file name becomes its process
-# name in the unified log, indistinguishable from the installed app
-# (docs/incidents/2026-07-20-workspace-death.md). The rule below renames it.
+# name in the unified log, indistinguishable from the installed app. The rule
+# below renames it so clean and process binding can tell them apart.
 WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspaceDev
 WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
 # Per-checkout: built from THIS worktree's sources, never the shared cache.
@@ -194,7 +194,7 @@ vendor-verify:
 	fi
 
 # No mtime prerequisites on purpose: the stamp name is the content key, so a
-# fresh worktree reuses the artifact instead of a 25-40 minute rebuild (#46).
+# fresh worktree reuses the artifact instead of a full rebuild.
 $(GHOSTTY_ARTIFACT_STAMP): | toolchain
 	@echo "building lock-pinned GhosttyKit"
 	@"$(ROOT)/scripts/build-ghosttykit.sh"
@@ -308,8 +308,8 @@ test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 	bun run test
 	cd workspace && swift test
 
-# Stop the dev instance, then delete every dev artifact — never the second
-# without the first (#44). Load-bearing invariants, each easy to break silently:
+# Stop the dev instance, then delete every dev artifact — never delete without
+# stopping first. Load-bearing invariants, each easy to break silently:
 #   - No kill is trusted: the sweep re-reads the process table and rm -rf runs
 #     only on an empty readback; a survivor refuses and exits non-zero.
 #   - Select by executable path and argv, never by process name — the user's

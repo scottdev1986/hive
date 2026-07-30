@@ -119,13 +119,13 @@ export async function verifyDevRun(
 }
 
 /**
- * The D1 guard for `make run`: the dev daemon must come up with the FULL
- * memory system, never silently FTS-only. The embedding service loads its
- * model lazily, so a live `memory_recall` through the daemon is the probe —
- * it dynamic-imports the external runtime bundle, loads the model, and
- * embeds the query. Afterwards hive_status's memory.embeddings section must
- * read "ready"; anything else (embedding-runtime-missing, disabled, …)
- * fails the run with the daemon's own detail.
+ * Guard for `make run`: the dev daemon must come up with the full memory
+ * system, never silently FTS-only. The embedding service loads its model
+ * lazily, so a live `memory_recall` through the daemon is the probe — it
+ * dynamic-imports the external runtime bundle, loads the model, and embeds
+ * the query. Afterwards hive_status's memory.embeddings section must read
+ * "ready"; anything else (embedding-runtime-missing, disabled, …) fails the
+ * run with the daemon's own detail.
  */
 export async function verifyMemoryLeg(devHome: string): Promise<void> {
   // readDaemonPort and the operator credential both resolve per-HIVE_HOME.

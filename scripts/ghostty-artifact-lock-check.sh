@@ -6,10 +6,9 @@
 #
 # The shared-cache key (ghostty-<commit>-zig-<version>) deliberately omits the
 # other locked inputs, so "same directory" does NOT imply "same inputs": a
-# patch-series change without a commit bump reuses the key. 689bc0a0 shipped
-# that way — the fresh engine was discarded in favor of a stale incumbent and
-# every Workspace pane attach failed its engine-build-id fence as
-# "renderer disconnected".
+# patch-series change without a commit bump reuses the key. Do not accept a
+# same-key mismatched incumbent — a stale engine fails every Workspace pane
+# attach at the engine-build-id fence ("renderer disconnected").
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then

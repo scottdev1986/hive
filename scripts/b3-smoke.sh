@@ -1,21 +1,15 @@
 #!/bin/bash
-# B3 replacement smoke — the driver half.
+# B3 smoke driver for the sessiond + HiveTerminalKit spine.
 #
-# Replaces the coverage of the retired workspace/scripts/smoke.sh on
-# the sessiond + HiveTerminalKit spine. Stands the stack up headless, runs the
-# in-process assertions (B3SmokeTests), then makes the POST-MORTEM assertions
-# from OUTSIDE the app — which is where the legacy harness put its two most
-# valuable invariants:
+# Stands the stack up headless, runs the in-process assertions (B3SmokeTests),
+# then makes post-mortem assertions from outside the app — the only place that
+# can see these two invariants after the viewer is gone:
 #
-#   detach never kills   (legacy SMOKE-61/62): closing a viewer must leave the
-#                        session alive. A smoke that only checks the viewer
-#                        cannot see this, because the viewer is gone.
-#   no leaked clients    (legacy SMOKE-64): after the viewer exits, nothing may
-#                        still be attached.
+#   detach never kills: closing a viewer must leave the session alive.
+#   no leaked clients:  after the viewer exits, nothing may still be attached.
 #
 # Headless by design: no Workspace app, no window, no GUI session required.
-# The GUI-bound checks live in SmokeRunner's opt-in sessiond proof and are
-# mapped separately — see workspace/docs/b3-smoke-coverage-mapping.md.
+# GUI-bound checks live in SmokeRunner's opt-in sessiond proof.
 #
 # Usage: scripts/b3-smoke.sh
 # Exit:  0 all stages passed; 1 any stage failed. Never pipes a run, so the
@@ -42,11 +36,10 @@ trap cleanup EXIT
 echo "B3 smoke — headless sessiond + HiveTerminalKit substrate"
 echo "home=$HOME_DIR port=$PORT"
 
-# The legacy harness destroyed its temp dirs even on failure, making
-# post-mortem debugging impossible. Keep artifacts instead.
+# Keep artifacts on failure so post-mortem debugging is possible.
 mkdir -p "$ARTIFACTS"
 
-# Wait for a previously-leaked port rather than failing on EADDRINUSE.
+# Wait out a leftover holder of this port rather than failing on EADDRINUSE.
 for _ in $(seq 1 30); do
     lsof -nP -iTCP:"$PORT" >/dev/null 2>&1 || break
     sleep 1
@@ -85,18 +78,16 @@ else
     pass "in-process stages"
 fi
 
-# ── POST-MORTEM: the viewer is gone; assert from OUTSIDE the app ──────────
+# Post-mortem: viewer is gone; assert from outside the app.
 HOST_DIR="$HOME_DIR/runtime/sessiond/hosts/$SESSION_ID"
 RECORD="$HOST_DIR/record.json"
 cp "$RECORD" "$ARTIFACTS/record-after-detach.json" 2>/dev/null
-# Snapshot the journal NOW, while the session is still live. It is a small
-# rolling window that the session's own output rotates out within seconds, so
-# a copy taken later would capture less. This is kept for whoever builds the
-# outside-the-app readback (GAP-4) and is deliberately NOT asserted on: a
-# partial window cannot support a completeness claim.
+# Snapshot the journal while the session is live. It is a small rolling window
+# that rotates out within seconds. Kept for outside-the-app readback; not
+# asserted on — a partial window cannot support a completeness claim.
 cp "$HOST_DIR/journal.bin" "$ARTIFACTS/journal-snapshot.bin" 2>/dev/null
 
-echo "[3/5] detach never kills (legacy SMOKE-61/62)"
+echo "[3/5] detach never kills"
 if [ ! -f "$HOST_DIR/final.json" ]; then
     pass "no final.json — session was not terminated by the viewer detaching"
 else
@@ -105,19 +96,12 @@ else
 fi
 
 if [ -f "$RECORD" ]; then
-    # NOT checked: record.json's "state" field. It is written at creation and
-    # is NOT rewritten when the session dies (death is recorded by writing
-    # final.json instead), so "state == live" reads back true even for a
-    # SIGKILLed session. Verified by mutation: killing the child left that
-    # field saying live while every other check went red. A clause that cannot
-    # fail is worse than an absent one, because it pads the pass list.
-    #
-    # The two checks below DO bite, both confirmed by that same mutation.
-    # Liveness is read from the process itself, not from a status file.
+    # Do not trust record.json "state": it is written at creation and never
+    # rewritten when the session dies (death writes final.json). "state == live"
+    # stays true even after SIGKILL. Read liveness from the process itself.
     hpid=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["processRoot"]["pid"])' "$RECORD" 2>/dev/null)
     HOSTPID=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["hostPid"])' "$RECORD" 2>/dev/null)
-    # Captured while still live: after teardown the record may be gone, and a
-    # pid read from a post-mortem file cannot be checked against the world.
+    # Capture while live: after teardown the record may be gone.
     RECORDED_PIDS="$hpid $HOSTPID"
     if kill -0 "$hpid" 2>/dev/null; then
         pass "session child pid $hpid still alive after detach"
@@ -128,9 +112,8 @@ else
     fail "no record.json at $RECORD"
 fi
 
-echo "[4/5] no leaked attach clients (legacy SMOKE-64)"
-# The per-host socket path is declared by the record itself rather than
-# guessed, so this cannot silently skip because a name changed.
+echo "[4/5] no leaked attach clients"
+# Socket path comes from the record, not a guessed name.
 SOCKREL=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("socketRelativePath",""))' "$RECORD" 2>/dev/null)
 SOCK="$HOST_DIR/$SOCKREL"
 if [ -n "$SOCKREL" ] && [ -S "$SOCK" ]; then
@@ -152,12 +135,9 @@ for _ in $(seq 1 20); do
     [ -f "$HOST_DIR/final.json" ] && break
     sleep 1
 done
-# PRIMARY: verify the recorded PIDs are gone by asking the OS, not by reading
-# sessiond's own account of itself. final.json's survivors/waitObserved are an
-# attestation written by the thing being torn down; they are not vacuous (that
-# file is written at the moment it describes, unlike record.json's create-time
-# "state"), but an attestation is weaker than a measurement. The measurement is
-# authoritative here and the attestation corroborates it.
+# Primary: recorded PIDs gone according to the OS, not sessiond's self-report.
+# final.json survivors/waitObserved are an attestation from the process under
+# test — weaker than a process-table measurement.
 leaked=""
 for p in $RECORDED_PIDS; do
     [ -n "$p" ] || continue
@@ -170,7 +150,7 @@ else
     ps -o pid,stat,command -p ${leaked// /,} > "$ARTIFACTS/survivors.txt" 2>&1
 fi
 
-# CORROBORATION: sessiond's own record must agree with what we just measured.
+# Corroboration: sessiond's own record must agree with the measurement.
 if [ -f "$HOST_DIR/final.json" ]; then
     cp "$HOST_DIR/final.json" "$ARTIFACTS/final.json"
     survivors=$(/usr/bin/python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["survivors"]))' "$HOST_DIR/final.json" 2>/dev/null)

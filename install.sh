@@ -2,15 +2,16 @@
 # Hive installer.
 #
 # Short enough to audit, which is the only reason `curl | sh` is acceptable.
-# Read it first: https://github.com/scottdev1986/hive/blob/main/install.sh
+# Read this file before piping it to a shell.
 #
-# It downloads a published release, checks every artifact's SHA-256 against the
-# release manifest, proves the binary runs, and only then points ~/.local/bin/hive
-# at it. It never modifies an existing unmanaged binary.
+# Downloads a published release, checks every artifact's SHA-256 against the
+# release manifest, proves the binary runs, and only then points
+# ~/.local/bin/hive at it. Never modifies an existing unmanaged binary.
 #
-# Releases without Hive manifest signature material are refused. Portable shell
-# does not verify Ed25519; it preserves the exact manifest bytes and normalized
-# signature for Hive to verify before offline rollback. See the release docs.
+# Releases without Hive manifest signature material are refused. Portable
+# shell does not verify Ed25519; it preserves the exact manifest bytes and
+# normalized signature so the installed binary can verify them before offline
+# rollback.
 set -eu
 
 REPO="${HIVE_REPO:-scottdev1986/hive}"
@@ -80,9 +81,8 @@ fetch "hive-darwin-$ARCH"
 fetch "hive-sessiond-darwin-$ARCH"
 fetch HiveWorkspace.tar.gz
 
-# Every artifact's digest must be the one the manifest names. The manifest is
-# served over TLS from GitHub Release hosting; `hive update` additionally
-# verifies its Ed25519 signature against the embedded release key.
+# Every artifact digest must match the manifest. The manifest arrives over TLS;
+# `hive update` also verifies its Ed25519 signature against the embedded key.
 digest_in_manifest() {
   tr -d ' \n' < "$TMP/hive-release.json" |
     sed -n "s/.*\"name\":\"$1\",[^}]*\"sha256\":\"\([0-9a-f]\{64\}\)\".*/\1/p" | head -1
@@ -106,20 +106,19 @@ mv "$TMP/hive-sessiond-darwin-$ARCH" "$STAGING_DIR/hive-sessiond"
 chmod 755 "$STAGING_DIR/hive-sessiond"
 tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
 
-# Preserve the exact manifest bytes and normalized signature for a future
-# offline rollback. The shell installer requires this material but does not
-# verify Ed25519 itself; the installed binary does so before rollback.
+# Exact manifest bytes + normalized signature for offline rollback. This shell
+# does not verify Ed25519; the installed binary does before rollback.
 manifest_base64="$(base64 < "$TMP/hive-release.json" | tr -d '\n')"
 printf '{\n  "schema": 1,\n  "manifestBase64": "%s",\n  "signature": "%s"\n}\n' "$manifest_base64" "$signature" > "$STAGING_DIR/release-verification.json"
 
-# Run it before it can ever be `current`.
+# Prove the staged binary runs before it can become `current`.
 reported="$("$STAGING_DIR/hive" --version 2>/dev/null || true)"
 case "$reported" in
   *"$RESOLVED"*) ;;
   *) die "staged binary reported '$reported', expected $RESOLVED" ;;
 esac
 
-# The complete replacement is proven before an existing version is touched.
+# Full replacement is proven before any existing version is touched.
 rm -rf "$VERSION_DIR"
 mv "$STAGING_DIR" "$VERSION_DIR"
 STAGING_DIR=""
@@ -139,14 +138,11 @@ printf '{\n  "active": "%s",\n  "previous": %s\n}\n' "$RESOLVED" \
   "$([ -n "${PREVIOUS:-}" ] && printf '"%s"' "$PREVIOUS" || printf 'null')" \
   > "$ROOT/state.json"
 
-# Semantic memory needs an embedding runtime that cannot live inside the
-# single-file binary (native napi graph), so installing Hive installs it too:
-# there is no separate command to run. It is fetched with the same manifest
-# SHA-256 check as everything above and unpacked into the machine-level tools
-# dir the daemon loads from. A failure here is loud but not fatal — the binary
-# is already installed and `hive init` provisions (and load-verifies) the
-# runtime again — because keyword-only memory is a worse product, not a broken
-# one. What is never acceptable is a silent gap.
+# Embedding runtime cannot ship inside the single-file binary (native napi).
+# Install it here with the same manifest SHA-256 check into the machine-level
+# tools dir the daemon loads from. Failure is loud but not fatal — the binary
+# is already installed and `hive init` provisions again — because keyword-only
+# memory is degraded product, not a broken install. Silent gap is never OK.
 EMBEDDINGS_DIR="${HIVE_EMBEDDINGS_HOME:-${HIVE_HOME:-$HOME/.hive}/tools/embeddings}"
 embeddings_note=""
 printf 'Fetching the embedding runtime...\n'

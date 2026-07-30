@@ -25,12 +25,12 @@ if [ ! -f "$BUNDLED_STUB" ]; then
   exit 1
 fi
 
-# The overlay is a symlink farm over the locked Zig's bundled Darwin stub and
-# the active Xcode SDKs. It is keyed by (zig version, locked Xcode build) and
-# created ONCE, atomically — the previous delete-and-rebuild on every call
-# yanked the overlay out from under concurrent builds in sibling worktrees
-# (#46). The lock pins the Xcode build (preflight asserts it), so a locked
-# toolchain change renames the key and naturally invalidates the overlay.
+# Symlink farm over the locked Zig's bundled Darwin stub and the active Xcode
+# SDKs. Keyed by (zig version, locked Xcode build) and created ONCE, atomically.
+# Do not delete-and-rebuild on every call: that yanks the overlay out from under
+# concurrent builds in sibling worktrees. The lock pins the Xcode build
+# (preflight asserts it), so a locked toolchain change renames the key and
+# invalidates the overlay.
 OVERLAY="$CACHE/zig-xcode-overlay/$VERSION-xcode-$XCODE_BUILD"
 if [ -e "$OVERLAY/.complete" ]; then
   printf '%s\n' "$OVERLAY"

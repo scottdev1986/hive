@@ -68,9 +68,9 @@ OVERLAY=$("$ROOT/scripts/prepare-zig-xcode-overlay.sh")
 BUNDLED_STUB="$ZIG_LIB_DIR/libc/darwin/libSystem.tbd"
 MACOS_SDK=$(xcrun --sdk macosx --show-sdk-path)
 XCODE_STUB="$MACOS_SDK/usr/lib/libSystem.tbd"
-# The artifact cache is shared across worktrees (#46): build in unique
-# scratch, publish atomically at the end. Never mutate $FINAL_OUT in place —
-# a sibling worktree may be reading it right now.
+# Shared artifact cache across worktrees: build in unique scratch, publish
+# atomically at the end. Never mutate $FINAL_OUT in place — a sibling worktree
+# may be reading it right now.
 FINAL_OUT="$CACHE/artifacts/ghostty-$commit-zig-$version"
 WORK="$CACHE/build/ghostty-$commit.$$"
 OUT="$FINAL_OUT.build.$$"
@@ -232,8 +232,7 @@ if [[ $PRODUCTION -eq 1 ]]; then
   "$ROOT/scripts/qualify-ghostty-release-lock.sh" "$OUT"
 fi
 
-# Atomic publish (#46); the incumbent-vs-fresh decision lives in its own
-# script so it is unit-testable (test/ghostty-artifact-publish.test.ts).
+# Atomic publish; incumbent-vs-fresh lives in publish-ghostty-artifact.sh.
 "$ROOT/scripts/publish-ghostty-artifact.sh" "$OUT" "$FINAL_OUT" "$LOCK"
 
 echo "Ghostty native artifacts: $FINAL_OUT"

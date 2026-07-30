@@ -1,22 +1,19 @@
 #!/usr/bin/env bun
 /**
- * B2.2 live watchable proof harness (M1 boundary: black-box, manually-launched
- * simple command — NOT M2 spawn).
+ * B2.2 live watchable proof harness: black-box, manually-launched simple
+ * command (not an agent spawn).
  *
- * Stands up the REAL stack end to end:
+ * Stands up the real stack end to end:
  *   1. real `hive-sessiond serve` broker
- *   2. real Hive daemon (`bun src/cli.ts daemon`) sharing the same HIVE_HOME
- *   3. one manually-created sessiond session running either the visible B2.2
- *      ticker or (with HIVE_B22_REAL_SHELL=1) the user's interactive login
- *      shell, admitted through HiveTerminalHostAdapter.create with a harness-
- *      owned visibility publisher (this process), lease sustained by renewal
- *   4. the REAL Workspace debug app launched against the daemon; its pane for
- *      the agent carries the exact sessiond locator, so the B2.2 wiring
- *      attaches a HiveTerminalView and renders the live output
+ *   2. real Hive daemon sharing the same HIVE_HOME
+ *   3. one manually-created sessiond session (B2.2 ticker, or login shell with
+ *      HIVE_B22_REAL_SHELL=1) via HiveTerminalHostAdapter.create; this process
+ *      owns visibility and renews the lease
+ *   4. real Workspace debug app; pane carries the sessiond locator so
+ *      HiveTerminalView attaches and renders live output
  *
- * The harness stays in the foreground; Ctrl-C tears everything down (session
- * terminate → daemon SIGTERM → broker SIGTERM). All steps append to a
- * transcript file for the evidence bundle.
+ * Stays in the foreground; Ctrl-C tears down (session → daemon → broker).
+ * Steps append to a transcript for the evidence bundle.
  */
 import {
   accessSync,
@@ -89,8 +86,6 @@ const log = (line: string) => {
   appendFileSync(transcriptPath, `${stamped}\n`);
 };
 
-// Imports that read HIVE_HOME resolve it lazily per call; the env above is set
-// before any daemon-path helper runs.
 const { HiveDatabase } = await import("../src/daemon/db");
 const { hiveInstanceSuffix } = await import("../src/daemon/instance-identity");
 const { HiveTerminalHostAdapter } = await import(
@@ -104,9 +99,8 @@ const { mintSessionLocator } = await import(
   "../src/daemon/session-host/locators"
 );
 
-// The Workspace's `--hive` binary: passes every verb through to the real CLI
-// except the orchestrator boot, which is a placeholder so a recorded demo
-// never launches a real vendor TUI.
+// Pass-through CLI wrapper: every verb hits the real CLI except orchestrator
+// boot, which is a placeholder so a demo never launches a real vendor TUI.
 const hiveWrapper = join(home, "hive-cli");
 writeFileSync(
   hiveWrapper,
@@ -126,11 +120,11 @@ log(`transcript: ${transcriptPath}`);
 log(`Workspace project: ${workspaceProject}`);
 
 // 1. Real broker. A terminal Ctrl-C signals the whole foreground process
-// group, so the broker used to die FIRST — before the orderly teardown below
-// could terminate the session through it. That is what manufactured the
-// broker-unavailable shutdown in the first place. The broker therefore ignores
-// SIGINT (an ignored disposition survives exec, unlike a handler) and dies on
-// the explicit signal the shutdown path and the exit hook send instead.
+// group. Do not let that kill the broker first: orderly teardown terminates
+// sessions through it, and a broker that dies on SIGINT manufactures a
+// broker-unavailable shutdown. Ignore SIGINT on the broker (an ignored
+// disposition survives exec, unlike a handler) and kill it only from the
+// explicit shutdown path and the exit hook.
 const brokerBinary = join(
   repoRoot,
   "native/sessiond/zig-out/bin/hive-sessiond",
@@ -153,16 +147,15 @@ for (let i = 0; i < 100; i += 1) {
 }
 log(`broker live (pid ${broker.pid}) at ${brokerSocket}`);
 
-// 2. The REAL daemon, in this process: the broker authenticates exactly one
-// daemon identity (daemon.lock pid/start-token), so the harness must BE the
-// daemon rather than sit beside it.
+// 2. Real daemon in this process: the broker authenticates exactly one daemon
+// identity (daemon.lock), so the harness must BE the daemon, not sit beside it.
 process.env.HIVE_PORT = String(port);
 const { acquireDaemonLock, releaseDaemonLock } = await import(
   "../src/daemon/lifecycle"
 );
 await acquireDaemonLock();
-// The broker no longer dies with the process group, so every exit path — not
-// just the orderly one below — has to take it down or the run leaks a broker.
+// The broker ignores process-group SIGINT, so every exit path — not just the
+// orderly one below — must take it down or the run leaks a broker.
 process.once("exit", () => {
   try {
     broker.kill();
@@ -209,15 +202,14 @@ for (let i = 0; i < 100; i += 1) {
 }
 log(`daemon live in-process on port ${daemon.listeningPort}`);
 
-// 3. Manually-created sessiond session (the M1 black-box act) through the
-// daemon's own locator-fenced adapter and binding store.
+// 3. Manually-created sessiond session through the daemon's locator-fenced
+// adapter and binding store.
 const instanceId = hiveInstanceSuffix();
 // Runtime-full adapter; the getter's compile-time Pick is narrower.
 const adapter = daemon.sessiondTerminalHost as InstanceType<
   typeof HiveTerminalHostAdapter
 >;
-// The broker authenticates against daemon.lock and finishes its own startup
-// recovery before serving; fail loud if the lock never appeared.
+// Broker auth needs daemon.lock; fail loud if it never appears.
 for (let i = 0; i < 100 && !existsSync(join(home, "daemon.lock")); i += 1) {
   await Bun.sleep(100);
 }
@@ -357,7 +349,6 @@ log(
   `captured live session tree before action: ${processTree.map((entry) => entry.pid).join(",")}`,
 );
 
-// Sustain the visibility lease from this live publisher process.
 const renewals = setInterval(() => {
   adapter.renewVisibility(locator, visibility).then(
     (lease) => log(`visibility renewed until ${lease.expiresAt}`),
@@ -365,19 +356,15 @@ const renewals = setInterval(() => {
   );
 }, 5_000);
 
-// 4. The real Workspace app.
-// The Makefile rule for this path renames SwiftPM's output so a debug build
-// never carries the installed app's process name into the unified log (see the
-// Makefile note).
+// 4. The real Workspace app. Binary is HiveWorkspaceDev so a debug build's
+// process name is not the installed app's name in the unified log.
 const workspaceBinary = join(
   repoRoot,
   "workspace/.build/debug/HiveWorkspaceDev",
 );
 const launchApp = process.env.HIVE_B22_NO_APP !== "1";
-// The old `make terminal`/`make demo` targets built this binary before running
-// the harness; the make surface is now exactly clean/build/run/test, so the
-// harness builds it itself by naming the FILE (make no-ops when it is current).
-// Only when the app is actually launched: HIVE_B22_NO_APP=1 runs never need it.
+// Build the Workspace binary here by naming the file (make no-ops when current).
+// HIVE_B22_NO_APP=1 runs never need it.
 if (launchApp) {
   const built = Bun.spawnSync(["make", workspaceBinary], {
     cwd: repoRoot,
@@ -420,8 +407,7 @@ if (workspace !== null) log(`workspace app launched (pid ${workspace.pid})`);
 let shuttingDown = false;
 const shutdown = async (reason: string, requestedExitCode = 0) => {
   if (shuttingDown) {
-    // A second Ctrl-C means "stop waiting": force the exit rather than
-    // re-entering the orderly path.
+    // Second signal during shutdown: force exit rather than re-enter orderly path.
     log(`forced exit (${reason} during shutdown)`);
     try {
       broker.kill("SIGKILL");
@@ -439,20 +425,18 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     /* already gone */
   }
   // ONE teardown path. daemon.stop() closes every live agent — this session
-  // included — through the daemon's own teardown, so terminating here as well
-  // would be the two-racing-teardowns bug docs/daemon/agent-teardown.md exists
-  // to prevent. Since 16908cc1 an unreachable broker is treated as an
-  // already-dead session, so stop() refuses only when teardown ACTIVELY failed:
-  // something it captured is still running.
+  // included — through the daemon's own teardown; terminating here as well
+  // races two teardowns. An unreachable broker is treated as an already-dead
+  // session, so stop() refuses only when teardown ACTIVELY failed: something
+  // it captured is still running.
   let exitCode = requestedExitCode;
   try {
     await daemon.stop();
     log("daemon stopped; session torn down");
   } catch (error) {
-    // A refusal means real work is still standing. The host pid was recorded at
-    // create time, so killing it needs no broker — but a kill is an act and a
-    // process gone is a state, so the exit code reports what the process table
-    // says rather than what we sent.
+    // Refusal means real work is still standing. Kill by host pid recorded at
+    // create (no broker needed); exit code reports process-table state, not
+    // the signal we sent.
     log(`daemon stop refused (${error}); killing session host directly`);
     const hostPid = createdHostPid;
     try {
@@ -460,13 +444,9 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     } catch {
       /* already gone */
     }
-    // `kill(pid, 0)` cannot tell a running process from an exited one whose
-    // parent has not called waitpid yet: a zombie keeps its pid entry and
-    // answers signal 0. The broker is this host's parent and is still up here,
-    // so a SIGKILLed host reads back as "alive" for as long as the broker takes
-    // to reap it — which is how a renderer-kill drill produced a SURVIVED
-    // SIGKILL line for a process the process table later showed as gone. Read
-    // the state instead of probing the pid; a zombie has stopped executing.
+    // Do not use kill(pid, 0) for liveness: a zombie still answers signal 0
+    // until the broker reaps it. Read process state; a zombie has stopped
+    // executing.
     let state = "?";
     for (let i = 0; i < 40; i += 1) {
       await Bun.sleep(50);
@@ -521,8 +501,8 @@ if (
     a4Action === "close")
 ) {
   const proofExit = await workspace.exited;
-  // A signal-driven shutdown kills the app too; that passive exit must not
-  // re-enter shutdown and masquerade as the user's second Ctrl-C.
+  // Signal-driven shutdown already kills the app; do not re-enter shutdown
+  // for that passive exit (would look like a second Ctrl-C).
   if (!shuttingDown) {
     log(`Workspace live-resize proof exited ${proofExit}`);
     if (a4Action === "close") {

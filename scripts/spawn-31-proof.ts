@@ -1,14 +1,18 @@
 #!/usr/bin/env bun
 /**
- * spawn-31-proof.ts — the acceptance proof for the 2026-07-27 spawn-collapse
- * fix (planning/2026-07-27-spawn-collapse-root-cause.md).
+ * Acceptance proof: a wide concurrent spawn keeps every agent alive past the
+ * first visibility-lease window with renewals actually landing.
  *
- * ONE runnable thing, per queen's instruction: restarts the dev daemon on the
- * staged build, then spawns 31 agents at once FIVE consecutive times and
- * prints a per-run tally. A run passes only if all 31 agents are alive past
- * their first visibility-lease expiry AND every lease is verifiably renewing
- * (the binding's lease expiry is in the future at check time — renewal
- * landing is measured, not inferred from "agents alive").
+ * Restarts the staged dev daemon, spawns WIDTH agents RUNS times, prints a
+ * per-run tally. Pass only if all agents survive first lease expiry AND every
+ * binding lease is still in the future at check time (renewal measured, not
+ * inferred from "agents alive").
+ *
+ * Load-bearing because a large concurrent spawn saturates both the daemon's
+ * single-threaded loop and sessiond's serialized broker accept loop; each
+ * slows the other (every broker HELLO fetches /handshake). Fixed budgets do
+ * not scale with in-flight spawns — agents die VISIBILITY_EXPIRED when
+ * renewals never land. This is the regression gate for that mode.
  *
  * Usage:
  *   bun run scripts/spawn-31-proof.ts [--build] [--runs 5] [--width 31] [--no-restart]
@@ -16,14 +20,10 @@
  *   --build       run `make build` first to stage a fresh dev binary
  *   --no-restart  skip the daemon restart (proof against the running daemon)
  *
- * Environment is derived from the repo checkout exactly like the Makefile's
- * `make run`: HIVE_HOME=/tmp/hv-<sha256(repo root)[0:10]>, binary at
- * .dev/root/current/hive. The Workspace app and queen must be running (start
- * them with `make run`); the script proves that with a one-agent canary
- * before the five runs and aborts with diagnostics if renewal cannot land.
+ * Environment matches `make run`. Workspace + queen must be up; a one-agent
+ * canary aborts with diagnostics if renewal cannot land.
  *
- * Exit 0 = 5/5 runs at 31/31. Any dropped agent is a FAIL with its
- * failureReason printed — never a flake.
+ * Exit 0 = all runs at full width. Any dropped agent FAILs with failureReason.
  */
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";

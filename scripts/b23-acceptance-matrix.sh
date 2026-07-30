@@ -8,7 +8,7 @@
 # which would leave the manifest unverifiable on a fresh checkout.
 #
 # Only defect-independent rows run here (encoder + fake-host). Live-PTY rows
-# are recorded separately once the parallel PTY/resize fixes land on main.
+# are recorded separately.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

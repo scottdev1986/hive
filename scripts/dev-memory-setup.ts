@@ -1,35 +1,24 @@
-// `make run` dev-home memory sharing (user ruling, 2026-07-23: "when we test
-// hive using dev it has the lessons that were learned in live and we don't
-// lose anything"). The dev daemon runs with HIVE_HOME=/tmp/hv-<tag> so its
-// RUNTIME state (daemon.port, credentials, runtime/, logs/, hive.db) stays
-// isolated — but its MEMORY state must be the same memory the installed
-// (prod) hive writes. This script links the four memory paths of the real
-// user home ($HOME/.hive) into the dev home:
+// `make run` dev-home memory sharing. Dev daemon uses HIVE_HOME=/tmp/hv-<tag>
+// so RUNTIME state stays isolated; MEMORY state must match installed hive.
+// Links four paths from $HOME/.hive into the dev home:
 //
-//   memory/                global wiki (~/.hive/memory — adapters/memory.ts)
-//   projects/              per-project episodic stores (project-state.ts)
-//   project-registry.json  repo→hiveUuid mapping (project-identity.ts) —
-//                          without sharing it, dev mints a different uuid and
-//                          the episodic stores diverge from prod's
-//   models/                embedding model cache (memory-embeddings.ts)
+//   memory/                global wiki
+//   projects/              per-project episodic stores
+//   project-registry.json  repo→hiveUuid — without it, dev mints a different
+//                          uuid and episodic stores diverge
+//   models/                embedding model cache
 //
-// Everything else in the dev home stays per-home. The link set is a
-// WHITELIST: runtime state is never linked, whatever the real home contains.
+// Everything else stays per-home. WHITELIST only — runtime is never linked.
 //
-// Rules (tested in dev-memory-setup.test.ts):
-//   - The real memory/, projects/, and models/ dirs plus an empty valid
-//     project-registry.json are created when absent, so a dev-first machine
-//     shares one identity and memory store with a later installed release.
-//   - A dev path that already exists as a REAL directory/file is never
-//     deleted or merged: a non-empty one (pre-existing dev-only memory)
-//     gets a loud warning with manual reconcile steps and stays untouched.
-//   - A stale symlink (pointing anywhere other than the real path) is
-//     refreshed; a correct one is left alone.
+// Rules (dev-memory-setup.test.ts):
+//   - Create real memory/, projects/, models/ and empty project-registry.json
+//     when absent so a dev-first machine shares identity with a later install.
+//   - Never delete or merge a real directory/file already at a dev path;
+//     non-empty pre-existing state gets a warning and is left alone.
+//   - Refresh stale symlinks; leave correct ones alone.
 //
-// Clean-safety: the dev-home entries are symlinks, and `make clean` deletes
-// the dev home with `rm -rf` — which unlinks symlinks without following
-// them, so the real ~/.hive is unreachable from clean (audited 2026-07-23;
-// see the comment on the clean target).
+// Clean-safety: entries are symlinks; `make clean` rm -rf unlinks without
+// following, so real ~/.hive is unreachable.
 import {
   lstat,
   mkdir,

@@ -47,16 +47,15 @@ patch_series_sha256() {
 }
 
 # git apply DISCOVERS the enclosing repository. When the target directory is
-# nested inside this repo (the default TMPDIR is <repo>/.dev/tmp, and the
-# fetch cache is <repo>/.cache/native), `git -C "$target" apply` resolves the
-# hive checkout as the repository and treats $target as a subdirectory — every
-# path in the patch is then "outside the subdirectory" and silently IGNORED:
-# all applies exit 0 while changing nothing (#58). A ceiling at the target
-# stops the upward discovery, so apply always runs in plain patch mode
-# against the target tree, exactly as it does when TMPDIR is /tmp.
-# The ceiling must be the target's PARENT: git only honours a ceiling while
-# ascending INTO it, so a ceiling at the start directory itself is ignored
-# (measured: discovery still resolved the enclosing repo).
+# nested inside this repo (default TMPDIR is <repo>/.dev/tmp; fetch cache is
+# under the repo), `git -C "$target" apply` resolves the hive checkout as the
+# repository and treats $target as a subdirectory — every path in the patch is
+# then "outside the subdirectory" and silently IGNORED: applies exit 0 while
+# changing nothing. A ceiling at the target's PARENT stops upward discovery so
+# apply runs in plain patch mode against the target tree. The ceiling must be
+# the parent: git only honours a ceiling while ascending INTO it; a ceiling at
+# the start directory itself is ignored (measured: discovery still resolved
+# the enclosing repo).
 apply_in() {
   dir=$1
   shift
