@@ -1,9 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseProcessTable, runPs } from "../../src/daemon/resources";
 import { HostOperationError } from "../../src/daemon/session-host/host-operations";
-import {
-  SessiondWireError,
-} from "../../src/daemon/session-host/sessiond-host";
+import { SessiondWireError } from "../../src/daemon/session-host/sessiond-host";
 import {
   captureProcessTree,
   type ReapDependencies,

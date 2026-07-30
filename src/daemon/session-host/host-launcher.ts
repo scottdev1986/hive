@@ -3,10 +3,7 @@ import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import type { z } from "zod";
-import {
-  FRAME_FLAGS,
-  HostRegisterPayloadSchema,
-} from "../../schemas";
+import { FRAME_FLAGS, HostRegisterPayloadSchema } from "../../schemas";
 import type { CreateResult } from "./contract";
 import {
   encodeSessiondFrame,
@@ -228,9 +225,8 @@ export async function launchHost(
   // A host whose working directory is gone fails deep inside its own boot as a
   // bare FileNotFound, naming nothing. The directory belongs to the caller, so
   // the check belongs here, where the answer can say which path was missing.
-  const workingDirectory = (
-    JSON.parse(request.specJson) as { cwd?: unknown }
-  ).cwd;
+  const workingDirectory = (JSON.parse(request.specJson) as { cwd?: unknown })
+    .cwd;
   if (typeof workingDirectory !== "string") {
     throw new HostLaunchError("create spec has no working directory");
   }

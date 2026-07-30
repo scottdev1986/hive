@@ -112,5 +112,4 @@ export const ORCHESTRATOR_BRIEF = [
   formatBriefSection(`
     Once an agent's work is merged (or it never had any to land) Close it.
   `),
-
 ].join("\n\n");

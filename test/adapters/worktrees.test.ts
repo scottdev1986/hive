@@ -224,9 +224,7 @@ describe("git worktree manager", () => {
     await writeFile(join(created.path, "landed.txt"), "the agent's work\n");
     await gitIn(created.path, "add", "-A");
     await gitIn(created.path, "commit", "-m", "the agent's work");
-    const agentCommit = (
-      await gitIn(created.path, "rev-parse", "HEAD")
-    ).trim();
+    const agentCommit = (await gitIn(created.path, "rev-parse", "HEAD")).trim();
 
     // main moves on, then takes the agent's change as a NEW commit.
     await writeFile(join(repoRoot, "unrelated.txt"), "main moved on\n");

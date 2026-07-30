@@ -1373,8 +1373,7 @@ export class HiveSpawner implements Spawner {
     | undefined
   > {
     const locator = requireSessiondAgentLocator(record);
-    const inspection = await this
-      .requireSessiondHost(record)
+    const inspection = await this.requireSessiondHost(record)
       .inspect(locator)
       .catch(() => null);
     const foreground = inspection?.foreground;
@@ -3030,7 +3029,8 @@ export class HiveSpawner implements Spawner {
           );
         } catch (error) {
           const changed =
-            error instanceof Error && error.message.includes("foreground-changed");
+            error instanceof Error &&
+            error.message.includes("foreground-changed");
           if (!changed) throw error;
           await adapter.startInitialTurn?.(
             this.agentTurnInput(

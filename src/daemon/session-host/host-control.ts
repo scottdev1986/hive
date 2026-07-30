@@ -11,10 +11,7 @@ import {
   TERMINAL_LIMITS,
 } from "../../schemas";
 import type { AttachGrant, AttachRequest, SessionLocator } from "./contract";
-import {
-  encodeSessiondFrame,
-  SessiondFrameDecoder,
-} from "./sessiond-host";
+import { encodeSessiondFrame, SessiondFrameDecoder } from "./sessiond-host";
 import { hostDirectory, HostOperationError } from "./host-operations";
 
 /**
@@ -80,15 +77,17 @@ async function exchange(
     };
     const timer = setTimeout(
       () =>
-        finish(() =>
-          reject(new HostOperationError(`host ${type} timed out`)),
-        ),
+        finish(() => reject(new HostOperationError(`host ${type} timed out`))),
       timeoutMilliseconds,
     );
     timer.unref?.();
     socket.once("error", (error) =>
       finish(() =>
-        reject(new HostOperationError("host control socket failed", { cause: error })),
+        reject(
+          new HostOperationError("host control socket failed", {
+            cause: error,
+          }),
+        ),
       ),
     );
     socket.once("close", () =>
@@ -117,7 +116,11 @@ async function exchange(
         );
       } catch (error) {
         finish(() =>
-          reject(new HostOperationError("host sent an invalid frame", { cause: error })),
+          reject(
+            new HostOperationError("host sent an invalid frame", {
+              cause: error,
+            }),
+          ),
         );
         return;
       }
@@ -149,7 +152,8 @@ async function exchange(
         // The host answers on the request's id, response|final. Anything else
         // is a frame this exchange did not ask for.
         if (frame.requestId !== CONTROL_REQUEST_ID) continue;
-        if (frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final)) continue;
+        if (frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final))
+          continue;
         finish(() => {
           try {
             resolve(JSON.parse(new TextDecoder().decode(frame.payload)));

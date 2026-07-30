@@ -27,9 +27,7 @@ import {
   requireSessiondAgentLocator,
 } from "./session-host/hive-terminal-host";
 import { mintSessionRequestId } from "./session-host/locators";
-import {
-  SessiondWireError,
-} from "./session-host/sessiond-host";
+import { SessiondWireError } from "./session-host/sessiond-host";
 
 export interface ReapDependencies {
   /** `ps -axo pid=,ppid=,rss=,command=` — the tree, with commands for the report. */
