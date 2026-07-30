@@ -5,9 +5,8 @@
  * JavaScript file on disk (dist/entry.js) plus native libraries it dlopens.
  * Nothing about that is signature-checked, so anyone who can write the runtime
  * directory can execute code inside a Developer-ID-signed, notarized hive
- * process and inherit every TCC grant the user gave it. That was demonstrated,
- * not theorized: editing dist/entry.js and running the signed binary executed
- * the edit.
+ * process and inherit every TCC grant the user gave it. Editing dist/entry.js
+ * and running the signed binary executes the edit.
  *
  * WHY THE DIGEST CANNOT LIVE NEXT TO THE CODE. The release manifest's SHA-256
  * pins the downloaded TARBALL, not the extracted tree, and the tarball is

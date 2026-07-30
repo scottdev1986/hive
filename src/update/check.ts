@@ -8,9 +8,8 @@
  * only a machine that has never successfully checked says "could not check".
  *
  * Checks are cached for a day, jittered nowhere because the CLI check happens
- * on an explicit human command. The daemon-owned background check on a jittered
- * ~24h timer is the design in docs/release/update-experience.md and is not built
- * yet; this module is written so the daemon can call it unchanged.
+ * on an explicit human command. A future daemon-owned background check can call
+ * this module unchanged and should jitter its timer to spread network load.
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -104,11 +103,10 @@ export interface CheckDeps {
 }
 
 /**
- * GitHub's `releases/latest` endpoint. docs/release/distribution.md
- * argues for a signed channel document on a CDN instead, so that channel and
- * rollout policy are not inferred from a mutable API. That endpoint does not
- * exist yet; this reads the tag of the newest non-prerelease and the manifest
- * asset carries the rest. The deviation is recorded in the same doc.
+ * GitHub's `releases/latest` endpoint. A signed channel document on a CDN will
+ * eventually carry mutable channel and rollout policy without inferring either
+ * from this API. Until that endpoint exists, the newest non-prerelease tag
+ * selects the release and its manifest carries the remaining policy.
  */
 export async function fetchLatestFromGitHub(
   repo = HIVE_UPDATE_REPO,

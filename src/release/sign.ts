@@ -19,7 +19,7 @@
  *
  *   1. `bun build --compile` writes its own ad-hoc "linker-signed" signature,
  *      and on Bun >= 1.3.12 that signature reserves too little space in
- *      __LINKEDIT for a real one (oven-sh/bun#29120). Re-signing on top of it
+ *      __LINKEDIT for a real one. Re-signing on top of it
  *      produces a truncated signature that fails `codesign --verify --strict`
  *      with "main executable failed strict validation". The fix is to build with
  *      `BUN_NO_CODESIGN_MACHO_BINARY=1` (the workflow sets it only when signing

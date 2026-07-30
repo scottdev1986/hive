@@ -7,9 +7,9 @@
  * command gets the passive notice: at most one dim line, only when there is
  * something to do, rate-limited to once a day per version.
  *
- * A "you are N versions behind" counter was considered and rejected. At a
- * patch-per-push cadence the number is noise, and the security flag plus the
- * staged-and-waiting line already say everything the count would imply.
+ * Do not show a "you are N versions behind" counter. At a patch-per-push cadence
+ * the number is noise, and the security flag plus the staged-and-waiting line
+ * already say everything the count would imply.
  */
 
 import type { UpdateCache, UpdateCheck } from "./check";

@@ -27,8 +27,8 @@
  * accepts a signature from any listed key, so no single release has to be the
  * one where every installation either updates or bricks. It buys nothing against
  * a *compromised* key — an attacker holding the old private half can still sign
- * for binaries that still list it, and the only answer to that is an
- * out-of-band reinstall. See docs/release/versioning-and-release.md.
+ * for binaries that still list it, and recovery requires an out-of-band
+ * reinstall.
  */
 import {
   createHash,
@@ -72,7 +72,7 @@ const ManifestSchema = z
     channel: z.enum(["stable", "beta"]),
     commit: z.string().min(1),
     publishedAt: z.iso.datetime({ offset: true }),
-    /** Overrides every notice rate limit. See docs/release/versioning-and-release.md. */
+    /** Overrides every notice rate limit. */
     securityCritical: z.boolean(),
     wireProtocol: z.strictObject({
       min: z.number().int().nonnegative(),

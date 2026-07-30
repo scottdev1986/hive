@@ -264,10 +264,10 @@ export function embeddingsDigestForBuild(
 /**
  * Compile one CLI slice. When the build will be signed, compile with
  * `BUN_NO_CODESIGN_MACHO_BINARY=1`: Bun's own ad-hoc signature reserves too
- * little space in __LINKEDIT (oven-sh/bun#29120), and codesign re-signing on top
+ * little space in __LINKEDIT, and codesign re-signing on top
  * of it produces a truncated signature that fails `codesign --verify --strict`.
  * The env var makes the compiled binary re-signable; sign.ts's header records
- * the proof. Unsigned builds keep Bun's default so today's output is unchanged.
+ * the proof. Unsigned builds keep Bun's default signature.
  */
 async function compileCli(
   options: Options,

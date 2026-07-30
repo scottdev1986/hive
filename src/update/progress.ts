@@ -46,8 +46,8 @@ const FALLBACK_COLUMNS = 80;
  * a pipe promoted to a TTY — reports `columns` as **0**, and `??` does not catch
  * a zero. Left alone, that zero makes every optional segment "not fit" and the
  * bar silently degrades to a bare percentage on exactly the machines whose
- * output someone is most likely to be reading. Found by running the thing, not
- * by testing it: every unit test passes an explicit width and so cannot see this.
+ * output someone is most likely to be reading. Unit tests that pass an explicit
+ * width cannot exercise this fallback.
  */
 function usableColumns(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0

@@ -3,9 +3,8 @@
  *
  * GitHub Releases hold immutable bytes; a small signed channel document on a
  * CDN should hold mutable channel and rollout policy. The channel endpoint does
- * not exist yet, so this reads `releases/latest` and its manifest asset, and
- * `docs/release/distribution.md` records the deviation. The interface is
- * the seam: swapping in a channel document changes this file and nothing else.
+ * not exist yet, so this reads `releases/latest` and its manifest asset. The
+ * interface keeps that transition isolated to this file.
  */
 import { z } from "zod";
 import {
@@ -43,8 +42,8 @@ export interface ReleaseSource {
 /**
  * Read a response body chunk by chunk rather than buffering it whole.
  *
- * `response.arrayBuffer()` — what this used to be — cannot report progress even
- * in principle: it resolves once, at the end. Streaming is what makes a bar
+ * `response.arrayBuffer()` cannot report progress because it resolves once, at
+ * the end. Streaming is what makes a bar
  * possible at all, and it is also what lets us notice a truncated transfer at
  * the moment the body ends rather than after the SHA-256 of a short file fails
  * to explain itself.

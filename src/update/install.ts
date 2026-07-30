@@ -370,12 +370,10 @@ async function proveStaged(
  * The one way in. Produce a version directory that has passed every gate —
  * whether that means downloading it or re-proving what is already there.
  *
- * `runUpdate` used to ask `isStaged()` and skip staging entirely when the answer
- * was yes, which skipped *all three* checks: the manifest signature, the digest,
- * and the probe. A crash between download and activation was enough to walk a
- * binary straight past a fail-closed path. Routing both cases through here means
- * there is no arrangement of prior state that yields an activation without
- * verification.
+ * Do not treat `isStaged()` as proof: that skips the manifest signature, digest,
+ * and probe checks, so a crash between download and activation could bypass the
+ * fail-closed path. Routing both cases through here ensures no prior state can
+ * yield an activation without verification.
  */
 export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
   const root = deps.root ?? installRoot();
@@ -560,11 +558,8 @@ export type ActivationOutcome =
  * Activate, then prove it. On failure, put `current` back and keep the staged
  * version on disk for diagnosis rather than deleting the evidence.
  *
- * None of the surveyed updaters — rustup, Deno, Bun, Claude Code — does a
- * post-activation revert. They verify before activation and leave recovery to
- * an explicit `install <old-version>`. Hive goes further because it can: the
- * thing being activated has a health check, and the cost of a broken control
- * plane is a stranded team rather than a failed command.
+ * Hive reverts after a failed post-activation health check because a broken
+ * control plane strands a team rather than merely failing one command.
  */
 export async function activateWithHealthCheck(
   version: string,

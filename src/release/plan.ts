@@ -53,8 +53,7 @@ function assertInSeries(tags: readonly string[]): void {
     if (VERSION_TAG.test(trimmed)) {
       throw new VersioningContractError(
         `Tag ${trimmed} is outside the ${PATCH_SERIES}.x patch series. Hive is ` +
-          "patch-only; a minor or major bump is a deliberate decision that must " +
-          "update docs/release/versioning-and-release.md and src/release/plan.ts together.",
+          "patch-only; this release planner does not define minor or major bumps.",
       );
     }
   }
