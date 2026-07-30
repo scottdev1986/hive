@@ -726,7 +726,7 @@ fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
         const prefix = pattern[1 .. separator + 1];
         return taggedUuidV7(string, prefix);
     }
-    // Zod z.string().uuid() pattern (unprefixed, versions 1-8 plus nil/max).
+    // Zod z.string.uuid pattern (unprefixed, versions 1-8 plus nil/max).
     if (std.mem.indexOf(u8, pattern, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8]") != null)
         return standardUuid(string);
     if (std.mem.eql(u8, pattern, "^\\/.*")) return std.mem.startsWith(u8, string, "/");

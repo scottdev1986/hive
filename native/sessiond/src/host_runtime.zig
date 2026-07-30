@@ -139,7 +139,6 @@ pub fn setControlTimeoutMs(fd: std.posix.fd_t, timeout_ms: u64) !void {
 
 /// How long the broker waits for a freshly launched host to report READY, and
 /// how long that host waits for the acknowledgement. Both ends must agree.
-///
 /// This is the create budget itself, not a fraction of it. Half was tried, on
 /// the reasoning that a host which will never report should fail fast and
 /// leave the create room to answer: it cost 27 of 31 hosts, because a boot
@@ -334,7 +333,7 @@ pub const HostRuntime = struct {
         });
         errdefer allocator.free(socket_path);
         const address = try std.net.Address.initUnix(socket_path);
-        // host.sock's 0600 mode is fixed atomically at bind() through a
+        // host.sock's 0600 mode is fixed atomically at bind through a
         // saved/restored umask: 0177 masks exactly group/other (and the
         // owner-execute bit) off the 0777 bind base. A post-bind path chmod
         // both follows symlinks and leaves the socket briefly permissive, so
@@ -450,7 +449,7 @@ pub const LaunchClient = struct {
 const adopt_attempts: usize = 4;
 const adopt_retry_interval_ns: u64 = 50 * std.time.ns_per_ms;
 
-/// Production WP3 HostLauncher injection. It forks and execs the exact
+/// Production HostLauncher injection. It forks and execs the exact
 /// executable argument in `host` role and transfers all sensitive boot state
 /// only through fd 3. The launcher owns returned HostControl contexts.
 pub const ProductionHostLauncher = struct {
@@ -465,7 +464,8 @@ pub const ProductionHostLauncher = struct {
     /// broker's gate while another thread is inside that released window: two
     /// concurrent creates otherwise hand out the same pending id, append to
     /// `clients` at once, or remove an entry from under another thread's
-    /// index. That is the `HOST_START_FAILED` in the 2026-07-28 16-wide run.
+    /// index — which surfaces as `HOST_START_FAILED` under wide concurrent
+    /// create.
     clients_gate: std.Thread.Mutex = .{},
 
     pub fn init(
@@ -556,9 +556,8 @@ pub const ProductionHostLauncher = struct {
         errdefer if (stream_owned) child.stream.close();
         // Everything the child does before READY — forkpty, a login shell
         // sourcing the operator's whole profile, the vendor exec, the VT
-        // engine — happens inside this read, and at 31 wide that measured up
+        // engine — happens inside this read, and at 31 wide that
         // to 14 s. The control-RPC timeout was far too tight for it.
-        //
         // The whole create budget is too loose: a host that is never going to
         // report would hold this read for all of it and the create would time
         // out at the ceiling instead of failing as HOST_START_FAILED with time
@@ -714,7 +713,6 @@ pub const ProductionHostLauncher = struct {
     /// find the listener not yet accepting. Under a 31-wide burst that showed
     /// up as `ConnectionRefused` and `InvalidHostResponse`, and the host was
     /// then killed as an impostor: a working terminal destroyed by a race.
-    ///
     /// A refusal that is real stays real, so a host that fails every attempt is
     /// still discarded. Only the timing is forgiven.
     fn adoptWithRetry(self: *ProductionHostLauncher, client: *LaunchClient) bool {
@@ -749,7 +747,7 @@ pub const ProductionHostLauncher = struct {
                 };
                 stream.close();
                 // Admission is final, so the host now serves host.sock — but
-                // it fails closed for terminate/grant_register/
+                // it fails closed for terminate/grant_register
                 // visibility_renew until HOST_ADOPT proves the 32-byte secret.
                 // Adopt immediately so the legit fresh-launch flow keeps
                 // working; a host that refuses adoption is not the host this

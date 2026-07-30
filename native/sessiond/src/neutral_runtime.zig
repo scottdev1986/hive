@@ -622,13 +622,10 @@ pub const Registry = struct {
 
     /// A rescan re-reads and re-parses every session's record from disk under
     /// an exclusive lock, and the broker holds its own state gate across the
-    /// whole call. Read paths used to do that per request, which is fine at
-    /// one agent and ruinous at thirty-one: establishing one provider's
-    /// foreground identity polls INSPECT forty times, so a wide burst spent
-    /// tens of thousands of full directory rescans serialized against the
-    /// accept loop, and the daemon's next HELLO timed out waiting to be
-    /// accepted at all (measured 2026-07-28 at 31 wide).
-    ///
+    /// whole call. Doing that per read is fine at one agent and ruinous under
+    /// a wide concurrent burst: establishing one provider's foreground
+    /// identity polls INSPECT many times, so unshared rescans serialize the
+    /// accept loop and can starve the daemon's next HELLO.
     /// Reads therefore share one rescan across a short window. A caller that
     /// acts on state — create, terminate — still calls `recover` directly and
     /// gets a fresh one.

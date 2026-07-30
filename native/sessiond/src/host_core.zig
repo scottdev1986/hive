@@ -377,7 +377,7 @@ const InputOperationKind = enum { bytes, canonical_eof, hangup };
 /// generated-limits-style caps: past the cap the oldest entry evicts before
 /// the new one reserves, so unique client-chosen idempotency keys can never
 /// grow the host without limit. Eviction only forfeits dedup of ancient keys
-/// — a replayed recent key still hits, a re-submitted ancient key simply
+/// a replayed recent key still hits, a re-submitted ancient key simply
 /// re-derives its outcome under a fresh ledger entry.
 pub const max_replay_entries: usize = 256;
 
@@ -465,7 +465,6 @@ const ClaimResponse = union(enum) {
 /// The message form is what a wide spawn burst starves: renewals queue behind
 /// the creates that made them necessary, and the fleet dies at its busiest
 /// moment. `kill(pid, 0)` cannot be starved.
-///
 /// The grace window exists for exactly one case: a daemon restart hands these
 /// hosts to a NEW broker, which adopts them off disk. Until that adoption
 /// lands the old supervisor is genuinely gone, and a host that died the
@@ -519,16 +518,10 @@ pub const SupervisorWatch = struct {
 };
 
 /// How long a host outlives an observably dead supervisor.
-///
 /// This is the window a restarting broker has to recover this host off disk
-/// and prove the adoption secret. It began as the visibility lease's 15 s,
-/// inherited without thought — and 15 s is a number that does not scale with
-/// fleet width, which is the mistake this whole redesign is about. A broker
-/// that dies mid-burst must re-adopt every host it had, one IPC each; at 31
-/// that does not fit, so a single broker blip cost 25 agents (measured
-/// 2026-07-28: runs containing `broker exited 143` returned 4–6 of 31, runs
-/// without it returned 27).
-///
+/// and prove the adoption secret. A short grace does not scale with fleet
+/// width: a broker that dies mid-burst must re-adopt every host it had, one
+/// IPC each, and a tight window kills working agents before adoption finishes.
 /// The cost of being generous is only that a genuinely orphaned host lingers
 /// longer before reaping itself, and that is the backstop path — the daemon's
 /// explicit terminate and the broker's `terminateAll` on observed owner death
@@ -548,7 +541,7 @@ pub const HostCore = struct {
     supervisor: ?SupervisorWatch = null,
     grants: std.ArrayList(GrantEntry) = .{},
     active_claim: ?ActiveInputClaim = null,
-    /// Last human claim orphaned by an unclean viewer drop (#40). Retained only
+    /// Last human claim orphaned by an unclean viewer drop. Retained only
     /// so inspection can still name the input owner of record while the arbiter
     /// holds HUMAN_ORPHANED — never consulted for authorization. Cleared on the
     /// next grant or clean release.
@@ -763,7 +756,7 @@ pub const HostCore = struct {
 
         // Returning human after unclean drop: arbiter is HUMAN_ORPHANED until
         // operatorResume (never-steal still blocks concurrent HUMAN_OWNED).
-        // Automation must not reclaim an orphaned human lease (#40 invariant).
+        // Automation must not reclaim an orphaned human lease (invariant).
         // Kind enforcement is by-construction inside operatorResume(kind=…);
         // the early host compare is a diagnostic shortcut only.
         if (arbiter.currentState() == .human_orphaned) {
@@ -827,7 +820,7 @@ pub const HostCore = struct {
     }
 
     /// Unclean viewer drop: orphan the arbiter claim (lease current) and clear
-    /// the host `active_claim` so a returning human can re-enter (#40). The
+    /// the host `active_claim` so a returning human can re-enter. The
     /// dropped claim moves to `orphaned_claim` so inspection still reports the
     /// input owner of record while HUMAN_ORPHANED holds; if the arbiter did
     /// not orphan (expired lease → Closed), the claim is dropped for real.
@@ -1703,9 +1696,9 @@ pub const HostCore = struct {
         return payload;
     }
 
-    /// §22 INPUT_ORPHAN_DISCARD resolves a human claim on the authenticated
+    /// INPUT_ORPHAN_DISCARD resolves a human claim on the authenticated
     /// broker path. `orphaned` can cancel only an abandoned draft; `held` is
-    /// the user-authorized M1 preemption, reported as its own typed result.
+    /// the user-authorized preemption, reported as its own typed result.
     pub fn discardInputOrphan(self: *HostCore, payload: []const u8, now_ns: u64) ![]u8 {
         if (!protocol.validateControlPayload(
             self.allocator,

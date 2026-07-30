@@ -125,7 +125,7 @@ pub const ResizeRequest = struct {
     idempotencyKey: []const u8,
 };
 
-/// §5 outcomes. Each carries `schemaVersion` on top of the frozen result shape,
+/// outcomes. Each carries `schemaVersion` on top of the frozen result shape,
 /// exactly as the termination payload carries it on top of its result. The
 /// applied variant reports the geometry read back from the terminal AFTER the
 /// set, and has deliberately no field claiming the foreground application
@@ -171,7 +171,7 @@ pub fn unknownResize(
     }, .{}) };
 }
 
-/// §5 applied evidence from the terminal the control plane does not own.
+/// applied evidence from the terminal the control plane does not own.
 pub const AppliedResize = struct {
     revision: u64,
     orderedAt: u64,

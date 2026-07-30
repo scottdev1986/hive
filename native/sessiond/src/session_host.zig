@@ -1,5 +1,4 @@
-//! WP4 Track Omega: one HOST process owns one provider generation.
-//!
+//! One HOST process owns one provider generation.
 //! This module composes the landed PTY, process-inspection, input-arbiter, and
 //! terminal-state leaves. Broker registry/admission authority remains in
 //! broker.zig; this module implements only the host process and its launcher.
@@ -222,7 +221,7 @@ fn acceptHostHello(
 const AuthorizedViewer = struct {
     authorization: ViewerAuthorization,
     /// HOST_ATTACH request header fields for correlated snapshot frames and
-    /// typed attach failures (§20).
+    /// typed attach failures.
     attach_minor: u8,
     attach_request_id: u64,
 };
@@ -231,7 +230,7 @@ fn viewerAttachFailureCode(err: anyerror) protocol.WireError {
     return switch (err) {
         error.VisibilityExpired => .not_ready,
         error.InvalidHostAttach => .malformed_frame,
-        // Exact-locator fence (§06/§20): a wrong or superseded generation is a
+        // Exact-locator fence: a wrong or superseded generation is a
         // typed refusal before any grant/token evaluation.
         error.AttachLocatorMismatch => .generation_mismatch,
         error.InvalidViewerGrant => .unauthenticated,
@@ -542,13 +541,13 @@ fn handleViewerFrame(
     );
 }
 
-/// One live attached viewer stream owned by the host loop (§20/§26).
+/// One live attached viewer stream owned by the host loop.
 const AttachedViewer = struct {
     stream: std.net.Stream,
     authorization: ViewerAuthorization,
     /// Exclusive journal byte offset already written to this viewer.
     sent_seq: u64,
-    /// Exclusive contiguous OUTPUT high-water the viewer acknowledged (§20 APPLIED).
+    /// Exclusive contiguous OUTPUT high-water the viewer acknowledged (APPLIED).
     acked_seq: u64,
 
     fn close(self: *AttachedViewer, allocator: std.mem.Allocator) void {
@@ -583,7 +582,7 @@ fn pushRetainedOutput(
     seq.* += @as(u64, @intCast(slice.len));
 }
 
-/// §20 attach stream for an authorized viewer: when the requested cursor is
+/// attach stream for an authorized viewer: when the requested cursor is
 /// below the retained journal start, the newest verified HVTCP001 checkpoint
 /// envelope is sent as correlated SNAPSHOT_BYTES chunks; every retained byte
 /// after the effective base then replays as ordered OUTPUT. Returns the
@@ -736,7 +735,7 @@ fn detachAttachedViewer(
             state.retainedOutputStart(),
         },
     );
-    // #40: an unclean drop affects only this viewer's claim.
+    // an unclean drop affects only this viewer's claim.
     core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
     viewer.close(allocator);
     publishViewerFloor(viewers, state);
@@ -789,7 +788,7 @@ fn pumpAttachedViewer(
     state: *terminal_state.TerminalState,
     timer: *std.time.Timer,
 ) ?ViewerDetach {
-    // One absolute budget per pump call: poll() proves only that SOME byte is
+    // One absolute budget per pump call: poll proves only that SOME byte is
     // readable, so a dribbling viewer cannot stall the host loop.
     const deadline = ConnectionDeadline.init(timer) catch return null;
     // Journal pressure may evict past one lagging viewer. Detach only that
@@ -1035,7 +1034,7 @@ const PersistenceCursor = struct {
     checkpoint_seq: ?u64 = null,
 };
 
-/// Streaming output batches persist the journal on the §18 batch window; any
+/// Streaming output batches persist the journal on the batch window; any
 /// path that needs the tail durable NOW (terminate, lease expiry, startup) or
 /// that just verified a checkpoint (which evicted the covered journal prefix)
 /// forces the rewrite.
@@ -1091,11 +1090,10 @@ fn queueInitialInput(
 /// The real terminal behind the neutral control plane's mutation seam. The
 /// neutral plane deliberately owns no terminal, so without this binding its
 /// resize handler has nothing to set and answers `unknown`.
-///
 /// It performs the SAME two-part mutation the production resize path does: the
 /// PTY set with its post-set readback, and the shadow VT following the applied
 /// window so later checkpoints carry the real geometry rather than the
-/// create-time size (§23). Setting the PTY alone would leave the shadow behind
+/// create-time size. Setting the PTY alone would leave the shadow behind
 /// and make a restored checkpoint render at the wrong size.
 const NeutralTerminalSource = struct {
     pty: *pty_host.PtyHost,
@@ -1224,7 +1222,7 @@ const NeutralLiveEvidenceSource = struct {
         }
         var input_owner: ?neutral_control_plane.WireInputClaim = null;
         // Active claim first; otherwise the retained orphan still names the
-        // input owner of record while the arbiter holds HUMAN_ORPHANED (#40).
+        // input owner of record while the arbiter holds HUMAN_ORPHANED.
         if (self.core.active_claim orelse self.core.orphaned_claim) |claim| {
             const kind = std.meta.stringToEnum(
                 @FieldType(neutral_control_plane.WireInputClaim, "kind"),
@@ -1382,7 +1380,7 @@ fn runHostLoop(
                 break :blk null;
             };
             if (accepted) |viewer| {
-                // §26 retarget is scoped to one viewer identity. Renderer,
+                // retarget is scoped to one viewer identity. Renderer,
                 // observer, and automation viewers coexist on the same host.
                 try installAttachedViewer(
                     core.allocator,
@@ -1433,7 +1431,7 @@ fn runHostLoop(
                 try persistTerminalState(state, runtime.directory, persistence, .forced);
                 refreshRegistration(core, state);
                 // Best-effort tail push: every journaled byte reaches the
-                // attached viewers before the endpoint closes (§20 drain).
+                // attached viewers before the endpoint closes (drain).
                 pumpAttachedViewers(core.allocator, &attached, core, state, timer);
                 const response = try core.terminateBound(.immediate, null);
                 core.allocator.free(response);
@@ -1443,7 +1441,7 @@ fn runHostLoop(
         };
         if (output.bytes.len > 0) {
             try state.feedOutput(output.bytes);
-            // Streaming batch: journal rewrite rides the §18 batch window;
+            // Streaming batch: journal rewrite rides the batch window;
             // checkpoints still persist the moment they verify.
             try persistTerminalState(state, runtime.directory, persistence, .batched);
             refreshRegistration(core, state);
@@ -1459,13 +1457,11 @@ fn runHostLoop(
 pub const control_socket_env = "HIVE_HOST_CONTROL_SOCKET";
 
 /// The control stream carrying the HVB1 boot message.
-///
 /// A launcher that can hand a socketpair down as a descriptor passes nothing
 /// and this inherits fd 3. A launcher that cannot — anything that is not a
 /// forking C parent — names a socket it is already listening on, and the host
 /// dials it. Both produce the same private SOCK_STREAM, so everything after
 /// this point is identical; only who calls connect changes.
-///
 /// The path is per-host, so accepting one connection on it is unambiguous
 /// without a correlation token.
 fn openControlStream(allocator: std.mem.Allocator) !std.net.Stream {
@@ -1616,7 +1612,7 @@ fn runHostRoleWithControl(
         },
         .exited, .unknown => return error.ProviderExecFailed,
     };
-    // Evidence the frozen create result does not carry, measured by the create.
+    // Evidence the frozen create result does not carry,
     const launch_evidence = direct.launch_evidence orelse return error.ProviderExecFailed;
 
     var neutral_endpoint = try neutral_host.HostEndpoint.open(
@@ -1666,9 +1662,9 @@ fn runHostRoleWithControl(
     };
     var host_token_storage: [64]u8 = undefined;
     const host_token = try host_identity.start_token.format(&host_token_storage);
-    // Already formatted by the create that measured it.
+    // Already formatted by the create that
     const root_token = launch.child.startToken;
-    // The CLOEXEC barrier above proves execve(spec.argv[0], ...) succeeded.
+    // The CLOEXEC barrier above proves execve(spec.argv[0],...) succeeded.
     // Verify the contract's resolved argv[0] identity, not a later proc_pidpath
     // sample: hardened or self-replacing providers can make that sample
     // unobservable even though this host remains their direct parent.
@@ -1909,10 +1905,10 @@ test "a running host holds its own lease open" {
     const first = lease.expires_mono_ns;
     try std.testing.expect(!lease.expired(first - 1));
 
-    // Past the old deadline with no renewal from anywhere: the host is still
-    // running, so it touches its own lease and the terminal lives. This is the
-    // 2026-07-27 collapse — every host expired waiting for a message that was
-    // queued behind the burst that created it.
+    // Past the unrenewed deadline with no renewal from anywhere: the host is
+    // still running, so it touches its own lease and the terminal lives. A
+    // running host holds its own lease open: reading an unrenewed lease as
+    // death kills working agents whose vendor TUI is rendered and running.
     lease.touch(first + 1);
     try std.testing.expect(lease.expires_mono_ns > first);
     try std.testing.expect(!lease.expired(first + 1));
@@ -2102,7 +2098,7 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
         std.posix.AT.SYMLINK_NOFOLLOW,
     );
     try std.testing.expectEqual(first_checkpoint.ino, unchanged_checkpoint.ino);
-    // No real_engine.deinit(): TerminalState owns the injected engine and its
+    // No real_engine.deinit: TerminalState owns the injected engine and its
     // deferred deinit is the single destruction path.
 }
 
@@ -2253,7 +2249,7 @@ fn drainReadable(stream: std.net.Stream, sink: *std.ArrayList(u8)) !void {
     }
 }
 
-// #91 regression: the host loop feeds PTY output and THEN pumps the attached
+// Regression: the host loop feeds PTY output and THEN pumps the attached
 // viewer, so a checkpoint firing inside feedOutput evicted the journal ahead of
 // the viewer's sent_seq; the pump's push then read an evicted range and the host
 // detached a live pane every checkpoint interval. Drives the loop's exact order.
@@ -2476,7 +2472,7 @@ test "daemon viewer coexists with renderer and detaches independently" {
 // viewer it drops is by definition one whose unacknowledged window is full. If
 // the pump tested backpressure first it would skip the cursor read forever: the
 // lost range would never be observed, the socket would stay open, and the pane
-// would freeze silently — which contract §6 forbids.
+// would freeze silently — which contract forbids.
 test "retention loss detaches a viewer whose unacknowledged window is full" {
     const StoppedClock = struct {
         fn now(_: *anyopaque) u64 {
@@ -3593,7 +3589,7 @@ test "host child environment strips DYLD_ but keeps the rest" {
 test "null-sink VT effects retention fails closed at the journal ceiling" {
     const audit = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     defer audit.engine().deinit();
-    // Simulate a verification engine that already retains the §18 journal
+    // Simulate a verification engine that already retains the journal
     // ceiling: one more PTY-effect byte must fail closed, not grow the
     // session-lifetime copy without bound.
     try audit.effects.ensureTotalCapacity(std.testing.allocator, terminal_state.journal_max_bytes);
@@ -3630,7 +3626,7 @@ test "sustained output does not export a checkpoint per written chunk" {
     try std.testing.expect(!std.mem.eql(u8, &measured, &after));
 }
 
-// Freeze case E producer size (`docs/contracts/terminal-host-v1.md`). An exact
+// Freeze case E producer size. An exact
 /// multiple of `freeze_e_block_bytes`, so the expected byte at absolute offset
 /// `o` is `block[o % freeze_e_block_bytes]`.
 const freeze_e_target_bytes: usize = 100 * 1024 * 1024;
@@ -4097,10 +4093,10 @@ test "CLAIM_RESULT reports unknown without inventing an owner when the arbiter i
     try std.testing.expect(std.mem.indexOf(u8, result, "\"owner\"") == null);
 }
 
-// #40 RED control: after viewer-a is granted a human claim, a second viewer
+// RED control: after viewer-a is granted a human claim, a second viewer
 // (or the same viewer after a drop without CLAIM_RELEASE) is denied while
 // host `active_claim` is never cleared on stream close. Documents the orphan
-// / permanent-input-death mechanism until onViewerDetached + claimRelease land.
+// permanent-input-death mechanism until onViewerDetached + claimRelease land.
 test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
@@ -4164,7 +4160,7 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     // Host still holds the first claim — second reattach cannot recover without detach.
     try std.testing.expect(core.active_claim != null);
 
-    // Unclean drop path (#40 fix): onViewerDetached clears host claim + orphans arbiter.
+    // Unclean drop path (fix): onViewerDetached clears host claim + orphans arbiter.
     core.onViewerDetached("viewer-a", 3_500);
     try std.testing.expect(core.active_claim == null);
     try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
@@ -4734,10 +4730,10 @@ fn orphanDiscardPayload(
     );
 }
 
-// §22 / 2026-07-21 messaging regression. A human claim orphaned by an unclean
-// viewer drop denied every automation claim forever, and operatorDiscard had no
-// caller. INPUT_ORPHAN_DISCARD is that caller. This walks the whole deadlock:
-// claim -> unclean drop -> automation DENIED -> discard -> automation GRANTED.
+// A human claim orphaned by an unclean viewer drop denied every automation
+// claim forever, and operatorDiscard had no caller. INPUT_ORPHAN_DISCARD is
+// that caller. This walks the whole deadlock: claim -> unclean drop ->
+// automation DENIED -> discard -> automation GRANTED.
 test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is heard again" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
@@ -4793,15 +4789,15 @@ test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is hea
     try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
 
     // NEVER-STEAL CONTROL: a LIVE human claim is refused too. This is the whole
-    // #40 invariant; if this ever passes, the discard has become a steal.
+    // invariant; if this ever passes, the discard has become a steal.
     const live_refusal = try core.discardInputOrphan(discard_payload, 2_500);
     defer std.testing.allocator.free(live_refusal);
     try std.testing.expect(std.mem.indexOf(u8, live_refusal, "\"state\":\"refused\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, live_refusal, "human_owned") != null);
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 
-    // M1 authorizes the delivery path to preempt a held human draft. Its
-    // result is distinct from an orphan discard, so callers can show/audit it.
+    // Delivery may preempt a held human draft when authorized. That result
+    // is distinct from an orphan discard, so callers can show/audit it.
     const preempted = try core.discardInputOrphan(preempt_payload, 2_750);
     defer std.testing.allocator.free(preempted);
     try std.testing.expect(std.mem.indexOf(u8, preempted, "\"state\":\"preempted\"") != null);
@@ -5492,10 +5488,10 @@ test "a host self-terminates only once its supervisor is observably gone" {
     }
     try bindTestProvider(std.testing.allocator, &core, &pty, temporary.dir);
     const provider_pid = core.registration.record.process_root.pid;
-    // A live supervisor, long past the deadline the visibility lease used to
-    // impose: nothing dies. Under the lease every host in a wide burst expired
-    // here, waiting on a renewal queued behind the creates that made it
-    // necessary (2026-07-27).
+    // A live supervisor, long past the unrenewed visibility deadline: nothing
+    // dies. A running host holds its own lease open; reading an unrenewed
+    // lease as death kills working agents whose vendor TUI is rendered and
+    // running.
     core.bindSupervisor(host_core.SupervisorWatch.of(c.getpid()).?);
     const past_old_lease = 1_000 + 10 * generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
     try std.testing.expect(!try core.enforceSupervisorLoss(past_old_lease));

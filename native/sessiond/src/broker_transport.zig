@@ -17,11 +17,11 @@ pub fn setTransportReadTimeout(socket: std.posix.fd_t) !void {
         return error.SocketTimeoutFailed;
 }
 
-/// SO_RCVTIMEO bounds only a single read() syscall, so a peer dribbling one
+/// SO_RCVTIMEO bounds only a single read syscall, so a peer dribbling one
 /// byte per sub-timeout interval would pin the serialized accept loop
 /// indefinitely (pre-auth, before verifyDaemonPeer) while never tripping any
 /// per-syscall timeout. Every frame read therefore runs under one absolute
-/// monotonic deadline — a total assembly budget shared across all read()
+/// monotonic deadline — a total assembly budget shared across all read
 /// syscalls of that frame — so dribbling cannot exceed it. The budget is the
 /// standard control-RPC bound; a loopback frame assembles in microseconds, so
 /// only a stalling peer ever approaches it. The test-build budget keeps the
@@ -32,7 +32,7 @@ else
     generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms;
 
 /// readNoEof-compatible reader that enforces frame_read_budget_ns as one
-/// absolute monotonic deadline across the whole frame assembly. Each read()
+/// absolute monotonic deadline across the whole frame assembly. Each read
 /// is preceded by a poll bounded by the REMAINING budget, so a dribbling peer
 /// is cut at the deadline instead of at a per-syscall timeout it keeps
 /// resetting; expiry, EOF, and transport errors all fail closed identically.

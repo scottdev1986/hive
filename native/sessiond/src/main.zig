@@ -5,7 +5,7 @@ const session_host = @import("session_host");
 
 pub fn main() !void {
     // Allocator by optimize mode: DebugAllocator (leak detection on deinit) in
-    // Debug only. Release builds of this long-running daemon use c_allocator —
+    // Debug only. Release builds of this long-running daemon use c_allocator
     // DebugAllocator adds per-allocation metadata, slowdown, and leak
     // diagnostics carrying stack addresses to stderr. libc is linked for this
     // module, matching the c_allocator use throughout session_host.zig.
@@ -40,8 +40,8 @@ pub fn main() !void {
     defer allocator.free(hive_home);
     // There is no `serve` role. Hive launches each terminal host itself and
     // speaks to it on the host's own sockets, so no broker process stands
-    // between them: it was never in the terminal data path, and one process
-    // relaying every launch and every inspect was the 31-wide ceiling.
+    // between them: the broker is not in the terminal data path, and one
+    // process relaying every launch and every inspect caps concurrent width.
     if (std.mem.eql(u8, role, "host")) {
         session_host.runHostRole(allocator, hive_home) catch |err| {
             // This stderr is inherited by the broker startup log. Preserve the

@@ -309,7 +309,7 @@ pub const RealVtEngine = struct {
         const self: *RealVtEngine = @ptrCast(@alignCast(context));
         if (!self.digest_dirty) return self.digest_value;
         self.updateDigest() catch {
-            // §23 forbids claiming a clean restore from state that was never
+            // forbids claiming a clean restore from state that was never
             // verified, so an unmeasurable digest must never compare equal to
             // another engine's. The live and the fresh verify engine are alive
             // at the same moment, so their addresses cannot collide.
@@ -348,7 +348,7 @@ pub const RealVtEngine = struct {
         // Fresh verification engines retain effects for TG2 comparison. The
         // live engine delivers them directly to the bounded PTY queue instead
         // of retaining a second, session-lifetime copy. Retention stays under
-        // the §18 journal ceiling; a null-sink engine that would grow past it
+        // the journal ceiling; a null-sink engine that would grow past it
         // fails closed rather than pinning unbounded client-driven bytes.
         const retained = std.math.add(usize, self.effects.items.len, bytes.len) catch {
             self.effect_failed = true;
@@ -363,7 +363,7 @@ pub const RealVtEngine = struct {
         };
     }
 
-    /// §23: keep the shadow VT grid/pixel geometry in lockstep with the host's
+    /// keep the shadow VT grid/pixel geometry in lockstep with the host's
     /// applied window so checkpoints and XTWINOPS replies carry the real size.
     pub fn resize(
         self: *RealVtEngine,

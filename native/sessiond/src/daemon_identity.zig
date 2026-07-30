@@ -74,15 +74,11 @@ pub fn observeExactProcess(
         if (waited != 0) {
             // ECHILD is not "I cannot tell": it means this PID is not a child
             // of ours to wait for, and the ordinary way that happens is that an
-            // EARLIER observation on this same path already reaped it. The
-            // first caller consumed the exit status; every caller after it used
-            // to get `unknown` — and `unknown` occupies a registry slot
-            // forever, so a host killed through a TERMINATE whose readback did
-            // not verify took its slot with it and no restart-free path
-            // returned it. That is the CAPACITY_EXCEEDED exhaustion recorded in
-            // planning/2026-07-25-sessiond-capacity-exhaustion.md; reproduced
-            // with real processes in prototypes/capacity (S3/S4).
-            //
+            // earlier observation on this same path already reaped it. Treat
+            // that as "look harder", never as `unknown`: `unknown` occupies a
+            // registry slot forever, so a host killed through a TERMINATE
+            // whose readback did not verify would take its slot with it and
+            // starve capacity until restart.
             // Falling through to the ordinary identity evidence is strictly
             // more evidence, never less: a gone PID answers absent through the
             // kill probe, a REUSED PID answers absent on the start token, and a

@@ -1,5 +1,4 @@
 //! Frozen A0 LIST/INSPECT/TERMINATE projection for the neutral host seam.
-//!
 //! Hive locator and visibility policy never crosses this module. Controller
 //! operations address only an exact neutral SessionRef and preserve measured
 //! partial/unavailable evidence when a live host cannot be reached.

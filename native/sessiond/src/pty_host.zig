@@ -1,10 +1,7 @@
-//! §21 PTY host leaf — openpty/fork/execve, process group, geometry, start-token
+//! PTY host leaf — openpty/fork/execve, process group, geometry, start-token
 //! at spawn, ordered write-queue drain, raw read loop.
-//!
 //! Does NOT own VT parse, checkpoint, attach protocol, or broker grants.
 //! Integrates process_inspector for spawn-time root identity snapshot.
-//!
-//! Authority: docs/design/terminal-stack-transition.html §18/§19/§21.
 //! Child path after fork is async-signal-safe only (descriptor setup + execve).
 
 const std = @import("std");
@@ -29,8 +26,8 @@ const c = @cImport({
 /// fail at this bound rather than hanging the daemon spawn path forever.
 pub const exec_barrier_timeout_ms: c_int = 5_000;
 
-/// Bound on the reap wait after SIGKILL (R5-class, matching §21's 2 s KILL
-/// settle bound). A child wedged in uninterruptible I/O fails at this bound
+/// Bound on the reap wait after SIGKILL (matches the 2 s KILL settle
+/// bound). A child wedged in uninterruptible I/O fails at this bound
 /// instead of hanging the spawn/deinit path on a blocking waitpid forever.
 pub const force_kill_reap_timeout_ms: u32 = 2_000;
 /// Poll slice for the bounded reap wait.
@@ -46,13 +43,13 @@ extern "c" fn openpty(
     winp: ?*const c.struct_winsize,
 ) c_int;
 
-/// §18 geometry bounds.
+/// geometry bounds.
 pub const cells_per_dimension_min: u32 = 1;
 pub const cells_per_dimension_max: u32 = 1_000;
 pub const active_cells_max: u32 = 250_000;
-/// §18 stream chunk bound (maximum bytes in one PTY drain write).
+/// stream chunk bound (maximum bytes in one PTY drain write).
 pub const stream_chunk_max_bytes: usize = 64 * 1024;
-/// Write-queue capacity: the §22 maximum encoded automation transaction
+/// Write-queue capacity: the maximum encoded automation transaction
 /// (1 MiB body * 4 worst-case expansion + 256 bytes framing).
 pub const write_queue_cap_bytes: usize = (1024 * 1024) * 4 + 256;
 
@@ -99,8 +96,8 @@ pub const Geometry = struct {
         // Active-cell product; use u64 to avoid overflow before the check.
         const active: u64 = @as(u64, self.columns) * @as(u64, self.rows);
         if (active > active_cells_max) return error.GeometryOutOfRange;
-        // §19 positive pixel sizes when set; zero is legitimate (§18: no viewer
-        // has established pixels yet). Upper bound is winsize u16 capacity (M2).
+        // positive pixel sizes when set; zero is legitimate (: no viewer
+        // has established pixels yet). Upper bound is winsize u16 capacity.
         if (self.width_px > std.math.maxInt(u16) or self.height_px > std.math.maxInt(u16))
             return error.GeometryOutOfRange;
     }
@@ -223,7 +220,7 @@ pub const PtyHost = struct {
     session: i32 = -1,
     start_token: process_inspector.StartToken = .{ .seconds = 0, .microseconds = 0 },
     geometry: Geometry = .{ .columns = 80, .rows = 24 },
-    /// Exclusive next PTY-output byte offset (§18 exclusive sequences).
+    /// Exclusive next PTY-output byte offset (exclusive sequences).
     output_seq: u64 = 0,
     /// Exclusive next PTY-input byte offset owned by the write queue / written.
     input_seq: u64 = 0,
@@ -370,7 +367,7 @@ pub const PtyHost = struct {
 
         // R1: CLOEXEC exec-barrier pipe — real evidence of the exec transition.
         // Write end is FD_CLOEXEC: successful execve auto-closes it → parent reads EOF;
-        // ANY pre-exec / execve failure → child write()s errno then _exit (R2).
+        // ANY pre-exec / execve failure → child writes errno then _exit (R2).
         var exec_pipe: [2]c_int = .{ -1, -1 };
         if (c.pipe(&exec_pipe) != 0) return error.SpawnFailed;
         errdefer {
@@ -537,7 +534,7 @@ pub const PtyHost = struct {
         }
 
         // A successful exec is enough to open a terminal. Process-tree
-        // completeness is measured later by inspection; provider startup must
+        // completeness is
         // not delay or veto the PTY becoming usable.
         return .{ .running = makeReadback(
             self,
@@ -650,8 +647,8 @@ pub const PtyHost = struct {
 
     /// Consecutive would-block retries before writeDrainAll gives up (~1.5 s
     /// at 100 µs per retry). Progress resets the count, so only a child that
-    /// stops reading entirely hits the bound; the old flat 1M-iteration guard
-    /// could spin ~100 s on the host's single loop.
+    /// stops reading entirely hits the bound; a flat multi-million iteration
+    /// guard would otherwise spin for tens of seconds on the host's single loop.
     pub const write_drain_stall_budget: usize = 15_000;
 
     /// Drain until the queue is empty or a would-block/error stops progress.
@@ -683,7 +680,7 @@ pub const PtyHost = struct {
             error.WouldBlock => return .{ .through_seq = self.output_seq, .bytes = &[_]u8{} },
             error.BrokenPipe, error.ConnectionResetByPeer => return error.Closed,
             // Darwin hangup: a master read after the last slave close returns
-            // EIO (xnu pts master). That is peer-gone, not an I/O fault —
+            // EIO (xnu pts master). That is peer-gone, not an I/O fault
             // report the dead session cleanly as Closed.
             error.InputOutput => return error.Closed,
             else => return error.IoFailed,
@@ -794,13 +791,11 @@ pub const PtyHost = struct {
     }
 
     /// SIGKILL our own child, then reap with a bounded wait.
-    ///
-    /// When a start token is on record, re-observe and verify it first (§21
+    /// When a start token is on record, re-observe and verify it first (
     /// TOCTOU): if the recorded identity is gone — reaped by a sibling
     /// authority and the pid since reused — the pid now belongs to an
     /// unrelated process and must NOT be signalled. Unobservable fails closed
     /// (skip) because reuse cannot be ruled out.
-    ///
     /// Returns true when the child was reaped or positively absent; false when
     /// the signal was skipped or the reap deadline expired — the caller must
     /// forget the pid rather than hang on a child wedged in uninterruptible
@@ -825,7 +820,7 @@ pub const PtyHost = struct {
         }
         _ = c.kill(child_pid, c.SIGKILL);
         // Bounded reap: a blocking waitpid hangs forever on a child wedged in
-        // uninterruptible I/O and would stall the spawn/deinit path (R5-class).
+        // uninterruptible I/O and would stall the spawn/deinit path.
         var st: c_int = 0;
         var waited_ms: u32 = 0;
         while (waited_ms < force_kill_reap_timeout_ms) {
@@ -859,7 +854,7 @@ const BarrierResult = union(enum) {
 
 /// Parent-side barrier: poll with bound (R5), read with EINTR retry (R3).
 /// EOF ⇒ success; a complete typed evidence frame ⇒ exec_failed.
-/// M1: deadline is monotonic — EINTR must not reset the full timeout budget
+/// deadline is monotonic — EINTR must not reset the full timeout budget
 /// (SIGCHLD from other children is common in sessiond).
 fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
     const started = std.time.Instant.now() catch {
@@ -938,7 +933,7 @@ fn readExecBarrierOnce(read_fd: c_int, timeout_ms: c_int) BarrierResult {
 }
 
 /// Child-side: report errno on the barrier (EINTR-retried), then _exit.
-/// write() and _exit are async-signal-safe. The evidence frame is ≤ PIPE_BUF.
+/// write and _exit are async-signal-safe. The evidence frame is ≤ PIPE_BUF.
 fn childBarrierFail(
     write_fd: c_int,
     layer: LaunchFailureLayer,
@@ -1081,7 +1076,7 @@ const ArgvOwned = struct {
 
 fn dupeArgv(allocator: std.mem.Allocator, items: []const []const u8) Error!ArgvOwned {
     const storage = allocator.alloc([:0]u8, items.len) catch return error.Internal;
-    // M1: free only the initialized prefix — storage is uninit until each dupeZ.
+    // free only the initialized prefix — storage is uninit until each dupeZ.
     var initialized: usize = 0;
     errdefer {
         for (storage[0..initialized]) |s| allocator.free(s);
@@ -1134,7 +1129,7 @@ test "geometry bounds: valid accepted, out-of-range rejected" {
     try testing.expectError(error.GeometryOutOfRange, (Geometry{ .columns = 1001, .rows = 24 }).validate());
     try testing.expectError(error.GeometryOutOfRange, (Geometry{ .columns = 500, .rows = 501 }).validate()); // 250500 > 250000
     try (Geometry{ .columns = 500, .rows = 500 }).validate(); // exactly 250000
-    // M2: zero pixels ok; above u16 panics/truncates in winsizeFromGeometry.
+    // zero pixels ok; above u16 panics/truncates in winsizeFromGeometry.
     try (Geometry{ .columns = 80, .rows = 24, .width_px = 0, .height_px = 0 }).validate();
     try testing.expectError(error.GeometryOutOfRange, (Geometry{
         .columns = 80,
@@ -1379,7 +1374,7 @@ test "writeDrainAll bounds a stalled consumer with DrainStalled and keeps the qu
     const started = std.time.milliTimestamp();
     try testing.expectError(error.DrainStalled, host.writeDrainAll());
     const elapsed = std.time.milliTimestamp() - started;
-    // Bounded to the ~1.5 s stall budget, far under the old ~100 s worst case.
+    // Bounded to the ~1.5 s stall budget (`write_drain_stall_budget`).
     try testing.expect(elapsed < 10_000);
     // Bytes are not dropped: the undrained tail stays queued and the host
     // loop's writeDrain keeps working after the stall.
@@ -1605,7 +1600,7 @@ test "100 MiB ordered read digest (SLO-04 seed)" {
     try testing.expectEqualSlices(u8, &expected, &got);
 }
 
-// Exec-barrier: nonexistent binary → child write()s typed errno evidence.
+// Exec-barrier: nonexistent binary → child writes typed errno evidence.
 // Must NOT return a SpawnReadback claiming a live child (acting≠being).
 test "negative spawn: nonexistent binary returns typed exec evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
@@ -1664,7 +1659,7 @@ test "R1: shebang shim spawn succeeds when resolved image != argv basename" {
         .argv = &[_][]const u8{abs},
         .geometry = defaultGeometry(),
     }));
-    // THE ASSERTION THAT FAILS AGAINST BASENAME-MATCH CODE:
+    // THE ASSERTION THAT FAILS AGAINST BASENAME-MATCH CODE
     // want_name would be "provider-shim" but proc_pidpath is ".../sh" or ".../cat".
     try testing.expect(host.spawned);
     try testing.expect(rb.pid > 1);

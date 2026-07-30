@@ -329,11 +329,10 @@ pub const Runtime = struct {
         // stamped into the lock file is advisory identity only; the daemon
         // supervisor's ready-proof is kernel-bound (LOCAL_PEERPID + HELLO on
         // broker.sock — see src/daemon/sessiond-broker.ts), never stdout.
-        //
         // This library must never write to ambient stdout: under `zig build
         // test` a test binary's stdout IS the build-runner `--listen` IPC
         // pipe, and any stray bytes desync that framed protocol into a
-        // permanent build<->runner deadlock (issue #54).
+        // permanent build<->runner deadlock.
         {
             const pid = c.getpid();
             var pid_buf: [32]u8 = undefined;
@@ -529,8 +528,8 @@ pub const Registry = struct {
     directory_quarantines: [generated.limits.live_sessions_per_hive_home]?DirectoryQuarantine = @splat(null),
     enumeration_complete: bool = true,
     /// Counts quarantines that found no free slot and could not be recorded.
-    /// A flood must never silently mask a later genuinely-suspicious record:
-    /// enumeration stays fail-closed and list() raises operator attention
+    /// A flood must never silently mask a later genuinely-suspicious record
+    /// enumeration stays fail-closed and list raises operator attention
     /// until the broker restarts (the same lifecycle as enumeration_complete).
     dropped_quarantines: usize = 0,
 
@@ -549,7 +548,7 @@ pub const Registry = struct {
     /// The only path that returns capacity. TERMINATE answers on the control
     /// plane and never writes this in-memory registry, so a killed or crashed
     /// host is discovered here: the broker observes the exact process, and an
-    /// absent one has taken its generation with it. Adopted hosts count too —
+    /// absent one has taken its generation with it. Adopted hosts count too
     /// after a restart every recovered session is non-parent, and skipping them
     /// would leak precisely the sessions a restart was meant to recover.
     pub fn reapExitedHosts(self: *Registry) usize {
@@ -563,7 +562,7 @@ pub const Registry = struct {
             ) != .absent) continue;
             // Exited, not unknown: unknown counts as occupied forever, and the
             // process is proven gone. Whether the exit was clean is answered by
-            // final evidence, which list() consults ahead of this state.
+            // final evidence, which list consults ahead of this state.
             entry.record.state = .exited;
             reaped += 1;
         };
@@ -791,7 +790,7 @@ pub const Registry = struct {
     /// that owns this broker is observed gone: the hosts are separate forks
     /// that would otherwise reparent to launchd and keep their vendors running
     /// with nobody left to stop them. Each host also watches this process
-    /// independently, so a broker that is killed outright is still covered —
+    /// independently, so a broker that is killed outright is still covered
     /// this path is the fast, clean one.
     pub fn terminateAll(self: *Registry, reason: []const u8) usize {
         var terminated: usize = 0;
@@ -990,7 +989,7 @@ pub const RecoveredRegistry = struct {
         self.registry.quarantineDirectory(session_id, verify_after_ns);
     }
 
-    /// §21 crash invariant: an unparseable host receives no renewals and must
+    /// crash invariant: an unparseable host receives no renewals and must
     /// self-terminate on its own lease. The broker verifies final.json after
     /// the lease plus graceful-stop bound; absence remains explicit unknown.
     pub fn verifyDirectoryQuarantines(
@@ -1176,8 +1175,7 @@ pub fn launchHost(
     // directory is claimed exclusively by session id, so two creates cannot
     // collide on one; the adoption secret and the executable path are this
     // create's own. Holding the gate across this filesystem work is what still
-    // cost a 31-wide burst its renewals after the launch itself was yielded:
-    // measured 10.3 s for a renewal pass during a burst against 0.2 s idle.
+    // cost a 31-wide burst its renewals after the launch itself was yielded
     if (state_gate) |gate| gate.unlock();
     var relocked = false;
     defer if (state_gate) |gate| {
@@ -1219,16 +1217,14 @@ pub fn launchHost(
         .{ .code = .generation_mismatch, .close_connection = false },
     );
     // Deliberately NOT gated on how much of the host's stated lease is left.
-    //
     // The host writes `expiresAt = now + visibility_expiry_ms` early in boot,
     // before it forks a login shell and execs the vendor; the broker sees it
     // only once READY arrives. At fleet width that gap is longer than the 15 s
-    // window — measured 12.3–14.3 s per create at 31 wide — so the remaining
+    // window
     // lease reads as zero and a healthy host that merely booted slowly was
     // rejected as unverifiable, killed, and its create failed. That is the
     // deleted lease still deciding whether a terminal may exist, through a
     // constant that does not scale with burst width.
-    //
     // Nothing enforces the lease now, and the broker sets this record's expiry
     // from its own clock below, so the host's value is not authority for
     // anything. Every other field here still has to match exactly.
@@ -1612,7 +1608,7 @@ pub fn serveAuthenticatedFrames(
 
         // One absolute monotonic budget per frame assembly (see
         // FrameDeadlineReader): a dribbling peer is cut at the deadline
-        // instead of pinning the loop with sub-timeout read() syscalls.
+        // instead of pinning the loop with sub-timeout read syscalls.
         var frame_reader = FrameDeadlineReader.init(stream.handle, timer) orelse return;
         const read = protocol.readFrameForRange(
             allocator,
@@ -1667,11 +1663,10 @@ pub fn serveAuthenticatedFrames(
 }
 
 /// Caches the daemon's /handshake across connections, keyed by instance id.
-/// Fetching it is a blocking HTTP GET against the daemon's own event loop —
-/// paid per accepted connection, that turned any daemon-loop stall into
-/// multi-second service time on the broker's serialized accept loop, which is
-/// precisely what converted the 2026-07-27 sixteen-spawn burst into a fleet
-/// death (planning/2026-07-27-spawn-collapse-root-cause.md). The instance id
+/// Fetching it is a blocking HTTP GET against the daemon's own event loop.
+/// Paid per accepted connection, that turns any daemon-loop stall into
+/// multi-second service time on the broker's serialized accept loop and can
+/// starve every concurrent host create behind one handshake. The instance id
 /// is minted per daemon launch, so a matching id means the handshake is
 /// current; a restart changes the id and forces exactly one re-fetch. The
 /// cheap daemon.lock file read stays per-connection: the kernel peer check
@@ -1765,7 +1760,7 @@ fn serveDaemonConnection(
         return;
     };
     // Pre-WELCOME logical failures send a best-effort typed ERROR before the
-    // close; the original error still propagates so serve() logs the reason,
+    // close; the original error still propagates so serve logs the reason,
     // and a dead transport must never mask it.
     var daemon_lock = loadDaemonLock(allocator, runtime.canonical_home) catch |err| {
         writeFailure(allocator, stream, hello_frame.header, .{
@@ -1816,7 +1811,7 @@ fn serveDaemonConnection(
         try writeFailure(allocator, stream, hello_frame.header, failure);
         return;
     }
-    // A typed ERROR is only legal while zero WELCOME bytes are on the wire:
+    // A typed ERROR is only legal while zero WELCOME bytes are on the wire
     // build and validate the frame first, and once writeFrame starts, any
     // failure is transport-fatal and closes bare.
     const welcome = buildWelcome(
@@ -1966,7 +1961,7 @@ pub const ProductionBackend = struct {
         return failure(.not_found);
     }
 
-    /// §19/§20 one-use viewer attach: mints a grant token, registers only its
+    /// one-use viewer attach: mints a grant token, registers only its
     /// hash on the live exact-generation host (visibility-gated by
     /// Registry.registerGrant), and returns the ATTACH_GRANT the viewer
     /// presents directly to the host endpoint.
@@ -2148,7 +2143,7 @@ pub const ProductionBackend = struct {
         return .{ .response = response };
     }
 
-    /// §22 INPUT_ORPHAN_DISCARD. Adoption-secret authenticated by construction:
+    /// INPUT_ORPHAN_DISCARD. Adoption-secret authenticated by construction
     /// only the broker holds a HostControl, and the host refuses every verb
     /// until HOST_ADOPT proved the 32-byte secret. The broker adds nothing to
     /// the policy — the host alone decides whether the claim is orphaned or
@@ -2380,14 +2375,12 @@ fn captureBrokerOwner() !BrokerOwner {
 }
 
 /// Names whoever terminates this broker.
-///
-/// A broker that dies mid-burst takes its hosts' supervisor with it, and the
-/// 2026-07-28 31-wide runs kept recording `exited 143` — SIGTERM — with no way
-/// to tell who sent it. The daemon's own supervisor is ruled out (it suppresses
-/// the restart path for exits it initiated) and so is the memory watchdog (it
-/// walks descendants of each terminal's shell root; this process is their
-/// parent). The kernel knows the answer and puts it in `si_pid`, so ask it,
-/// then exit exactly as the default disposition would have.
+/// A broker that dies mid-burst takes its hosts' supervisor with it. SIGTERM
+/// (`exited 143`) without a sender is opaque: the daemon's own supervisor is
+/// ruled out (it suppresses the restart path for exits it initiated) and so
+/// is the memory watchdog (it walks descendants of each terminal's shell root;
+/// this process is their parent). The kernel knows the answer and puts it in
+/// `si_pid`, so ask it, then exit exactly as the default disposition would.
 fn onBrokerTermination(sig: c_int, info: [*c]c.siginfo_t, _: ?*anyopaque) callconv(.c) void {
     var buffer: [128]u8 = undefined;
     const text = std.fmt.bufPrint(
@@ -2417,8 +2410,8 @@ fn brokerOwnerIsLive(owner: BrokerOwner) bool {
     return std.meta.eql(observed.start_token, owner.start_token);
 }
 
-/// Runs the shipped broker role. WP4 replaces only the host side of the
-/// lifecycle transport; this process never opens or retains a PTY master.
+/// Runs the shipped broker role. This process never opens or retains a PTY
+/// master; host lifecycle transport is the only side it owns.
 pub fn serve(
     allocator: std.mem.Allocator,
     hive_home: []const u8,
@@ -2466,14 +2459,12 @@ pub fn serve(
             return;
         }
         // Maintenance runs on a cadence, not once per accepted connection.
-        //
         // Both passes want the gate that in-flight connections hold, and this
         // loop took it TWICE before it even polled — so a worker busy with a
         // create or a registry rescan delayed accepting connections that were
         // already pending, and the daemon's HELLO timed out waiting to be
         // accepted at all. That is the 31-wide failure that survived every
         // other fix.
-        //
         // A cadence rather than a `tryLock`: skipping opportunistically starves
         // whichever pass loses the race, and `reapExitedHosts` is the only path
         // that returns registry capacity — starving it produced ALREADY_EXISTS
@@ -2508,7 +2499,7 @@ pub fn serve(
                 continue;
             },
         };
-        // Serving on this thread is what made a wide spawn burst unsurvivable:
+        // Serving on this thread is what made a wide spawn burst unsurvivable
         // one CREATE_COMMIT holds the loop through a whole host launch, so the
         // VISIBILITY_RENEW that would keep the already-launched hosts alive is
         // not even accepted until the burst drains — long past the 15 s lease.
@@ -2848,7 +2839,7 @@ const DaemonWireHarness = struct {
     observed: *const ObservedPeer,
     timer: *std.time.Timer,
     build_id: []const u8 = "test-build",
-    /// When set, the connection shares this cache (the production serve()
+    /// When set, the connection shares this cache (the production serve
     /// shape); otherwise it gets a private one (the single-shot test shape).
     handshake_cache: ?*DaemonHandshakeCache = null,
     // Read only after joining the thread; the join is the synchronization.
@@ -3115,7 +3106,7 @@ test "daemon evidence instance mismatch sends a correlated typed ERROR" {
     try writeDaemonEvidenceFixture(tmp.dir, test_daemon_lock_json, handshake_server.listener.listen_address.in.getPort());
     const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
     defer {
-        // macOS does not wake a blocked accept() when the listener closes, so
+        // macOS does not wake a blocked accept when the listener closes, so
         // unblock it in case the broker never fetched the handshake.
         if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
             unblock.close()
@@ -3328,7 +3319,7 @@ test "WELCOME validation failure sends a typed ERROR with no WELCOME bytes" {
     try writeDaemonEvidenceFixture(tmp.dir, test_daemon_lock_json, handshake_server.listener.listen_address.in.getPort());
     const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
     defer {
-        // macOS does not wake a blocked accept() when the listener closes, so
+        // macOS does not wake a blocked accept when the listener closes, so
         // unblock it in case the broker never fetched the handshake.
         if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
             unblock.close()
@@ -3382,7 +3373,7 @@ test "WELCOME transport failure closes bare with no ERROR frame" {
     try writeDaemonEvidenceFixture(tmp.dir, test_daemon_lock_json, handshake_server.listener.listen_address.in.getPort());
     const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
     defer {
-        // macOS does not wake a blocked accept() when the listener closes, so
+        // macOS does not wake a blocked accept when the listener closes, so
         // unblock it in case the broker never fetched the handshake.
         if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
             unblock.close()
@@ -3463,7 +3454,7 @@ test "partial WELCOME transport failure closes bare mid-frame" {
     try writeDaemonEvidenceFixture(tmp.dir, lock_json, handshake_server.listener.listen_address.in.getPort());
     const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
     defer {
-        // macOS does not wake a blocked accept() when the listener closes, so
+        // macOS does not wake a blocked accept when the listener closes, so
         // unblock it in case the broker never fetched the handshake.
         if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
             unblock.close()
@@ -3815,7 +3806,7 @@ test "post-connect socket guard rejects a substituted filesystem socket" {
     );
 }
 
-test "Runtime.open writes no bytes to ambient stdout (issue #54 runner-IPC deadlock)" {
+test "Runtime.open writes no bytes to ambient stdout (runner-IPC deadlock)" {
     // Under `zig build test` this binary's stdout is the build-runner
     // `--listen` IPC pipe; a single stray byte desyncs the framed protocol
     // and deadlocks the whole build. Capture fd 1 across Runtime.open and
@@ -3978,7 +3969,7 @@ test "pre-auth dribbling HELLO is cut at the connection deadline" {
     };
     const broker_thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
 
-    // Dribble one byte per 100ms: every read() syscall returns well inside
+    // Dribble one byte per 100ms: every read syscall returns well inside
     // the 5s SO_RCVTIMEO, so only the absolute connection deadline (500ms in
     // test builds) can cut it. The loop ends on EPIPE from the bare close.
     var drip_timer = try std.time.Timer.start();
@@ -4157,7 +4148,7 @@ test "quarantine overflow stays fail-closed and flags operator attention" {
     _ = packed_registry.quarantine(record, .{ .code = .unauthenticated, .close_connection = true });
     try std.testing.expectEqual(@as(usize, 1), packed_registry.dropped_quarantines);
 
-    // Capacity counts exited entries as reusable, so quarantine must agree:
+    // Capacity counts exited entries as reusable, so quarantine must agree
     // 32 tombstones are not a full table and must not drop new evidence.
     var tombstoned_registry: Registry = .{};
     var exited = record;

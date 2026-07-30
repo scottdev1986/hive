@@ -109,7 +109,7 @@ pub const HostControl = struct {
         return self.renew_visibility_fn(self.context, locator, payload);
     }
 
-    /// §22 host-authorized human-claim resolution. The typed response makes an
+    /// host-authorized human-claim resolution. The typed response makes an
     /// orphan discard, held-claim preemption, and refusal distinct on the wire.
     pub fn discardOrphan(
         self: HostControl,
@@ -199,7 +199,7 @@ pub fn locatorJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.jso
 
 pub const wallDeadline = wall_clock.deadline;
 
-/// Production broker-side implementation of the WP4 seam. Every operation
+/// Production broker-side implementation of the seam. Every operation
 /// reconnects and authenticates the exact recorded host before speaking v1 on
 /// host.sock; the test double exercises this code over a real UDS.
 fn copyNeutralSessionRef(

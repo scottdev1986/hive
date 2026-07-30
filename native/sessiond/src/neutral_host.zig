@@ -221,7 +221,7 @@ pub const LaunchEvidence = struct {
 
 /// Production `Host`: opens its own terminal and launches the frozen command
 /// directly. It owns the resulting PTY, so it must run in the process that will
-/// go on to serve the session. Create is exactly-once by the registry ledger —
+/// go on to serve the session. Create is exactly-once by the registry ledger
 /// a replayed idempotency key returns the recorded result and never spawns.
 pub const DirectHost = struct {
     allocator: std.mem.Allocator,
@@ -324,7 +324,7 @@ pub const DirectHost = struct {
     }
 
     fn launch(self: *DirectHost, session: SessionRef, request: CreateRequest) !CreateResult {
-        // M1: the wire carries opaque transfer tokens and this host has no
+        // the wire carries opaque transfer tokens and this host has no
         // descriptor-passing channel that could resolve one into a descriptor.
         // Refuse in the ledger so the rejection replays like any other result.
         if (request.command.descriptorMap.len > 0) return self.commit(session, StoredOutcome.execFailed(
@@ -617,7 +617,7 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
     } else |err| if (err != error.CreateConflict) return err;
     if (direct.spawns != 1) return error.DoubleSpawn;
 
-    // Descriptor maps are explicitly unsupported in M1: the wire carries opaque
+    // Descriptor maps are explicitly unsupported in the wire carries opaque
     // transfer tokens this host cannot resolve, so the create is refused with
     // typed evidence, committed to the ledger, and never spawned.
     var descriptor_pty = try pty_host.PtyHost.init(allocator);
@@ -661,7 +661,6 @@ pub const CreateResultProof = struct {
 
 /// Create through `host` and return the frozen create-result document for the
 /// outcome the ledger committed.
-///
 /// The record is read here rather than by the caller because a `Record` borrows
 /// registry storage that the next reservation recycles; keeping the borrow
 /// inside this call is what stops a caller from holding it across another
@@ -685,7 +684,6 @@ pub fn createDocument(
 }
 
 /// Assemble the frozen create-result document for one committed session.
-///
 /// The outcome is embedded from the COMMITTED LEDGER BYTES, parsed as an opaque
 /// value, rather than re-serialized from typed values: a field the ledger
 /// omitted must stay omitted here, or a schema check above would be validating
@@ -985,9 +983,8 @@ test "client refuses an aggregate frame the server would reject" {
     );
 }
 
-/// Real committed create results — one running, one descriptor-map refusal —
+/// Real committed create results — one running, one descriptor-map refusal
 /// assembled as frozen create-result documents.
-///
 /// This module must stay project-neutral, so it cannot validate them against
 /// the Hive wire schema itself. The golden layer above imports both and does
 /// the validation; producing the documents here is what lets it.
@@ -1160,10 +1157,10 @@ fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
 
 pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     // Security gate: the live proof handler below terminates a real child and
-    // writes proof-run evidence — including a FROZEN observedAt timestamp —
+    // writes proof-run evidence — including a FROZEN observedAt timestamp
     // into the durable ledger. That ledger-write power must stay unreachable
     // from production code paths, so the handler and its host role are
-    // declared INSIDE this proof entry point rather than at module scope:
+    // declared INSIDE this proof entry point rather than at module scope
     // nothing outside `proveLiveLifecycle` (whose only caller is the golden
     // proof runner, test/neutral-host-golden.zig) can name or serve them.
     const LiveProofHost = struct {

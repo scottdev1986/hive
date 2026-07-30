@@ -1,6 +1,5 @@
 //! Private broker↔host bootstrap codec for `hive-sessiond host`.
-//!
-//! This is not a §20 endpoint protocol. It is the single byte-level authority
+//! This is not an endpoint protocol. It is the single byte-level authority
 //! for the bounded inherited-fd handoff used before the child's READY result.
 
 const std = @import("std");
@@ -14,12 +13,12 @@ test {
 /// is not secret; every sensitive launch byte travels inside the socketpair.
 pub const inherited_control_fd: std.posix.fd_t = 3;
 
-/// Fixed 48-byte HVB1 header:
-///   0..4   ASCII "HVB1" (magic and version)
-///   4..8   big-endian u32 CREATE_BEGIN JSON byte length
-///   8..12  big-endian u32 initial-input byte length
-///   12..16 reserved zero bytes (nonzero fails closed)
-///   16..48 raw 32-byte adoption secret
+/// Fixed 48-byte HVB1 header
+/// 0..4 ASCII "HVB1" (magic and version)
+/// 4..8 big-endian u32 CREATE_BEGIN JSON byte length
+/// 8..12 big-endian u32 initial-input byte length
+/// 12..16 reserved zero bytes (nonzero fails closed)
+/// 16..48 raw 32-byte adoption secret
 /// The exact JSON bytes and then exact opaque input bytes follow immediately,
 /// without a terminator, padding, or trailer. The next bytes on the same
 /// SOCK_STREAM are the generated broker HELLO frame.

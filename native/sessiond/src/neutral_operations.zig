@@ -47,7 +47,6 @@ pub const HostOperations = struct {
     /// field because a defaulted one is silently forgettable: the production
     /// host omitted it once and every resize it served answered `unknown` with
     /// nothing red to show for it.
-    ///
     /// A required OPTIONAL parameter only prevents omission, not an explicit
     /// null. A host that must serve resize therefore builds through
     /// `initServingTerminal`, whose terminal is not optional, so null cannot
@@ -118,7 +117,7 @@ pub const HostOperations = struct {
         };
     }
 
-    /// Frozen `resize`. §5 is an ordered mutation, not a setter: the revision
+    /// Frozen `resize`. is an ordered mutation, not a setter: the revision
     /// must advance, the geometry returned is what the terminal reported AFTER
     /// the set rather than what was asked for, and a superseded revision names
     /// the revision that superseded it instead of failing opaquely. The
@@ -228,7 +227,7 @@ pub const HostOperations = struct {
             !std.mem.eql(u8, request.idempotencyKey, operation.idempotencyKey))
             return error.InvalidTerminationRequest;
         const canonical = try canonicalTermination(allocator, request);
-        // A .pending reservation means an earlier attempt reserved this key
+        // A.pending reservation means an earlier attempt reserved this key
         // and died before committing, so the kill sequence below RE-EXECUTES
         // against the recorded child identity. That is safe against PID reuse
         // only because process_inspector re-verifies the recorded start token
@@ -553,7 +552,7 @@ pub const Controller = struct {
             var client = self.registry.connect(request.session) catch |err| {
                 // Local allocation failure is not host evidence. Reporting it
                 // as an unreachable host would tell the caller something about
-                // the SESSION that only happened inside this process --
+                // the SESSION that only happened inside this process
                 // the same distinction Controller.inspect makes.
                 if (err == error.OutOfMemory) return err;
                 break :blk null;
@@ -638,7 +637,7 @@ pub const Controller = struct {
         const record = self.registry.get(request.value.session) orelse return error.SessionNotFound;
         return self.callInspect(self.allocator, record, true) catch |err| {
             // A degraded fallback is evidence that the HOST could not be
-            // reached. Local allocation failure is not host evidence:
+            // reached. Local allocation failure is not host evidence
             // propagate it rather than committing a degraded inspection as if
             // the host were gone.
             if (err == error.OutOfMemory) return err;
@@ -732,7 +731,7 @@ pub const Controller = struct {
         // The host may have committed immediately before its socket vanished.
         // Refresh, then prefer the exact durable replay over reconstruction.
         try self.registry.recover();
-        // A .pending reservation here must NOT re-execute the kill sequence:
+        // A.pending reservation here must NOT re-execute the kill sequence
         // the unreachable host may already have signaled the recorded child,
         // and the recorded PID may since have been reused by an unrelated
         // process. The controller commits durable evidence instead; the only

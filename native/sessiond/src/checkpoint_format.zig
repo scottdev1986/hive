@@ -3,8 +3,9 @@ const builtin = @import("builtin");
 const generated = @import("session_protocol_generated");
 
 /// Maximum opaque checkpoint payload accepted by the streamed producer and
-/// legacy contiguous importer (§18 / §23). The old allocating producer stays
-/// at 64 MiB; larger checkpoints must use the bounded streaming path.
+/// the contiguous importer. The contiguous path stays at
+/// `checkpoint_contiguous_max_bytes`; larger checkpoints must use the bounded
+/// streaming path.
 pub const checkpoint_max_bytes: usize = 512 * 1024 * 1024;
 pub const checkpoint_contiguous_max_bytes: usize = 64 * 1024 * 1024;
 pub const checkpoint_stream_chunk_bytes: usize = 64 * 1024;
@@ -47,7 +48,7 @@ pub const flags_v1: u32 = generated.checkpoint.flags;
 pub const engine_build_id_bytes: usize = generated.checkpoint.engine_build_id_bytes;
 pub const payload_sha256_bytes: usize = generated.checkpoint.payload_sha256_bytes;
 
-// HVTCP001 field offsets (network layout, §23 / CHECKPOINT_HEADER.offsets).
+// HVTCP001 field offsets (network layout / CHECKPOINT_HEADER.offsets).
 // Local table is dual-sourced against generated.checkpoint.offset: if the
 // generator re-emits a moved boundary and this table is not updated, comptime fails.
 pub const off = struct {

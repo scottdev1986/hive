@@ -1,22 +1,15 @@
-//! §18/§20/§23 terminal_state — headless VT + durable journal/checkpoint.
-//!
+//! terminal_state — headless VT + durable journal/checkpoint.
 //! Owns: feed every PTY output byte through an injected VT engine, write back
 //! ONLY PTY-bound effects (GHOSTTY_TERMINAL_OPT_WRITE_PTY), maintain journal.bin,
 //! assemble the 116-byte HVTCP001 envelope AROUND the bridge's opaque export,
 //! dual-retain verified checkpoints, and import-verify into a FRESH terminal +
 //! digest BEFORE atomic rename.
-//!
 //! Does NOT own: input arbitration, process kill, viewer grants, PTY open/spawn.
-//!
-//! Assumption A2 (load-bearing): TG2 opaque-payload completeness may still be
-//! incomplete. An incomplete / failed checkpoint yields CHECKPOINT_UNAVAILABLE —
-//! never a silent "mostly restored" path. Envelope + journal paths are testable
-//! with an export double before full TG2 (export double injected via VtEngine).
-//!
-//! Authority: docs/design/terminal-stack-transition.html §18 limits, §20 wire
-//! (exclusive high-water seq), §23 checkpoint create/attach/restore + envelope.
-//! Machine source for header layout: CHECKPOINT_HEADER in
-//! src/schemas/session-protocol.ts / session_protocol.generated.zig.
+//! Incomplete / failed checkpoint yields CHECKPOINT_UNAVAILABLE — never a
+//! silent "mostly restored" path. Envelope + journal paths are testable with
+//! an export double (injected via VtEngine). Wire sequences are exclusive
+//! high-water; checkpoints import-verify into a fresh terminal before rename.
+//! Header layout source: CHECKPOINT_HEADER in session_protocol.generated.zig.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -46,20 +39,20 @@ pub const assembleEnvelope = checkpoint_format.assembleEnvelope;
 pub const parseEnvelope = checkpoint_format.parseEnvelope;
 pub const verifyPayload = checkpoint_format.verifyPayload;
 
-// ── Limits (§18 / TERMINAL_LIMITS) ──────────────────────────────────────────
+// ── Limits (TERMINAL_LIMITS) ───────────────────────────────────────────
 
-/// Replay journal capacity per generation (§18).
+/// Replay journal capacity per generation.
 pub const journal_max_bytes: usize = 64 * 1024 * 1024;
-/// Dual retain: newest valid + previous valid (§18).
+/// Dual retain: newest valid + previous valid.
 pub const retained_checkpoints: usize = 2;
-/// Stream chunk bound for OUTPUT / SNAPSHOT_BYTES (§18).
+/// Stream chunk bound for OUTPUT / SNAPSHOT_BYTES.
 pub const stream_chunk_max_bytes: usize = 64 * 1024;
-/// Checkpoint after this much new output since last verified checkpoint (§23).
+/// Checkpoint after this much new output since last verified checkpoint.
 pub const checkpoint_output_interval_bytes: u64 = 2 * 1024 * 1024;
-/// Checkpoint after this many nanoseconds of mono time since last verified (§23).
+/// Checkpoint after this many nanoseconds of mono time since last verified.
 pub const checkpoint_interval_ns: u64 = 30 * std.time.ns_per_s;
 /// Journal persistence batching: journal.bin rewrites at most once per this
-/// interval while output streams (§18 durability is unchanged at checkpoints,
+/// interval while output streams (durability is unchanged at checkpoints,
 /// termination, and forced persists — only the streaming path is batched).
 pub const journal_persist_interval_ns: u64 = 250 * std.time.ns_per_ms;
 
@@ -76,24 +69,22 @@ pub const PtyEffectSink = struct {
 };
 
 /// One headless VT engine instance (live terminal or a fresh verify terminal).
-///
-/// Production wires libghostty-vt + hive_ghostty_terminal_checkpoint_export_v1 /
+/// Production wires libghostty-vt + hive_ghostty_terminal_checkpoint_export_v1
 /// import_v1. Tests inject an export double so envelope/journal paths are
 /// proven without requiring TG2 completeness.
-///
-/// Contract:
-/// - `write` feeds PTY output bytes; may emit PTY-bound effects via the
-///   registered sink (engine-owned).
-/// - `exportOpaque` returns a slice OWNED BY THE PASSED ZIG ALLOCATOR.
-///   Caller always frees with `allocator.free`. The real bridge export
-///   (`hive_ghostty_terminal_checkpoint_export_v1`) returns C-allocated
-///   memory via the bridge alloc_fn — the host-composition ADAPTER MUST
-///   copy that payload into the Zig allocator (or free via the matching
-///   C free path) before returning from exportFn. Returning a C heap
-///   pointer that TerminalState later `allocator.free`s is heap corruption.
-///   On error → CHECKPOINT_UNAVAILABLE (never "mostly restored").
-/// - `importOpaque` leaves the destination UNCHANGED on failure (§23).
-/// - `digest` is a deterministic semantic fingerprint for restore equality.
+/// Contract
+/// `write` feeds PTY output bytes; may emit PTY-bound effects via the
+/// registered sink (engine-owned).
+/// `exportOpaque` returns a slice OWNED BY THE PASSED ZIG ALLOCATOR.
+/// Caller always frees with `allocator.free`. The real bridge export
+/// (`hive_ghostty_terminal_checkpoint_export_v1`) returns C-allocated
+/// memory via the bridge alloc_fn — the host-composition ADAPTER MUST
+/// copy that payload into the Zig allocator (or free via the matching
+/// C free path) before returning from exportFn. Returning a C heap
+/// pointer that TerminalState later `allocator.free`s is heap corruption.
+/// On error → CHECKPOINT_UNAVAILABLE (never "mostly restored").
+/// `importOpaque` leaves the destination UNCHANGED on failure.
+/// `digest` is a deterministic semantic fingerprint for restore equality.
 pub const VtEngine = struct {
     context: *anyopaque,
     deinitFn: *const fn (context: *anyopaque) void,
@@ -188,7 +179,7 @@ pub const OpaqueStreamSink = struct {
     }
 };
 
-/// Factory that builds a fresh engine for import-verify (§23: import into a FRESH terminal).
+/// Factory that builds a fresh engine for import-verify (: import into a FRESH terminal).
 pub const VtEngineFactory = struct {
     context: *anyopaque,
     createFn: *const fn (
@@ -324,7 +315,7 @@ fn createAnonymousSpool(dir: std.fs.Dir) Error!std.fs.File {
 
 /// Exclusive-high-water byte journal. `start_seq` is the exclusive start of
 /// retained bytes (every byte with offset in [start_seq, end_seq) is present).
-/// `end_seq` == host `outputSeq` (exclusive next write offset) (§20).
+/// `end_seq` == host `outputSeq` (exclusive next write offset).
 pub const Journal = struct {
     allocator: std.mem.Allocator,
     /// First retained exclusive sequence (bytes below this have been covered by a
@@ -538,22 +529,22 @@ pub const TerminalState = struct {
     journal: Journal,
     checkpoints: CheckpointStore,
 
-    /// Exclusive next PTY-output byte offset (§20 outputSeq).
+    /// Exclusive next PTY-output byte offset (outputSeq).
     output_seq: u64 = 0,
-    /// throughSeq of newest valid checkpoint; 0 when none (§20 checkpointSeq).
+    /// throughSeq of newest valid checkpoint; 0 when none (checkpointSeq).
     checkpoint_seq: u64 = 0,
     /// Bytes of output since last verified checkpoint (for 2 MiB interval).
     bytes_since_checkpoint: u64 = 0,
     /// Mono nanos of last verified checkpoint (or create).
     last_checkpoint_mono: u64 = 0,
-    /// Journal bytes/seq changed since the last persistJournal (§18 batching).
+    /// Journal bytes/seq changed since the last persistJournal (batching).
     journal_dirty: bool = false,
     /// Mono nanos of the last persistJournal (or create).
     last_journal_persist_mono: u64 = 0,
     /// When true, reconnect must surface CHECKPOINT_UNAVAILABLE (no silent approx).
     reconnect_available: bool = true,
     /// Lowest exclusive journal offset already sent across all live viewers
-    /// (§20 sent_seq); `null` when no viewer is attached. See setViewerFloor.
+    /// (sent_seq); `null` when no viewer is attached. See setViewerFloor.
     viewer_floor_seq: ?u64 = null,
     closed: bool = false,
 
@@ -620,7 +611,7 @@ pub const TerminalState = struct {
     /// no viewer is attached. A checkpoint fires from inside feedOutput and
     /// evicts the journal it just covered; without this floor that eviction can
     /// pass bytes an attached viewer has not been sent, and its next push reads
-    /// an evicted range and the host detaches a healthy pane (#91).
+    /// an evicted range and the host detaches a healthy pane.
     /// The journal-pressure path in feedChunk deliberately ignores the floor: a
     /// viewer a whole journal behind is dropped rather than growing retention
     /// without bound.
@@ -645,7 +636,7 @@ pub const TerminalState = struct {
         return self.checkpoints.newest();
     }
 
-    /// §23 geometry: the shadow VT follows every applied window resize so the
+    /// geometry: the shadow VT follows every applied window resize so the
     /// next verified checkpoint carries the live geometry — envelope fields
     /// AND opaque payload agree, so restoreInto renders at the real size
     /// instead of the create-time 80x24.
@@ -788,7 +779,7 @@ pub const TerminalState = struct {
     }
 
     /// Feed PTY output: journal first (durability), then VT. On journal pressure,
-    /// checkpoint-first then keep draining (§18). Never drops bytes silently.
+    /// checkpoint-first then keep draining. Never drops bytes silently.
     pub fn feedOutput(self: *TerminalState, data: []const u8) Error!void {
         if (self.closed) return error.Closed;
         if (data.len == 0) return;
@@ -806,7 +797,7 @@ pub const TerminalState = struct {
     fn feedChunk(self: *TerminalState, chunk: []const u8) Error!void {
         if (self.journal.wouldExceed(chunk.len)) {
             // Checkpoint-first, then evict covered prefix; if still no room, mark
-            // reconnect unavailable but CONTINUE draining (§18 journal limit).
+            // reconnect unavailable but CONTINUE draining (journal limit).
             const cp_result = self.tryCheckpoint();
             if (cp_result) |_| {
                 // Eviction of covered prefix happens inside tryCheckpoint on success.
@@ -839,7 +830,7 @@ pub const TerminalState = struct {
 
         // F1: engine.write FIRST, then journal on success. Journal-before-write
         // left end_seq > output_seq when write failed → later checkpoint used a
-        // stale through_seq and restoreInto silently diverged (§23 forbids).
+        // stale through_seq and restoreInto silently diverged (forbids).
         self.engine.write(chunk) catch {
             self.reconnect_available = false;
             return error.Internal;
@@ -987,7 +978,7 @@ pub const TerminalState = struct {
     }
 
     /// Disk-style write of newest checkpoint to `dir` as checkpoint-0.bin (and
-    /// previous as checkpoint-1.bin). Atomic: unique randomized .tmp, fsync,
+    /// previous as checkpoint-1.bin). Atomic: unique randomized.tmp, fsync,
     /// rename.
     pub fn persistCheckpoints(self: *const TerminalState, dir: std.fs.Dir) Error!void {
         if (self.checkpoints.newest()) |cp| {
@@ -1017,7 +1008,7 @@ pub const TerminalState = struct {
         self.last_journal_persist_mono = self.clock.now();
     }
 
-    /// Batched streaming persist (§18): rewrites journal.bin at most once per
+    /// Batched streaming persist: rewrites journal.bin at most once per
     /// journal_persist_interval_ns so chatty output does not fsync-storm the
     /// whole journal per batch. No-op while clean or inside the window.
     /// Checkpoint/terminate/read-paths that need durability must call
@@ -1032,16 +1023,16 @@ pub const TerminalState = struct {
 
 fn writeAtomic(dir: std.fs.Dir, name: []const u8, bytes: []const u8) Error!void {
     // journal.bin carries raw PTY output (potential secrets). Fail closed
-    // unless the target directory is owned by this uid and not group/other-
+    // unless the target directory is owned by this uid and not group/other
     // writable: in a shared dir a hostile writer could pre-plant or race the
-    // temp path. Same uid+mode doctrine as broker.openOwnedDirectory (F2/§23).
+    // temp path. Same uid+mode doctrine as broker.openOwnedDirectory.
     const stat = std.posix.fstat(dir.fd) catch return error.IoFailed;
     if (stat.uid != std.posix.getuid() or stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR or
         stat.mode & 0o022 != 0) return error.IoFailed;
 
-    // Unique randomized temp name per call (was the fixed "{name}.tmp"): a
-    // same-dir writer cannot predict and pre-plant the temp path to win the
-    // rename race. O_NOFOLLOW + 0600 below are retained regardless.
+    // Unique randomized temp name per call: a same-dir writer cannot predict
+    // and pre-plant the temp path to win the rename race. O_NOFOLLOW + 0600
+    // below are retained regardless.
     var tmp_buf: [64]u8 = undefined;
     const tmp_name = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>16}.tmp", .{
         name,
@@ -1107,7 +1098,7 @@ fn writeAtomicTmp(dir: std.fs.Dir, name: []const u8, tmp_name: []const u8, bytes
     file.writeAll(bytes) catch return error.IoFailed;
     file.sync() catch return error.IoFailed; // data durable
     dir.rename(tmp_name, name) catch return error.IoFailed;
-    // F2 / §23: fsync the directory so the rename itself survives power loss.
+    // fsync the directory so the rename itself survives power loss.
     // Without this, checkpoint-0.bin may be absent/zero after crash even though
     // the file fsync succeeded.
     const dir_file: std.fs.File = .{ .handle = dir.fd };
@@ -1430,7 +1421,7 @@ const MockEngine = struct {
 
     fn importCb(ctx: *anyopaque, payload: []const u8) anyerror!void {
         const self: *MockEngine = @ptrCast(@alignCast(ctx));
-        // Validate mock payload. On failure leave destination UNCHANGED (§23).
+        // Validate mock payload. On failure leave destination UNCHANGED.
         if (payload.len < 8 + 32 or !std.mem.eql(u8, payload[0..8], "MOCKCP01")) {
             return error.InvalidCheckpoint;
         }
@@ -1636,7 +1627,7 @@ test "feedOutput advances exclusive outputSeq and journals bytes" {
     try testing.expectEqual(@as(u64, 5), s.ts.outputSeq());
     try testing.expectEqualStrings("hello", s.ts.journal.bytes.items);
     try testing.expectEqualStrings("hello", s.engine_ptr.state.items);
-    // Invariant: journal.endSeq() == output_seq (§20 exclusive high-water).
+    // Invariant: journal.endSeq == output_seq (exclusive high-water).
     try testing.expectEqual(s.ts.outputSeq(), s.ts.journal.endSeq());
 }
 
@@ -1746,7 +1737,7 @@ test "corrupt one opaque byte → import fails / destination unchanged" {
 
     // Fresh terminal with a sentinel so we can prove "unchanged on failure".
     var fresh = try MockEngine.create(testing.allocator);
-    // Don't use engine() deinit which destroys — manage manually.
+    // Don't use engine deinit which destroys — manage manually.
     defer fresh.destroy();
     try fresh.state.appendSlice(testing.allocator, "SENTINEL");
     const before = try testing.allocator.dupe(u8, fresh.state.items);
@@ -1848,7 +1839,7 @@ test "checkpoint interval triggers after 2 MiB new output" {
     try testing.expect(s.ts.checkpointAvailable());
 }
 
-// #91: the checkpoint fires from INSIDE feedOutput, i.e. before the host loop
+// the checkpoint fires from INSIDE feedOutput, i.e. before the host loop
 // pumps the attached viewer. Evicting the covered prefix therefore raced ahead
 // of the viewer's sent_seq on the 30s cadence, its next push read an evicted
 // range, and the host detached a healthy pane.
@@ -1880,10 +1871,10 @@ test "an interval checkpoint never evicts past a live viewer floor" {
 }
 
 // F3: This is PLUMBING-ONLY. MockEngine state is plain byte concatenation and
-// digest=SHA256(state), so restored==uninterrupted holds for ANY split —
+// digest=SHA256(state), so restored==uninterrupted holds for ANY split
 // independent of VT parsing. It proves envelope/journal/restore round-trips
 // bytes through the seam. It is NOT TG2 and MUST NOT be read as sequence-split
-// corpus evidence. The real adversarial CSI/OSC/DCS/UTF-8/grapheme/Kitty/
+// corpus evidence. The real adversarial CSI/OSC/DCS/UTF-8/grapheme/Kitty
 // synchronized-output/alternate-screen split corpus is gated on TG2 host
 // composition against libghostty-vt (A2).
 test "plumbing only: byte-split feed/checkpoint/restore round-trips opaque state (NOT TG2 corpus)" {
@@ -2012,7 +2003,7 @@ test "writeAtomic fails closed on a group/other-writable target directory" {
     defer shared.close();
     try shared.chmod(0o777);
 
-    // Shared-dir doctrine: refuse even though the dir is owned by this uid —
+    // Shared-dir doctrine: refuse even though the dir is owned by this uid
     // group/other write bits let a hostile writer race the temp path.
     try testing.expectError(error.IoFailed, s.ts.persistJournal(shared));
 
@@ -2089,7 +2080,7 @@ test "engineBuildId is embedded from caller, not recomputed" {
     try testing.expectEqualSlices(u8, &testBuildId(), &cp.header.engine_build_id);
 }
 
-test "limits match §18 / schema" {
+test "limits match schema TERMINAL_LIMITS" {
     try testing.expectEqual(@as(usize, 64 * 1024 * 1024), journal_max_bytes);
     try testing.expectEqual(@as(usize, 512 * 1024 * 1024), checkpoint_max_bytes);
     try testing.expectEqual(@as(usize, 64 * 1024 * 1024), checkpoint_contiguous_max_bytes);

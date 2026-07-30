@@ -1,12 +1,9 @@
-//! §22 Input arbiter v1 — standalone ordering/claim/transaction logic.
-//!
+//! Input arbiter v1 — standalone ordering/claim/transaction logic.
 //! Owns: state machine, PTY write queue, claim-local input sequence, and the
 //! automation transaction ledger. Writes bytes only through an injected
 //! WriteSink (real PTY wiring is the host composition branch).
-//!
-//! Authority: docs/design/terminal-stack-transition.html §22; enums match
-//! src/schemas/session-protocol.ts INPUT_ARBITER_STATES / INPUT_EVIDENCE_LEVELS.
-//! Does not invent timeouts, states, or evidence meanings.
+//! Enums match INPUT_ARBITER_STATES / INPUT_EVIDENCE_LEVELS. Does not invent
+//! timeouts, states, or evidence meanings.
 
 const std = @import("std");
 
@@ -37,7 +34,7 @@ pub const State = enum {
     }
 };
 
-/// Evidence ladder values are typed and never inferred from elapsed time (§22).
+/// Evidence ladder values are typed and never inferred from elapsed time.
 pub const EvidenceLevel = enum {
     buffered,
     committed,
@@ -75,7 +72,7 @@ pub const WriteSink = struct {
 
 /// Injected encoder: turns verified automation body + submit into PTY bytes.
 /// Isolation tests pass an identity/mock encoder; host composition owns VT.
-/// `allocator` is the arbiter's allocator — WP4-B must use it for `out` growth (M6).
+/// `allocator` is the arbiter's allocator — must use it for `out` growth.
 pub const Encoder = struct {
     context: *anyopaque,
     encodeFn: *const fn (
@@ -127,7 +124,7 @@ pub const Error = error{
     GenerationMismatch,
     Closed,
     Internal,
-    /// Sink rejected the write after the ledger secured a committed entry (N2).
+    /// Sink rejected the write after the ledger secured a committed entry.
     SinkWriteFailed,
 };
 
@@ -153,9 +150,9 @@ const LedgerEntry = struct {
     epoch: u64,
     message_id: []u8,
     transaction_id: []u8,
-    /// Host write-queue owned range (P3 / §22:1348 committed). Populated at
-    /// entry creation with the planned range; evidence stays .committed until
-    /// the sink accepts the bytes (.written).
+    /// Host write-queue owned range under .committed. Populated at entry
+    /// creation with the planned range; evidence stays .committed until the
+    /// sink accepts the bytes (.written).
     byte_range: ?ByteRange,
     /// Planned write offset reserved at commit (same as byte_range.start when set).
     planned_start: u64,
@@ -163,8 +160,8 @@ const LedgerEntry = struct {
     evidence: EvidenceLevel,
     result_label: []u8,
     /// Encoded PTY bytes retained until written/cancel/disconnect/exit (sink retry).
-    /// §22:1337 durable key fields do not include this; it is ephemeral retry state
-    /// and MUST be zeroed on commit, cancel, disconnect, and exit (§22:1338 / P1).
+    /// Durable key fields do not include this; it is ephemeral retry state
+    /// and MUST be zeroed on commit, cancel, disconnect, and exit.
     encoded: ?[]u8,
 
     fn deinit(self: *LedgerEntry, allocator: std.mem.Allocator) void {
@@ -210,7 +207,7 @@ const TakeoverRecord = struct {
     }
 };
 
-/// §18 automated message cap: 1 MiB.
+/// automated message cap: 1 MiB.
 pub const automated_message_max_bytes: usize = 1024 * 1024;
 /// Human/gesture/release payload cap enforced at the arbiter boundary
 /// (audit hardening): matches the generated input_transaction_bytes limit
@@ -226,13 +223,12 @@ pub const ledger_max_entries: usize = 256;
 /// Claim-local human input dedup window. Sequences are monotone within a
 /// claim, so evicting the oldest record only narrows the dedup window: a
 /// replay of an evicted sequence fails Malformed (sequence != next_input_seq)
-/// — it can never re-execute.
+/// it can never re-execute.
 pub const human_records_max: usize = 1024;
 /// Orphan-takeover audit window (operatorResume); oldest evicted first.
 pub const takeover_records_max: usize = 64;
-/// Fixed-cap encode bound: worst-case C0-safe expansion + framing/submit slack (P4 / §22:1338).
-/// Encoders must stay within this; excess fails without realloc. Non-core-dump memory
-/// where available is an open WP4-B item (§22:1338).
+/// Fixed-cap encode bound: worst-case C0-safe expansion + framing/submit slack.
+/// Encoders must stay within this; excess fails without realloc.
 pub const encoded_expansion_factor: usize = 4;
 pub const encoded_framing_slack: usize = 256;
 
@@ -280,7 +276,7 @@ pub const InputArbiter = struct {
     ledger: std.ArrayList(LedgerEntry) = .{},
 
     /// Injected visibility-lease currency. Human claim never times out into FREE;
-    /// orphan survival requires this to remain true (§22).
+    /// orphan survival requires this to remain true.
     /// Structural invariant (no timed unlock): this module has no clock, timer,
     /// Thread, or sleep — only an injected boolean lease flag and explicit
     /// onVisibilityLeaseExpired. Orphan→FREE is never automatic.
@@ -288,7 +284,7 @@ pub const InputArbiter = struct {
 
     /// Last CLAIM_RELEASE kind (submit vs cancel). Encoding is supplied by the
     /// host/provider adapter via `encoded_release`; the arbiter records the
-    /// distinction for inspection (§22 table separates the two effects; M8).
+    /// distinction for inspection (table separates the two effects; ).
     last_release_kind: ?ReleaseKind = null,
 
     pub fn init(
@@ -487,8 +483,7 @@ pub const InputArbiter = struct {
 
         // Release only after all prior claim bytes and the encoded submit/cancel
         // bytes are accepted by the ordered write queue.
-        //
-        // M8: `kind` is the §22 submit vs cancel distinction. The provider
+        // `kind` is the submit vs cancel distinction. The provider
         // adapter (host composition) chooses the encoded bytes for that kind
         // (Return/newline vs Escape/^C/Control-U); this module records the kind
         // and orders the write — it does not re-encode or collapse the two.
@@ -508,13 +503,13 @@ pub const InputArbiter = struct {
     pub fn viewerDisconnect(self: *InputArbiter) Error!void {
         try self.requireLive();
         if (self.state != .human_owned) {
-            // L3/P1: §22 lists disconnect as a plaintext-zeroing trigger.
+            // Disconnect is a plaintext-zeroing trigger.
             if (self.state == .automation_buffering) {
                 self.zeroAndFreeAutomationBuffers();
                 self.state = .free;
                 return;
             }
-            // P1: pending-unwritten hold retains entry.encoded plaintext — zero
+            // pending-unwritten hold retains entry.encoded plaintext — zero
             // it, then terminate (lease/disconnect of a held automation txn).
             if (self.state == .automation_committed) {
                 self.zeroLedgerEncoded();
@@ -537,7 +532,6 @@ pub const InputArbiter = struct {
     // ── HUMAN_ORPHANED + operator resume ────────────────────────────────────
 
     /// Resume an orphaned human claim for `viewer_id` under a new claim id.
-    ///
     /// `kind` is enforced HERE (by-construction): only `"human"` may resume.
     /// Callers must not treat a string-compare at the host claim path as the
     /// sole never-steal guard — a future second caller that skips host-side
@@ -587,9 +581,8 @@ pub const InputArbiter = struct {
         // B2: never leave a field holding a freed pointer. Free + null first,
         // then allocate both new ids, then install — errdefer covers both.
         // Issue a new claim to one viewer at the prior sequence. Do not replay
-        // acknowledged bytes (human_records retained for dedup of unacked? —
+        // acknowledged bytes (human_records retained for dedup of unacked?
         // acknowledged bytes stay in the write high-water; sequence continues).
-        //
         // B2 note: on alloc failure below we remain HUMAN_ORPHANED with both
         // claim fields null. That is sound — orphan protects the draft/sequence
         // high-water, not the claim id strings; operator resume/discard are
@@ -606,7 +599,7 @@ pub const InputArbiter = struct {
         const owned_viewer = self.allocator.dupe(u8, viewer_id) catch return error.Internal;
         errdefer self.allocator.free(owned_viewer);
         const owned_claim = self.allocator.dupe(u8, new_claim_id) catch return error.Internal;
-        // Both allocations succeeded; the audit append below can still fail —
+        // Both allocations succeeded; the audit append below can still fail
         // errdefer covers the new ids so no field ever holds a freed pointer.
         errdefer self.allocator.free(owned_claim);
 
@@ -647,7 +640,7 @@ pub const InputArbiter = struct {
         return self.cancelHumanClaim();
     }
 
-    /// M1 fleet-unwedging escape hatch. Only the host's authenticated control
+    /// fleet-unwedging escape hatch. Only the host's authenticated control
     /// path calls this; it deliberately differs from operatorDiscard by
     /// accepting a currently-held human claim, and is reported as preemption.
     pub fn operatorPreempt(self: *InputArbiter) Error!ByteRange {
@@ -666,14 +659,14 @@ pub const InputArbiter = struct {
     fn cancelHumanClaim(self: *InputArbiter) Error!ByteRange {
         var encoded: std.ArrayList(u8) = .{};
         defer {
-            // M3/N4: zero capacity (not just items.len) before release.
+            // zero capacity (not just items.len) before release.
             if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
             encoded.deinit(self.allocator);
         }
-        // N4: pre-size so encode does not realloc and free an un-zeroed buffer.
+        // pre-size so encode does not realloc and free an un-zeroed buffer.
         encoded.ensureTotalCapacity(self.allocator, 64) catch return error.Internal;
         self.cancel_encoder.encode(self.allocator, &encoded) catch {
-            // A failed cancel remains orphaned (§22).
+            // A failed cancel remains orphaned.
             return error.Internal;
         };
         const range = self.enqueueAndWrite(encoded.items) catch {
@@ -711,7 +704,7 @@ pub const InputArbiter = struct {
         }
         if (begin.expected_len > automated_message_max_bytes) return error.PayloadTooLarge;
 
-        // N2: a committed-not-written entry is still in-flight — no new automation.
+        // a committed-not-written entry is still in-flight — no new automation.
         if (self.hasPendingUnwritten()) return error.InputBusy;
 
         // Idempotent: identical key+digest returns stored result path on commit;
@@ -749,7 +742,7 @@ pub const InputArbiter = struct {
         try self.requireLive();
         if (self.state != .automation_buffering) return error.NotReady;
         if (offset != self.buffer_len) return error.Malformed;
-        // Subtraction form: buffer_len + bytes.len could wrap on attacker-
+        // Subtraction form: buffer_len + bytes.len could wrap on attacker
         // influenced bytes.len. Invariants (begin sets expected_len; chunks
         // never exceed it) keep expected_len >= buffer_len — assert it.
         std.debug.assert(self.expected_len >= self.buffer_len);
@@ -775,7 +768,7 @@ pub const InputArbiter = struct {
     ) Error!TransactionResult {
         try self.requireLive();
 
-        // Idempotent re-delivery / sink-write retry (N2).
+        // Idempotent re-delivery / sink-write retry.
         if (self.findLedger(idempotency_key)) |entry| {
             if (!std.mem.eql(u8, &entry.digest, &expected_digest) or
                 entry.epoch != capability_epoch or
@@ -823,13 +816,13 @@ pub const InputArbiter = struct {
 
         var encoded: std.ArrayList(u8) = .{};
         defer {
-            // N4: zero the full allocation (capacity), not just items.len, so a
+            // zero the full allocation (capacity), not just items.len, so a
             // realloc path cannot leave plaintext in a freed old buffer — we
             // also ensureTotalCapacity first so encode does not realloc.
             if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
             encoded.deinit(self.allocator);
         }
-        // P4/N4: fixed-cap encode buffer (worst-case expansion). Capacity is set
+        // fixed-cap encode buffer (worst-case expansion). Capacity is set
         // once so the encoder must not force realloc of an un-zeroed old buffer.
         // Belt-and-suspenders: the encoder is injected code behind a fixed
         // interface, so a hostile/buggy encoder could still append past the
@@ -854,8 +847,8 @@ pub const InputArbiter = struct {
             return error.PayloadTooLarge;
         }
 
-        // M4/N2: ledger BEFORE sink write. P3: byte_range = planned range at
-        // creation under .committed (§22:1348 queue owns the range; not kernel).
+        // ledger BEFORE sink write. byte_range = planned range at
+        // creation under .committed (queue owns the range; not kernel).
         const planned_start = self.write_high_water;
         const encoded_owned = self.allocator.dupe(u8, encoded.items) catch {
             self.state = .automation_buffering;
@@ -881,7 +874,7 @@ pub const InputArbiter = struct {
             return error.Internal;
         };
         // buildLedgerEntry took ownership of encoded_owned on success.
-        // Bounded ledger (see ledger_max_entries), evict-oldest. The pending-
+        // Bounded ledger (see ledger_max_entries), evict-oldest. The pending
         // unwritten entry is always the newest (the automation_committed hold
         // blocks any other append), so evicting from the front can never touch
         // in-flight retry state; entry.deinit secureZeroes encoded regardless.
@@ -899,7 +892,7 @@ pub const InputArbiter = struct {
 
         // Body buffer zeroed here after encode (commit path). Encoded bytes are
         // RETAINED in the ledger for sink retry while held — still plaintext and
-        // still under §22:1338 (zeroed on commit when the write succeeds, and on
+        // still under (zeroed on commit when the write succeeds, and on
         // cancel / disconnect / exit). Do not free entry.encoded on SinkWriteFailed
         // alone (retry needs it); do zero it on the four triggers.
         self.zeroAndFreeAutomationBuffers();
@@ -907,11 +900,11 @@ pub const InputArbiter = struct {
         // Sink write after ledger is secured.
         const pending = &self.ledger.items[ledger_idx];
         self.sink.write(pending.encoded.?) catch {
-            // N2: typed failure; evidence stays .committed; do NOT return Ok.
-            // HOLD in .automation_committed (§22 table: BUFFERING+COMMIT →
+            // typed failure; evidence stays .committed; do NOT return Ok.
+            // HOLD in .automation_committed (BUFFERING+COMMIT →
             // AUTOMATION_COMMITTED → FREE — FREE only after the commit effect
             // finishes; write is part of that effect). Holding an automation
-            // state blocks every other writer with no new mechanism (claim /
+            // state blocks every other writer with no new mechanism (claim
             // gesture / humanInput / new BEGIN all reject automation_*), and
             // write_high_water cannot advance under an interleaved writer — so
             // the planned range stays valid for retry.
@@ -922,7 +915,7 @@ pub const InputArbiter = struct {
     }
 
     /// Cancellation before COMMIT writes nothing; after COMMIT returns stored
-    /// result (§22). For the held pending-unwritten entry only, drops encoded
+    /// result. For the held pending-unwritten entry only, drops encoded
     /// and releases AUTOMATION_COMMITTED → FREE.
     pub fn automationCancel(self: *InputArbiter, idempotency_key: []const u8) Error!?TransactionResult {
         try self.requireLive();
@@ -932,7 +925,7 @@ pub const InputArbiter = struct {
                 .byte_range = entry.byte_range,
                 .result_label = entry.result_label,
             };
-            // P2: only release the hold when THIS entry is the pending-unwritten
+            // only release the hold when THIS entry is the pending-unwritten
             // txn (encoded != null). A stale cancel of an old completed key must
             // not wipe an unrelated in-flight buffering txn.
             const was_pending = entry.encoded != null;
@@ -942,7 +935,7 @@ pub const InputArbiter = struct {
                 entry.encoded = null;
             }
             if (was_pending) {
-                // Pending entry always implies .automation_committed (pre-append
+                // Pending entry always implies.automation_committed (pre-append
                 // failures reset to buffering WITHOUT a ledger entry).
                 self.state = .free;
             }
@@ -985,7 +978,7 @@ pub const InputArbiter = struct {
     fn markWritten(self: *InputArbiter, entry: *LedgerEntry) Error!TransactionResult {
         const start = entry.planned_start;
         // Holding automation_committed prevented interleaved writers, so
-        // write_high_water still equals planned_start (N2 free property).
+        // write_high_water still equals planned_start (free property).
         if (self.write_high_water != start) return error.Internal;
         self.write_high_water = start + entry.planned_len;
         const range = ByteRange{ .start = start, .end_exclusive = start + entry.planned_len };
@@ -1010,7 +1003,7 @@ pub const InputArbiter = struct {
         if (self.state == .closed) return;
         self.state = .terminating;
         // Finish cancellation policy: drop open automation, zero plaintext.
-        // P1/§22:1338 EXIT: ledger may outlive termination for durable fields,
+        // EXIT: ledger may outlive termination for durable fields,
         // but entry.encoded is ephemeral retry plaintext — zero it now.
         self.zeroLedgerEncoded();
         self.zeroAndFreeAutomationBuffers();
@@ -1087,7 +1080,7 @@ pub const InputArbiter = struct {
         return null;
     }
 
-    /// Zero+null every ledger encoded buffer (§22 disconnect/exit zeroing; P1).
+    /// Zero+null every ledger encoded buffer (disconnect/exit zeroing; ).
     fn zeroLedgerEncoded(self: *InputArbiter) void {
         for (self.ledger.items) |*entry| {
             if (entry.encoded) |buf| {
@@ -1099,7 +1092,7 @@ pub const InputArbiter = struct {
     }
 };
 
-/// N4 hardening allocator for the injected-encoder call: refuses remap/resize
+/// hardening allocator for the injected-encoder call: refuses remap/resize
 /// so ArrayList growth always takes the alloc+copy+free fallback, and zeroes
 /// every buffer it frees — a realloc of the encode buffer can then never leave
 /// partial encoded plaintext in freed memory (audit finding: intermediate
@@ -1130,7 +1123,7 @@ const ZeroOnFreeAllocator = struct {
         _ = alignment;
         _ = new_len;
         _ = ret_addr;
-        // Force the alloc+copy+free fallback so free() below zeroes the old buffer.
+        // Force the alloc+copy+free fallback so free below zeroes the old buffer.
         return false;
     }
 
@@ -1173,8 +1166,8 @@ fn buildLedgerEntry(
     const txn_owned = try allocator.dupe(u8, transaction_id);
     errdefer allocator.free(txn_owned);
     const label = try allocator.dupe(u8, "written");
-    // P3: populate byte_range at creation with the planned range under .committed
-    // (§22:1348 — queue owns the contiguous range; not kernel-consumed).
+    // populate byte_range at creation with the planned range under .committed
+    // (— queue owns the contiguous range; not kernel-consumed).
     const range = ByteRange{ .start = planned_start, .end_exclusive = planned_start + planned_len };
     return .{
         .idempotency_key = key_owned,
@@ -1192,7 +1185,7 @@ fn buildLedgerEntry(
     };
 }
 
-// ── Unit tests (mock sink; every §22 transition + crash-at-boundary) ────────
+// ── Unit tests (mock sink; every transition + crash-at-boundary) ────────
 
 const MockSink = struct {
     writes: std.ArrayList(u8) = .{},
@@ -1796,9 +1789,9 @@ test "viewer disconnect without current lease terminates instead of FREE" {
     try std.testing.expectEqual(State.closed, arb.currentState());
 }
 
-// M7: The no-timed-unlock invariant is structural — InputArbiter has no clock,
+// The no-timed-unlock invariant is structural — InputArbiter has no clock,
 // timer, Thread, or sleep; only an injected lease_current boolean and explicit
-// onVisibilityLeaseExpired(). A loop over currentState() cannot observe a
+// onVisibilityLeaseExpired. A loop over currentState cannot observe a
 // timed unlock and is not a positive control. See the lease_current field doc.
 
 test "L1: human input dedup returns original written evidence not downgraded" {
@@ -1859,7 +1852,7 @@ test "M8: claimRelease records submit vs cancel kind distinctly" {
     try std.testing.expectEqualStrings("\r\x03", sink.writes.items);
 }
 
-// N2: sink fail → typed error + evidence .committed + hold automation_committed;
+// sink fail → typed error + evidence.committed + hold automation_committed;
 // retained encoded enables retry; no double-write; writers blocked by state.
 test "N2: sink write failure is typed; retry writes once; blocks new automation" {
     var sink = MockSink{ .allocator = std.testing.allocator };
@@ -1895,11 +1888,11 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
         .none,
     ));
     try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
-    // HOLD in automation_committed — not FREE (N2 constraint #3/#4).
+    // HOLD in automation_committed — not FREE (constraint /).
     try std.testing.expectEqual(State.automation_committed, arb.currentState());
     const entry = arb.findLedger("idemp_m4").?;
     try std.testing.expectEqual(EvidenceLevel.committed, entry.evidence);
-    // P3: byte_range populated at creation with planned range under .committed.
+    // byte_range populated at creation with planned range under .committed.
     try std.testing.expect(entry.byte_range != null);
     try std.testing.expectEqual(entry.planned_start, entry.byte_range.?.start);
     try std.testing.expect(entry.encoded != null); // content retained for retry
@@ -1956,7 +1949,7 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
     try std.testing.expectEqualStrings("once-only", sink.writes.items);
 }
 
-// P1 positive control: disconnect while pending-unwritten zeros ledger.encoded.
+// positive control: disconnect while pending-unwritten zeros ledger.encoded.
 test "P1: disconnect while pending-unwritten zeros retained plaintext" {
     var sink = MockSink{ .allocator = std.testing.allocator };
     defer sink.deinit();
@@ -1998,7 +1991,7 @@ test "P1: disconnect while pending-unwritten zeros retained plaintext" {
     try std.testing.expect(arb.findLedger("idemp_p1").?.encoded == null);
 }
 
-// P2 positive control: stale cancel of completed A must not destroy buffering B.
+// positive control: stale cancel of completed A must not destroy buffering B.
 test "P2: cancel completed A while B buffers leaves B intact" {
     var sink = MockSink{ .allocator = std.testing.allocator };
     defer sink.deinit();
@@ -2055,7 +2048,7 @@ test "P2: cancel completed A while B buffers leaves B intact" {
     const cancelled = try arb.automationCancel("idemp_a");
     try std.testing.expect(cancelled != null);
     try std.testing.expectEqual(EvidenceLevel.written, cancelled.?.evidence);
-    // THE ASSERTION THAT FAILS AGAINST UNFIXED P2:
+    // THE ASSERTION THAT FAILS AGAINST UNFIXED
     try std.testing.expectEqual(State.automation_buffering, arb.currentState());
     try std.testing.expectEqual(body_b.len, arb.buffer_len);
     try std.testing.expectEqualStrings(body_b, arb.buffer[0..arb.buffer_len]);
@@ -2356,7 +2349,7 @@ const GreedyEncoder = struct {
         _ = submit;
         try out.appendSlice(allocator, body);
         // Deliberately overshoot the fixed pre-reserved capacity, forcing
-        // ArrayList growth (realloc) — positive control that the N4 encode
+        // ArrayList growth (realloc) — positive control that the encode
         // path fails closed and leaks nothing when an encoder misbehaves.
         const pad = try allocator.alloc(u8, out.capacity + 1);
         defer allocator.free(pad);
