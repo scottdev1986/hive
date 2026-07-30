@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import {
   mkdir,
   readdir,
@@ -67,6 +68,10 @@ export async function observedWorktreeFiles(
   const paths = new Set<string>();
   if (worktreePath !== null) {
     const status = await runGit(worktreePath, [
+      // This runs inside a live agent's worktree on every status query, in
+      // parallel across all agents; taking the index.lock here collides with
+      // the agent's own git commands.
+      "--no-optional-locks",
       "status",
       "--porcelain",
       "-uall",
@@ -716,9 +721,15 @@ export async function assessStrandedWork(
   mainBranch = "main",
 ): Promise<StrandedWork> {
   const dirtyFiles: string[] = [];
-  if (worktreePath !== null) {
+  // A missing or already-pruned worktree has no dirty files by definition;
+  // any commits it made still show up in the unmerged count below.
+  if (worktreePath !== null && existsSync(worktreePath)) {
     const skillLinks = await provisionedSkillLinks(worktreePath);
     const statusResult = await runGit(worktreePath, [
+      // The status here can authorize worktree deletion, and the agent may be
+      // running its own git in this worktree right now: never take its
+      // index.lock, and never let a failed status read as "nothing here".
+      "--no-optional-locks",
       "status",
       "--porcelain",
       // Untracked directories are collapsed by default -- git prints
@@ -727,19 +738,16 @@ export async function assessStrandedWork(
       // actually holding. -uall names every file.
       "-uall",
     ]);
-    if (statusResult.exitCode === 0) {
-      const candidates = statusResult.stdout
-        .split("\n")
-        .filter((line) => line !== "")
-        .map((line) => line.slice(3));
-      for (const path of candidates) {
-        if (!(await isHiveWorktreeWiring(path, worktreePath, skillLinks))) {
-          dirtyFiles.push(path);
-        }
+    assertGitSuccess(statusResult, "status");
+    const candidates = statusResult.stdout
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => line.slice(3));
+    for (const path of candidates) {
+      if (!(await isHiveWorktreeWiring(path, worktreePath, skillLinks))) {
+        dirtyFiles.push(path);
       }
     }
-    // A missing or already-pruned worktree has no dirty files by definition;
-    // any commits it made still show up in the unmerged count below.
   }
 
   // Commits are counted against a REVISION, not a branch name. A detached

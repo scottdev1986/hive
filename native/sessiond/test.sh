@@ -3,6 +3,13 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
+# Local zig caches are per-checkout: concurrent worktrees sharing one local
+# cache land on the same content-addressed manifest files and serialize on
+# zig's blocking flock, which has no timeout — runs hang silently instead of
+# failing. The global cache below stays shared; fetched packages are immutable
+# and sharing them is what keeps a fresh worktree warm.
+CHECKOUT_KEY=$(printf '%s' "$ROOT" | /usr/bin/shasum | /usr/bin/cut -c1-12)
+LOCAL_CACHE="$CACHE/zig-local/checkout-$CHECKOUT_KEY"
 LOCK="$ROOT/native/toolchain-lock.json"
 VERSION=$(/usr/bin/plutil -extract zig.version raw -o - "$LOCK")
 
@@ -49,7 +56,7 @@ echo "header-standalone ABI check passed"
 # this standard gate so deleting the acceptsBuildId configuration fence is a
 # measured failure rather than a green Ghostty-only unit-test mutation.
 cd "$ROOT/vendor/ghostty"
-if ! checkpoint_debug_summary=$("$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-debug" \
+if ! checkpoint_debug_summary=$("$ZIG" build --cache-dir "$LOCAL_CACHE/ghostty-checkpoint-debug" \
   --global-cache-dir "$CACHE/zig-global" \
   test-lib-vt -Dtarget="$TARGET" --sysroot "$OVERLAY" \
   -Dtest-filter="legacy build id is rejected outside its exact production configuration" \
@@ -62,7 +69,7 @@ case "$checkpoint_debug_summary" in
   *"Build Summary: 21/21 steps succeeded; 53/53 tests passed"*) ;;
   *) echo "Debug checkpoint test count drifted; the filtered assertion may not have executed" >&2; exit 1 ;;
 esac
-if ! checkpoint_release_summary=$("$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-release" \
+if ! checkpoint_release_summary=$("$ZIG" build --cache-dir "$LOCAL_CACHE/ghostty-checkpoint-release" \
   --global-cache-dir "$CACHE/zig-global" \
   test-lib-vt -Dtarget="$TARGET" --sysroot "$OVERLAY" -Doptimize=ReleaseFast \
   -Dtest-filter="legacy" --summary all 2>&1); then
@@ -78,10 +85,7 @@ esac
 # real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
 # inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
 cd "$ROOT/native/sessiond"
-# Shared per-user zig caches (#46): zig's cache is content-addressed and
-# file-locked, so concurrent worktrees share compiled deps safely and a fresh
-# worktree starts warm instead of recompiling libghostty-vt from scratch.
-"$ZIG" build --cache-dir "$CACHE/zig-local/sessiond" \
+"$ZIG" build --cache-dir "$LOCAL_CACHE/sessiond" \
   --global-cache-dir "$CACHE/zig-global" \
   test identity-probe install -Dtarget="$TARGET" --sysroot "$OVERLAY"
 MIN_OS=$(xcrun vtool -show-build zig-out/bin/hive-sessiond |

@@ -63,9 +63,30 @@ export async function processEvent(
       ? null
       : recordProviderHookEvent(deps.db, eventAgent, value);
   if (value.providerRunId !== undefined && providerEvent === null) {
-    // A run-bound hook speaks only for that exact active ProviderRun. Do not
-    // let a stale worktree hook mutate the lifecycle row after the
-    // normalized ingestion path rejected it.
+    // A run-bound hook speaks only for that exact active ProviderRun. The
+    // rejected binding fences it out of the status machine, approvals,
+    // quota, and delivery below — but the raw observation is still evidence
+    // that a process with this name is alive, so it lands in the events
+    // table and advances liveness before this returns. Discarding it
+    // entirely left every agent with a stale or missing run row reading as
+    // silent — frozen lastEventAt, "no turn events at all" deafness
+    // warnings — for its whole life.
+    if (value.kind !== "tool-boundary") deps.db.insertEvent(value);
+    const rejected = deps.db.getAgentByName(value.agentName);
+    if (
+      rejected !== null &&
+      rejected.status !== "dead" &&
+      rejected.status !== "done" &&
+      rejected.status !== "failed"
+    ) {
+      deps.db.upsertAgent({
+        ...rejected,
+        lastEventAt: new Date(value.timestamp).toISOString(),
+        ...(value.toolSessionId === undefined
+          ? {}
+          : { toolSessionId: value.toolSessionId }),
+      });
+    }
     return;
   }
   if (

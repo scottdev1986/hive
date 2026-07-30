@@ -23,7 +23,12 @@ export const opencodeAgentAdapter: AgentAdapter = {
     eventSource: "hooks",
     nativeDelivery: false,
     toolBoundaryEvents: false,
-    turnBoundaryEvents: true,
+    // Opencode has no turn-start surface (session.idle maps to turn-end
+    // only, and sparsely). Claiming a turn stream makes every busy opencode
+    // agent read as deaf ("no turn events at all") and makes paste
+    // confirmation wait on a turn-start that never comes; judging it by
+    // lastEventAt is the honest surface.
+    turnBoundaryEvents: false,
     transcriptReader: false,
     nativeCancel: false,
     conversationResume: true,

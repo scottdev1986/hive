@@ -26,7 +26,12 @@ export const kimiAgentAdapter: AgentAdapter = {
     eventSource: "hooks",
     nativeDelivery: false,
     toolBoundaryEvents: false,
-    turnBoundaryEvents: true,
+    // Kimi reads hook config only from user-level files Hive does not write:
+    // no turn-start ever arrives and turn-end is sporadic at best. Claiming a
+    // turn stream makes every busy kimi agent read as deaf ("no turn events
+    // at all") and makes paste confirmation wait on a turn-start that never
+    // comes; judging it by lastEventAt is the honest surface.
+    turnBoundaryEvents: false,
     transcriptReader: false,
     nativeCancel: false,
     conversationResume: true,

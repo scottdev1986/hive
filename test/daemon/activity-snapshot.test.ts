@@ -243,7 +243,7 @@ describe("ActivitySnapshot", () => {
     expect(getAgentAdapter("kimi").communication).toMatchObject({
       eventSource: "hooks",
       toolBoundaryEvents: false,
-      turnBoundaryEvents: true,
+      turnBoundaryEvents: false,
       transcriptReader: false,
     });
 

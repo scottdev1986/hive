@@ -281,7 +281,37 @@ export class MessageDelivery {
     /** Durable warning sink: trigger and wake-delta failures persist here
      * in addition to the console. */
     private readonly log?: (line: string) => void,
+    /** The terminal's foreground identity as it is right now. The run row
+     * records the identity measured the instant the vendor first appeared; a
+     * vendor that later moves the terminal's foreground group (a forked
+     * child, a re-exec) makes a fence built from that recording refuse every
+     * injection while the agent is alive and well. Measuring at submit time
+     * keeps the fence honest. Absent (tests, embedded daemons), the run row
+     * is the fence. */
+    private readonly measuredForeground?: (
+      agent: AgentRecord,
+    ) => Promise<
+      { pid: number; startToken: string; processGroupId: number } | undefined
+    >,
   ) {}
+
+  /** The injection fence: the live foreground when it can be measured, the
+   * run row's launch-time reading otherwise. */
+  private async injectionFence(
+    recipient: AgentRecord,
+    activeRun: ProviderRun,
+  ): Promise<{ pid: number; startToken: string; processGroupId: number }> {
+    const measured = await this.measuredForeground?.(recipient).catch(
+      () => undefined,
+    );
+    return (
+      measured ?? {
+        pid: activeRun.pid,
+        startToken: activeRun.startToken,
+        processGroupId: activeRun.foregroundProcessGroupId,
+      }
+    );
+  }
 
   private sleep(ms: number): Promise<void> {
     return (this.timing.sleep ?? ((value: number) => Bun.sleep(value)))(ms);
@@ -993,17 +1023,14 @@ export class MessageDelivery {
           return [];
         }
       }
+      const fence = await this.injectionFence(recipient, activeRun);
       const attempts = messages.map((message) =>
         this.db.beginMessageAttempt({
           attemptId: crypto.randomUUID(),
           messageId: message.id,
           expectedProviderRunId: activeRun.runId,
           terminalGeneration: terminal.generation,
-          expectedForeground: {
-            pid: activeRun.pid,
-            startToken: activeRun.startToken,
-            processGroupId: activeRun.foregroundProcessGroupId,
-          },
+          expectedForeground: fence,
           attemptedAt: new Date().toISOString(),
         }),
       );
@@ -1013,9 +1040,7 @@ export class MessageDelivery {
           terminal,
           expectedForeground: {
             providerRunId: activeRun.runId,
-            pid: activeRun.pid,
-            startToken: activeRun.startToken,
-            processGroupId: activeRun.foregroundProcessGroupId,
+            ...fence,
           },
           bytes: encodeSubmittedText(text),
           idempotencyKey: projection.projectionId,
@@ -1141,16 +1166,13 @@ export class MessageDelivery {
       // a diagnostic that only reaches a /dev/null stderr leaves silent
       // retries with indistinguishable causes. A row that stays queued must
       // carry its own explanation.
+      const fence = await this.injectionFence(recipient, activeRun);
       const attempt = this.db.beginMessageAttempt({
         attemptId: crypto.randomUUID(),
         messageId: message.id,
         expectedProviderRunId: activeRun.runId,
         terminalGeneration: terminal.generation,
-        expectedForeground: {
-          pid: activeRun.pid,
-          startToken: activeRun.startToken,
-          processGroupId: activeRun.foregroundProcessGroupId,
-        },
+        expectedForeground: fence,
         attemptedAt: new Date().toISOString(),
       });
       let result: SessiondInjectResult;
@@ -1159,9 +1181,7 @@ export class MessageDelivery {
           terminal,
           expectedForeground: {
             providerRunId: activeRun.runId,
-            pid: activeRun.pid,
-            startToken: activeRun.startToken,
-            processGroupId: activeRun.foregroundProcessGroupId,
+            ...fence,
           },
           bytes: encodeSubmittedText(text),
           idempotencyKey: attempt.attemptId,

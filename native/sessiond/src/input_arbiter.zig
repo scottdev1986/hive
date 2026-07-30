@@ -657,6 +657,18 @@ pub const InputArbiter = struct {
     }
 
     fn cancelHumanClaim(self: *InputArbiter) Error!ByteRange {
+        // A claim that never wrote a byte left no draft in the terminal, so
+        // there is nothing to cancel. Emitting the cancel sequence anyway
+        // types it into whatever the foreground program is doing — a claim
+        // leaked by a failed inject would interrupt a live agent mid-turn.
+        if (self.human_records.items.len == 0) {
+            self.clearClaim();
+            self.state = .free;
+            return .{
+                .start = self.write_high_water,
+                .end_exclusive = self.write_high_water,
+            };
+        }
         var encoded: std.ArrayList(u8) = .{};
         defer {
             // zero capacity (not just items.len) before release.
@@ -1458,10 +1470,26 @@ test "HUMAN_ORPHANED + operator discard → FREE after cancel enqueued" {
     defer arb.deinit();
 
     _ = try arb.claimAcquire("v1", "clm_1");
+    _ = try arb.humanInput("v1", "clm_1", 1, sha256("x"), "x");
     try arb.viewerDisconnect();
     _ = try arb.operatorDiscard();
     try std.testing.expectEqual(State.free, arb.currentState());
-    try std.testing.expectEqualStrings("\x03", sink.writes.items);
+    try std.testing.expectEqualStrings("x\x03", sink.writes.items);
+}
+
+test "HUMAN_ORPHANED + operator discard of an unwritten claim writes no cancel bytes" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    _ = try arb.claimAcquire("v1", "clm_1");
+    try arb.viewerDisconnect();
+    _ = try arb.operatorDiscard();
+    try std.testing.expectEqual(State.free, arb.currentState());
+    // The claim drafted nothing, so there is no draft to cancel; the cancel
+    // sequence would land in the foreground program instead.
+    try std.testing.expectEqualStrings("", sink.writes.items);
 }
 
 test "AUTOMATION_BUFFERING + COMMIT → AUTOMATION_COMMITTED → FREE zeros buffers" {

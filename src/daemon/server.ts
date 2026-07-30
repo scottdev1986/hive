@@ -883,6 +883,27 @@ export class HiveDaemon {
       // Durable warning sink (defect D2): trigger and wake-delta failures
       // persist to the daemon log, not only the unread console.
       (line) => this.writeDaemonLog(line),
+      // Submit-time foreground measurement: the run row's launch-time
+      // identity goes stale the moment the vendor forks a child that takes
+      // the terminal's foreground group, and a fence built from it refuses
+      // every injection to a live agent.
+      async (agent) => {
+        const inspection = await this.terminalHost.inspect(
+          requireSessiondAgentLocator(agent),
+        );
+        const foreground = inspection.foreground;
+        if (
+          foreground.state !== "unmanaged" &&
+          foreground.state !== "managed"
+        ) {
+          return undefined;
+        }
+        return {
+          pid: foreground.pid,
+          startToken: foreground.startToken,
+          processGroupId: foreground.foregroundProcessGroupId,
+        };
+      },
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -1736,7 +1757,13 @@ export class HiveDaemon {
           }`,
         );
       });
-      await this.reconcileAgents();
+      await this.reconcileAgents().catch((error) => {
+        console.error(
+          `Hive agent reconciliation failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       await this.sweepStrandedWorktrees().catch((error) => {
         console.error(
           `Hive stranded-worktree sweep failed: ${
