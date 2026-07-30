@@ -15,7 +15,7 @@ import HiveGhosttyC
 /// policy classifies as byte-reachable (handledByEffects ∪ deniedPolicy ∪
 /// engineInert), and that NOTHING privileged/gesture-only leaks. It prints
 /// the exact observed set so the classification is grounded in a live
-/// measurement the reviewer can read, not tag-name guessing.
+/// measurement, not tag-name guessing.
 final class Gate9ReachabilityTraceTests: XCTestCase {
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
@@ -79,30 +79,20 @@ final class Gate9ReachabilityTraceTests: XCTestCase {
 
         lock.lock(); let reachable = observed; lock.unlock()
 
-        // The measured reachable set, printed for the reviewer/record.
+        // The measured reachable set, printed for the record.
         let names = reachable.sorted().map { raw -> String in
             "\(raw):\(Self.tagName(raw))"
         }
         print("GATE9-TRACE reachable-from-output action tags = \(names)")
 
-        // MEASURED RESULT (2026-07-18): the ONLY action reachable from the
-        // entire untrusted-output corpus is SCROLLBAR (rawValue 26) — engine
-        // scrollbar-geometry housekeeping, inert. title/pwd/bell reach the
-        // surface as HiveManual EFFECTS → bridge events (HIVE_GHOSTTY_EVENT_*),
-        // NOT the action callback, so they never appear here; notification/
-        // color/progress/clipboard actions are not wired to the manual apprt
-        // path at all. This makes the byte-triggerable action surface
-        // effectively empty of anything privileged — a stronger result than
-        // "denied": the classification is confirmed by measurement, not
-        // inferred from tag names.
-        //
-        // HARD PIN (cross-vendor review 2026-07-18, clyde): assert equality
-        // to exactly {SCROLLBAR}, not a soft subset of the policy's
-        // byte-reachable buckets. A soft check would pass a dangerous tag
-        // that was misclassified into deniedPolicy/handledByEffects/
-        // engineInert (e.g. DESKTOP_NOTIFICATION is in deniedPolicyTags —
-        // {SCROLLBAR, DESKTOP_NOTIFICATION} would satisfy subset checks
-        // while contradicting the empty-privileged-action claim).
+        // The ONLY action reachable from the untrusted-output corpus is
+        // SCROLLBAR (rawValue 26) — engine scrollbar-geometry housekeeping,
+        // inert. title/pwd/bell reach the surface as HiveManual EFFECTS →
+        // bridge events (HIVE_GHOSTTY_EVENT_*), NOT the action callback;
+        // notification/color/progress/clipboard actions are not wired to the
+        // manual apprt path. Hard-pin equality to exactly {SCROLLBAR}: a soft
+        // subset of policy buckets would pass a dangerous tag misclassified
+        // into deniedPolicy/handledByEffects/engineInert.
 
         let expected: Set<UInt32> = [GHOSTTY_ACTION_SCROLLBAR.rawValue]
 

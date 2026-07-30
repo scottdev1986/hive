@@ -3,33 +3,26 @@ import HiveGhosttyC
 import XCTest
 @testable import HiveTerminalKit
 
-/// B3 replacement smoke — the assertion half.
+/// B3 substrate smoke — the assertion half.
 ///
-/// Proves the sessiond + HiveTerminalKit substrate end to end on the NEW
-/// spine, replacing the coverage of the retired terminal harness. The driver
-/// half (`scripts/b3-smoke.sh`) stands
-/// the stack up, runs this, and tears it down.
+/// Proves the sessiond + HiveTerminalKit substrate end to end. The driver
+/// half (`scripts/b3-smoke.sh`) stands the stack up, runs this, and tears
+/// it down.
 ///
-/// WHAT THIS PROVES, stated so the claim cannot drift upward later:
-/// stage 3 proves bytes reached a RENDER-READY GRID — the terminal's semantic
+/// Stage 3 proves bytes reached a RENDER-READY GRID — the terminal's semantic
 /// snapshot contains them — NOT that pixels were drawn. It is a functional
-/// substrate gate, not a visual one. Anything asserting appearance belongs in
-/// the aesthetics work, and nobody should cite this smoke for it.
+/// substrate gate, not a visual one.
 ///
-/// DELIBERATELY HEADLESS. The GUI-bound checks (window becomes key, terminal
-/// owns first responder, app activation) live in `SmokeRunner`'s opt-in
-/// sessiond proof and are app-integration coverage, not substrate coverage.
-/// Folding them in here is what would make this flaky and would put an
-/// unlocked GUI session on the critical path of every run. The removal-gate
-/// mapping cites them as their own row.
+/// DELIBERATELY HEADLESS. GUI-bound checks (window becomes key, terminal owns
+/// first responder, app activation) live in `SmokeRunner`'s opt-in sessiond
+/// proof. Folding them in here would make this flaky and put an unlocked GUI
+/// session on the critical path of every run.
 ///
 /// ONE CLAIM, NO RETRY. A human input claim is never stolen: when a viewer
 /// drops it the arbiter orphans it, and the client has no release call (the
-/// `claimRelease` frame type exists at FrameCodec.swift:23 but nothing sends
-/// it — this is the mechanism under adjudication for #40). So this smoke
+/// `claimRelease` frame type exists but nothing sends it). This smoke
 /// attaches ONCE, claims ONCE, and must never retry an attach: a retry would
-/// not recover, it would burn the session. Once hulda's release fix lands,
-/// this constraint can relax.
+/// not recover, it would burn the session.
 ///
 /// Opt-in: requires `HIVE_B3_SMOKE_HOME`, set by the driver script.
 final class B3SmokeTests: XCTestCase {
@@ -92,13 +85,10 @@ final class B3SmokeTests: XCTestCase {
         // ── STAGE 3 + 4: input applied, then bytes render-ready ───────────
         // One claim covers both.
         //
-        // SPLIT MARKER, ported from the legacy smoke's highest-value check
-        // (SmokeRunner.swift:414). The marker is TYPED in a split form that
-        // only a real shell will rejoin, and the assertion looks for the
-        // REJOINED form. That distinguishes "a shell interpreted these bytes"
-        // from "the renderer echoed back what I typed" — without it, a
-        // terminal that merely echoed input would satisfy the check and the
-        // whole round trip would be tautological.
+        // SPLIT MARKER: typed in a split form only a real shell will rejoin;
+        // the assertion looks for the REJOINED form. Distinguishes "a shell
+        // interpreted these bytes" from "the renderer echoed what I typed" —
+        // without it a terminal that merely echoed input would pass.
         let unique = abs(proof.locator.sessionId.hashValue % 100000)
         let joined = "B3SMOKE\(unique)"
         let split = "B3SM''OKE\(unique)"

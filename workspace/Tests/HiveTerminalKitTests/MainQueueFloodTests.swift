@@ -5,19 +5,13 @@ import XCTest
 /// What a flooding pane is allowed to put on the main queue.
 ///
 /// A keystroke is main-queue work, so every block the output path posts is
-/// something the next keystroke queues behind. Two of those blocks used to be
-/// posted per parsed chunk — one bridge INVALIDATE delivery and one accessibility
-/// export — and both were unbounded in the number of chunks.
-///
-/// Measured shape of the problem, with 32 live panes each flooding a real zsh
-/// through a real PTY (`prototypes/terminal`, 3 runs per arm): 2.45M INVALIDATEs
-/// posted 2.45M main-queue blocks and 56k viewport exports; main-queue
-/// scheduling latency ran p50 9.5 / p99 13.0 ms. Collapsed and made on-demand,
-/// the same run posts 70k deliveries and 2.1k exports at p50 7.4 / p99 10.1 ms.
+/// something the next keystroke queues behind. Bridge INVALIDATE deliveries
+/// and accessibility exports must collapse and stay on-demand — unbounded
+/// per-chunk posts put every keystroke behind a flood of main-queue work.
 ///
 /// These rows pin the two policies in process, where the counts are exact.
 ///
-/// The coalescing lives in `BridgeCallbackContext.enqueueEvent` — the point that
+/// Coalescing lives in `BridgeCallbackContext.enqueueEvent` — the point that
 /// actually posts to the main queue. `HiveTerminalView` receives every bridge
 /// event already on main, so a collapse there would never run.
 final class MainQueueFloodTests: XCTestCase {

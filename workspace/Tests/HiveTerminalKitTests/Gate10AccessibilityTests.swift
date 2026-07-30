@@ -262,7 +262,7 @@ final class Gate10AccessibilityTests: XCTestCase {
     }
 
     /// Selection-change AX posting: the Gate 9 carrier + snapshot diff must
-    /// post `.selectedTextChanged` (previously unclaimed by Gate 10 engine).
+    /// post `.selectedTextChanged`.
     func testSelectionChangePostsAccessibilityNotification() throws {
         let view = try makeView()
         let surface = surface(of: view)

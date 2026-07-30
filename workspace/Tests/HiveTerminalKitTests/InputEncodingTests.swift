@@ -612,7 +612,7 @@ final class InputEncodingTests: XCTestCase {
         XCTAssertEqual(writes, cases.map { Data($0.commit.utf8) })
     }
 
-    // MARK: 6. Scroll (previously missing entirely)
+    // MARK: 6. Scroll
 
     func testScrollModsEncodesPrecisionBit() {
         let mods = HiveTerminalView.scrollMods(precision: true, momentumPhase: [])
@@ -641,16 +641,15 @@ final class InputEncodingTests: XCTestCase {
             ),
             let event = NSEvent(cgEvent: cgEvent)
         else {
-            // Fails loudly rather than XCTSkip: skipped-green on a
-            // live-proof gate is false-green (cross-vendor review
-            // 2026-07-17, same policy as the other gate suites).
+            // Fails loudly rather than XCTSkip: skipped-green on a live-proof
+            // gate is false-green.
             return XCTFail("could not synthesize a CGEvent-backed scroll event — gate 8 live proof requires it")
         }
 
         terminal.scrollWheel(with: event)
 
         XCTAssertEqual(engine.scrollsSent.count, 1,
-                       "pre-B1 snapshot had no scrollWheel override at all — scroll never reached the terminal")
+                       "scrollWheel must reach the terminal")
         // Direction sign matches the input; exact magnitude depends on the
         // precision multiplier already covered by testScrollModsEncodes*.
         XCTAssertNotEqual(engine.scrollsSent[0].y, 0, "a real scroll delta must reach the engine")
@@ -892,10 +891,10 @@ final class InputEncodingTests: XCTestCase {
         XCTAssertEqual(engine.keysSentDetail[0].action, .release)
         XCTAssertNil(engine.keysSentDetail[0].text,
                      "a release must never carry text — real keyAction only embeds its explicit " +
-                     "text: parameter, which keyUp never passes (fidelity audit 2026-07-17)")
+                     "text: parameter, which keyUp never passes")
     }
 
-    // MARK: isARepeat (pre-B1 always sent PRESS)
+    // MARK: isARepeat
 
     func testRepeatedKeyDownSendsRepeatActionNotPress() {
         let engine = FakeManualSurface()
@@ -1066,36 +1065,28 @@ final class InputEncodingTests: XCTestCase {
         do {
             surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         } catch {
-            // Fails loudly rather than XCTSkip: skipped-green on a
-            // live-proof gate is false-green (cross-vendor review
-            // 2026-07-17, same policy as the other gate suites).
+            // Fails loudly rather than XCTSkip: skipped-green on a live-proof
+            // gate is false-green.
             XCTFail("real manual surface required for gate 8 live proof, got: \(error)")
             throw error
         }
         defer { surface.free() }
         let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
 
-        // Pre-B1 snapshot always returned convert(bounds, to: nil) — the
-        // entire view, width/height 400x300 — regardless of cursor
-        // position. A real ghostty_surface_ime_point call returns a
-        // cell-sized (or default) rect, not the whole view.
+        // A real ghostty_surface_ime_point call returns a cell-sized (or
+        // default) rect, not the whole view bounds.
         let rect = terminal.firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
         XCTAssertTrue(rect.width.isFinite && rect.height.isFinite && !rect.width.isNaN && !rect.height.isNaN)
         XCTAssertFalse(rect.width == 400 && rect.height == 300,
-                       "must not just be the old hardcoded whole-view-bounds placeholder")
+                       "must not just be the whole-view-bounds placeholder")
     }
 
     /// NSTextInputClient's firstRect contract is SCREEN coordinates, not
-    /// window coordinates — the pinned Surface View converts view→window
-    /// and then window.convertToScreen. Cross-vendor review (bram,
-    /// 2026-07-18) caught the port stopping at window coords, displacing
-    /// the IME candidate window in any window with a nonzero screen
-    /// origin, and the prior control being blind to it (unattached view:
-    /// window == screen trivially). This control observes the screen
-    /// conversion directly: the SAME view in the SAME window must report
-    /// a rect that SHIFTS by exactly the window's origin delta when the
-    /// window moves — window-coordinate output shifts by nothing and
-    /// goes RED.
+    /// window coordinates — convert view→window then window.convertToScreen.
+    /// Stopping at window coords displaces the IME candidate in any window
+    /// with a nonzero screen origin. The SAME view in the SAME window must
+    /// report a rect that SHIFTS by exactly the window's origin delta when
+    /// the window moves — window-coordinate output shifts by nothing.
     func testFirstRectShiftsWithWindowScreenOriginProvingScreenCoords() throws {
         let surface: GhosttyManualSurface
         do {

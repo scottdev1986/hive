@@ -7,28 +7,18 @@ import HiveGhosttyC
 /// response-producing controls must reach the write callback — exactly
 /// once, in order — on a REAL manual surface (no fakes).
 ///
-/// KNOWN SNAPSHOT DEFECT this corpus exists to catch: the pre-B1 patch set
-/// `device_attributes`, `enquiry`, `size`, `write_pty`, and `xtversion` to
-/// `null` in the manual-mode vt Handler.Effects (native/ghostty-patches/
-/// 0001-hive-manual-io-checkpoint.patch). A null `write_pty` means
-/// `reportDeviceAttributes`/`reportSize`/`reportXtversion` compute a reply
-/// and then silently drop it — a TUI paints (INVALIDATE still fires) but
-/// query/negotiation sequences never reach the host. Every assertion below
-/// fails on that snapshot (zero writes observed) and passes only because
-/// 0002-hive-terminal-reply-effects.patch wires real implementations.
+/// A null `write_pty` effect means `reportDeviceAttributes` /
+/// `reportSize` / `reportXtversion` compute a reply and then silently drop
+/// it — a TUI paints (INVALIDATE still fires) but query/negotiation
+/// sequences never reach the host. These assertions fail on zero writes
+/// and require real reply effects.
 ///
-/// Expected bytes are sourced from ECMA-48, the xterm ctlseqs reference
-/// (ftp://ftp.invisible-island.net/xterm/ctlseqs.txt), and Ghostty's own
-/// exec-mode reference implementation (termio/stream_handler.zig
-/// deviceAttributes/reportXtversion), not invented — this is the same
-/// pinned Ghostty engine build, so DA1/DA2 must match it exactly.
+/// Expected bytes match ECMA-48 / xterm ctlseqs / Ghostty's exec-mode
+/// `termio/stream_handler.zig` deviceAttributes/reportXtversion for this
+/// pinned engine build.
 final class TerminalReplyCorpusTests: XCTestCase {
-    /// Fails loudly rather than XCTSkip: this is the story's mandated
-    /// LIVE-PROOF gate, so a run where every test silently skips must not
-    /// report as "N tests, 0 failures" (cross-vendor review 2026-07-17
-    /// caught exactly this — a real surface creation failure in the
-    /// reviewer's environment skipped all 9 gate-2/3 tests and still read
-    /// as green).
+    /// Fails loudly rather than XCTSkip: a fully-skipped live-proof suite
+    /// reports as "N tests, 0 failures" — false-green.
     private func makeSurface(_ policy: GhosttyTerminalReplyPolicy = .enabled) throws -> GhosttyManualSurface {
         do {
             return try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: policy)
@@ -44,11 +34,10 @@ final class TerminalReplyCorpusTests: XCTestCase {
         wait(for: [delivered], timeout: 1)
     }
 
-    /// DA1 (CSI c): xterm ctlseqs "Send Device Attributes (Primary DA)".
+    /// DA1 (CSI c): primary device attributes.
     /// Response CSI ? 62 ; 22 c = VT220 level-2 conformance + ANSI color.
     /// No ";52" (clipboard) feature: this bridge's clipboard_write effect
-    /// always denies (OSC 52 write denied per ADR-0002), matching upstream
-    /// stream_handler.zig's own conditional exactly.
+    /// always denies OSC 52 write, matching upstream stream_handler.zig.
     func testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce() throws {
         let surface = try makeSurface()
         defer { surface.free() }

@@ -11,9 +11,9 @@ final class PaneTerminalStatusTests: XCTestCase {
             feedStatus: "working", status: .running))
     }
 
-    /// #90, same split for the renderer: a pane still reconnecting says so
-    /// transiently and clears when it recovers. Latching here is what put a
-    /// resting "renderer disconnected" on a pane whose host was fine.
+    /// A pane still reconnecting says so transiently and clears when it
+    /// recovers. Latching here puts a resting "renderer disconnected" on a
+    /// pane whose host is fine.
     func testRendererRecoveringShowsWithoutLatchingTheGiveUp() throws {
         let pane = PaneView(paneID: "worker", title: "aria") { _ in }
         healthyFeedTick(pane)

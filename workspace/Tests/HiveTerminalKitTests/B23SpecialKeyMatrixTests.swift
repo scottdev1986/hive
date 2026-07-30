@@ -5,26 +5,17 @@ import XCTest
 
 /// B2.3/A3 acceptance matrix — editing / navigation / function key rows.
 ///
-/// Acceptance clause (planning/story-m1-b2-hive-terminal-view.md): key
-/// handling preserves physical key, layout-derived text, ... function and
-/// navigation keys.
-///
-/// Before this file the only special-key coverage was Ctrl+H and an assertion
-/// that an arrow's AppKit private-use scalar is NOT injected as text. Nothing
-/// asserted what these keys actually encode, which is the exact bug class this
-/// codebase has already hit once: a documented "zero writes for special keys"
-/// blocker (see KittyKeyboardGoldenTests' header) where every navigation key
-/// silently encoded nothing.
+/// Key handling preserves physical key, layout-derived text, and function and
+/// navigation keys. Silent zero-byte encoding of navigation keys is the
+/// failure mode these rows pin.
 ///
 /// Two levels of claim, deliberately separated:
-///  - Arrows are pinned to exact bytes. CSI A/B/C/D in the default (cursor
-///    key) mode is spec-certain, and the repo already cites left -> "\u{1B}[D".
-///  - The remaining keys assert NON-EMPTY and MUTUALLY DISTINCT encodings.
-///    That is weaker than a byte golden on purpose: those sequences vary with
-///    DECCKM/keypad state and pinning a value read back from this build would
-///    record current behavior rather than test it. Non-empty catches the
-///    historical silent-drop bug; distinctness catches two keys collapsing
-///    onto one sequence. Both bite without asserting anything unverified.
+///  - Arrows are pinned to exact bytes (CSI A/B/C/D in default cursor-key mode;
+///    left is "\u{1B}[D").
+///  - Remaining keys assert NON-EMPTY and MUTUALLY DISTINCT encodings. Those
+///    sequences vary with DECCKM/keypad state, so a byte golden would only
+///    re-record this build. Non-empty catches silent drops; distinctness
+///    catches two keys collapsing onto one sequence.
 final class B23SpecialKeyMatrixTests: XCTestCase {
     private struct Key {
         let name: String
@@ -66,9 +57,8 @@ final class B23SpecialKeyMatrixTests: XCTestCase {
         surface.callbackContext.onWrite = { log.append($0) }
         terminal.keyDown(with: Self.makeEvent(key))
 
-        // Encoder bytes arrive on the surface io thread. A synchronous read
-        // is the documented measurement error behind the earlier false
-        // "zero writes for special keys" report, so drain, then settle.
+        // Encoder bytes arrive on the surface io thread. Drain, then settle —
+        // a synchronous read can falsely report zero writes.
         _ = drain(log, until: 1)
         drainIdle(0.25)
 
@@ -86,8 +76,7 @@ final class B23SpecialKeyMatrixTests: XCTestCase {
         }
     }
 
-    /// Navigation and function keys: each must encode SOMETHING. This is the
-    /// row that would have caught the historical silent-drop blocker.
+    /// Navigation and function keys: each must encode SOMETHING.
     func testNavigationAndFunctionKeysAllEncodeNonEmptySequences() throws {
         for key in Self.navigationAndFunction {
             let encoded = try encode(key)

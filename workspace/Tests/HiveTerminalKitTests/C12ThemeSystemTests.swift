@@ -204,8 +204,8 @@ final class C12ThemeSystemTests: XCTestCase {
         )
     }
 
-    /// C1.1 deferred the font option to C1.2. Before this increment the font
-    /// never reached `contents`, so a selection could not reach a live surface.
+    /// The selected font must reach the generated configuration so a
+    /// selection can reach a live surface.
     func testSelectedFontReachesTheGeneratedConfiguration() {
         XCTAssertFalse(HiveTerminalConfiguration.contents(font: .embedded).contains("font-family"))
         XCTAssertTrue(

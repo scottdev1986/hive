@@ -3,9 +3,9 @@ import XCTest
 import HiveGhosttyC
 @testable import HiveTerminalKit
 
-/// B2.1 regression form of Ellen's independently verified B2.0 suppression
-/// detector. Each query must first prove that the enabled canonical surface
-/// answers, otherwise silence from the disabled renderer copy is vacuous.
+/// B2.1 reply-suppression detector. Each query must first prove that the
+/// enabled canonical surface answers, otherwise silence from the disabled
+/// renderer copy is vacuous.
 final class RendererReplySuppressionTests: XCTestCase {
     private struct Query {
         let name: String

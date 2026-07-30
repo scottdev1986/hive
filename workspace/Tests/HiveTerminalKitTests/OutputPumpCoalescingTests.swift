@@ -3,13 +3,8 @@ import XCTest
 @testable import HiveTerminalKit
 
 /// Output pump ordering (SessiondPaneTerminal pump): a burst of host frames
-/// must reach the surface in contiguous wire order with exactly one APPLIED ack
-/// per applied frame, and an ack high-water that never regresses.
-///
-/// These invariants used to be stated against the main-queue coalescing batch.
-/// Frames now apply one at a time on the pane's terminal I/O thread, so the
-/// batching is gone — but the ordering and ack contract it had to preserve is
-/// unchanged, and is what this exercises.
+/// must reach the surface in contiguous wire order with exactly one APPLIED
+/// ack per applied frame, and an ack high-water that never regresses.
 final class OutputPumpCoalescingTests: XCTestCase {
     private let geometry = TerminalGeometry(
         columns: 80,

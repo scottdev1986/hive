@@ -174,17 +174,11 @@ final class ModelControlTests: XCTestCase {
         XCTAssertNotEqual(MeterState.notMetered, .unknown(reason: "no reading for this window"))
     }
 
-    // THE POSITIVE CONTROL. These bytes were not typed by hand and were not
-    // copied from a description — they are what the daemon's own code (ac0979f)
-    // emitted when run over the real captured Codex payload
-    // (test/daemon/fixtures/codex-rate-limits-prolite.json).
-    //
-    // The first assertion is the whole point of the test: my reader must SEE
-    // availability. A misspelled key would decode to nil, the derivation would
-    // silently fall back to the old inference, the UI would still look right, and
-    // nothing would ever tell me the explicit path was dead. An all-absent field
-    // is indistinguishable from a quiet vendor — so prove the reader can see a
-    // positive before trusting any negative.
+    // POSITIVE CONTROL: bytes the daemon emits for a real Codex rate-limit
+    // payload. The first assertion proves the reader SEES availability — a
+    // misspelled key decodes to nil and falls back to inference while the UI
+    // still looks right. An all-absent field is indistinguishable from a quiet
+    // vendor — prove the reader can see a positive before trusting any negative.
     func testReaderActuallySeesAvailabilityOnTheRealEmittedWire() throws {
         let wire = """
         {"generatedAt":"2026-07-10T12:00:00.000Z","providers":{},"billing":{},
@@ -272,9 +266,8 @@ final class ModelControlTests: XCTestCase {
         XCTAssertEqual(reason, "no provider evidence")
     }
 
-    // The daemon's word OVERRIDES the inference, and must: a window it calls
-    // "unknown" is a failed read even if the duration went missing too. This is
-    // the case the old heuristic got wrong, now settled by the vendor's own fact.
+    // The daemon's word OVERRIDES the inference: a window it calls "unknown" is
+    // a failed read even if the duration went missing too.
     func testExplicitUnknownBeatsTheInferenceEvenWithNoDuration() {
         let halfQuiet = QuotaEntry.pool(QuotaPool(
             provider: "codex", pool: "codex", origin: "discovered",

@@ -67,9 +67,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(stopRequests, 1)
     }
 
-    /// #64: closing a pane (or a window fanning `.closePane` out to every
-    /// pane) must NEVER kill the agent. The pane goes away; the agent keeps
-    /// running headless, and the feed must not rebuild its pane while it does.
+    /// Closing a pane (or a window fanning `.closePane` out to every pane)
+    /// must NEVER kill the agent. The pane goes away; the agent keeps running
+    /// headless, and the feed must not rebuild its pane while it does.
     func testPaneCloseClosesThePaneAndNeverKillsTheAgent() throws {
         _ = NSApplication.shared
         let state = ProjectState(projectID: "project", displayName: "Project")
@@ -226,9 +226,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
     func testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground() throws {
         let pane = PaneView(paneID: "worker", title: "worker") { _ in }
-        // C1.3: the pane background is a plain opaque view. It used to be an
-        // NSVisualEffectView, which put terminal content inside a vibrancy-
-        // enabled ancestor — see C13PaneChromeTests.
+        // The pane background is a plain opaque view (not vibrancy).
         let backgroundIndex = try XCTUnwrap(
             pane.subviews.firstIndex(where: { $0 is PaneBackgroundView }))
         let statusIndex = try XCTUnwrap(

@@ -5,14 +5,10 @@ import XCTest
 
 /// B2.3/A3 acceptance matrix — bracketed paste boundary rows.
 ///
-/// Acceptance clause (planning/story-m1-b2-hive-terminal-view.md, "Input and
-/// resize semantics"): with DEC private mode 2004 set, exactly one
-/// `ESC [ 200 ~` / `ESC [ 201 ~` pair surrounds only the paste body; with it
-/// reset, Ghostty's safe-paste rules apply.
-///
-/// `Gate8ClipboardTests.swift:43` already pins the SET direction. The reset
-/// direction had no test, so "bracketed paste works" was only ever half
-/// observed: a build that bracketed unconditionally would have passed.
+/// With DEC private mode 2004 set, exactly one `ESC [ 200 ~` / `ESC [ 201 ~`
+/// pair surrounds only the paste body; with it reset, Ghostty's safe-paste
+/// rules apply. Both SET and RESET must be covered: a build that brackets
+/// unconditionally would pass SET-only coverage.
 final class B23PasteBoundaryMatrixTests: XCTestCase {
     /// Multiline: unsafe to paste unbracketed, because a newline submits.
     private static let multilineBody = "clip\nboard"
@@ -100,14 +96,14 @@ final class B23PasteBoundaryMatrixTests: XCTestCase {
         )
     }
 
-    /// RESET, unsafe body: the acceptance clause says "with it reset,
-    /// Ghostty's safe-paste rules apply." A multiline paste cannot be sent
-    /// unbracketed, because an embedded newline would submit the line to the
-    /// shell without the user seeing it. Ghostty withholds it.
+    /// RESET, unsafe body: with mode 2004 reset, Ghostty's safe-paste rules
+    /// apply. A multiline paste cannot be sent unbracketed, because an
+    /// embedded newline would submit the line to the shell without the user
+    /// seeing it. Ghostty withholds it.
     ///
-    /// Recorded as its own row rather than folded into the row above: the two
-    /// differ only by the paste BODY, and conflating them would let a build
-    /// that always withholds — or one that always sends — look correct.
+    /// Own row rather than folded into the row above: the two differ only by
+    /// paste BODY, and conflating them would let a build that always withholds
+    /// — or one that always sends — look correct.
     func testBracketedPasteResetWithholdsUnsafeMultilineBody() throws {
         let actual = try pasteWrites(
             afterMode: "\u{1B}[?2004h\u{1B}[?2004l",

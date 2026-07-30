@@ -155,8 +155,8 @@ final class AgentActivityTests: XCTestCase {
     }
 
     /// A dead feed invalidates the root's status exactly as it does an agent's.
-    /// The pane used to be exempt, which was only ever right while its word was
-    /// a constant — a constant cannot go stale. A measured one can.
+    /// The root's status is measured from turn boundaries, so a dead feed makes
+    /// it as untrustworthy as any agent's.
     func testFeedLossTurnsTheOrchestratorDotUnknownToo() {
         let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
         state.addOrchestrator()

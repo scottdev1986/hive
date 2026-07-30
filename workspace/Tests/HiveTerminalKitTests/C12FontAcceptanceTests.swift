@@ -5,17 +5,13 @@ import XCTest
 /// C1.2 F1 — does the engine ACCEPT the selected font, or did we only prove the
 /// generated string differed?
 ///
-/// The reviewer's finding: the live-font test asserted the push returned true
-/// and then read back `background`, a theme property that does not change across
-/// a font switch. If the engine had rejected `font-family`, every assertion in
-/// it still passed.
-///
-/// Reading `font-family` back is not an option — it is `RepeatableString`
-/// (vendor `Config.zig:168`), a plain struct over an ArrayList that is neither
-/// packed nor `cval`-bearing (`Config.zig:5983`), so `ghostty_config_get`'s
-/// struct branch returns false. The getter DOES return C strings for *enum*
-/// keys, so "it can return strings" is true and useless — it depends entirely on
-/// the field's Zig type.
+/// Reading `background` after a font push is blind: background does not change
+/// across a font switch, so a rejected `font-family` still passes. Reading
+/// `font-family` back is not an option — it is `RepeatableString`, a plain
+/// struct over an ArrayList that is neither packed nor `cval`-bearing, so
+/// `ghostty_config_get`'s struct branch returns false. The getter returns C
+/// strings for enum keys only — "it can return strings" depends on the field's
+/// Zig type.
 ///
 /// Acceptance is therefore proven through the engine's diagnostics channel.
 @MainActor
@@ -87,8 +83,7 @@ final class C12FontAcceptanceTests: XCTestCase {
     }
 
     /// The live push refuses a configuration the engine rejects, so a push that
-    /// returns true already implies zero diagnostics. Nothing pinned that
-    /// before: a refactor could have dropped the guard and gone unnoticed.
+    /// returns true already implies zero diagnostics.
     func testLivePushRefusesAConfigurationTheEngineRejects() {
         XCTAssertTrue(surface.applyHiveConfiguration(theme: .hiveDark, font: .embedded))
 

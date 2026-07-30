@@ -16,11 +16,8 @@ import HiveGhosttyC
 /// classification returns before touching parser state, pending buffer,
 /// or the renderer mutex — failures cannot poison later calls.
 final class OrderedOutputEngineTests: XCTestCase {
-    /// Fails loudly rather than XCTSkip: this is the story's mandated
-    /// LIVE-PROOF gate, so a run where every test silently skips must not
-    /// report as "N tests, 0 failures" (matches the fix applied to
-    /// TerminalReplyCorpusTests/AppWakeupLifecycleTests after cross-vendor
-    /// review 2026-07-17 caught exactly this failure mode).
+    /// Fails loudly rather than XCTSkip: a fully-skipped live-proof suite
+    /// reports as "N tests, 0 failures" — false-green.
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
             return try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: .enabled)
@@ -45,14 +42,11 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(surface.throughSeq, 0, "a rejected gap must not advance through_seq")
     }
 
-    /// Cross-vendor review (2026-07-17, bobby) flagged the original version
-    /// of this test: it only checked throughSeq stayed at 5, but a BROKEN
-    /// implementation that incorrectly re-parses the duplicate bytes would
-    /// also leave throughSeq unchanged (re-parsing "hello" doesn't move
-    /// position) -- throughSeq alone is a success-mirror, not proof of
-    /// no-op. HiveManual.process() classifies duplicates and returns
-    /// .success BEFORE touching the parser/pending buffer/emit -- so the
-    /// real proof is that the event stream gets ZERO new entries.
+    /// Duplicate exact retransmit must be a true no-op: throughSeq alone is
+    /// a success-mirror (re-parsing "hello" also leaves throughSeq
+    /// unchanged). HiveManual.process() classifies duplicates and returns
+    /// .success BEFORE touching the parser/pending buffer/emit — so the real
+    /// proof is that the event stream gets ZERO new entries.
     func testDuplicateExactRetransmitIsIdempotent() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -147,22 +141,11 @@ final class OrderedOutputEngineTests: XCTestCase {
     /// Arbitrary chunk boundary across a UTF-8 codepoint: "é" (U+00E9,
     /// 0xC3 0xA9) split into its two bytes across two calls.
     ///
-    /// Cross-vendor review (2026-07-17, bobby) flagged the original
-    /// version, which only checked "some INVALIDATE eventually fired."
-    /// That's not discriminating: process() emits INVALIDATE
-    /// unconditionally on every accepted call (not conditionally on a
-    /// complete grapheme forming), and a first FOLLOW-UP attempt at
-    /// comparing event COUNTS against a single-call baseline turned out to
-    /// be equally flawed -- two calls always produce one more INVALIDATE
-    /// than one call, purely because of the per-call-not-per-grapheme
-    /// architecture, regardless of whether the codepoint decoded
-    /// correctly. Neither approach can tell "correctly buffered
-    /// continuation byte" from "silently decoded as two garbled
-    /// characters" without reading the actual terminal content.
-    ///
-    /// The real proof: read back the screen text via
-    /// ghostty_surface_read_text and assert it is exactly "é" — not two
-    /// mangled replacement characters, not "é" plus a stray byte.
+    /// INVALIDATE alone is not discriminating: process() emits it on every
+    /// accepted call, not on grapheme completion. Event counts are also
+    /// flawed — two calls always produce one more INVALIDATE than one call.
+    /// Proof is screen text via ghostty_surface_read_text: exactly "é", not
+    /// two mangled replacement characters, not "é" plus a stray byte.
     func testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -171,14 +154,9 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: Data([0xA9]), streamSeq: 1), .success)
         XCTAssertEqual(surface.throughSeq, 2)
 
-        // Exactness (cross-vendor review bram, 2026-07-18 — this control's
-        // third round): hasPrefix("é") stayed green for "é" plus a stray
-        // replacement/duplicate glyph, so extra-byte corruption passed.
-        // The grid's blank cells and row separators are the read API's
-        // expected fill; after stripping ONLY that whitespace/newline
-        // padding, the ENTIRE meaningful screen content must equal "é" —
-        // any additional glyph (U+FFFD, "Ã©", a duplicated "é") survives
-        // the trim and goes RED.
+        // hasPrefix("é") stays green for "é" plus a stray replacement/duplicate
+        // glyph. After stripping only whitespace/newline grid fill, the entire
+        // meaningful screen content must equal "é".
         let screen = readScreenText(surface)
         let meaningful = screen.trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(meaningful, "é",
@@ -531,19 +509,15 @@ final class OrderedOutputEngineTests: XCTestCase {
     /// serialized against each other: force both to queue while processOutput
     /// is held in body, and prove via entry/exit stamps that they never nest.
     ///
-    /// That serialization is required because `HiveManual` mutates its
-    /// `pending` / `output_ranges` / `stream` bookkeeping OUTSIDE
-    /// `renderer_state.mutex`, so two concurrent feeds would corrupt it.
-    /// `feedLock` is what provides it now that the feed runs on the pane's
-    /// terminal I/O thread instead of the main queue.
+    /// Serialization is required because `HiveManual` mutates its `pending` /
+    /// `output_ranges` / `stream` bookkeeping OUTSIDE `renderer_state.mutex`,
+    /// so two concurrent feeds would corrupt it. `feedLock` provides that
+    /// serialization on the pane's terminal I/O thread.
     ///
-    /// `draw` is deliberately NOT part of that guarantee and is allowed to
-    /// overlap a feed. It used to be covered here only because main-queue
-    /// confinement serialized everything by construction, not because Ghostty
-    /// requires it — `Surface.draw` states outright that "renderers are
-    /// required to support `drawFrame` being called from the main thread", and
-    /// `drawFrame` takes only the renderer's own `draw_mutex` to rasterize
-    /// ALREADY-built cells. The one reader of terminal state is
+    /// `draw` is deliberately NOT part of that guarantee and may overlap a
+    /// feed. `Surface.draw` requires renderers to support `drawFrame` from the
+    /// main thread; `drawFrame` takes only the renderer's own `draw_mutex` to
+    /// rasterize already-built cells. The one reader of terminal state is
     /// `updateFrame`, which takes `renderer_state.mutex` — the same lock the
     /// feed takes. Serializing draw behind the feed would park the main thread
     /// on a VT parse for no safety benefit.

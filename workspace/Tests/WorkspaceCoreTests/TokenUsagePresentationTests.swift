@@ -31,16 +31,15 @@ final class TokenUsagePresentationTests: XCTestCase {
         // 2,342,862 new input + 505,059 out.
         XCTAssertEqual(headline.newTokens, 2_847_921)
 
-        // The point of the fix: nothing a reader leads with implies 50M tokens
-        // of consumption. The old headline was totalTokens — 51,651,264.
+        // Nothing a reader leads with may imply ~50M tokens of consumption;
+        // the headline is newTokens, not totalTokens.
         let headlined = try XCTUnwrap(headline.newTokens)
         XCTAssertLessThan(headlined, 3_000_000)
     }
 
     /// Codex reports cache reads but leaves cache writes null. Requiring both
-    /// subsets threw the split away for the WHOLE fleet the moment one Codex
-    /// agent joined it, and the 82M cumulative headline came straight back —
-    /// caught in the running app, not by a typecheck.
+    /// subsets drops the split for the whole fleet the moment one Codex agent
+    /// joins — headline must still form from the available half.
     func testCodexReportsReadsWithoutWritesAndStillGetsAHeadline() {
         let codex = TokenCounts(
             inputTokens: 2_488_274, cachedInputTokens: 2_367_232,

@@ -267,26 +267,11 @@ final class C13PaneChromeTests: XCTestCase {
             """)
     }
 
-    /// The same guarantee stated structurally: the fill must come from a
-    /// semantic color that re-resolves, which is what makes the test above
-    /// pass for the right reason.
-    // NOTE: there is deliberately no test that the background schedules its own
-    // redraw on an appearance change. One was written, and the mutation case
-    // `stop-repainting-on-appearance-change` showed it stayed GREEN when the
-    // override it appeared to guard was neutered: AppKit's own
-    // `viewDidChangeEffectiveAppearance` already invalidates the view, so the
-    // override was dead code. Both the override and the test were removed
-    // rather than shipped as decoration. The property that actually matters —
-    // the fill re-resolving across light and dark — is covered above and is
-    // mutation-proven by `hardcode-the-background-color`.
-
     // MARK: - 4. No attenuation
 
-    /// Panes are never dimmed. Focus-by-attenuation was removed: with many
-    /// agents open, every pane but one was an unfocused pane, so the dim
-    /// applied to nearly the whole workspace at once and agents were not
-    /// legible. Every pane now renders at full strength and focus is carried
-    /// by the ring and header tint alone.
+    /// Panes are never dimmed. With many agents open, dimming every unfocused
+    /// pane would darken nearly the whole workspace. Every pane renders at full
+    /// strength; focus is carried by the ring and header tint alone.
     func testNoPaneChromeDimsThePane() {
         let pane = makePane()
         pane.layoutSubtreeIfNeeded()

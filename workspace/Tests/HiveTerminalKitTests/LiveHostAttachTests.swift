@@ -650,13 +650,13 @@ final class LiveHostAttachTests: XCTestCase {
         try (evidence + "\n").write(toFile: transcriptPath, atomically: true, encoding: .utf8)
     }
 
-    /// #40 live proof: unclean transport drop orphans the human claim; a
-    /// returning human viewer re-acquires via the sanctioned resume path and
-    /// can type again. Clean CLAIM_RELEASE (cancel) is covered unit-side.
+    /// Unclean transport drop orphans the human claim; a returning human
+    /// viewer re-acquires via the sanctioned resume path and can type again.
+    /// Clean CLAIM_RELEASE (cancel) is covered unit-side.
     func testLiveClaimUncleanDropThenHumanResumeTypes() throws {
         let (proof, _) = try loadProof()
         guard proof.mode == "shell" else {
-            throw XCTSkip("#40 claim drop-reattach requires HIVE_B22_REAL_SHELL=1 shell home")
+            throw XCTSkip("claim drop-reattach requires HIVE_B22_REAL_SHELL=1 shell home")
         }
 
         // Unique viewer ids so host input-replay idempotency keys do not collide
@@ -765,7 +765,7 @@ final class LiveHostAttachTests: XCTestCase {
             }
         }
         let appliedB = engineB.appliedRanges.reduce(Data()) { $0 + $1.bytes }
-        // Claim resume + INPUT applied is the #40 contract; echo is corroboration.
+        // Claim resume + INPUT applied is the contract; echo is corroboration.
         if appliedB.range(of: Data(markerB.utf8)) == nil {
             NSLog(
                 "hive claim live: marker echo not observed in OUTPUT (applied=%@ stage=%@) — claim resume still GREEN",
@@ -881,9 +881,9 @@ final class LiveHostAttachTests: XCTestCase {
         XCTAssertEqual(view.resizeFramesSent, 1)
     }
 
-    /// Regression proof for a user resize killing terminal input. This uses a
-    /// key AppKit window and routes in-process NSEvents through sendEvent; a
-    /// CGEvent post is silently discarded by the XCTest runner.
+    /// User resize must not kill terminal input. Uses a key AppKit window and
+    /// routes in-process NSEvents through sendEvent; a CGEvent post is silently
+    /// discarded by the XCTest runner.
     func testLiveShellInputSurvivesWindowResize() throws {
         let (proof, _) = try loadProof()
         guard proof.mode == "shell" else {
@@ -999,14 +999,13 @@ final class LiveHostAttachTests: XCTestCase {
         )
     }
 
-    /// Reconnect-churn robustness (§18/§26): a pane that repeatedly loses its
-    /// transport and re-attaches keeps getting fresh one-use grants. Each cycle
-    /// is a REAL reconnect — issue a grant, attach (which the host consumes via
-    /// its own grant list), then drop the transport — so both the host's grant
-    /// list and the broker's four-slot mirror must free per cycle. The broker
-    /// previously retained the mirror slot until the 15 s expiry, exhausting it
-    /// after four cycles; issueAttach now releases it on issue, so far more
-    /// than capacity of rapid reconnect cycles succeed with no CAPACITY refusal.
+    /// Reconnect-churn robustness: a pane that repeatedly loses its transport
+    /// and re-attaches keeps getting fresh one-use grants. Each cycle is a REAL
+    /// reconnect — issue a grant, attach (host consumes via its grant list),
+    /// then drop the transport — so both the host's grant list and the broker's
+    /// four-slot mirror must free per cycle. `issueAttach` releases the mirror
+    /// slot on issue; otherwise the slot is held until the 15 s expiry and four
+    /// rapid reconnects exhaust capacity.
     func testReconnectChurnNeverExhaustsGrantCapacity() throws {
         let (proof, _) = try loadProof()
         let engine = FakeManualSurface()

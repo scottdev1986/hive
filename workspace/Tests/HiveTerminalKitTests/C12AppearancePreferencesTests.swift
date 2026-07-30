@@ -56,12 +56,10 @@ final class C12AppearancePreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.font, .embedded)
     }
 
-    /// A stored value of the wrong TYPE must fall back, not crash. Today the
-    /// fallback is robust by construction — `string(forKey:)` returns nil or a
-    /// coerced string, neither reaches a valid rawValue, and nothing
-    /// force-unwraps — but nothing pinned that. A refactor to
-    /// `defaults.object(forKey:) as! String` would crash on a Data value and no
-    /// other test would catch it. Reported by the C1.2 reviewer.
+    /// A stored value of the wrong TYPE must fall back, not crash.
+    /// `string(forKey:)` returns nil or a coerced string; neither reaches a
+    /// valid rawValue, and nothing force-unwraps. A force-cast to String would
+    /// crash on a Data value.
     func testWronglyTypedStoredValuesFallBackRatherThanCrash() {
         let wrongTypes: [Any] = [
             Data([0x00, 0x01]),

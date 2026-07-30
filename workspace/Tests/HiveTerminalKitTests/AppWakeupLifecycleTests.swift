@@ -4,26 +4,20 @@ import HiveGhosttyC
 @testable import HiveTerminalKit
 
 /// Gate 3 (M1-B1) positive control: `wakeup_cb` must schedule a REAL
-/// `ghostty_app_tick` — observed actually firing, on the right thread,
-/// with the right app pointer — and must never race a concurrent free.
+/// `ghostty_app_tick` — observed firing on the right thread with the right
+/// app pointer — and must never race a concurrent free.
 ///
-/// Cross-vendor review (2026-07-17) found the first version of this file
-/// insufficient: it only asserted `scheduleTick`/the trampoline returned
-/// without crashing, which stays green even if `wakeup_cb` regresses to a
-/// no-op, and it drove the Swift trampoline directly so the FACTORY's own
-/// wiring (`ghostty_runtime_config_s.wakeup_cb`/`userdata`) could regress
-/// undetected. It also only tested "free, then wakeup" — never a tick
-/// genuinely in flight while free is requested. This version fixes all
-/// three: `testFactory...` inspects the real config the factory builds;
-/// `GhosttyAppWakeupContext.tickOverride` is a spy seam that proves a real
-/// tick call happened (RED if the trampoline becomes a no-op); and
-/// `testFreeWaitsForInFlightTick...` races an in-flight tick against a
-/// concurrent free and asserts strict ordering, not just absence of a crash.
+/// Three guards:
+/// - `testFactory...` inspects the real config the factory builds, so factory
+///   wiring of `wakeup_cb`/`userdata` cannot drift undetected.
+/// - `GhosttyAppWakeupContext.tickOverride` is a spy seam that proves a real
+///   tick call happened (RED if the trampoline becomes a no-op).
+/// - `testFreeWaitsForInFlightTick...` races an in-flight tick against a
+///   concurrent free and asserts strict ordering, not just absence of a crash.
 ///
 /// `makeSurface()` fails loudly (XCTFail) rather than XCTSkip when the real
 /// surface can't be created — a fully-skipped suite reports as "passed" in
-/// XCTest's summary, which is exactly the false-green this gate exists to
-/// prevent (matches the review finding on TerminalReplyCorpusTests too).
+/// XCTest's summary, a false-green this gate exists to prevent.
 final class AppWakeupLifecycleTests: XCTestCase {
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
@@ -34,9 +28,8 @@ final class AppWakeupLifecycleTests: XCTestCase {
         }
     }
 
-    /// Closes the "factory wiring can regress undetected" gap: inspects the
-    /// REAL `ghostty_runtime_config_s` the factory builds (the same
-    /// `makeRuntimeConfig` `makeManualSurface` itself calls), not just the
+    /// Inspects the REAL `ghostty_runtime_config_s` the factory builds (the
+    /// same `makeRuntimeConfig` `makeManualSurface` itself calls), not just the
     /// trampoline function in isolation.
     func testFactoryWiresTheRealTrampolineAndContext() {
         let context = GhosttyAppWakeupContext()
@@ -100,14 +93,11 @@ final class AppWakeupLifecycleTests: XCTestCase {
 
     /// An on-main wakeup must DEFER the tick to a later main-queue turn —
     /// exactly what the pinned Ghostty app's own `wakeup` does
-    /// (Ghostty.App.swift: unconditional `DispatchQueue.main.async`).
-    /// Fidelity audit (2026-07-17) found the first landed version ticked
-    /// INLINE when already on main and had a test enshrining that: since
-    /// `App.Mailbox.push` (App.zig) invokes `wakeup_cb` synchronously on
-    /// the pushing thread, an inline tick re-enters `ghostty_app_tick`
-    /// from inside whatever Ghostty entry point posted the message —
-    /// including recursively from inside a tick's own mailbox drain —
-    /// a state the upstream code never has to survive because its only
+    /// (unconditional `DispatchQueue.main.async`). `App.Mailbox.push` invokes
+    /// `wakeup_cb` synchronously on the pushing thread, so an inline tick
+    /// re-enters `ghostty_app_tick` from inside whatever Ghostty entry point
+    /// posted the message — including recursively from inside a tick's own
+    /// mailbox drain — a state upstream never has to survive because its only
     /// embedder always defers.
     func testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp() throws {
         let surface = try makeSurface()
@@ -163,22 +153,12 @@ final class AppWakeupLifecycleTests: XCTestCase {
         XCTAssertEqual(tickCountAfterFree, 0, "a wakeup after free must never reach ghostty_app_tick")
     }
 
-    /// The race the first version of this suite didn't cover: a tick
-    /// genuinely IN FLIGHT (not "free happened first, then a wakeup
-    /// arrives") concurrent with a free requested from another thread.
-    ///
-    /// Second-pass fix (cross-vendor review 2026-07-17): the first version
-    /// used `wait(for: [tickStarted])` — an `XCTestExpectation` fulfilled
-    /// *inside* the same `DispatchQueue.main.async`-dispatched closure that
-    /// then calls `Thread.sleep`. That doesn't work: `wait(for:)` can only
-    /// notice a fulfillment by servicing the main run loop, and it can't
-    /// service the run loop while that very closure is still running
-    /// (synchronous work on a thread isn't preemptible by the run loop it's
-    /// blocking). So `wait(for: [tickStarted])` silently waited for the
-    /// ENTIRE closure — sleep included — to finish before returning, and
-    /// free() was dispatched only after the tick had already ended. This
-    /// version signals "tick started" via a `DispatchSemaphore` waited on
-    /// from a background thread instead: a semaphore wake-up is a kernel
+    /// A tick genuinely IN FLIGHT concurrent with a free requested from
+    /// another thread. Signals "tick started" via a `DispatchSemaphore`
+    /// waited on from a background thread: `wait(for: XCTestExpectation)`
+    /// fulfilled inside the same main-queue closure that then sleeps cannot
+    /// notice fulfillment until that closure finishes, so free would only
+    /// run after the tick ended. A semaphore wake-up is a kernel
     /// primitive, not a run-loop notification, so it fires the moment
     /// `signal()` runs on main regardless of what that closure does next.
     /// `free()` is then dispatched from that SAME background thread while
@@ -251,13 +231,12 @@ final class AppWakeupLifecycleTests: XCTestCase {
         XCTAssertLessThan(tickEndIndex, freeCompletedIndex,
                           "free() completed before the in-flight tick finished — recorded \(recorded)")
 
-        // Same serialization property for the SURFACE free (fidelity audit
-        // 2026-07-17): ghostty_surface_free mutates app state a concurrent
-        // main-queue tick also touches, so GhosttyManualSurface.free()
-        // must marshal it onto the main queue. If that regresses to
-        // freeing inline on the calling thread, the background thread's
-        // surface.free() returns while main is still inside the tick's
-        // sleep and this goes RED.
+        // Same serialization property for the SURFACE free:
+        // ghostty_surface_free mutates app state a concurrent main-queue tick
+        // also touches, so GhosttyManualSurface.free() must marshal it onto
+        // the main queue. If that regresses to freeing inline on the calling
+        // thread, the background thread's surface.free() returns while main is
+        // still inside the tick's sleep and this goes RED.
         guard let surfaceFreeIndex = recorded.firstIndex(of: "surface-free-completed") else {
             return XCTFail("expected surface-free-completed — recorded \(recorded)")
         }

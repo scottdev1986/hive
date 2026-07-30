@@ -1,19 +1,14 @@
 import XCTest
 @testable import WorkspaceCore
 
-/// THE CONTRACT between the daemon's emitted token-usage snapshot and this app's
+/// Contract between the daemon's emitted token-usage snapshot and this app's
 /// decoder. `Fixtures/token-usage-wire.json` is a document the daemon may
-/// legitimately emit today: it carries every subject role in `TOKEN_USAGE_ROLES`
-/// (src/schemas/token-usage.ts). The daemon-side twin of this test
-/// (test/schemas/token-usage.wire-contract.test.ts) proves the fixture is
-/// schema-valid AND that it still covers every role — so a kind added on the
-/// daemon side fails there and lands here before it can reach a user.
+/// legitimately emit: it carries every subject role in `TOKEN_USAGE_ROLES`.
 ///
-/// WHY THIS EXISTS: this app once threw on ONE unrecognised wire value, failed
-/// the WHOLE document, and fell back to a blank/provisional screen while both
-/// suites stayed green — because each side pinned its own fixture. Decoding must
-/// degrade NARROWLY (an unknown value costs its own field, never the document),
-/// and a role this build cannot name must stay VISIBLE, never folded into WORKERS.
+/// Decoding must degrade NARROWLY (an unknown value costs its own field, never
+/// the document). A strict throw on one unrecognised wire value fails the
+/// whole document and falls back to a blank/provisional screen. A role this
+/// build cannot name must stay VISIBLE, never folded into WORKERS.
 final class TokenUsageWireContractTests: XCTestCase {
 
     private func wireFixture() throws -> Data {

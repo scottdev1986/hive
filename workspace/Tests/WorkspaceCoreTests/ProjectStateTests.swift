@@ -26,9 +26,9 @@ final class ProjectStateTests: XCTestCase {
         return state
     }
 
-    // Closing a pane never kills its agent (#64), so the feed keeps listing
-    // that agent as live for as long as it runs. A pane rebuilt from those
-    // snapshots is exactly why the X looked broken.
+    // Closing a pane never kills its agent, so the feed keeps listing that
+    // agent as live for as long as it runs. A pane rebuilt from those
+    // snapshots makes the close control look broken.
     func testUserClosedAgentIsNotRebuiltByAFeedThatStillListsItAsLive() {
         let state = drivenState()
         let paneID = ProjectState.paneID(forAgent: "indexer")
@@ -401,14 +401,11 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertNil(state.attention.ordered.first { $0.paneID == failed })
     }
 
-    /// The orchestrator used to be EXEMPT from feed loss, on the grounds that its
-    /// terminal is not feed-driven. That was right only while its status was a
-    /// hardcoded constant: a constant cannot go stale, so a dead feed invalidated
-    /// nothing. Its status is now measured from the root's turn boundaries, so a
-    /// dead feed makes it exactly as untrustworthy as any agent's — the root may
-    /// have started or finished any number of turns since the last line we read.
-    /// It goes disconnected/unknown with the rest. The terminal stays attached;
-    /// what we lost is our knowledge of the root, not the root.
+    /// Feed loss turns every pane disconnected/unknown, including the
+    /// orchestrator. Its status is measured from the root's turn boundaries, so
+    /// a dead feed makes it as untrustworthy as any agent's — the root may have
+    /// started or finished turns since the last line we read. The terminal stays
+    /// attached; what we lost is our knowledge of the root, not the root.
     func testMarkFeedLostTurnsEveryPaneGrayIncludingTheOrchestrator() {
         let state = drivenState()
         state.markFeedLost()

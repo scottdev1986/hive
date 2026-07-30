@@ -1,21 +1,15 @@
 import XCTest
 @testable import WorkspaceCore
 
-/// THE CONTRACT between the daemon's emitted policy document and this app's
+/// Contract between the daemon's emitted policy document and this app's
 /// decoder. `Fixtures/routing-policy-wire.json` is a document the daemon may
-/// legitimately emit today: it carries every effort mode in
-/// `EffortTargetSchema` and every selection mode in `SelectionModeSchema`
-/// (src/schemas/routing-policy.ts). The daemon-side twin of this test
-/// (test/schemas/routing-policy.wire-contract.test.ts) proves the fixture is
-/// schema-valid AND that it still covers every enum value — so a mode added
-/// on the daemon side fails there and lands here before it can reach a user.
+/// legitimately emit: it carries every effort mode in `EffortTargetSchema`
+/// and every selection mode in `SelectionModeSchema`.
 ///
-/// WHY THIS EXISTS: a strict decoder used to throw on ONE unrecognised effort
-/// mode ("never-configured", added by capability-first routing). The throw
-/// failed the WHOLE document, the Settings screen fell back to the in-memory
-/// provisional store, and every setting silently stopped persisting. Decoding
-/// must degrade NARROWLY — an unknown value costs its own field, never the
-/// document.
+/// Decoding must degrade NARROWLY — an unknown effort mode costs its own
+/// field, never the whole document. A strict throw on one unrecognised value
+/// fails the document, Settings falls back to the provisional store, and
+/// every setting silently stops persisting.
 final class RoutingPolicyWireContractTests: XCTestCase {
 
     private func wireFixture() throws -> Data {
@@ -27,8 +21,8 @@ final class RoutingPolicyWireContractTests: XCTestCase {
         return try Data(contentsOf: url)
     }
 
-    /// The regression: this document is what `hive routing export` returns
-    /// today, and the app must READ it — not fall back to the placeholder.
+    /// This document is what `hive routing export` returns, and the app must
+    /// READ it — not fall back to the placeholder.
     func testDecodesTheDocumentTheDaemonEmitsToday() throws {
         let document = try RoutingPolicyDocument.decode(from: try wireFixture())
 

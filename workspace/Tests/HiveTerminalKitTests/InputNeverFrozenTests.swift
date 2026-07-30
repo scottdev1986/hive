@@ -2,19 +2,19 @@ import AppKit
 import XCTest
 @testable import HiveTerminalKit
 
-/// #87 (M1 acceptance, user ruling 2026-07-21): the human write path must never
-/// become permanently unavailable while a pane stays attached.
+/// The human write path must never become permanently unavailable while a
+/// pane stays attached.
 ///
-/// The freeze these rows pin was a viewer-side latch: a single transient host
-/// "no" ended typing for the life of the attach. Those answers are routinely transient:
-/// `input_arbiter.zig:349-356` returns `InputBusy` while the arbiter is
-/// mid-automation (i.e. every queen→agent inject), `HumanOrphaned` after an
-/// unclean viewer drop, `NotReady` before the visibility lease is current. The
-/// host readmits a returning human (`session_host.zig:2781-2811`), so the
-/// viewer must keep the original bytes queued and re-acquire internally.
+/// The freeze these rows pin is a viewer-side latch: a single transient host
+/// "no" ends typing for the life of the attach. Host answers are routinely
+/// transient: the arbiter returns `InputBusy` mid-automation (every
+/// queen→agent inject), `HumanOrphaned` after an unclean viewer drop, and
+/// `NotReady` before the visibility lease is current. The host readmits a
+/// returning human, so the viewer must keep the original bytes queued and
+/// re-acquire internally.
 ///
-/// #40 never-steal is untouched by these rows: every retry is another
-/// CLAIM_ACQUIRE the host is free to deny again.
+/// Never-steal is untouched: every retry is another CLAIM_ACQUIRE the host is
+/// free to deny again.
 final class InputNeverFrozenTests: XCTestCase {
     private let geometry = TerminalGeometry(
         columns: 80,
@@ -25,10 +25,10 @@ final class InputNeverFrozenTests: XCTestCase {
         cellHeightPx: 20
     )
 
-    /// The raised #87 bar: the key event that collides with an automation
-    /// inject is itself retained and submitted. The user must not have to type
-    /// a second key to retry, and no refusal state may be published while the
-    /// host arbitrates the ordered writers.
+    /// The key event that collides with an automation inject is itself retained
+    /// and submitted. The user must not have to type a second key to retry, and
+    /// no refusal state may be published while the host arbitrates the ordered
+    /// writers.
     func testInProcessKeyEventDuringInjectRetriesAndLandsWithoutRefusal() throws {
         _ = NSApplication.shared
         let host = FakeHost(connectionId: "never-refused-inject-race")

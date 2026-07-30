@@ -4,8 +4,7 @@
 Each case breaks exactly the mechanism one guard protects and requires that
 guard to go RED. A guard that survives its own mutation is not a guard.
 
-Three properties this harness enforces about itself, because an earlier shell
-version silently failed all three:
+Harness self-invariants:
 
   * Restore is a file copy from an in-memory snapshot, not `git checkout` --
     that reverts an untracked file to nothing and an uncommitted file to HEAD,

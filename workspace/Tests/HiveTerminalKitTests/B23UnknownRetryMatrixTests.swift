@@ -4,17 +4,12 @@ import XCTest
 
 /// B2.3/A3 acceptance matrix — retry / unknown semantics.
 ///
-/// Acceptance clause (planning/story-m1-b2-hive-terminal-view.md, "Input and
-/// resize semantics"): retry repeats the same domain transaction and
-/// idempotency key; it never invents a new act after an unknown result.
-///
-/// `real-host-golden.zig:882` proves the HOST side is idempotent under replay.
-/// The client side had no row at all. It matters here because
-/// `AttachReplayClient` derives `idempotencyKey` from `transactionId`, which
-/// embeds a monotonic sequence (`AttachReplayClient.swift:512-519`) — so any
-/// resend after an unknown result would necessarily mint a NEW key and thus a
-/// new act. The client therefore does not replay an uncertain transaction, but
-/// it also does not freeze the terminal: the next user input is a new act and
+/// Retry repeats the same domain transaction and idempotency key; it never
+/// invents a new act after an unknown result. `AttachReplayClient` derives
+/// `idempotencyKey` from `transactionId`, which embeds a monotonic sequence —
+/// so any resend after an unknown result would mint a NEW key and thus a new
+/// act. The client therefore does not replay an uncertain transaction, but it
+/// also does not freeze the terminal: the next user input is a new act and
 /// remains writable.
 final class B23UnknownRetryMatrixTests: XCTestCase {
     private let geometry = TerminalGeometry(

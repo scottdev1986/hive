@@ -4,21 +4,17 @@ import XCTest
 
 /// B2.3/A3 acceptance matrix — mouse mode rows.
 ///
-/// Acceptance clause (planning/story-m1-b2-hive-terminal-view.md, "Scroll,
-/// selection, copy, paste, and mouse"): with an application mouse mode active,
-/// button, motion, wheel, modifier, and pixel/cell coordinates are encoded
-/// exactly for X10, VT200, button-event, any-event, SGR, alternate-scroll, and
-/// pixel modes; a deliberate Shift override provides local selection while
-/// captured.
+/// With an application mouse mode active, button, motion, wheel, modifier, and
+/// pixel/cell coordinates are encoded exactly for X10, VT200, button-event,
+/// any-event, SGR, alternate-scroll, and pixel modes; a deliberate Shift
+/// override provides local selection while captured. `InputEncodingTests`
+/// pins any-motion (1003) + SGR (1006); this file covers X10 (9), VT200 (1000),
+/// button-event (1002), SGR-pixel (1016), alternate-scroll (1007), and Shift
+/// override.
 ///
-/// `InputEncodingTests` already pins any-motion (1003) + SGR (1006). This file
-/// covers the modes that had no test at all: X10 (9), VT200 (1000),
-/// button-event (1002), SGR-pixel (1016), alternate-scroll (1007), and the
-/// Shift override.
-///
-/// Every row — real rows and the planted positive controls alike — is read
-/// through the single `evaluate(_:)` predicate below, so a control that fails
-/// to bite proves the predicate is blind rather than the tree correct.
+/// Every row — real rows and planted positive controls — is read through the
+/// single `evaluate(_:)` predicate, so a control that fails to bite proves the
+/// predicate is blind rather than the tree correct.
 final class B23MouseModeMatrixTests: XCTestCase {
     /// One matrix row: enable a mode, drive a gesture, capture encoder bytes.
     struct Row {
@@ -71,8 +67,7 @@ final class B23MouseModeMatrixTests: XCTestCase {
 
     // MARK: - Rows
 
-    /// X10 (DECSET 9) reports a press and never a release. This is a spec
-    /// invariant, not a recording of whatever the encoder happened to do.
+    /// X10 (DECSET 9) reports a press and never a release.
     func testX10ReportsPressAndNeverRelease() throws {
         let outcome = try evaluate(
             Row(
@@ -91,8 +86,8 @@ final class B23MouseModeMatrixTests: XCTestCase {
             outcome.writes.count, 1,
             "X10 must emit exactly one report for a press+release pair, got \(outcome.writes)"
         )
-        // ESC [ M Cb Cx Cy with the historical +32 bias. Column 2 / row 14 are
-        // the coordinates InputEncodingTests already pins for this location.
+        // ESC [ M Cb Cx Cy with the +32 bias. Column 2 / row 14 match the
+        // coordinates InputEncodingTests pins for this location.
         XCTAssertEqual(outcome.writes.first, "\u{1B}[M\u{20}\u{22}\u{2E}")
     }
 

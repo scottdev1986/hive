@@ -5,26 +5,20 @@ import XCTest
 
 /// B2.3/A3 acceptance matrix — Kitty keyboard mode stack.
 ///
-/// Acceptance clause (planning/story-m1-b2-hive-terminal-view.md): key
-/// handling preserves ... Kitty progressive modes; and primary/alternate
-/// screens retain independent Kitty keyboard stacks.
+/// Key handling preserves Kitty progressive modes; primary/alternate screens
+/// retain independent Kitty keyboard stacks. `KittyKeyboardGoldenTests` pins
+/// PUSH (`CSI > n u`) only — a terminal that latches Kitty mode permanently
+/// and ignores every pop still passes that suite. These rows exercise pop
+/// (`CSI < u`) and stack nesting.
 ///
-/// `KittyKeyboardGoldenTests` pins the PUSH direction (`CSI > n u`) only. A
-/// terminal that latched Kitty mode permanently and ignored every pop passed
-/// that suite completely. These rows exercise pop (`CSI < u`) and stack
-/// nesting.
+/// Goldens (pinned against Ghostty fixtures):
+///   non-kitty shift+Enter -> "\u{1B}[27;2;13~"
+///   kitty  shift+Enter -> "\u{1B}[13;2u"
+/// A pop is proven by the encoding reverting to the non-kitty golden.
 ///
-/// No byte value here is invented. Both goldens are the ones the existing
-/// suite already pins against Ghostty's own fixtures:
-///   legacy shift+Enter -> "\u{1B}[27;2;13~"  (input/function_keys.zig)
-///   kitty  shift+Enter -> "\u{1B}[13;2u"     (input/key_encode.zig)
-/// A pop is therefore proven by the encoding REVERTING to the legacy golden,
-/// which is a round trip rather than a re-recording of current behavior.
-///
-/// Key-encoder bytes are delivered asynchronously by the surface io thread,
-/// so every read here drains rather than snapshots — a synchronous read is
-/// the documented measurement error that once produced a false "zero writes
-/// for special keys" blocker.
+/// Key-encoder bytes arrive asynchronously on the surface io thread, so every
+/// read drains rather than snapshots — a synchronous read can falsely report
+/// zero writes for special keys.
 final class B23KittyStackMatrixTests: XCTestCase {
     private static let legacyShiftEnter = Data("\u{1B}[27;2;13~".utf8)
     private static let kittyShiftEnter = Data("\u{1B}[13;2u".utf8)
@@ -64,13 +58,13 @@ final class B23KittyStackMatrixTests: XCTestCase {
         return writes.first
     }
 
-    /// Baseline: with no mode program the legacy golden is emitted. This is
+    /// Baseline: with no mode program the non-kitty golden is emitted. This is
     /// the value a pop must restore, so it is established first.
     func testBaselineShiftEnterIsLegacyGolden() throws {
         XCTAssertEqual(try shiftEnterBytes(afterModeProgram: []), Self.legacyShiftEnter)
     }
 
-    /// Push then pop must return to the legacy encoding. A terminal that
+    /// Push then pop must return to the non-kitty encoding. A terminal that
     /// ignores `CSI < u` fails here and nowhere else in the suite.
     func testPopRestoresLegacyEncoding() throws {
         let pushed = try shiftEnterBytes(afterModeProgram: ["\u{1B}[>1u"])
@@ -84,7 +78,7 @@ final class B23KittyStackMatrixTests: XCTestCase {
     }
 
     /// The stack must nest: two pushes need two pops. One pop leaving the
-    /// terminal in legacy mode would mean the stack is really a boolean.
+    /// terminal in non-kitty mode would mean the stack is really a boolean.
     func testStackNestsSoTwoPushesNeedTwoPops() throws {
         let afterOnePop = try shiftEnterBytes(
             afterModeProgram: ["\u{1B}[>1u", "\u{1B}[>1u", "\u{1B}[<u"]

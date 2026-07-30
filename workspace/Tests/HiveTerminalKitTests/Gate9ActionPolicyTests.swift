@@ -4,9 +4,8 @@ import HiveGhosttyC
 @testable import HiveTerminalKit
 
 /// Gate 9 (M1-B1): action/security matrix controls.
-/// Policy source: planning/gate9-action-security-matrix.md + queen rulings
-/// 2026-07-18 (strip B-class keybinds; deny SECURE_INPUT; bridge-deny
-/// DESKTOP_NOTIFICATION).
+///
+/// Strip B-class keybinds; deny SECURE_INPUT; bridge-deny DESKTOP_NOTIFICATION.
 final class Gate9ActionPolicyTests: XCTestCase {
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
@@ -24,12 +23,9 @@ final class Gate9ActionPolicyTests: XCTestCase {
     }
 
     /// Parses ONLY the `ghostty_action_tag_e` enum block out of the PINNED
-    /// vendored header and counts its members. Cross-vendor review
-    /// (2026-07-18) corrected the earlier claim that the old ambiguous
-    /// public-header field guarded this — it hashed the bridge header, which
-    /// has no action enum. The build lock now carries separate upstream and
-    /// bridge header hashes. This still reads the real upstream enum so a new
-    /// tag changes the count and turns the completeness test RED.
+    /// vendored header and counts its members. The build lock carries separate
+    /// upstream and bridge header hashes; this reads the real upstream enum so
+    /// a new tag changes the count and turns the completeness test RED.
     private func pinnedActionEnumMemberCount() throws -> Int {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // HiveTerminalKitTests
@@ -100,12 +96,10 @@ final class Gate9ActionPolicyTests: XCTestCase {
         XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_SEARCH_SELECTED), .engineInert)
     }
 
-    /// BEHAVIOR, not the table (cross-vendor review 2026-07-18): the earlier
-    /// controls asserted classify() the data table while handle() discarded
-    /// the verdict and blanket-returned false. This drives the REAL callback
-    /// body for one representative of each verdict and asserts the spy
-    /// observed the verdict handle ROUTED it through — RED if handle
-    /// regresses to a blanket false that ignores classify().
+    /// Behavior, not the table: drive the REAL callback body for one
+    /// representative of each verdict and assert the spy observed the verdict
+    /// handle ROUTED it through — RED if handle blanket-returns false and
+    /// ignores classify().
     func testHandleRoutesThroughTheVerdictNotABlanketFalse() {
         var seen: [(UInt32, HiveGhosttyActionPolicy.Verdict?)] = []
         HiveGhosttyActionPolicy.setObserver { seen.append(($0.rawValue, $1)) }
@@ -187,11 +181,10 @@ final class Gate9ActionPolicyTests: XCTestCase {
         }
     }
 
-    /// B-class strip (queen ruling 1): the manual config carries
-    /// `keybind = clear`, so Ghostty's default window/tab/split bindings
-    /// are unreachable-by-construction. Observable: cmd+N (default
-    /// new_window) reports NOT-a-binding on the live surface. RED if the
-    /// strip is removed: cmd+N is a default binding in a stock config.
+    /// B-class strip: the manual config carries `keybind = clear`, so
+    /// Ghostty's default window/tab/split bindings are unreachable-by-
+    /// construction. Observable: cmd+N (default new_window) reports NOT-a-
+    /// binding on the live surface. RED if the strip is removed.
     func testDefaultWindowBindingsAreStrippedFromManualConfig() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -228,10 +221,10 @@ final class Gate9ActionPolicyTests: XCTestCase {
                        "a stripped binding must never reach the action callback as NEW_WINDOW")
     }
 
-    /// DESKTOP_NOTIFICATION deny (queen ruling 3), live-fire: OSC 9 from
-    /// the untrusted byte stream must not post anything — and must not
-    /// crash or poison the stream. No notification API is ever touched by
-    /// the bridge (HiveTerminalKit imports no UserNotifications).
+    /// DESKTOP_NOTIFICATION deny, live-fire: OSC 9 from the untrusted byte
+    /// stream must not post anything — and must not crash or poison the
+    /// stream. No notification API is ever touched by the bridge
+    /// (HiveTerminalKit imports no UserNotifications).
     func testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream() throws {
         let surface = try makeSurface()
         defer { surface.free() }

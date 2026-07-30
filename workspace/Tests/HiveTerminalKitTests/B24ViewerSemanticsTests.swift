@@ -475,15 +475,13 @@ final class B24ViewerSemanticsTests: XCTestCase {
         XCTAssertNil(terminal.newOutputIndicatorForTesting)
     }
 
-    /// The regression guard for the input lag this file's `noteOutputApplied`
-    /// used to cause.
+    /// Applied OUTPUT frames must not export the semantic viewport.
     ///
     /// Every applied OUTPUT frame runs main-thread work, for every pane. The
     /// semantic export takes the renderer mutex the pane's terminal I/O thread
     /// holds while parsing, so doing it per frame puts a lock acquisition and a
     /// whole-viewport copy on the main queue ahead of the next keystroke, once
-    /// per frame per pane — and that is precisely why typing got slower the
-    /// more TUI agents were open.
+    /// per frame per pane — typing slows as more TUI agents open.
     func testOutputFramesNeverExportTheSemanticViewport() throws {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)

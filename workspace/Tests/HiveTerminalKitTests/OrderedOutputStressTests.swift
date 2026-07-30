@@ -4,11 +4,10 @@ import HiveGhosttyC
 @testable import HiveTerminalKit
 
 /// Gate 5 (M1-B1) stress: a large ordered stream through the REAL
-/// `hive_ghostty_surface_process_output_v1` boundary. Cross-vendor review
-/// (2026-07-19 fraser) required: dense unique sentinels across the WHOLE
-/// 100 MiB with sequence-stamped source/sink order (not a thin tail), and
-/// concurrent serialization proven under forced overlap (ready barrier +
-/// in-body hold + entry/exit stamps).
+/// `hive_ghostty_surface_process_output_v1` boundary. Dense unique sentinels
+/// across the whole volume with sequence-stamped source/sink order (not a
+/// thin tail), and concurrent serialization under forced overlap (ready
+/// barrier + in-body hold + entry/exit stamps).
 final class OrderedOutputStressTests: XCTestCase {
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
@@ -201,9 +200,8 @@ final class OrderedOutputStressTests: XCTestCase {
         XCTAssertEqual(writes, [da1], "post-stress DA1 must still answer byte-exactly")
     }
 
-    /// Negative control for the 100 MiB volume sink: a single mutated volume
-    /// byte (what used to be "padding") MUST make full-row equality fail.
-    /// Proves the control bites on the fraser counterexample.
+    /// Negative control for the volume sink: a single mutated volume byte
+    /// MUST make full-row equality fail.
     func testVolumeByteLossControlFailsOnSingleVolumeByteMutation() throws {
         let surface = try makeSurface()
         defer { surface.free() }

@@ -71,8 +71,8 @@ final class C12LiveReconfigurationTests: XCTestCase {
         XCTAssertEqual(pushes, [.begin, .end, .begin, .end])
     }
 
-    /// A font change alone must reach a live surface. Before C1.2 the font never
-    /// reached `contents`, so this push did not happen at all.
+    /// A font change alone must reach a live surface even when the theme is
+    /// unchanged.
     func testLiveFontChangeAloneReachesTheEngine() throws {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForConfigurationTesting(
             contents: HiveTerminalConfiguration.contents(theme: .hiveDark, headless: true)

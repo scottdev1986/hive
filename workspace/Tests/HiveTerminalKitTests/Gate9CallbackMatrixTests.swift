@@ -184,13 +184,11 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: ghostty_target_u(surface: handle))
     }
 
-    /// Lifetime ORDERING (dylan cross-vendor review 2026-07-18): a note
-    /// ENQUEUED while the surface is alive, with free() running before the
-    /// main queue drains (wrapper still retained), must deliver nothing.
-    /// The enqueue-time registry check alone passed here and delivered
-    /// after free; only the execution-time gate (the context's
-    /// acceptingCallbacks recheck, closed by beginTeardown in free) makes
-    /// this hold.
+    /// Lifetime ORDERING: a note ENQUEUED while the surface is alive, with
+    /// free() running before the main queue drains (wrapper still retained),
+    /// must deliver nothing. The enqueue-time registry check alone still
+    /// delivers after free; only the execution-time gate (the context's
+    /// acceptingCallbacks recheck, closed by beginTeardown in free) holds.
     func testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime() throws {
         let surface = try makeSurface()
         guard let handle = surface.surfaceHandle else { return XCTFail("real surface required") }
@@ -206,9 +204,8 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         drainMain(0.1)
 
         XCTAssertEqual(received, 0,
-                       "a notification enqueued before free() must be dropped at execution time — " +
-                       "delivery after free is the dylan-review blocking defect")
-        withExtendedLifetime(surface) {} // wrapper retained across the drain, as in the exploit
+                       "a notification enqueued before free() must be dropped at execution time")
+        withExtendedLifetime(surface) {} // wrapper retained across the drain
     }
 
     /// Lifetime: after free(), a late action routed at the old handle value
@@ -229,18 +226,16 @@ final class Gate9CallbackMatrixTests: XCTestCase {
 
     // MARK: static privileged-opener scan
 
-    /// The scanner predicate, factored so the suite can positively control
-    /// the DETECTION path itself: first forbidden symbol found on a code
-    /// (non-comment) line, or nil. Comment lines may NAME a forbidden symbol
-    /// (the policy docs do); only code lines can call one.
+    /// Scanner predicate: first forbidden symbol found on a code
+    /// (non-comment) line, or nil. Comment lines may NAME a forbidden symbol;
+    /// only code lines can call one.
     ///
-    /// NSWorkspace is judged PER LINE by SUBTRACTION, not marker presence
-    /// (eleanor integration review 2026-07-18: a marker-presence allowlist
-    /// was evadable by co-locating a benign marker on a mixed line or in an
-    /// inline comment): inline comments are stripped first, then the exact
-    /// benign observer expressions (Gate 7's sleep/wake observation) are
-    /// REMOVED from the line — if any NSWorkspace residue remains (an
-    /// opener call, a bare alias, anything else) the line is flagged.
+    /// NSWorkspace is judged PER LINE by SUBTRACTION, not marker presence —
+    /// a marker-presence allowlist is evadable by co-locating a benign marker
+    /// on a mixed line or in an inline comment. Inline comments are stripped
+    /// first, then the exact benign observer expressions (Gate 7 sleep/wake)
+    /// are REMOVED from the line — if any NSWorkspace residue remains, the
+    /// line is flagged.
     private static let forbiddenOpeners = ["NSWorkspace", "UserNotifications", "UNUserNotificationCenter",
                                            "EnableSecureEventInput", "DisableSecureEventInput"]
     private static let benignNSWorkspaceExpressions = ["NSWorkspace.shared.notificationCenter",
@@ -275,11 +270,9 @@ final class Gate9CallbackMatrixTests: XCTestCase {
     /// occur. Complements the live denials: even a misrouted verdict has no
     /// privileged sink to reach.
     ///
-    /// SELF-CHECKING (dylan cross-vendor review 2026-07-18, second pass): the
-    /// committed suite plants a synthetic forbidden opener through the SAME
+    /// Self-checking: plants a synthetic forbidden opener through the SAME
     /// predicate + symbol list the scan uses, so disabling detection
-    /// (emptying the list, breaking the predicate) turns THIS test red —
-    /// it can no longer stay green when the answer is NO.
+    /// (emptying the list, breaking the predicate) turns THIS test red.
     func testKitSourcesContainNoPrivilegedOpeners() throws {
         // Positive control 1: a planted forbidden CODE line IS detected.
         XCTAssertEqual(firstForbiddenOpener(in: "let opener = NSWorkspace.shared.open(url)"),

@@ -166,15 +166,10 @@ final class PaneOrderedOutputStressTests: XCTestCase {
         }
 
         // Sample how long a freshly-queued main-queue item waits to run — the
-        // keystroke path, since NSEvent delivery and input submission are both
-        // main-queue work.
-        //
-        // Sampled from a BACKGROUND thread on purpose. Driving this from the
-        // test's own main thread means every sample pays XCTest expectation
-        // overhead and measures the harness rather than the main queue; an
-        // earlier version of this test read ~140 ms that way while the pane had
-        // drawn zero frames. A semaphore round-trip from off-main is the honest
-        // instrument, and it cannot deadlock because the waiter is not main.
+        // keystroke path (NSEvent delivery and input submission are both
+        // main-queue work). Sample from a BACKGROUND thread: driving from the
+        // test's own main thread pays XCTest expectation overhead and measures
+        // the harness rather than the main queue.
         let worst = LockedBox<TimeInterval>()
         let sampleCount = LockedBox<Int>()
         let profile = LockedBox<String>()
@@ -190,11 +185,8 @@ final class PaneOrderedOutputStressTests: XCTestCase {
                 if elapsed > (all.max() ?? 0) { worstIndex = all.count }
                 all.append(elapsed)
             }
-            // Drop warm-up. The first hop pays one-time costs that have nothing
-            // to do with steady-state responsiveness — thread-pool spin-up and
-            // lazy init — and measured ~130 ms while p50 was 0 ms and the pane
-            // had drawn nothing. Asserting on the raw maximum measured that
-            // startup cost, not the main queue.
+            // Drop warm-up. The first hop pays one-time costs (thread-pool
+            // spin-up, lazy init) unrelated to steady-state responsiveness.
             let steady = all.count > 20 ? Array(all.dropFirst(10)) : all
             let sorted = steady.sorted()
             let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2]

@@ -41,9 +41,8 @@ final class SessiondPaneReattachTests: XCTestCase {
         XCTAssertEqual(failures, [])
     }
 
-    /// The other half of #90: recovery must actually re-engage. A live attach
-    /// lifts the degraded state and says so, through the same entry point
-    /// `completeAttach` uses.
+    /// Recovery must actually re-engage. A live attach lifts the degraded
+    /// state and says so, through the same entry point `completeAttach` uses.
     func testLossAfterLiveAttachRetriesAndReportsRecovery() {
         let terminal = makeTerminal()
         var degraded: [String] = []

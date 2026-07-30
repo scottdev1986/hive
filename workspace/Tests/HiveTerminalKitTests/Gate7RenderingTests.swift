@@ -8,13 +8,6 @@ import XCTest
 /// pixels, content scale, display identity, occlusion, and draw requests from
 /// the host. The host must relay those values without inventing terminal cells.
 ///
-/// Contract sources:
-/// - https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/include/ghostty.h
-/// - https://github.com/ghostty-org/ghostty/blob/73534c4680a809398b396c94ac7f12fcccb7963d/src/renderer/Metal.zig
-/// - https://developer.apple.com/tutorials/data/documentation/quartzcore/cametallayer/drawablesize.json
-/// - https://developer.apple.com/tutorials/data/documentation/appkit/nswindow/didchangescreennotification.json
-/// - https://developer.apple.com/tutorials/data/documentation/appkit/nsworkspace/didwakenotification.json
-///
 /// Physical monitor moves, device loss/recreation, and Instruments
 /// frame-pacing/memory measurements additionally require full-app live proof.
 final class Gate7RenderingTests: XCTestCase {

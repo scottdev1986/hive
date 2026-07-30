@@ -4,33 +4,22 @@ import HiveGhosttyC
 import IOKit.hidsystem
 @testable import HiveTerminalKit
 
-/// Gate 8 (M1-B1) Kitty keyboard protocol byte goldens against the same
-/// pinned Ghostty engine build, sourced from Ghostty's own key-encoder
-/// fixtures (input/key_encode.zig: "kitty: shift+enter emits CSI u" →
-/// "\x1b[13;2u") and the pinned legacy table (input/function_keys.zig
-/// .enter: shift → "\x1b[27;2;13~", xterm modified-keys style).
+/// Gate 8 (M1-B1) Kitty keyboard protocol byte goldens against the pinned
+/// Ghostty engine build. Goldens:
+///   kitty shift+Enter → "\x1b[13;2u"
+///   non-kitty shift+Enter → "\x1b[27;2;13~" (xterm modified-keys style)
 ///
-/// ROOT CAUSE of the earlier "zero writes for special keys" blocker
-/// (2026-07-17, boris): key-encoder output is NOT delivered synchronously.
-/// Terminal-generated replies (gate 2) reach the write callback
-/// synchronously on the process_output caller's thread (vt stream →
-/// writePty → manual callback), but KEY encodings travel
-/// Surface.keyCallback → encodeKey → queueIo → the surface's termio SPSC
-/// mailbox, drained by the surface's IO THREAD (termio.Thread + xev
-/// wakeup), which then invokes the C write trampoline later. The trampoline
-/// copies immediately and BridgeCallbackContext defers host delivery to main.
-/// Reading the write log immediately after
-/// ghostty_surface_key returns therefore observes zero writes for any
-/// key whose bytes come from the encoder rather than embedded text. The
-/// engine was never dropping anything: an async observable was read
-/// synchronously. (Diagnostic: immediately after sendKey — [] for Enter/
-/// shift+Enter/left-arrow; after a 250ms drain — "\r", "\x1b[27;2;13~",
-/// "\x1b[D", all byte-perfect.) Consequence for hosts, documented here
-/// deliberately: native production differs, but the Swift `onWrite` host
-/// callback is always deferred to main and tests must drain, not snapshot.
+/// Key-encoder output is NOT delivered synchronously. Terminal-generated
+/// replies reach the write callback on the process_output caller's thread,
+/// but KEY encodings travel Surface.keyCallback → encodeKey → queueIo → the
+/// surface's termio SPSC mailbox, drained by the surface's IO thread, which
+/// then invokes the C write trampoline later. BridgeCallbackContext defers
+/// host delivery to main. Reading the write log immediately after
+/// ghostty_surface_key returns therefore observes zero writes for any key
+/// whose bytes come from the encoder rather than embedded text. Tests must
+/// drain, not snapshot.
 final class KittyKeyboardGoldenTests: XCTestCase {
-    /// Fails loudly rather than XCTSkip: live-proof gate policy
-    /// (cross-vendor review 2026-07-17).
+    /// Fails loudly rather than XCTSkip: live-proof gate policy.
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
             return try GhosttyBridgeFactory.makeManualSurfaceForTesting()
@@ -54,9 +43,9 @@ final class KittyKeyboardGoldenTests: XCTestCase {
     }
 
     /// Pumps the main run loop and yields until `count` writes arrived or
-    /// the timeout elapsed. Key-encoder bytes are drained by the surface's
-    /// io thread asynchronously — a synchronous snapshot is exactly the
-    /// measurement error that produced the earlier false "zero writes".
+    /// the timeout elapsed. Key-encoder bytes arrive asynchronously on the
+    /// surface io thread — a synchronous snapshot can falsely report zero
+    /// writes.
     private func drain(_ log: WriteLog, until count: Int, timeout: TimeInterval = 2) -> [Data] {
         let deadline = Date().addingTimeInterval(timeout)
         while log.snapshot().count < count && Date() < deadline {
@@ -117,12 +106,9 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         )!
     }
 
-    /// Legacy (kitty off) golden: shift+Enter must emit the pinned
-    /// function_keys table's entry "\x1b[27;2;13~" (xterm modified-keys
-    /// style), exactly once, through the REAL NSEvent → keyDown →
-    /// interpretKeyEvents/accumulator → ghostty_surface_key path. RED if the
-    /// encoder path, keycode translation, mods mapping, or io-thread write
-    /// delivery breaks.
+    /// Non-kitty golden: shift+Enter must emit "\x1b[27;2;13~" (xterm
+    /// modified-keys style), exactly once, through the REAL NSEvent → keyDown
+    /// → interpretKeyEvents/accumulator → ghostty_surface_key path.
     func testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -136,15 +122,13 @@ final class KittyKeyboardGoldenTests: XCTestCase {
         let writes = drain(log, until: 1)
         XCTAssertEqual(writes.count, 1, "shift+Enter must produce exactly one write, got \(writes)")
         XCTAssertEqual(writes.first, Data("\u{1B}[27;2;13~".utf8),
-                       "legacy shift+Enter must match the pinned function_keys table byte-for-byte")
+                       "non-kitty shift+Enter must match the pinned function_keys table byte-for-byte")
     }
 
-    /// Kitty disambiguate golden: after the terminal stream enables
-    /// CSI > 1 u, the same shift+Enter must emit "\x1b[13;2u" — the exact
-    /// bytes of Ghostty's own encoder fixture ("kitty: shift+enter emits
-    /// CSI u", input/key_encode.zig). Discriminating both ways: if the
-    /// mode fails to latch, the legacy sequence appears instead; if the
-    /// kitty encoder or mods break, the CSI u parameters differ.
+    /// Kitty disambiguate golden: after CSI > 1 u, the same shift+Enter must
+    /// emit "\x1b[13;2u". If the mode fails to latch, the non-kitty sequence
+    /// appears instead; if the kitty encoder or mods break, the CSI u
+    /// parameters differ.
     func testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture() throws {
         let surface = try makeSurface()
         defer { surface.free() }

@@ -5,56 +5,42 @@ import XCTest
 
 /// B2.3/A3 acceptance matrix — LIVE-PTY traversal for the encoder rows.
 ///
-/// WHAT THIS ESTABLISHES, and why it is the substance of closure rather than a
-/// formality: today's "live input proof"
-/// (`LiveHostAttachTests.testLiveGate8InputRoundTrip`) drives a
-/// `FakeManualSurface`, so it never exercises the real Gate 8 encoder at all.
-/// The encoder rows, meanwhile, capture bytes at `onWrite` from a real
-/// `GhosttyManualSurface` that never reaches a PTY. The two halves of the
-/// input proof have therefore never been connected, and connecting them —
-/// real encoder -> production UDS transport -> authenticated human claim ->
-/// `INPUT_SUBMIT` -> real sessiond -> real PTY — is what these rows do.
+/// Connects the two halves of the input proof: real encoder → production UDS
+/// transport → authenticated human claim → `INPUT_SUBMIT` → real sessiond →
+/// real PTY. `LiveHostAttachTests.testLiveGate8InputRoundTrip` drives a
+/// `FakeManualSurface` (no real encoder); unit encoder rows capture `onWrite`
+/// from a real surface that never reaches a PTY.
 ///
-/// THE CLAIM, stated exactly and not more strongly: each row's real encoder
-/// bytes were WRITTEN TO A LIVE PTY, VERIFIED AT THE HOST WRITE BOUNDARY WITH
-/// A CORRELATED `written-to-terminal` RECEIPT. This is deliberately NOT a
-/// "byte-verbatim round-tripped" claim. Reading the bytes back would mean
-/// echoing them through the proof child (`read -r` + `printf %s`), which is a
-/// normalizer — it cannot carry NUL and would certify the normalizer rather
-/// than the transport. The write-boundary claim has no normalizer in the path.
+/// Claim: each row's real encoder bytes were WRITTEN TO A LIVE PTY, verified
+/// at the host write boundary with a correlated `written-to-terminal` receipt.
+/// Not a byte-verbatim round-trip — reading bytes back through the proof child
+/// (`read -r` + `printf %s`) is a normalizer that cannot carry NUL and would
+/// certify the normalizer rather than the transport.
 ///
-/// ATTRIBUTION: exactly one input event is driven per transaction, so the
-/// receipt that comes back is attributable to that row's encoder bytes and
-/// nothing else.
+/// Attribution: exactly one input event per transaction, so the receipt is
+/// attributable to that row's encoder bytes alone.
 ///
-/// CONSTRAINTS discovered building this, all real and all load-bearing:
+/// Constraints:
 ///
-/// 1. ONE CLAIM, MANY ROWS. A human input claim is never stolen — when a
-///    viewer drops it the arbiter ORPHANS it (row 2b's invariant, working as
-///    designed), and `AttachReplayClient` has no release call (the
-///    `claimRelease` frame type exists at FrameCodec.swift:23 but nothing
-///    sends it). A second attach in the same session is denied with "input
-///    owner lease expired", and a failed run leaves that session permanently
-///    unusable for input. So every row shares ONE attach and ONE claim, and
+/// 1. ONE CLAIM, MANY ROWS. A human input claim is never stolen — when a viewer
+///    drops it the arbiter orphans it, and `AttachReplayClient` has no release
+///    call (`claimRelease` exists but nothing sends it). A second attach in the
+///    same session is denied; every row shares ONE attach and ONE claim, and
 ///    each iteration needs a FRESH session.
 ///
-/// 2. THE CLAIM LEASE IS SHORT. Long per-row waits outlive it and the run then
-///    fails as "input claim expired" rather than as a missing byte — which
-///    reads like a transport bug and is not one. Waits here are kept tight.
+/// 2. THE CLAIM LEASE IS SHORT. Long per-row waits outlive it and fail as
+///    "input claim expired" rather than as a missing byte. Waits are kept tight.
 ///
-/// 3. THE HOST JOURNAL IS NOT A USABLE READBACK (recorded for whoever tries):
-///    `journal.bin` is a small ROLLING window (~2.4 KB observed) and the proof
-///    session runs a continuous ticker, so anything written rotates out within
-///    seconds. Anchoring a search to a byte offset captured before the write
-///    silently searches NOTHING once the window rotates past it — a false
-///    negative indistinguishable from a missing byte.
+/// 3. THE HOST JOURNAL IS NOT A USABLE READBACK: `journal.bin` is a small
+///    rolling window and the proof session runs a continuous ticker, so writes
+///    rotate out within seconds. Anchoring a search to a pre-write offset can
+///    silently search nothing — a false negative indistinguishable from a
+///    missing byte.
 ///
-/// 4. MODES CANNOT BE SET WITH `processOutput` ON A LIVE ATTACH. The
-///    ordered-output engine owns the stream sequence, so a hand-fed frame at
-///    an arbitrary seq is rejected as `invalidValue`. Rows needing DECSET —
-///    4 (Kitty), 7/7b (paste), 8/8b/8c (mouse) — therefore need the PTY child
-///    to emit the mode as real output, which is harness work and is NOT done
-///    here. Those rows stay OPEN for closure.
+/// 4. MODES CANNOT BE SET WITH `processOutput` ON A LIVE ATTACH. The ordered-
+///    output engine owns the stream sequence, so a hand-fed frame at an
+///    arbitrary seq is rejected as `invalidValue`. Rows needing DECSET need
+///    the PTY child to emit the mode as real output, which is not done here.
 ///
 /// Opt-in: requires `HIVE_B22_PROOF_HOME` naming a home prepared by
 /// `scripts/b22-live-attach-proof.ts` (run it with `HIVE_B22_NO_APP=1`; the
