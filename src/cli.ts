@@ -37,11 +37,10 @@ import { printRouting } from "./cli/routing";
 import {
   exportRoutingPolicy,
   printRoutingPolicy,
-  setCategoryChain,
   setModelEffort,
   setModelPolicy,
   setProviderPolicy,
-  setSelectionMode,
+  setRoute,
 } from "./cli/routing-policy";
 import { runStatusline } from "./cli/statusline";
 import { runUninstall } from "./cli/uninstall";
@@ -401,7 +400,7 @@ export function createProgram(): Command {
   routing
     .command("promote-default")
     .description(
-      "Replace the machine default's Model Control policy and selection modes with this instance's (discarding its existing policy)",
+      "Replace the machine default's Model Control policy with this instance's (discarding its existing policy)",
     )
     .action(async () => {
       const result = await promoteDefaultModelControl();
@@ -486,35 +485,12 @@ export function createProgram(): Command {
         ),
     );
   routing
-    .command("set-selection <mode>")
+    .command("set-route <scope> <mode> [candidates...]")
     .description(
-      "Preference intent, for every category at once: auto lets Hive fairly " +
-        "dispatch among capable, enabled models; choice follows the exact " +
-        "chain; never-configured refuses.",
-    )
-    .option("--port <number>", "daemon port")
-    .requiredOption(
-      "--expect-revision <revision>",
-      "the policy revision you read (compare-and-set; stale writes are rejected)",
-    )
-    .action(
-      (mode: string, options: { expectRevision: string; port?: string }) =>
-        setSelectionMode(
-          mode,
-          {
-            ...(options.port === undefined
-              ? {}
-              : { port: parsePort(options.port) }),
-          },
-          options.expectRevision,
-        ),
-    );
-  routing
-    .command("set-chain <category> [entries...]")
-    .description(
-      "Replace a category's ordered fallback chain (argument order is chain order; " +
-        "zero entries clears it). Every entry names a specific model: " +
-        "provider/model, provider/model@LEVEL, or provider/model@none.",
+      "Replace one scope's route (a category or `global`; zero candidates " +
+        "clears it). Mode is user-weighted or hive-equal. Every candidate " +
+        "names a specific model: provider/model[@LEVEL|@none][=WEIGHT], " +
+        "weight an integer 1-100 (default 1).",
     )
     .requiredOption(
       "--expect-revision <revision>",
@@ -523,13 +499,15 @@ export function createProgram(): Command {
     .option("--port <number>", "daemon port")
     .action(
       (
-        category: string,
-        entries: string[],
+        scope: string,
+        mode: string,
+        candidates: string[],
         options: { expectRevision: string; port?: string },
       ) =>
-        setCategoryChain(
-          category,
-          entries,
+        setRoute(
+          scope,
+          mode,
+          candidates,
           options.expectRevision,
           options.port === undefined ? undefined : parsePort(options.port),
         ),

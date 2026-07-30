@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ControlIntentSchema, MessagePrioritySchema } from "./message";
+import { MessagePrioritySchema } from "./message";
 import {
   DecimalUint64Schema,
   domainUuidV7Schema,
@@ -72,7 +72,6 @@ export const TerminalDeliveryAttemptSchema = z
     recipientGeneration: PositiveGenerationSchema,
     adapter: z.enum(TERMINAL_PROVIDER_ADAPTERS),
     priority: MessagePrioritySchema,
-    intent: ControlIntentSchema,
     evidence: TerminalDeliveryEvidenceSchema,
     byteRange: z
       .strictObject({

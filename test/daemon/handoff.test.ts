@@ -181,7 +181,7 @@ describe("handoff bundle", () => {
       to: agent.name,
       body: "Retain the worktree",
       createdAt: "2026-07-25T01:01:00.000Z",
-      deliveredAt: null,
+      notifiedAt: null,
       sequence: 3,
     });
     const providerEvent: ProviderEvent = {
@@ -307,7 +307,7 @@ describe("handoff bundle", () => {
       to: agent.name,
       body: "Continue from the retained worktree",
       createdAt: "2026-07-25T01:01:00.000Z",
-      deliveredAt: null,
+      notifiedAt: null,
       sequence: 4,
     });
     const bundle = await buildHandoffBundle({
@@ -355,7 +355,7 @@ describe("handoff bundle", () => {
     expect(bundle.summary).toMatchObject({ provenance: "fallback" });
   });
 
-  test("the replacement seam persists before stop and defers routing, then pickup leaves work open", async () => {
+  test("the replacement seam persists before stop, then routes a replacement and pickup leaves work open", async () => {
     const db = new HiveDatabase(":memory:");
     db.insertAgent({ ...agent, status: "held", writeRevoked: false });
     db.insertProviderRun({
@@ -365,14 +365,16 @@ describe("handoff bundle", () => {
       exitReason: null,
     });
     const order: string[] = [];
+    const spawnRequests: unknown[] = [];
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       repoRoot: "/does/not/exist",
       spawner: {
-        async spawn() {
+        async spawn(request) {
           order.push("spawn");
-          throw new Error("automatic replacement must stay deferred");
+          spawnRequests.push(request);
+          return { ...agent, id: "agent-replacement", name: "replacement" };
         },
       },
     });
@@ -411,7 +413,7 @@ describe("handoff bundle", () => {
       resetsAt: "2026-07-26T19:00:00.000Z",
       reason: "weekly pool spent",
     });
-    expect(order).toEqual(["pause", "stop"]);
+    expect(order).toEqual(["pause", "stop", "spawn"]);
     expect(db.getAgentById(agent.id)).toMatchObject({
       status: "control-paused",
       writeRevoked: true,
@@ -423,11 +425,14 @@ describe("handoff bundle", () => {
     if (stored === null) throw new Error("handoff was not persisted");
     expect(stored?.bundle.completeness).toBe("unknown");
     expect(stored?.pickup).toBeNull();
+    expect(spawnRequests[0]).toMatchObject({
+      task: agent.taskDescription,
+      category: agent.category,
+      handoffId: stored.bundle.handoffId,
+      excludedPoolIds: ["weekly"],
+    });
     expect(db.listMessages().at(-1)?.body).toContain(
-      "codex/weekly pool until 2026-07-26T19:00:00.000Z",
-    );
-    expect(db.listMessages().at(-1)?.body).toContain(
-      "Automatic replacement is deferred",
+      "replacement (codex/gpt-5-codex) was launched to pick it up",
     );
 
     db.insertAgent({

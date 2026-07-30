@@ -35,7 +35,7 @@ describe("terminal foundation WP0 contracts", () => {
     const design = await readFile(
       resolve(
         import.meta.dir,
-        "../../docs/design/terminal-stack-transition.html",
+        "../../docs/design/Done/terminal-stack-transition.html",
       ),
       "utf8",
     );

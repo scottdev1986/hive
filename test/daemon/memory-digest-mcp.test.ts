@@ -370,7 +370,7 @@ async function reapToKill(daemon: HiveDaemon, db: HiveDatabase): Promise<void> {
   const warning = db.listMessages().find((message) => message.to === "maya");
   db.transitionMessage(
     required(warning?.id),
-    "applied",
+    "acknowledged",
     new Date().toISOString(),
   );
   await daemon.reapIdleAgents();

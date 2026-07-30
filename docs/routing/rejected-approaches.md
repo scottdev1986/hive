@@ -1,11 +1,11 @@
 # Rejected Approaches — where the dead routers are buried
 
-Updated: 2026-07-14
-Source: Hive source tree, 2026-07-14
+Updated: 2026-07-30
+Source: Hive source tree, 2026-07-30
 
 ## Summary
 
-Six routing designs were adopted and then killed. This article records what each was,
+Nine routing designs were adopted and then killed. This article records what each was,
 why it was adopted, and why it died, so nobody rebuilds one.
 
 The source documents were retired with the designs they described. Several of them
@@ -35,9 +35,9 @@ human's preference.
 > **A tier system that lowers the effort flag but not the model is not a tier system.**
 
 This is the origin of the entire no-quiet-defaults rule, and why `ExactModelIdSchema`
-(`src/schemas/routing-policy.ts:61-67`) now refuses the literal string `"default"` as a model id.
+(`src/schemas/routing-policy.ts`) still refuses the literal string `"default"` as a model id.
 
-**Replaced by** ten categories plus a user-authored `default` chain. Note the diagnosis:
+**Replaced by** task categories with user-authored routes. Note the diagnosis:
 the failure was **never "four tiers is too few"** — it was *the values behind the tiers*.
 More tiers would have failed identically.
 
@@ -60,9 +60,7 @@ exist. `benchmarkFit` does not exist. There is no benchmark source registry.
 
 It was **the most dangerous document in the repo**: marked ADOPTED and LIVE, describing
 machinery deleted the following day. That one-day gap is the cautionary tale — a status
-header is the first thing to go stale and the last thing anyone updates. The sole code
-vestige is `src/schemas/config.ts:59-66`, where `benchmarks.mode` is explicitly marked
-**VESTIGIAL** — *"Nothing reads this value."*
+header is the first thing to go stale and the last thing anyone updates.
 
 **What is durable and must survive.** The **source survey** — because these failure
 modes recur every time someone proposes an external ranker:
@@ -81,7 +79,7 @@ And these principles, which outlived the machinery:
   model; an easier task goes to a cheaper agent capable of handling it." A policy must
   be able to place a *lower*-scoring capable model **on purpose**. This survives today
   as `hive-decides` effort choosing the *lowest sufficient* level
-  (`src/daemon/effort.ts:100-110`).
+  (`resolveAutoEffort`, `src/daemon/effort.ts`).
 - **No gating, only ordering.** "Absence of benchmark data never excludes." User
   ruling: *"in no way do i accept that we have a model or an effort level available to
   use and no way to use it."* Capability is a hard floor; a score never lifts an
@@ -92,8 +90,8 @@ And these principles, which outlived the machinery:
   effort inference > vendor-tier placement > unknown-holds-policy-position.*
 
 **Why the whole thing still lost:** even correct, it made Hive the ranker. The
-redesign's answer is that *the user is the router* — fit is **authored**
-(`modelCategoryFit`), not scored.
+redesign's answer is that *the user is the router* — a model does a category's work
+because the user placed it in that category's route, never because a score put it there.
 
 ## 3. The signed candidate manifest
 
@@ -107,11 +105,6 @@ knowledge as a route source, and then the redesign removed derivation itself —
 nothing for a manifest to feed. The user also rejected the parallel path outright:
 *"I do not want shadow at all i want the real thing live no parallel path"* and
 *"old path removed it is dead."*
-
-**Vestiges:** `src/schemas/config.ts:57-58` still parses `routingManifest` and `router`
-as **no-ops**. The comment is explicit — both were escape hatches back to the
-compiled-in table and the manifest, "**both of which were removed as route sources**…
-setting them changes nothing."
 
 **Durable principle:** shadow modes and dual routers are a permanent tax. The redesign
 banned them by name — *"a per-spawn 'new failed → old' is a money and consent bug"*,
@@ -131,8 +124,9 @@ me on this vendor's current default"* — without a compiled model id.
 
 > "we are specific on the models that we choose"
 
-Commit `0dc25c0` removed it. `ChainEntrySchema` (`src/schemas/routing-policy.ts:77-81`) now has
-**only** the exact form. The schema comment records the reasoning: **a vendor default
+Commit `0dc25c0` removed it. The exact form is the only form to this day —
+`RouteCandidateSchema` (`src/schemas/routing-policy.ts`) names a specific model,
+always. The reasoning survives in the schema's comments: **a vendor default
 is a quiet default, and quiet defaults are the defect this store exists to delete.**
 Vendors also move their defaults server-side mid-session (repo memory:
 *vendor-default-model-moves-under-you*) — *an indirection that cannot be written cannot
@@ -183,8 +177,86 @@ advertised context variant — all
 [../providers/capability-discovery.md](../providers/capability-discovery.md).
 
 **The line:** a vendor is authoritative about *what it offers*. It is not authoritative
-about *how good it is*, and neither is Hive. Only the user is, and their chain
+about *how good it is*, and neither is Hive. Only the user is, and their route
 placements are the record of it.
+
+## 7. Ordered fallback chains (schemaVersion 2)
+
+**What it was.** The first post-derivation policy: per-category **ordered** chains
+of exact (provider, model, effort) links, walked in rank order, with the
+`default` chain behind every category and — when a non-empty authored chain was
+exhausted — a last-resort spread across the remaining enabled models.
+
+**Why it was adopted.** After the tier burn, an explicit user-authored order was
+the obvious first replacement for a compiled preference table, and "first,
+second, third" is the easiest preference a UI can collect.
+
+**Why it died — one sentence:** an ordered chain encodes preference *direction*
+but not *magnitude*, and walking it concentrates every spawn on the first
+eligible link. Rank order is a hidden claim nobody made — "first beats second"
+never says by how much, so any consumer converting rank to a distribution has to
+invent the ratio. This is exactly why the V3 migration
+(`migrateStoredV2`, `src/daemon/routing-policy-store.ts`) **dropped rank
+deliberately** instead of converting it: *Hive must not invent how much more
+"first" meant than "second."* Chains became hive-equal weight-1 routes; the
+user assigns real weights through `set-route` when they want them.
+
+Two appendages died with it:
+
+- **The exhaustion widening.** V2's "authored chains exhausted → spread across
+  remaining enabled models" made the enablement set a silent route. In V3 a
+  category route is an explicit boundary: refuse everything and the spawn
+  refuses, with one bounded reason per candidate. There is no third tier.
+- **Per-category selection-mode overrides and the global
+  `never-configured | auto | choice` mode** (with its machine preference file
+  `routing-selection.json`). The mode split existed to answer "order or
+  distribute?" — a question the weighted route answers per scope with
+  `user-weighted | hive-equal`, so the separate selection document, its
+  overlay machinery, and `set-selection`/`set-chain` were all deleted.
+
+**Do not rebuild:** any route representation where position carries meaning, and
+any "if all else fails, use whatever is enabled" arm.
+
+## 8. `strict` / `spread` selection modes
+
+**What it was.** The quota dispatch vocabulary: `strict` walked the authored
+chain in user order and reserved the first link with safe headroom; `spread`
+chose among gated candidates by weighted-fair deficit. The spawner mapped policy
+`choice` → `strict` and `auto` → `spread`.
+
+**Why it died — one sentence:** two selection algorithms keyed off a policy mode
+are two routers, and one of them (strict) concentrated load by design while the
+other distributed with weights the user never set. V3 keeps **one** selector —
+smooth weighted round-robin — whose only mode difference is the weight vector:
+the stored user ratings, or 1 for everyone (`effectiveWeight`,
+`src/schemas/routing-policy.ts`). The words `strict` and `spread` no longer
+appear in the routing surface at all.
+
+## 9. Quota-owned selection (`routeAndReserve`)
+
+**What it was.** `QuotaService.routeAndReserve`: the quota layer chose the
+candidate **and** reserved capacity atomically, using weighted-fair deficit over
+a `quota_fair_dispatch` history table (equal credit to every eligible provider
+per dispatch, one unit charged to the winner, largest deficit wins).
+
+**Why it was adopted.** It was the honest answer to the headroom-sort era: fair
+deficit counts work Hive *sent*, so it never compares unlike quota windows and
+never fabricates a reading for an unmetered vendor — and putting choice and
+reservation in one transaction stopped two concurrent spawns from both seeing
+the same provider as under-share.
+
+**Why it died — one sentence:** the booking layer was a hidden router — quota
+choosing the candidate meant a subsystem whose job is *facts about capacity*
+also owned *preference*, with implicit equal weights the user never expressed.
+The router design spec drew the boundary: **quota provides observations and
+proven exclusions; it never supplies a preference multiplier.** Today
+`routeAndReserve` is gone, `quota_fair_dispatch` is dropped on startup
+(`src/daemon/quota-ledger.ts`), and quota's whole routing surface is
+`poolsGoverning` / `drainFor` / `launchCooldown` facts plus the never-refusing
+`reserveLaunch` booking (`src/daemon/quota.ts`). What was right about fair
+deficit — count assigned work, never compare unlike windows — survives in the
+router's smooth weighted round-robin over **user-authored** weights. See
+[quota-and-headroom.md](quota-and-headroom.md).
 
 ## Stuffing whole design docs into a spawn is two orders of magnitude too expensive
 
@@ -210,14 +282,16 @@ The rule that decided several of the calls above, and should decide the next one
 > (adoption, promotion).**
 
 Hive may automatically *demote* a model, drop a stale reading to unknown, or refuse a
-launch. It may **not** automatically promote, enable, reorder from telemetry, or widen
-a pool. The MCC shows evidence; the user re-ranks. *"Hive proposes reorders; it never
-applies them."*
+launch. It may **not** automatically promote, enable, re-weight from telemetry, or widen
+a pool. The MCC shows evidence; the user re-weights. Outcome-driven automatic weight
+learning is on the router spec's do-not-add list for the same reason: *expose measured
+outcomes to the user; only the user changes preference.*
 
 ## See Also
 
 - [routing-policy.md](routing-policy.md) — what replaced all of this
 - [quota-and-headroom.md](quota-and-headroom.md) — including the headroom-sort that also lost
-- [model-control-center.md](model-control-center.md) — the surface where the user does the ranking
+- [model-control-center.md](model-control-center.md) — the surface where the user does the weighting
+- [../design/hive-router.html](../design/hive-router.html) — the design spec that retired 7–9
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — what a catalog can and cannot tell you
 - [../../SPEC.md](../../SPEC.md) §6 — the orchestrator classifies; discovered policy resolves

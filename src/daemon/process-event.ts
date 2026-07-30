@@ -133,12 +133,7 @@ export async function processEvent(
             : { toolSessionId: value.toolSessionId }),
         });
       });
-      deps.delivery.confirmSteerAtToolBoundary(
-        value.agentName,
-        value.timestamp,
-      );
       await deps.delivery.flushUrgent(value.agentName);
-      await deps.delivery.flushSteer(value.agentName);
     }
     return;
   }
@@ -319,9 +314,6 @@ export async function processEvent(
     (value.kind === "turn-start" || value.kind === "turn-end")
   ) {
     deps.orchestratorSessiond?.markInputReady();
-  }
-  if (value.kind === "session-start") {
-    await deps.delivery.recoverCriticalControls();
   }
   if (value.kind === "session-start" || value.kind === "turn-end") {
     await deps.delivery.flushQueued(value.agentName);

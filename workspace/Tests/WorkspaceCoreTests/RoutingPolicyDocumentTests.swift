@@ -1,7 +1,7 @@
 import XCTest
 @testable import WorkspaceCore
 
-/// The daemon policy document: decoding clay's wire shape and the fail-closed
+/// The daemon policy document: decoding the wire shape and the fail-closed
 /// reading. The one rule everything here defends: ABSENT MEANS UNCONFIGURED,
 /// and unconfigured never reads as enabled or as permission to spend.
 final class RoutingPolicyDocumentTests: XCTestCase {
@@ -9,7 +9,7 @@ final class RoutingPolicyDocumentTests: XCTestCase {
     private var fixture: RoutingPolicyDocument {
         let json = """
         {
-          "schemaVersion": 1,
+          "schemaVersion": 3,
           "revision": 7,
           "updatedAt": "2026-07-13T00:30:00.000Z",
           "provisional": true,
@@ -21,17 +21,23 @@ final class RoutingPolicyDocumentTests: XCTestCase {
             { "provider": "claude", "model": "claude-fable-5",
               "effort": { "mode": "exact", "value": "high" } }
           ],
-          "chains": {
-            "complex_coding": [
+          "global": {
+            "mode": "hive-equal",
+            "candidates": [
               { "provider": "claude", "model": "claude-opus-4-8",
-                "effort": { "mode": "exact", "value": "high" } },
-              { "provider": "grok", "model": "grok-composer-2.5-fast",
-                "effort": { "mode": "none" } }
-            ],
-            "default": [
-              { "provider": "claude", "model": "claude-opus-4-8",
-                "effort": { "mode": "provider-controlled" } }
+                "effort": { "mode": "provider-controlled" }, "weight": 1 }
             ]
+          },
+          "categories": {
+            "complex_coding": {
+              "mode": "user-weighted",
+              "candidates": [
+                { "provider": "claude", "model": "claude-opus-4-8",
+                  "effort": { "mode": "exact", "value": "high" }, "weight": 3 },
+                { "provider": "grok", "model": "grok-composer-2.5-fast",
+                  "effort": { "mode": "none" }, "weight": 1 }
+              ]
+            }
           }
         }
         """
@@ -42,11 +48,17 @@ final class RoutingPolicyDocumentTests: XCTestCase {
         let document = fixture
         XCTAssertEqual(document.revision, 7)
         XCTAssertTrue(document.provisional)
-        XCTAssertEqual(document.chain(for: .complexCoding).count, 2)
-        XCTAssertEqual(document.defaultChain.count, 1)
+        let complex = document.route(for: .complexCoding)
+        XCTAssertEqual(complex?.routerMode, .userWeighted)
+        XCTAssertEqual(complex?.candidates.count, 2)
+        XCTAssertEqual(complex?.candidates[0].weight, 3)
         XCTAssertEqual(
-            document.chain(for: .complexCoding)[1].effort,
+            complex?.candidates[1].effort,
             RoutingPolicyDocument.WireEffort.none)
+        XCTAssertEqual(document.global?.routerMode, .hiveEqual)
+        XCTAssertNil(
+            document.route(for: .planning),
+            "a category with no route of its own resolves to global, not to an empty route")
     }
 
     func testAbsentProviderDisablesAnUnconfiguredModel() {
@@ -121,21 +133,56 @@ final class RoutingPolicyDocumentTests: XCTestCase {
             "provider-controlled")
     }
 
-    func testChainEntryCliSpellings() {
+    func testRouteCandidateCliSpellings() {
         XCTAssertEqual(
-            RoutingPolicyDocument.WireChainEntry(
+            RoutingPolicyDocument.WireRouteCandidate(
                 provider: "claude", model: "claude-opus-4-8",
-                effort: .exact("high")).cliArgument,
-            "claude/claude-opus-4-8@high")
+                effort: .exact("high"), weight: 3).cliArgument,
+            "claude/claude-opus-4-8@high=3")
         XCTAssertEqual(
-            RoutingPolicyDocument.WireChainEntry(
+            RoutingPolicyDocument.WireRouteCandidate(
                 provider: "grok", model: "grok-composer-2.5-fast",
-                effort: .none).cliArgument,
-            "grok/grok-composer-2.5-fast@none")
+                effort: .none, weight: 1).cliArgument,
+            "grok/grok-composer-2.5-fast@none=1")
         XCTAssertEqual(
-            RoutingPolicyDocument.WireChainEntry(
+            RoutingPolicyDocument.WireRouteCandidate(
                 provider: "codex", model: "gpt-5.6-sol",
-                effort: .providerControlled).cliArgument,
-            "codex/gpt-5.6-sol")
+                effort: .providerControlled, weight: 2).cliArgument,
+            "codex/gpt-5.6-sol=2")
+        XCTAssertEqual(
+            RoutingPolicyDocument.WireRouteCandidate(
+                provider: "claude", model: "claude-fable-5",
+                effort: .hiveDecides, weight: 1).cliArgument,
+            "claude/claude-fable-5@hive-decides=1")
+        // No spelling at all: never-configured is a model-row state, and an
+        // unknown mode must not be respelled. NIL forces the caller to refuse.
+        XCTAssertNil(
+            RoutingPolicyDocument.WireRouteCandidate(
+                provider: "claude", model: "claude-fable-5",
+                effort: .neverConfigured, weight: 1).cliArgument)
+        XCTAssertNil(
+            RoutingPolicyDocument.WireRouteCandidate(
+                provider: "claude", model: "claude-fable-5",
+                effort: .unknown("thinking-budget"), weight: 1).cliArgument)
+    }
+
+    func testWireRouteBridgesToEditorTermsAndBack() throws {
+        let wire = try XCTUnwrap(fixture.route(for: .complexCoding))
+        let route = try XCTUnwrap(wire.asRoutePolicy)
+        XCTAssertEqual(route.mode, .userWeighted)
+        XCTAssertEqual(route.candidates.map(\.weight), [3, 1])
+        XCTAssertEqual(route.candidates[0].effort, .exact("high"))
+        XCTAssertEqual(route.candidates[1].effort, EffortTarget.none)
+
+        let rebuilt = RoutingPolicyDocument.WireRoute(route)
+        XCTAssertEqual(rebuilt, wire)
+
+        // A nil editor effort is Hive's pick — a candidate always answers
+        // effort on the wire, and never with never-configured.
+        let hiveDecides = RoutingPolicyDocument.WireRoute(RoutePolicy(
+            mode: .hiveEqual,
+            candidates: [RouteCandidate(
+                provider: "claude", model: "claude-fable-5", effort: nil, weight: 1)]))
+        XCTAssertEqual(hiveDecides.candidates[0].effort, .hiveDecides)
     }
 }

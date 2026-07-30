@@ -728,10 +728,10 @@ final class ModelControlTests: XCTestCase {
             "a user off is a user off — only seeding writes seededOff")
     }
 
-    func testSeededOffProviderIsExcludedFromTheSeededDefaultChain() {
+    func testSeededOffProviderIsExcludedFromTheSeededGlobalRoute() {
         let policy = ProvisionalPolicyStore.seed(from: grokAvailableSnapshot)
-        XCTAssertEqual(policy.defaultChain.map(\.provider), ["claude"],
-                       "an unconsented vendor must not be pre-wired into the fallback")
+        XCTAssertEqual(policy.global?.candidates.map(\.provider), ["claude"],
+                       "an unconsented vendor must not be pre-wired into a spending position")
     }
 
     func testSpendCaveatStates() {
@@ -753,7 +753,7 @@ final class ModelControlTests: XCTestCase {
         XCTAssertNotNil(SpendCaveat.derive(from: nil))
     }
 
-    // MARK: Policy mutations and chains
+    // MARK: Policy mutations and routes
 
     private var fixtureSnapshot: ModelControlSnapshot {
         let opus = DiscoveredModel(
@@ -784,18 +784,6 @@ final class ModelControlTests: XCTestCase {
             quotaError: "daemon not running")
     }
 
-    func testChainReorderKeepsPrimaryAtIndexZero() {
-        let a = ChainEntry(provider: "claude", model: "a", effort: .exact("high"))
-        let b = ChainEntry(provider: "codex", model: "b", effort: .providerControlled)
-        let c = ChainEntry(
-            provider: "grok", model: "grok-4.5", effort: EffortTarget.none)
-        XCTAssertEqual(c.effort, .some(EffortTarget.none))
-        let moved = ModelControlPolicy.move([a, b, c], from: 2, to: 0)
-        XCTAssertEqual(moved, [c, a, b])
-        XCTAssertEqual(ModelControlPolicy.move([a, b, c], from: 5, to: 0), [a, b, c],
-                       "out-of-range moves are no-ops")
-    }
-
     func testEditsClearTheProvisionalFlag() {
         var policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         XCTAssertTrue(policy.provisional)
@@ -803,115 +791,99 @@ final class ModelControlTests: XCTestCase {
         XCTAssertFalse(policy.provisional)
     }
 
-    func testSeedEnablesEveryDiscoveredProviderAndSkipsUnavailableInDefaultChain() {
+    func testSeedEnablesEveryDiscoveredProviderAndSkipsUnavailableInGlobalRoute() {
         let policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         XCTAssertTrue(policy.providerEnabled(.claude))
         XCTAssertTrue(policy.providerEnabled(.grok))
-        // grok's catalog is unavailable, so it cannot serve as a default link.
-        XCTAssertEqual(policy.defaultChain.map(\.provider), ["claude"])
+        // grok's catalog is unavailable, so it cannot serve as a candidate.
+        XCTAssertEqual(policy.global?.candidates.map(\.provider), ["claude"])
     }
 
-    // MARK: The provisional routing table — the atom is (model, effort)
+    // MARK: The provisional route — equal weight is the only honest rating
 
-    /// Two consented providers, one with a full effort axis and one whose
-    /// vendor states there is no effort axis.
-    private var routingTableSnapshot: ModelControlSnapshot {
+    func testSeedWritesOneEqualWeightGlobalRouteAndNoCategoryRoutes() {
         var snapshot = grokAvailableSnapshot
         snapshot.billing["grok"] = BillingSnapshot(
             creditsEnabled: .known(false, surface: "grok._x.ai/billing", observedAt: ""),
             generalUtilization: .unknown(reason: "surface-silent", surface: "grok._x.ai/billing", observedAt: ""))
-        return snapshot
-    }
+        let policy = ProvisionalPolicyStore.seed(from: snapshot)
 
-    func testEveryCategorySeedsAChainWithReasoning() {
-        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
+        let global = policy.global
+        XCTAssertEqual(global?.mode, .hiveEqual,
+                       "equal weight is the only rating no outcome data has to back")
+        XCTAssertEqual(global?.candidates.map(\.provider), ["claude", "grok"])
+        XCTAssertTrue(global?.candidates.allSatisfy { $0.weight == 1 } == true)
+        XCTAssertTrue(global?.candidates.allSatisfy { $0.effort == .providerControlled } == true,
+                      "efforts are left to the vendor — nothing invents a level")
         for category in TaskCategory.allCases {
-            let chain = policy.categoryPolicy(category).chain
-            XCTAssertFalse(chain.isEmpty, "\(category.rawValue) should ship pre-filled")
-            for entry in chain {
-                XCTAssertEqual(entry.confidence, .assumed,
-                               "nothing claims evidence that does not exist")
-                XCTAssertTrue(entry.note?.contains("Assumed order") == true,
-                              "every seeded row says why it was chosen")
-            }
+            XCTAssertNil(policy.route(category),
+                         "\(category.rawValue) resolves to global; no per-category seed")
         }
-        XCTAssertFalse(policy.defaultChain.isEmpty)
     }
 
-    func testSameModelSeedsAtDifferentEffortsInDifferentCategories() {
-        // The whole feature: fable-5@high for complex coding and fable-5@low
-        // for summarization are two different placeable routing choices.
-        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
-        let complex = policy.categoryPolicy(.complexCoding).chain
-            .first { $0.provider == "claude" }
-        let summarize = policy.categoryPolicy(.summarization).chain
-            .first { $0.provider == "claude" }
-        guard let complexModel = complex?.model, let summaryModel = summarize?.model else {
-            return XCTFail("claude should seed exact targets in both categories")
-        }
-        XCTAssertEqual(complexModel, summaryModel, "same model…")
-        XCTAssertEqual(complex?.effort, .exact("high"))
-        XCTAssertEqual(summarize?.effort, .exact("low"))
-        XCTAssertNotEqual(complex?.effort, summarize?.effort, "…different atoms")
+    func testExpectedSharePreviewsWeightsAndEqualSplit() {
+        let a = RouteCandidate(provider: "claude", model: "a", effort: .exact("high"), weight: 3)
+        let b = RouteCandidate(provider: "codex", model: "b", effort: nil, weight: 1)
+        var route = RoutePolicy(mode: .userWeighted, candidates: [a, b])
+        XCTAssertEqual(route.expectedShare(of: a), 0.75)
+        XCTAssertEqual(route.expectedShare(of: b), 0.25)
+
+        // hive-equal previews 1/n while the stored weights stay intact.
+        route.mode = .hiveEqual
+        XCTAssertEqual(route.expectedShare(of: a), 0.5)
+        XCTAssertEqual(route.candidates.map(\.weight), [3, 1])
     }
 
-    func testSeedingNeverInventsAnEffortLevel() {
-        // Grok's model states it has NO effort axis: the seeded entry must be
-        // effort .none — assignable, with nothing to pick — never a made-up
-        // "high".
-        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
-        let grokLink = policy.categoryPolicy(.complexCoding).chain
-            .first { $0.provider == "grok" }
-        XCTAssertNotNil(grokLink, "a consented grok is seeded — visible, usable")
-        XCTAssertEqual(grokLink?.effort, EffortTarget.none)
+    func testProviderSharesAggregateAcrossCandidates() {
+        let route = RoutePolicy(mode: .userWeighted, candidates: [
+            RouteCandidate(provider: "claude", model: "a", effort: nil, weight: 2),
+            RouteCandidate(provider: "claude", model: "b", effort: nil, weight: 1),
+            RouteCandidate(provider: "codex", model: "c", effort: nil, weight: 1),
+        ])
+        XCTAssertEqual(route.providerShares["claude"] ?? 0, 0.75, accuracy: 0.001)
+        XCTAssertEqual(route.providerShares["codex"] ?? 0, 0.25, accuracy: 0.001)
     }
 
-    func testCodeReviewLeadsWithADifferentVendor() {
-        let policy = ProvisionalPolicyStore.seed(from: routingTableSnapshot)
-        let review = policy.categoryPolicy(.codeReview).chain
-        let complex = policy.categoryPolicy(.complexCoding).chain
-        XCTAssertEqual(review.count, complex.count)
-        XCTAssertNotEqual(review.first?.provider, complex.first?.provider,
-                          "review prefers vendor independence")
-    }
-
-    func testChainLinkStatusProviderOffWins() {
+    func testRouteCandidateStatusProviderOffWins() {
         var policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         policy.setProviderEnabled(.claude, false)
-        let entry = ChainEntry(
+        let candidate = RouteCandidate(
             provider: "claude", model: "claude-opus-4-8", effort: .exact("high"))
         XCTAssertEqual(
-            ChainLinkStatus.derive(entry: entry, policy: policy, snapshot: fixtureSnapshot),
+            RouteCandidateStatus.derive(
+                candidate: candidate, policy: policy, snapshot: fixtureSnapshot),
             .providerOff)
     }
 
-    func testChainLinkStatusUnresolvableWhenModelLeftCatalog() {
+    func testRouteCandidateStatusUnresolvableWhenModelLeftCatalog() {
         let policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
-        let entry = ChainEntry(
+        let candidate = RouteCandidate(
             provider: "claude", model: "claude-3-opus", effort: .providerControlled)
         XCTAssertEqual(
-            ChainLinkStatus.derive(entry: entry, policy: policy, snapshot: fixtureSnapshot),
+            RouteCandidateStatus.derive(
+                candidate: candidate, policy: policy, snapshot: fixtureSnapshot),
             .unresolvable)
     }
 
-    func testChainLinkStatusModelDisabled() {
+    func testRouteCandidateStatusModelDisabled() {
         var policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         policy.setModelEnabled(provider: .claude, modelId: "claude-opus-4-8", false)
-        let entry = ChainEntry(
+        let candidate = RouteCandidate(
             provider: "claude", model: "claude-opus-4-8", effort: .providerControlled)
         XCTAssertEqual(
-            ChainLinkStatus.derive(entry: entry, policy: policy, snapshot: fixtureSnapshot),
+            RouteCandidateStatus.derive(
+                candidate: candidate, policy: policy, snapshot: fixtureSnapshot),
             .modelDisabled)
     }
 
-    func testWarningsFireOnAllProvidersOffAndEmptyDefaultChain() {
+    func testWarningsFireOnAllProvidersOffAndNoGlobalRoute() {
         var policy = ProvisionalPolicyStore.seed(from: fixtureSnapshot)
         policy.setProviderEnabled(.claude, false)
         policy.setProviderEnabled(.grok, false)
-        policy.defaultChain = []
+        policy.setRoute(nil, nil)
         let warnings = PolicyWarning.derive(policy: policy, snapshot: fixtureSnapshot)
         XCTAssertTrue(warnings.contains(.noProvidersEnabled))
-        XCTAssertTrue(warnings.contains(.defaultChainEmpty))
+        XCTAssertTrue(warnings.contains(.noGlobalRoute))
     }
 
     // MARK: Display names — specific models, never "default"

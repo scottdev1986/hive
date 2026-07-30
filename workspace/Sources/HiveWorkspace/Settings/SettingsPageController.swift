@@ -210,7 +210,7 @@ class SettingsPageController: NSViewController {
             let text: String
             switch warning {
             case .noProvidersEnabled: text = MCCCopy.warnNoProviders
-            case .defaultChainEmpty: text = MCCCopy.warnDefaultChainEmpty
+            case .noGlobalRoute: text = MCCCopy.warnNoGlobalRoute
             }
             let banner = CapsuleBadge(
                 text: text, symbol: "exclamationmark.triangle.fill", style: .warning)
@@ -278,100 +278,37 @@ final class FlippedView: NSView {
 }
 
 /// TASKS — the routing table, and the screen the window opens on. For each
-/// kind of work: which models are good enough, at which effort. The atom is
-/// a (model @ effort) pair; work SPREADS across a category's models by
-/// remaining capacity — rank is preference and tie-break, not a strict walk.
+/// kind of work: an unordered set of (model @ effort) candidates with a split
+/// mode — the user's weights or an equal share. The atom is a (model @
+/// effort) pair; there is no rank and no fallback ladder anywhere.
 final class TasksSettingsController: SettingsPageController {
 
     override func buildContent() {
         addHeader(
             title: "Tasks",
-            subtitle: "Which models are good enough for each kind of work, and at which "
-                + "effort. " + MCCCopy.selectionSubtitle)
+            subtitle: "Which models handle each kind of work, at which effort, and in "
+                + "what proportion. " + MCCCopy.routesSubtitle)
         addBanners()
 
         guard dataSource.snapshot != nil, dataSource.policyLoaded else { return }
 
-        buildSelectionControl()
+        let globalCard = CardView()
+        let globalSection = RouteSectionView(kind: .global, dataSource: dataSource)
+        globalCard.contentStack.addArrangedSubview(globalSection)
+        globalCard.pinToContentWidth(globalSection)
+        contentStack.addArrangedSubview(globalCard)
+        pinToContent(globalCard)
+        contentStack.setCustomSpacing(Theme.Space.xl, after: globalCard)
 
         for category in TaskCategory.allCases {
             let card = CardView()
-            let section = ChainSectionView(kind: .category(category), dataSource: dataSource)
+            let section = RouteSectionView(kind: .category(category), dataSource: dataSource)
             card.contentStack.addArrangedSubview(section)
             card.pinToContentWidth(section)
             contentStack.addArrangedSubview(card)
             pinToContent(card)
         }
-
-        contentStack.setCustomSpacing(Theme.Space.xl, after: contentStack.arrangedSubviews.last!)
-        let defaultCard = CardView()
-        let section = ChainSectionView(kind: .defaultChain, dataSource: dataSource)
-        defaultCard.contentStack.addArrangedSubview(section)
-        defaultCard.pinToContentWidth(section)
-        contentStack.addArrangedSubview(defaultCard)
-        pinToContent(defaultCard)
     }
-
-    /// The one prominent selection control: the global mode, plus the
-    /// place per-category overrides are created (each overridden card then
-    /// shows its own badge with a clear way back to global).
-    private func buildSelectionControl() {
-        let label = NSTextField(labelWithString: MCCCopy.selectionControlLabel)
-        label.font = Theme.Font.headline
-        label.compressHorizontally()
-
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.controlSize = .small
-        popup.font = NSFont.systemFont(ofSize: 11)
-        for mode in SelectionMode.userChoices {
-            popup.addItem(withTitle: MCCCopy.selectionTitle(mode))
-        }
-        if let mode = dataSource.globalSelection,
-           let index = SelectionMode.userChoices.firstIndex(of: mode) {
-            popup.selectItem(at: index)
-        } else {
-            popup.select(nil)
-        }
-        popup.target = self
-        popup.action = #selector(globalSelectionChanged(_:))
-        popup.setAccessibilityLabel("Who picks the model for a task")
-        popup.isEnabled = dataSource.canEditSelection
-
-        var rowViews: [NSView] = [label]
-        if dataSource.canEditSelection,
-           dataSource.globalSelection == .neverConfigured {
-            rowViews.append(CapsuleBadge(
-                text: MCCCopy.selectionUnconfigured,
-                symbol: "exclamationmark.triangle.fill", style: .warning))
-        }
-        rowViews.append(contentsOf: [popup, NSView.spacer()])
-        let row = NSStackView(views: rowViews)
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = Theme.Space.m
-        contentStack.addArrangedSubview(row)
-        pinToContent(row)
-
-        let captionText = dataSource.canEditSelection
-            ? dataSource.globalSelection.map(MCCCopy.selectionCaption)
-                ?? MCCCopy.selectionUnreadable
-            : MCCCopy.selectionUnreadable
-        let caption = NSTextField(wrappingLabelWithString: captionText)
-        caption.font = Theme.Font.caption
-        caption.textColor = .tertiaryLabelColor
-        caption.compressHorizontally()
-        contentStack.addArrangedSubview(caption)
-        pinToContent(caption)
-    }
-
-    @objc private func globalSelectionChanged(_ sender: NSPopUpButton) {
-        guard SelectionMode.userChoices.indices.contains(sender.indexOfSelectedItem) else {
-            return
-        }
-        dataSource.setGlobalSelection(
-            SelectionMode.userChoices[sender.indexOfSelectedItem])
-    }
-
 }
 
 /// MODELS — the inventory and the consent surface: every provider, every

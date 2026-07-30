@@ -708,7 +708,6 @@ const validCases: readonly WireCorpusCase[] = [
       recipientGeneration: 3,
       adapter: "codex-tui",
       priority: "normal",
-      intent: "instruction",
       evidence: "transport-written",
       byteRange: { start: "5000", endExclusive: "5012" },
       nativeEndpointReceipt: null,

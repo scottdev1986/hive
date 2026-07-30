@@ -39,7 +39,6 @@ import {
   type ActivitySnapshot,
   type AgentRecord,
   type CapabilityProvider,
-  ControlIntentSchema,
   canonicalOrchestratorName,
   compactMemoryWriteResult,
   HandoffSchema,
@@ -202,7 +201,6 @@ import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
 } from "./routing-policy-store";
-import type { SelectionPreferenceControl } from "./selection-preferences";
 import type { SessionHost, SessionLocator } from "./session-host/contract";
 import {
   HiveTerminalHostAdapter,
@@ -364,7 +362,6 @@ export interface HiveDaemonOptions {
    * operator-gated `/autonomy` endpoint, which persists before it applies. */
   autonomy?: AutonomyControl;
   /** Ordinary Workspace selection persistence; absent for named/default homes. */
-  selectionPreferences?: SelectionPreferenceControl;
   /** The per-repo graphify MCP server, when this repo opted in. The daemon owns its
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
@@ -549,7 +546,6 @@ export class HiveDaemon {
   /** Approval ids currently crossing an awaited vendor delivery boundary. */
   private readonly resolvingApprovals = new Set<string>();
   private readonly autonomy: AutonomyControl | undefined;
-  private readonly selectionPreferences: SelectionPreferenceControl | undefined;
   private readonly graphify: GraphifyService | undefined;
   /** Per-agent graphify MCP call counts. Keyed by
    * AgentUUID, in memory on purpose: the transcripts are durable, so a
@@ -730,7 +726,6 @@ export class HiveDaemon {
             instanceId: hiveInstanceSuffix(),
           });
     this.autonomy = options.autonomy;
-    this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
     const sessionSender: SessionSender = options.sessionSender ?? {
       sendSessionMessage: async () => {
@@ -743,91 +738,7 @@ export class HiveDaemon {
     this.delivery = new MessageDelivery(
       this.db,
       sessionSender,
-      {
-        apply: async (agent, message) => {
-          if (message.intent === "pause" || message.intent === "stop") {
-            const locator = requireSessiondAgentLocator(agent);
-            const run = this.db.getActiveProviderRunByTerminal(locator);
-            if (run === null) {
-              throw new Error(
-                `${agent.name} has no active provider run to ${message.intent}`,
-              );
-            }
-            const applied =
-              message.intent === "pause"
-                ? await this.terminalHost.pauseProvider(locator, run)
-                : await this.terminalHost.stopProvider(locator, run);
-            if (!applied) {
-              throw new Error(
-                `${agent.name}'s foreground provider identity changed before ${message.intent}`,
-              );
-            }
-            return;
-          }
-          if (message.intent === "cancel") {
-            throw new Error(
-              `${agent.tool} terminal sessions have no provider-native turn cancel surface; use pause or stop`,
-            );
-          }
-          const sameControlAttempt =
-            agent.status === "control-paused" &&
-            agent.controlMessageId === message.id &&
-            agent.controlQuotaReservationId !== undefined &&
-            this.quota?.ledger.getReservation(agent.controlQuotaReservationId)
-              ?.status === "active";
-          if (sameControlAttempt && (await this.agentSessionPresent(agent))) {
-            // The daemon may have crashed after launch but before advancing the
-            // message. Reuse the surviving process and reservation exactly.
-            return;
-          }
-          if (!sameControlAttempt) {
-            const stopped = await this.stopAgentProcesses(agent);
-            if (stopped.survivors.length > 0) {
-              throw new Error(
-                `${stopped.survivors.length} process(es) survived critical-control teardown for ${agent.name}`,
-              );
-            }
-            await this.settleAgentQuota(agent);
-          }
-          if (this.quota === undefined) {
-            throw new Error(
-              "quota accounting is unavailable; read-only control restart was not launched",
-            );
-          }
-          if (this.spawner.restartForControl === undefined) {
-            throw new Error(
-              `Spawner cannot restart ${agent.name} for critical control`,
-            );
-          }
-          try {
-            await this.spawner.restartForControl(agent, message);
-          } catch (error) {
-            const current = this.db.getAgentById(agent.id) ?? agent;
-            if (current.status === "stuck") throw error;
-            // The writer is already gone, so rolling back across the OS
-            // boundary is impossible. Finish the control into a coherent,
-            // terminal fail-closed state and release what the ledger says this
-            // agent still holds; a queued control must not strand capacity or
-            // invite an identical recovery attempt forever.
-            await this.settleAgentQuota(current).catch(() => undefined);
-            const reason =
-              error instanceof Error
-                ? error.message
-                : "control acknowledgement process failed to launch";
-            this.db.insertAgent({
-              ...current,
-              status: "failed",
-              writeRevoked: true,
-              failureReason: `Critical control ${message.id} restart failed: ${reason}`,
-              failedAt: new Date().toISOString(),
-              lastEventAt: new Date().toISOString(),
-            });
-            throw error;
-          }
-        },
-      },
-      // All visible roots use their instance-scoped terminal. Delivery holds
-      // the composer lease so a report cannot overwrite human input.
+      undefined,
       options.rootProtocol ??
         new SessiondOrchestratorRootDelivery({
           db: this.db,
@@ -844,66 +755,10 @@ export class HiveDaemon {
                 : await this.sessiondInput.writeAutomated(input),
           },
         }),
-      {},
+      undefined,
       (agent) => this.agentProcessState(agent),
       undefined,
-      // Daemon-to-idle-sessiond-agent input uses the neutral
-      // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
-      // the viewer wire is the interim addition.
       deliverySessiondInput,
-      // Wake-delta memory injection: every delivery to
-      // an agent — an ordinary message, a queued flush, or the resume wake —
-      // carries the bounded delta since the agent's high-water mark, over the
-      // send lane so no vendor hook is required. repoRoot is read lazily
-      // because it is assigned later in this constructor.
-      this.episodic !== null && options.wakeBudgetTokens !== undefined
-        ? createWakeDeltaProvider({
-            repoRoot: () => this.repoRoot,
-            store: this.episodic,
-            memory: this.memory,
-            budgetTokens: options.wakeBudgetTokens,
-          })
-        : undefined,
-      // Queen and operator trigger words
-      // execute memory recall/writes at the daemon and their labeled result
-      // replaces the delivered body. repoRoot is read lazily because it is
-      // assigned later in this constructor; writes ride the daemon's
-      // serialized writeMemoryFact so the FTS index stays current.
-      this.episodic !== null
-        ? createMemoryTriggerExecutor({
-            repoRoot: () => this.repoRoot,
-            memory: this.memory,
-            semantic: this.semanticRecall(),
-            semanticStatus: this.semanticRecallState(),
-            write: (input) => this.writeMemoryFact(input),
-            episodic: this.episodic,
-            log: (message) => this.writeDaemonLog(message),
-          })
-        : undefined,
-      // Durable warning sink (defect D2): trigger and wake-delta failures
-      // persist to the daemon log, not only the unread console.
-      (line) => this.writeDaemonLog(line),
-      // Submit-time foreground measurement: the run row's launch-time
-      // identity goes stale the moment the vendor forks a child that takes
-      // the terminal's foreground group, and a fence built from it refuses
-      // every injection to a live agent.
-      async (agent) => {
-        const inspection = await this.terminalHost.inspect(
-          requireSessiondAgentLocator(agent),
-        );
-        const foreground = inspection.foreground;
-        if (
-          foreground.state !== "unmanaged" &&
-          foreground.state !== "managed"
-        ) {
-          return undefined;
-        }
-        return {
-          pid: foreground.pid,
-          startToken: foreground.startToken,
-          processGroupId: foreground.foregroundProcessGroupId,
-        };
-      },
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -1146,21 +1001,45 @@ export class HiveDaemon {
     // Persistence is the boundary: failure from here onward cannot erase the
     // task, worktree measurements, or evidence needed by another provider.
     if (paused) await this.terminalHost.stopProvider(locator, run);
-    // TODO(router): launch automatically only after quota lifecycle can enforce
-    // this measured provider/pool exclusion through the replacement decision.
-    await this.delivery.send(
-      "hive-handoff",
-      ORCHESTRATOR_NAME,
-      `${agent.name}'s quota handoff ${bundle.handoffId} is durable; the source terminal and worktree remain retained. ` +
-        `Automatic replacement is deferred until quota routing can exclude the proven drained ${
-          drain.pool === null
-            ? `${drain.provider} route`
-            : `${drain.provider}/${drain.pool} pool`
-        }${drain.resetsAt === null ? "" : ` until ${drain.resetsAt}`}. ${drain.reason}`,
-      {
-        idempotencyKey: `handoff-awaiting-route:${bundle.handoffId}`,
-      },
-    );
+    // Route the replacement now that the handoff is durable, excluding the
+    // proven-drained pool so the work cannot land back on the route that just
+    // demonstrated it cannot continue. A refused route (no candidate) falls
+    // back to the durable orchestrator notice — quota lifecycle and the human
+    // decide wait versus preserve; nothing busy-retries here.
+    try {
+      const replacement = await this.spawner.spawn({
+        task: fenced.taskDescription,
+        category: fenced.category,
+        handoffId: bundle.handoffId,
+        ...(drain.pool === null ? {} : { excludedPoolIds: [drain.pool] }),
+      });
+      await this.delivery.send(
+        "hive-handoff",
+        ORCHESTRATOR_NAME,
+        `${agent.name} drained its quota; handoff ${bundle.handoffId} is durable and ` +
+          `${replacement.name} (${replacement.tool}/${replacement.model}) was launched to pick it up. ` +
+          "The source terminal and worktree remain retained.",
+        {
+          idempotencyKey: `handoff-replacement:${bundle.handoffId}`,
+        },
+      );
+    } catch (error) {
+      await this.delivery.send(
+        "hive-handoff",
+        ORCHESTRATOR_NAME,
+        `${agent.name}'s quota handoff ${bundle.handoffId} is durable; the source terminal and worktree remain retained. ` +
+          `No replacement could be routed away from the proven drained ${
+            drain.pool === null
+              ? `${drain.provider} route`
+              : `${drain.provider}/${drain.pool} pool`
+          }${drain.resetsAt === null ? "" : ` until ${drain.resetsAt}`}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        {
+          idempotencyKey: `handoff-awaiting-route:${bundle.handoffId}`,
+        },
+      );
+    }
   }
 
   private async agentSessionPresent(agent: AgentRecord): Promise<boolean> {
@@ -1308,20 +1187,6 @@ export class HiveDaemon {
       void this.runMaintenance().catch((error) => {
         console.error(
           `Hive reconciliation failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
-      void this.delivery.alertExpiredControls().catch((error) => {
-        console.error(
-          `Hive control deadline check failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
-      void this.delivery.alertStuckDeliveries().catch((error) => {
-        console.error(
-          `Hive stuck-delivery check failed: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         );
@@ -1742,21 +1607,10 @@ export class HiveDaemon {
           }`,
         );
       });
-      await this.delivery.recoverCriticalControls();
       // Root wakes deferred behind a human draft are retried only at this
       // bounded daemon boundary. The row remains queued until the terminal confirms
       // the composer is empty, so no report silently rots.
       await this.delivery.wakeOrchestrator();
-      // Close the loop on every message we handed over. Runs after the wake, so a
-      // message injected on this very tick is judged against the deadline it was
-      // actually given rather than the instant it was handed over.
-      await this.delivery.reconcileInjected().catch((error) => {
-        console.error(
-          `Hive delivery reconciliation failed: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-        );
-      });
       await this.reconcileAgents().catch((error) => {
         console.error(
           `Hive agent reconciliation failed: ${
@@ -3053,27 +2907,8 @@ export class HiveDaemon {
     }
   }
 
-  async acknowledgeControlMessage(
-    agentName: string,
-    messageId: string,
-    capabilityEpoch: number | undefined,
-    applied: boolean,
-  ) {
-    const message = this.delivery.acknowledge(
-      agentName,
-      messageId,
-      capabilityEpoch,
-      applied,
-    );
-    const record = this.db.getAgentByName(agentName);
-    if (
-      message.priority === "critical" &&
-      record?.controlMessageId === messageId &&
-      record.controlQuotaReservationId !== undefined
-    ) {
-      await this.quota?.cancel(record.controlQuotaReservationId);
-    }
-    return message;
+  async acknowledgeMessage(agentName: string, messageId: string) {
+    return this.delivery.acknowledge(agentName, messageId);
   }
 
   /**
@@ -4039,25 +3874,6 @@ export class HiveDaemon {
         mutation.data,
         authenticated.capability.subject,
       );
-      if (mutation.data.op === "set-selection") {
-        try {
-          await this.selectionPreferences?.apply(
-            mutation.data,
-            policy.selection,
-          );
-        } catch (error) {
-          return json(
-            {
-              error:
-                "selection was saved in this Workspace but could not be saved " +
-                `for future ordinary Workspace sessions: ${
-                  error instanceof Error ? error.message : String(error)
-                }`,
-            },
-            { status: 500 },
-          );
-        }
-      }
       return json(policy);
     } catch (error) {
       if (error instanceof RoutingPolicyConflictError) {
@@ -4544,8 +4360,7 @@ export class HiveDaemon {
       memoryPressure: () => this.memoryPressure,
       authorizeTool: (cap, tool, action, subject, auditAllow) =>
         this.authorizeTool(cap, tool, action, subject, auditAllow),
-      acknowledgeControlMessage: (name, id, epoch, applied) =>
-        this.acknowledgeControlMessage(name, id, epoch, applied),
+      acknowledgeMessage: (name, id) => this.acknowledgeMessage(name, id),
     });
 
     const spawnAgent = async (request: SpawnRequest): Promise<AgentRecord> => {

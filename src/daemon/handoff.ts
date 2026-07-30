@@ -185,7 +185,6 @@ export async function buildHandoffBundle(
     (message) =>
       isOrchestratorName(message.from) &&
       message.to === input.agent.name &&
-      message.intent === "instruction" &&
       Date.parse(message.createdAt) > Date.parse(input.agent.createdAt),
   );
   const addressed = input.messages.filter(
@@ -196,8 +195,7 @@ export async function buildHandoffBundle(
     handoffId: input.handoffId,
     sourceRunId: input.run.runId,
     runOutcome: {
-      // Before the router exists, the authorized launch grant is the durable
-      // identifier for the exact decision that created this provider run.
+      // The run's launch grant IS the router decision that authorized it.
       decisionId: input.run.launchGrantId,
       providerRunId: input.run.runId,
       provider: input.run.provider,
@@ -243,7 +241,7 @@ export async function buildHandoffBundle(
       0,
     ),
     pendingMessageIds: addressed
-      .filter((message) => message.state !== "applied")
+      .filter((message) => message.state !== "acknowledged")
       .map((message) => message.id),
     memoryRefs: explicitMemoryRefs(report, input.memory),
     activity: {

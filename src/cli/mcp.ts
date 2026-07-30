@@ -96,7 +96,7 @@ export async function sendOrchestratorMessage(
   await callHiveTool(
     port,
     "hive_send",
-    { from: ORCHESTRATOR_NAME, to, body, priority: "steer" },
+    { from: ORCHESTRATOR_NAME, to, body },
     "message",
     fetcher,
     `hive_send to ${to}`,

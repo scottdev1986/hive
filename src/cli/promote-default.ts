@@ -8,7 +8,6 @@ import {
   RoutingPolicyStore,
   readRoutingPolicyDatabase,
 } from "../daemon/routing-policy-store";
-import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 import type { RoutingPolicy } from "../schemas";
 
 const PROMOTE_ACTOR = "hive-cli-promote-default";
@@ -27,9 +26,7 @@ export interface PromoteDefaultModelControlResult {
 /**
  * Promote this instance's explicit Model Control document to the machine
  * default. A live (or unprovably dead) default daemon owns its database, so
- * this command writes only after its lock has been proved dead. The audited,
- * CAS-protected database promotion deliberately precedes the selection mirror:
- * if the mirror write fails, the recoverable database remains authoritative.
+ * this command writes only after its lock has been proved dead.
  */
 export async function promoteDefaultModelControl(
   options: PromoteDefaultModelControlOptions = {},
@@ -82,23 +79,8 @@ export async function promoteDefaultModelControl(
   const targetDb = new HiveDatabase(join(targetHome, "hive.db"));
   try {
     const target = new RoutingPolicyStore(targetDb);
-    const preferences = new SelectionPreferenceStore(
-      join(targetHome, "routing-selection.json"),
-    );
-    // Preserve a malformed existing preference rather than overwriting it as
-    // an incidental side effect of the database promotion.
-    preferences.read();
     const targetRevision = target.read(now).revision;
     const next = target.promote(source, targetRevision, PROMOTE_ACTOR, now);
-    try {
-      await preferences.replace(source.selection);
-    } catch (error) {
-      throw new Error(
-        "Model Control was promoted, but the selection mirror is stale. " +
-          "Rerun `hive promote-default` to update ~/.hive/routing-selection.json.",
-        { cause: error },
-      );
-    }
     return { sourceRevision: source.revision, targetRevision: next.revision };
   } finally {
     targetDb.close();

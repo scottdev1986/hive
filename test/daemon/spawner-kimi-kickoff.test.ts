@@ -81,22 +81,26 @@ test("Kimi turn zero is submitted after readiness with the measured foreground i
   const events: string[] = [];
   const writes: Parameters<SessiondAgentInput["writeAutomated"]>[0][] = [];
   const policy: RoutingPolicy = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     updatedAt: "2026-07-25T00:00:00.000Z",
     provisional: false,
     providers: {},
     models: [],
-    chains: {
-      simple_coding: [
-        {
-          provider: "kimi",
-          model: "kimi-code/k3",
-          effort: { mode: "provider-controlled" },
-        },
-      ],
+    global: null,
+    categories: {
+      simple_coding: {
+        mode: "user-weighted",
+        candidates: [
+          {
+            provider: "kimi",
+            model: "kimi-code/k3",
+            effort: { mode: "provider-controlled" },
+            weight: 1,
+          },
+        ],
+      },
     },
-    selection: { global: "choice" },
   };
   let locator = terminal;
   const spawner = new HiveSpawner({

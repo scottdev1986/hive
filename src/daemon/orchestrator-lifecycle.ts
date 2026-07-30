@@ -281,7 +281,7 @@ export interface SendResultSummary {
   priority: AgentMessage["priority"];
   sequence: number;
   createdAt: string;
-  deliveredAt: string | null;
+  notifiedAt: string | null;
   body: string;
   truncated: boolean;
   /** Present exactly when the send left the message queued at a live agent:
@@ -302,7 +302,7 @@ export function compactSendResult(message: AgentMessage): SendResultSummary {
     priority: message.priority,
     sequence: message.sequence,
     createdAt: message.createdAt,
-    deliveredAt: message.deliveredAt,
+    notifiedAt: message.notifiedAt,
     body: truncateCodePoints(message.body, MAX_SEND_BODY_CODE_POINTS),
     truncated: codePoints(message.body).length > MAX_SEND_BODY_CODE_POINTS,
   };

@@ -77,10 +77,8 @@ const AUTHORIZED_CANDIDATES = await authorizeForQuotaTest([
   { tool: "claude" as const, model: "claude-model" },
   { tool: "codex" as const, model: "codex-model" },
 ]);
-
-function candidates() {
-  return [...AUTHORIZED_CANDIDATES];
-}
+const CLAUDE_CANDIDATE = required(AUTHORIZED_CANDIDATES[0]);
+const CODEX_CANDIDATE = required(AUTHORIZED_CANDIDATES[1]);
 
 describe("quota windows", () => {
   test("uses timezone-aware calendar week boundaries across UTC offsets", () => {
@@ -295,15 +293,9 @@ describe("quota persistence and reservations", () => {
       config([limit("claude")]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    await expect(
-      service.routeAndReserve({
-        agentName: "maya",
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      }),
-    ).rejects.toThrow("quota ledger history is unknown");
+    expect(() =>
+      service.reserveLaunch("maya", CLAUDE_CANDIDATE, "simple_coding"),
+    ).toThrow("quota ledger history is unknown");
     expect(ledger.getActiveReservationForAgent("maya")).toBeNull();
     db.close();
   });
@@ -361,34 +353,28 @@ describe("quota persistence and reservations", () => {
     const first = new QuotaService(firstLedger, quotaConfig, clock);
     const second = new QuotaService(secondLedger, quotaConfig, clock);
 
-    const [firstRoute, secondRoute] = await Promise.all([
-      first.routeAndReserve({
-        agentName: "maya",
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      }),
-      second.routeAndReserve({
-        agentName: "maya",
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      }),
-    ]);
+    const firstReservation = first.reserveLaunch(
+      "maya",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
+    const secondReservation = second.reserveLaunch(
+      "maya",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
 
     expect(firstLedger.activeReservations().map((row) => row.id)).toEqual([
-      firstRoute.reservation.id,
+      firstReservation.id,
     ]);
     expect(secondLedger.activeReservations().map((row) => row.id)).toEqual([
-      secondRoute.reservation.id,
+      secondReservation.id,
     ]);
     expect(
-      firstLedger.getReservation(secondRoute.reservation.id)?.instanceId,
+      firstLedger.getReservation(secondReservation.id)?.instanceId,
     ).toEqual("instance-b");
     expect(
-      secondLedger.getReservation(firstRoute.reservation.id)?.instanceId,
+      secondLedger.getReservation(firstReservation.id)?.instanceId,
     ).toEqual("instance-a");
     firstDb.close();
     secondDb.close();
@@ -426,51 +412,34 @@ describe("quota persistence and reservations", () => {
       new QuotaService(firstLedger, quotaConfig, clock),
       new QuotaService(secondLedger, quotaConfig, clock),
     ];
-    const results = await Promise.allSettled(
-      services.map((service, index) =>
-        service.routeAndReserve({
-          agentName: index === 0 ? "maya" : "sam",
-          category: "simple_coding",
-          selection: "strict",
-          explicitTool: "claude",
-          candidates: candidates(),
-        }),
-      ),
-    );
     // Usage never refuses a spawn, so both siblings book; what this test pins is
     // the liveness-aware expiry below.
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(2);
-    const accepted = results.find((result) => result.status === "fulfilled");
-    if (accepted?.status !== "fulfilled")
-      throw new Error("missing accepted reservation");
+    const owned = required(services[0]).reserveLaunch(
+      "maya",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
+    required(services[1]).reserveLaunch("sam", CLAUDE_CANDIDATE, "simple_coding");
 
-    const owner = accepted.value.reservation.instanceId;
+    const owner = owned.instanceId;
     const sibling =
       owner === "instance-a" ? required(services[1]) : required(services[0]);
     expect(
       await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")),
     ).toEqual(0);
-    expect(
-      firstLedger.getReservation(accepted.value.reservation.id)?.status,
-    ).toEqual("active");
+    expect(firstLedger.getReservation(owned.id)?.status).toEqual("active");
 
     liveness.set(owner, "dead");
     expect(
       await sibling.recoverExpired(new Date("2026-07-09T12:02:00.000Z")),
     ).toEqual(1);
-    expect(
-      firstLedger.getReservation(accepted.value.reservation.id)?.status,
-    ).toEqual("released");
-    const replacement = await sibling.routeAndReserve({
-      agentName: "replacement",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    expect(replacement.reservation.status).toEqual("active");
+    expect(firstLedger.getReservation(owned.id)?.status).toEqual("released");
+    const replacement = sibling.reserveLaunch(
+      "replacement",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
+    expect(replacement.status).toEqual("active");
     firstDb.close();
     secondDb.close();
   });
@@ -529,15 +498,13 @@ describe("quota persistence and reservations", () => {
     const now = () => new Date("2026-07-09T12:00:00.000Z");
     const ledger = new QuotaLedger(db);
     const service = new QuotaService(ledger, quotaConfig, now);
-    const original = await service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "codex",
-      candidates: candidates(),
-    });
-    service.markStarted(original.reservation.id);
-    await service.cancel(original.reservation.id);
+    const original = service.reserveLaunch(
+      "maya",
+      CODEX_CANDIDATE,
+      "simple_coding",
+    );
+    service.markStarted(original.id);
+    await service.cancel(original.id);
 
     const control = await service.reserveControlRun({
       agentName: "maya",
@@ -551,7 +518,7 @@ describe("quota persistence and reservations", () => {
       controlMessageId: "control-1",
       status: "active",
     });
-    expect(ledger.getReservation(original.reservation.id)).toMatchObject({
+    expect(ledger.getReservation(original.id)).toMatchObject({
       status: "reconciled",
       actualUnits: 10,
     });
@@ -614,26 +581,20 @@ describe("quota persistence and reservations", () => {
       config([limit("claude")], { reservationTtlMinutes: 1 }),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    const unstarted = await service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    await service.cancel(unstarted.reservation.id);
-    expect(ledger.getReservation(unstarted.reservation.id)?.status).toEqual(
-      "released",
+    const unstarted = service.reserveLaunch(
+      "maya",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
     );
+    await service.cancel(unstarted.id);
+    expect(ledger.getReservation(unstarted.id)?.status).toEqual("released");
 
-    const started = await service.routeAndReserve({
-      agentName: "sam",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    service.markStarted(started.reservation.id);
+    const started = service.reserveLaunch(
+      "sam",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
+    service.markStarted(started.id);
     db.close();
 
     const restartedDb = new HiveDatabase(path);
@@ -649,9 +610,7 @@ describe("quota persistence and reservations", () => {
       () => new Date("2026-07-09T12:02:00.000Z"),
     );
     expect(await restarted.recoverExpired()).toEqual(1);
-    expect(
-      restartedLedger.getReservation(started.reservation.id),
-    ).toMatchObject({
+    expect(restartedLedger.getReservation(started.id)).toMatchObject({
       status: "reconciled",
       actualUnits: 10,
       source: "estimated",
@@ -667,13 +626,11 @@ describe("quota persistence and reservations", () => {
       config([limit("claude")]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    const decision = await service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
+    const reservation = service.reserveLaunch(
+      "maya",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
     db.insertAgent({
       id: "maya-id",
       name: "maya",
@@ -685,7 +642,7 @@ describe("quota persistence and reservations", () => {
       worktreePath: "/tmp/maya",
       branch: "hive/maya-test",
       contextPct: 0,
-      quotaReservationId: decision.reservation.id,
+      quotaReservationId: reservation.id,
       createdAt: "2026-07-09T12:00:00.000Z",
       lastEventAt: "2026-07-09T12:00:00.000Z",
       recoveryAttempts: 0,
@@ -723,7 +680,7 @@ describe("quota persistence and reservations", () => {
       usageUnits: 99,
       usageSource: "gateway",
     });
-    expect(ledger.getReservation(decision.reservation.id)).toMatchObject({
+    expect(ledger.getReservation(reservation.id)).toMatchObject({
       status: "reconciled",
       actualUnits: 7,
       source: "gateway",
@@ -732,158 +689,34 @@ describe("quota persistence and reservations", () => {
   });
 });
 
-describe("quota-aware routing", () => {
-  test("fair dispatch starts with the stable primary instead of comparing unlike headroom windows", async () => {
-    const { db } = await fileDatabase("routing");
-    const ledger = new QuotaLedger(db);
-    const now = new Date("2026-07-09T12:00:00.000Z");
-    const service = new QuotaService(
-      ledger,
-      config([limit("claude", 100), limit("codex", 200)]),
-      () => now,
-    );
-    const decision = await service.routeAndReserve({
-      agentName: "maya",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: candidates(),
-    });
-    expect(decision.tool).toEqual("claude");
-    db.close();
-  });
-
-  test("fair dispatch ignores small cross-provider headroom differences", async () => {
-    const { db } = await fileDatabase("deadband-primary");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude", 88.5), limit("codex", 89.3)]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const decision = await service.routeAndReserve({
-      agentName: "primary-wins",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: candidates(),
-    });
-    expect(decision.tool).toBe("claude");
-    db.close();
-  });
-
-  test("atomic fair dispatch gives concurrent spawns different providers", async () => {
-    const { db } = await fileDatabase("reservations-spread");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude"), limit("codex")]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const [first, second] = await Promise.all([
-      service.routeAndReserve({
-        agentName: "first",
-        category: "complex_coding",
-        selection: "spread",
-        candidates: candidates(),
-      }),
-      service.routeAndReserve({
-        agentName: "second",
-        category: "complex_coding",
-        selection: "spread",
-        candidates: candidates(),
-      }),
-    ]);
-    expect([first.tool, second.tool]).toEqual(["claude", "codex"]);
-    db.close();
-  });
-
-  test("sole-capable assignments create no fairness debt", async () => {
-    const { db } = await fileDatabase("fair-eligible-set");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude"), limit("codex")]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const [claude] = candidates();
-    await service.routeAndReserve({
-      agentName: "only-claude",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: [required(claude)],
-    });
-    const firstRealChoice = await service.routeAndReserve({
-      agentName: "choice",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: candidates(),
-    });
-    expect(firstRealChoice.tool).toBe("claude");
-    db.close();
-  });
-
-  test("strict mode preserves chain order despite unequal headroom", async () => {
-    const { db } = await fileDatabase("strict-order");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude", 25), limit("codex", 100)]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const decision = await service.routeAndReserve({
-      agentName: "strict",
-      category: "complex_coding",
-      selection: "strict",
-      candidates: candidates(),
-    });
-    expect(decision.tool).toBe("claude");
-    db.close();
-  });
-
-  test("routes review to the other vendor when quota is equally healthy", async () => {
-    const { db } = await fileDatabase("review");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude"), limit("codex")]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const decision = await service.routeAndReserve({
-      agentName: "maya",
-      category: "code_review",
-      selection: "strict",
-      reviewOfTool: "claude",
-      candidates: candidates(),
-    });
-    expect(decision.tool).toEqual("codex");
-    db.close();
-  });
-
-  test("keeps legacy routing with explicit missing-confidence diagnostics when no limits are configured", async () => {
+describe("unmetered booking", () => {
+  test("books an unmetered launch against its unconfigured pool without warning", async () => {
     const { db } = await fileDatabase("missing");
     const alerts: string[] = [];
+    const ledger = new QuotaLedger(db);
     const service = new QuotaService(
-      new QuotaLedger(db),
+      ledger,
       config([]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
     service.setAlertSink(async (body) => {
       alerts.push(body);
     });
-    const first = await service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      candidates: candidates(),
+    const first = service.reserveLaunch(
+      "maya",
+      CLAUDE_CANDIDATE,
+      "simple_coding",
+    );
+    expect(first).toMatchObject({
+      pool: "unconfigured:claude-model",
+      estimatedUnits: 10,
+      status: "active",
     });
-    await service.cancel(first.reservation.id);
-    await service.routeAndReserve({
-      agentName: "sam",
-      category: "simple_coding",
-      selection: "strict",
-      candidates: candidates(),
-    });
-    expect(first.tool).toEqual("claude");
-    expect(first.status).toMatchObject({
-      configured: false,
-      confidence: "missing",
-    });
+    await service.cancel(first.id);
+    service.reserveLaunch("sam", CLAUDE_CANDIDATE, "simple_coding");
+    expect(ledger.getActiveReservationForAgent("sam")).not.toBeNull();
     // Compatibility mode is gone: an unmetered route is the normal case now,
-    // so nothing warns — the status above is the only diagnostic left.
+    // so nothing warns.
     expect(alerts).toHaveLength(0);
     db.close();
   });
@@ -980,15 +813,9 @@ describe("quota telemetry and alerts", () => {
       config([limit("claude")]),
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
-    await expect(
-      service.routeAndReserve({
-        agentName: "maya",
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      }),
-    ).rejects.toThrow("Corrupt quota observation");
+    expect(() =>
+      service.reserveLaunch("maya", CLAUDE_CANDIDATE, "simple_coding"),
+    ).toThrow("Corrupt quota observation");
     expect(ledger.getActiveReservationForAgent("maya")).toEqual(null);
     db.close();
   });

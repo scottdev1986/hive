@@ -26,7 +26,7 @@ function message(id: string, sequence: number, body: string) {
     to: "maya",
     body,
     createdAt: "2026-07-24T12:00:00.000Z",
-    deliveredAt: null,
+    notifiedAt: null,
     sequence,
   });
 }
@@ -188,12 +188,7 @@ describe("C3 context economy", () => {
         conversationResume: true,
       },
     });
-    expect(MessagePrioritySchema.options).toEqual([
-      "normal",
-      "steer",
-      "urgent",
-      "critical",
-    ]);
+    expect(MessagePrioritySchema.options).toEqual(["normal", "urgent"]);
     expect(ROLE_GRANTS.writer.actions).toEqual(
       expect.arrayContaining([
         "terminal:observe",

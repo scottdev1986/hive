@@ -11,50 +11,23 @@ import type { StatusStore } from "./status-store";
 import { toolResult } from "./tool-result";
 import {
   type AgentRecord,
-  ControlIntentSchema,
   HandoffSchema,
   isOrchestratorName,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
 } from "../schemas";
 
-export function inferLegacyControl(body: string): {
-  priority: "critical";
-  intent: "pause" | "stop" | "cancel" | "restrict-writes";
-} | null {
-  const value = body.trim().toLowerCase();
-  if (/^cancel(?:\s+(?:this task|work|now))?[.!]?$/.test(value)) {
-    return { priority: "critical", intent: "cancel" };
-  }
-  if (/^stop(?:\s+(?:this task|work|now|working))?[.!]?$/.test(value)) {
-    return { priority: "critical", intent: "stop" };
-  }
-  if (
-    /^(?:pause before (?:coding|writing|modifying)|pause work)\b/.test(value)
-  ) {
-    return { priority: "critical", intent: "pause" };
-  }
-  if (/^(?:do not|don't) (?:modify|write|edit)\b/.test(value)) {
-    return { priority: "critical", intent: "restrict-writes" };
-  }
-  return null;
-}
-
 export const SendRequestSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
   body: z.string(),
   priority: MessagePrioritySchema.optional(),
-  intent: ControlIntentSchema.optional(),
   idempotencyKey: z.string().min(1).optional(),
-  deadlineMs: z.number().int().positive().optional(),
 });
 
 export const MessageAcknowledgementSchema = z.object({
   agent: z.string().min(1),
   messageId: z.string().min(1),
-  capabilityEpoch: z.number().int().nonnegative().optional(),
-  applied: z.boolean().optional().default(false),
 });
 
 export const EscalationRequestSchema = z.object({
@@ -103,11 +76,9 @@ export interface MessagingToolDeps {
     subject?: string,
     auditAllow?: boolean,
   ) => void;
-  acknowledgeControlMessage: (
+  acknowledgeMessage: (
     agentName: string,
     messageId: string,
-    capabilityEpoch: number | undefined,
-    applied: boolean,
   ) => Promise<unknown>;
 }
 
@@ -121,21 +92,14 @@ export function registerMessagingTools(
     {
       title: "Send agent message",
       description:
-        'Send a durable message and return its real lifecycle state. normal is ordinary guidance and lands at a turn boundary. steer is prompt, NON-DESTRUCTIVE guidance: Claude and Codex receive it mid-turn at the next tool boundary without cancellation; Grok, OpenCode, and Kimi expose no Hive-wired mid-turn steer boundary, so steer degrades to the next turn. urgent is Codex-only: with a live native Codex control it cancels the exact in-flight turn, waits for turn/completed, then starts the urgent instruction; Claude, Grok, OpenCode, Kimi, queen, and Codex without a live native control fail without queuing because Hive cannot prove cancellation. To stop a runaway agent on any vendor, use critical: it revokes write and landing authority, applies the typed control to the verified provider run, and restarts the target read-only; unsupported or unverified control surfaces fail loudly. "queued" means not delivered, "injected" means handed to the vendor, and "applied" means receipt measured on the vendor\'s own boundary/transcript surface; queued/injected is SENT, not RECEIVED and not STOPPED. Never report a target as informed from enqueue or transport silence. Recipient queen wakes the root (preferred name; synonym "orchestrator" remains accepted). The returned body is a short head-and-tail preview; read the durable message for the full body.',
+        "Send a durable inbox message. normal waits for the recipient's next safe turn boundary. urgent sends Escape once, then posts the same compact inbox notice. Both remain queued until hive_ack_message records that the recipient read them. The TUI never receives the message body; it receives only a prompt to check hive_inbox.",
       inputSchema: SendRequestSchema,
     },
     async ({ from, to, body, ...requested }) => {
       // `from` is a claim about identity, so it is checked against the bound
       // subject rather than trusted. No agent can forge a message from another.
       deps.authorizeTool(capability, "hive_send", "message:send", from, false);
-      const inferred =
-        requested.priority === undefined && requested.intent === undefined
-          ? inferLegacyControl(body)
-          : null;
-      const message = await deps.delivery.send(from, to, body, {
-        ...requested,
-        ...(inferred ?? {}),
-      });
+      const message = await deps.delivery.send(from, to, body, requested);
       // A send that left the message queued tells the sender what queued means
       // for THIS recipient right now — measured from its row, not implied by
       // the state name. "Queued" read as "delivered" is how an agent shipped a
@@ -248,17 +212,12 @@ export function registerMessagingTools(
     {
       title: "Acknowledge a control message",
       description:
-        "Acknowledge an injected urgent or critical control using its capability epoch; optionally confirm it has been applied.",
+        "Record that this agent read one inbox message. This updates the durable message state and sends no reply to the sender.",
       inputSchema: MessageAcknowledgementSchema,
     },
-    async ({ agent, messageId, capabilityEpoch, applied }) => {
+    async ({ agent, messageId }) => {
       deps.authorizeTool(capability, "hive_ack_message", "message:ack", agent);
-      const message = await deps.acknowledgeControlMessage(
-        agent,
-        messageId,
-        capabilityEpoch,
-        applied,
-      );
+      const message = await deps.acknowledgeMessage(agent, messageId);
       return toolResult(message, "message");
     },
   );
@@ -268,7 +227,7 @@ export function registerMessagingTools(
     {
       title: "Read agent inbox",
       description:
-        'Read and atomically acknowledge queued messages. Recipient queen returns bounded envelopes (synonym "orchestrator" is still accepted).',
+        "Read every unacknowledged inbox message. Reading never acknowledges a message; call hive_ack_message for each message after reading it.",
       inputSchema: InboxRequestSchema,
     },
     async ({ agent }) => {

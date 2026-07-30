@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  CandidateEffortSchema,
   EffortTargetSchema,
   ROUTING_CATEGORIES,
+  RouterModeSchema,
   RoutingPolicySchema,
-  SelectionModeSchema,
 } from "../../src/schemas/routing-policy";
 
 /**
@@ -35,52 +36,72 @@ describe("routing policy wire contract (shared with the Swift Settings decoder)"
   });
 
   test("the fixture exercises EVERY effort mode the daemon can emit", () => {
-    const schemaModes = EffortTargetSchema.options
+    const policy = RoutingPolicySchema.parse(fixture);
+
+    // Model rows carry the full 5-mode EffortTarget vocabulary, including
+    // never-configured (the unanswered row state).
+    const rowModes = EffortTargetSchema.options
       .map((option) => option.shape.mode.value as string)
       .sort();
-
-    const policy = RoutingPolicySchema.parse(fixture);
-    const fixtureModes = [
-      ...new Set([
-        ...policy.models.map((row) => row.effort.mode as string),
-        ...Object.values(policy.chains)
-          .flat()
-          .map((link) => link.effort.mode as string),
-      ]),
+    const fixtureRowModes = [
+      ...new Set(policy.models.map((row) => row.effort.mode as string)),
     ].sort();
+    expect(fixtureRowModes).toEqual(rowModes);
 
-    expect(fixtureModes).toEqual(schemaModes);
+    // Route candidates always answer effort, so their vocabulary is the
+    // 4-mode CandidateEffort — never-configured cannot appear on a candidate.
+    const candidateModes = CandidateEffortSchema.options
+      .map((option) => option.shape.mode.value as string)
+      .sort();
+    const routes = [
+      ...Object.values(policy.categories),
+      ...(policy.global === null ? [] : [policy.global]),
+    ];
+    const fixtureCandidateModes = [
+      ...new Set(
+        routes.flatMap((route) =>
+          route.candidates.map((candidate) => candidate.effort.mode as string),
+        ),
+      ),
+    ].sort();
+    expect(fixtureCandidateModes).toEqual(candidateModes);
   });
 
   /**
-   * Every category must appear in the shared fixture so the Settings screen can
-   * show and edit every chain the daemon can route through. Adding a category
-   * fails this test until both decoders name it.
+   * Every category must appear in the shared fixture so the Settings screen
+   * can show and edit every route the daemon can resolve through. Adding a
+   * category fails this test until both decoders name it.
    */
-  test("the fixture exercises EVERY routing category the daemon can emit", () => {
+  test("the fixture exercises EVERY routing category the daemon can emit, plus the global route", () => {
     const schemaCategories = [...ROUTING_CATEGORIES].sort();
 
     const policy = RoutingPolicySchema.parse(fixture);
-    const fixtureCategories = Object.keys(policy.chains).sort();
+    const fixtureCategories = Object.keys(policy.categories).sort();
 
     expect(fixtureCategories).toEqual(schemaCategories);
+    expect(policy.global).not.toBeNull();
   });
 
   /**
-   * Selection is one mode for the whole document, so a single fixture cannot
-   * exercise every value. Pinning the vocabulary here forces any new mode into
-   * the Swift `SelectionMode` enum before either decoder accepts it alone.
+   * Both router modes must reach the Swift decoder: pinning the vocabulary
+   * forces any new mode into the shared fixture before either side accepts
+   * it alone.
    */
-  test("the selection vocabulary is pinned, so a new mode must reach the Swift decoder", () => {
-    expect([...SelectionModeSchema.options].sort()).toEqual([
-      "auto",
-      "choice",
-      "never-configured",
+  test("the router-mode vocabulary is pinned and fully exercised", () => {
+    expect([...RouterModeSchema.options].sort()).toEqual([
+      "hive-equal",
+      "user-weighted",
     ]);
 
     const policy = RoutingPolicySchema.parse(fixture);
-    expect(SelectionModeSchema.options as readonly string[]).toContain(
-      policy.selection.global,
-    );
+    const fixtureModes = [
+      ...new Set(
+        [
+          ...Object.values(policy.categories),
+          ...(policy.global === null ? [] : [policy.global]),
+        ].map((route) => route.mode),
+      ),
+    ].sort();
+    expect(fixtureModes).toEqual(["hive-equal", "user-weighted"]);
   });
 });

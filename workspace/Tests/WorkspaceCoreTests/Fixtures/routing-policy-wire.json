@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "revision": 6,
   "updatedAt": "2026-07-13T16:05:40.344Z",
   "provisional": false,
@@ -39,84 +39,145 @@
       "effort": { "mode": "none" }
     }
   ],
-  "chains": {
-    "complex_coding": [
+  "global": {
+    "mode": "hive-equal",
+    "candidates": [
       {
         "provider": "claude",
         "model": "claude-opus-4-8",
-        "effort": { "mode": "exact", "value": "high" }
+        "effort": { "mode": "provider-controlled" },
+        "weight": 1
       },
       {
         "provider": "codex",
         "model": "gpt-5.6-sol",
-        "effort": { "mode": "never-configured" }
-      }
-    ],
-    "standard_coding": [
-      {
-        "provider": "codex",
-        "model": "gpt-5.6-sol",
-        "effort": { "mode": "provider-controlled" }
-      }
-    ],
-    "simple_coding": [
-      {
-        "provider": "codex",
-        "model": "gpt-5.6-sol",
-        "effort": { "mode": "exact", "value": "low" }
-      }
-    ],
-    "code_review": [
-      {
-        "provider": "claude",
-        "model": "claude-sonnet-5",
-        "effort": { "mode": "exact", "value": "high" }
-      }
-    ],
-    "planning": [
-      {
-        "provider": "claude",
-        "model": "claude-opus-4-8",
-        "effort": { "mode": "hive-decides" }
-      }
-    ],
-    "debugging": [
-      {
-        "provider": "claude",
-        "model": "claude-fable-5",
-        "effort": { "mode": "exact", "value": "high" }
-      }
-    ],
-    "heavy_research": [
-      {
-        "provider": "claude",
-        "model": "claude-fable-5",
-        "effort": { "mode": "provider-controlled" }
-      }
-    ],
-    "light_research": [
-      {
-        "provider": "grok",
-        "model": "grok-4.5",
-        "effort": { "mode": "none" }
-      }
-    ],
-    "summarization": [
-      {
-        "provider": "grok",
-        "model": "grok-4.5",
-        "effort": { "mode": "exact", "value": "low" }
-      }
-    ],
-    "default": [
-      {
-        "provider": "claude",
-        "model": "claude-opus-4-8",
-        "effort": { "mode": "provider-controlled" }
+        "effort": { "mode": "hive-decides" },
+        "weight": 1
       }
     ]
   },
-  "selection": {
-    "global": "never-configured"
+  "categories": {
+    "light_research": {
+      "mode": "hive-equal",
+      "candidates": [
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "effort": { "mode": "none" },
+          "weight": 1
+        }
+      ]
+    },
+    "heavy_research": {
+      "mode": "hive-equal",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "effort": { "mode": "provider-controlled" },
+          "weight": 1
+        }
+      ]
+    },
+    "simple_coding": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": { "mode": "exact", "value": "low" },
+          "weight": 4
+        },
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "effort": { "mode": "provider-controlled" },
+          "weight": 1
+        }
+      ]
+    },
+    "standard_coding": {
+      "mode": "hive-equal",
+      "candidates": [
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": { "mode": "provider-controlled" },
+          "weight": 1
+        }
+      ]
+    },
+    "complex_coding": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "effort": { "mode": "exact", "value": "high" },
+          "weight": 3
+        },
+        {
+          "provider": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": { "mode": "hive-decides" },
+          "weight": 1
+        }
+      ]
+    },
+    "code_review": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-sonnet-5",
+          "effort": { "mode": "exact", "value": "high" },
+          "weight": 2
+        }
+      ]
+    },
+    "planning": {
+      "mode": "hive-equal",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "effort": { "mode": "hive-decides" },
+          "weight": 1
+        }
+      ]
+    },
+    "debugging": {
+      "mode": "user-weighted",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-fable-5",
+          "effort": { "mode": "exact", "value": "high" },
+          "weight": 1
+        }
+      ]
+    },
+    "summarization": {
+      "mode": "hive-equal",
+      "candidates": [
+        {
+          "provider": "grok",
+          "model": "grok-4.5",
+          "effort": { "mode": "exact", "value": "low" },
+          "weight": 1
+        }
+      ]
+    },
+    "default": {
+      "mode": "hive-equal",
+      "candidates": [
+        {
+          "provider": "claude",
+          "model": "claude-opus-4-8",
+          "effort": { "mode": "provider-controlled" },
+          "weight": 1
+        }
+      ]
+    }
   }
 }

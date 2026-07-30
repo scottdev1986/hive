@@ -537,7 +537,6 @@
         "recipientGeneration": 3,
         "adapter": "codex-tui",
         "priority": "normal",
-        "intent": "instruction",
         "evidence": "transport-written",
         "byteRange": {
           "start": "5000",
@@ -3129,7 +3128,6 @@
         "recipientGeneration": 3,
         "adapter": "codex-tui",
         "priority": "normal",
-        "intent": "instruction",
         "evidence": "recipient-acknowledged",
         "byteRange": {
           "start": "5000",
@@ -3165,7 +3163,6 @@
         "recipientGeneration": 3,
         "adapter": "codex-tui",
         "priority": "normal",
-        "intent": "instruction",
         "evidence": "transport-written",
         "byteRange": null,
         "nativeEndpointReceipt": null,

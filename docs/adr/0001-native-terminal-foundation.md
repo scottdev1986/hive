@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-16
 - Decision scope: terminal transition T0–T7
-- Source of record: [Terminal stack transition](../design/terminal-stack-transition.html), especially §§01, 03, 04, 11, 17, 21, and 28
+- Source of record: [Terminal stack transition](../design/Done/terminal-stack-transition.html), especially §§01, 03, 04, 11, 17, 21, and 28
 
 ## Context
 

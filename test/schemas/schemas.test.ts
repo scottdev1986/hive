@@ -139,21 +139,12 @@ describe("AgentMessageSchema", () => {
     to: "agent-3",
     body: "The interface is ready.",
     createdAt: timestamp,
-    deliveredAt: null,
     priority: "normal",
-    intent: "instruction",
     state: "queued",
-    injectedAt: null,
+    notifiedAt: null,
     acknowledgedAt: null,
-    appliedAt: null,
-    deadlineAt: null,
-    alertAt: null,
     sequence: 0,
     idempotencyKey: null,
-    capabilityEpoch: null,
-    deliveryDiagnostic: null,
-    deliveryDiagnosticAt: null,
-    deliveryAlertAt: null,
   } satisfies AgentMessage;
 
   test("parses a valid round-trip", () => {
@@ -163,7 +154,7 @@ describe("AgentMessageSchema", () => {
 
   test("rejects an invalid message", () => {
     expect(() =>
-      AgentMessageSchema.parse({ ...message, deliveredAt: 123 }),
+      AgentMessageSchema.parse({ ...message, notifiedAt: 123 }),
     ).toThrow();
     expect(() =>
       AgentMessageSchema.parse({

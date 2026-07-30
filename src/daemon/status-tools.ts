@@ -198,7 +198,6 @@ export function registerStatusTools(
                 (message) =>
                   isOrchestratorName(message.from) &&
                   message.to === agent.name &&
-                  message.intent === "instruction" &&
                   Date.parse(message.createdAt) > Date.parse(agent.createdAt),
               )
               .map((message) => message.body),

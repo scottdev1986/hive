@@ -1,8 +1,8 @@
 import { getAgentAdapter } from "../adapters/providers/provider-registry";
 import type {
+  CandidateEffort,
   CapabilityProvider,
   CapabilityRecord,
-  EffortTarget,
   ProviderDiscovery,
   RoutingCategory,
   RoutingPolicy,
@@ -23,11 +23,11 @@ import {
 } from "./usage-credits";
 
 export type InventoryRole = {
-  category: RoutingCategory;
-  /** The link's position in the user's chain: 0 is the primary, everything
-   * after is the fallback order the user wrote. */
-  position: number;
-  effort: EffortTarget;
+  /** The route naming this model: a category's own route or the global one. */
+  scope: RoutingCategory | "global";
+  /** The candidate's stored relative weight (1–100). */
+  weight: number;
+  effort: CandidateEffort;
 };
 
 export type InventoryModel = {
@@ -78,7 +78,7 @@ export type ModelInventory = {
 
 export type ModelInventoryInput = {
   discovery: Record<CapabilityProvider, ProviderDiscovery>;
-  /** The user's routing policy — roles are read from its chains, verbatim. */
+  /** The user's routing policy — roles are read from its routes, verbatim. */
   policy: RoutingPolicy;
   billing?: AccountBillings | null;
   now?: Date;
@@ -120,23 +120,32 @@ const recordMatches = (record: CapabilityRecord, model: string): boolean =>
   record.launchToken === model ||
   record.aliases.includes(model);
 
-/** The roles the USER gave this model: its position in each category chain.
+/** The roles the USER gave this model: its membership in each route.
  * Read from policy verbatim — Hive infers nothing. */
 function rolesFor(
   record: CapabilityRecord,
   input: ModelInventoryInput,
 ): InventoryRole[] {
   const roles: InventoryRole[] = [];
-  for (const category of ROUTING_CATEGORIES) {
-    const chain = input.policy.chains[category] ?? [];
-    chain.forEach((entry, position) => {
+  const routes: [RoutingCategory | "global", typeof input.policy.global][] = [
+    ...ROUTING_CATEGORIES.map(
+      (category): [RoutingCategory | "global", typeof input.policy.global] => [
+        category,
+        input.policy.categories[category] ?? null,
+      ],
+    ),
+    ["global", input.policy.global],
+  ];
+  for (const [scope, route] of routes) {
+    if (route === null) continue;
+    for (const candidate of route.candidates) {
       if (
-        entry.provider === record.provider &&
-        recordMatches(record, entry.model)
+        candidate.provider === record.provider &&
+        recordMatches(record, candidate.model)
       ) {
-        roles.push({ category, position, effort: entry.effort });
+        roles.push({ scope, weight: candidate.weight, effort: candidate.effort });
       }
-    });
+    }
   }
   return roles;
 }
@@ -148,14 +157,10 @@ function whenUsed(
   if (roles.length === 0) {
     return record.hidden.state === "known" && record.hidden.value
       ? "Not used automatically: the vendor marks this model hidden."
-      : "Not in any category chain; an explicit user request may still select it.";
+      : "Not in any route; an explicit user request may still select it.";
   }
   return `${roles
-    .map((role) =>
-      role.position === 0
-        ? `Primary for ${role.category}`
-        : `Fallback ${role.position} for ${role.category}`,
-    )
+    .map((role) => `In the ${role.scope} route (weight ${role.weight})`)
     .join("; ")}.`;
 }
 

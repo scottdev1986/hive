@@ -5,7 +5,7 @@
  * the shell,
  * the filesystem, the binary on disk. The model is the far side. Only the far
  * side can say anything about a route, and Hive acts on what it says by
- * quarantining that route for up to an hour (see QuotaService.quarantinedUntil).
+ * quarantining that route for up to an hour (see QuotaService.launchCooldown).
  *
  * Recording a transport failure there benches a model that was never contacted.
  * One over-long brief took Opus out of rotation for half an hour and silently

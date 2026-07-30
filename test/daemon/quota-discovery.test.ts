@@ -438,29 +438,21 @@ describe("the real Codex payload, verbatim off the wire", () => {
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now, { force: true });
-      const candidates = await authorizeForQuotaTest([
-        { tool: "codex", model: "gpt-5.3-codex" },
-      ]);
-      const spent = await quota.routeAndReserve({
-        agentName: "spent",
-        category: "complex_coding",
-        selection: "strict",
-        explicitCandidate: true,
-        candidates,
-      });
+      const candidate = required(
+        (
+          await authorizeForQuotaTest([
+            { tool: "codex", model: "gpt-5.3-codex" },
+          ])
+        )[0],
+      );
+      const spent = quota.reserveLaunch("spent", candidate, "complex_coding");
       await quota.reconcile(
-        spent.reservation.id,
+        spent.id,
         undefined,
         "estimated",
         "2026-07-10T12:10:00.000Z",
       );
-      await quota.routeAndReserve({
-        agentName: "active",
-        category: "complex_coding",
-        selection: "strict",
-        explicitCandidate: true,
-        candidates,
-      });
+      quota.reserveLaunch("active", candidate, "complex_coding");
 
       expect(pool(quota, "codex").fiveHour).toEqual({
         availability: "not-metered",
@@ -607,25 +599,26 @@ describe("startup quota discovery", () => {
     }
   });
 
-  test("routes and reserves against the discovered pool", async () => {
+  test("books against the discovered pool", async () => {
     const codex = new StubProbe("codex", await codexPools());
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      const decision = await quota.routeAndReserve({
-        agentName: "sam",
-        category: "complex_coding",
-        selection: "strict",
-        explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([
-          { tool: "codex", model: "gpt-5.3-codex" },
-        ]),
-      });
-      expect(decision.tool).toBe("codex");
-      expect(decision.reservation.pool).toBe("codex");
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "codex", model: "gpt-5.3-codex" },
+            ])
+          )[0],
+        ),
+        "complex_coding",
+      );
+      expect(reservation.pool).toBe("codex");
       // The deep tier's percent estimate debits each window differently.
-      expect(decision.reservation.estimatedUnits).toBe(8);
-      expect(decision.reservation.estimatedWeeklyUnits).toBe(1.5);
+      expect(reservation.estimatedUnits).toBe(8);
+      expect(reservation.estimatedWeeklyUnits).toBe(1.5);
 
       const after = pool(quota, "codex");
       expect(after.fiveHour.reserved).toBe(8);
@@ -654,21 +647,20 @@ describe("startup quota discovery", () => {
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      // Usage never refuses a spawn: the booking lands, and the decision still
-      // reports the measured, nearly-spent pool it came from.
-      const decision = await quota.routeAndReserve({
-        agentName: "sam",
-        category: "complex_coding",
-        selection: "strict",
-        candidates: await authorizeForQuotaTest([
-          { tool: "codex", model: "gpt-5.3-codex" },
-        ]),
-      });
-      expect(decision.tool).toBe("codex");
-      if ("configured" in decision.status) {
-        throw new Error("expected a measured pool");
-      }
-      expect(decision.status.pool).toBe("codex");
+      // Usage never refuses a spawn: the booking lands, against the measured,
+      // nearly-spent pool it came from.
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "codex", model: "gpt-5.3-codex" },
+            ])
+          )[0],
+        ),
+        "complex_coding",
+      );
+      expect(reservation.pool).toBe("codex");
       expect(quota.ledger.getActiveReservationForAgent("sam")).not.toBeNull();
     } finally {
       db.close();
@@ -786,19 +778,21 @@ describe("per-window accounting", () => {
       await quota.refreshFromProviders(now);
 
       // Spend a standard run: 4% of five-hour, 0.75% of weekly.
-      const decision = await quota.routeAndReserve({
-        agentName: "sam",
-        category: "simple_coding",
-        selection: "strict",
-        explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([
-          { tool: "codex", model: "gpt-5.3-codex" },
-        ]),
-      });
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "codex", model: "gpt-5.3-codex" },
+            ])
+          )[0],
+        ),
+        "simple_coding",
+      );
       const spentAt = new Date(now.getTime() + 60_000);
-      quota.markStarted(decision.reservation.id, spentAt.toISOString());
+      quota.markStarted(reservation.id, spentAt.toISOString());
       await quota.reconcile(
-        decision.reservation.id,
+        reservation.id,
         undefined,
         "estimated",
         spentAt.toISOString(),
@@ -829,18 +823,20 @@ describe("per-window accounting", () => {
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      const decision = await quota.routeAndReserve({
-        agentName: "sam",
-        category: "simple_coding",
-        selection: "strict",
-        explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([
-          { tool: "codex", model: "gpt-5.3-codex" },
-        ]),
-      });
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "codex", model: "gpt-5.3-codex" },
+            ])
+          )[0],
+        ),
+        "simple_coding",
+      );
       const at = new Date(now.getTime() + 60_000);
       await quota.reconcile(
-        decision.reservation.id,
+        reservation.id,
         undefined,
         "estimated",
         at.toISOString(),
@@ -863,23 +859,20 @@ describe("per-window accounting", () => {
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      const decision = await quota.routeAndReserve({
-        agentName: "sam",
-        category: "simple_coding",
-        selection: "strict",
-        explicitCandidate: true,
-        candidates: await authorizeForQuotaTest([
-          { tool: "codex", model: "gpt-5.3-codex" },
-        ]),
-      });
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "codex", model: "gpt-5.3-codex" },
+            ])
+          )[0],
+        ),
+        "simple_coding",
+      );
       const at = new Date(now.getTime() + 60_000);
       // The provider says the run really cost 2% of the five-hour window.
-      await quota.reconcile(
-        decision.reservation.id,
-        2,
-        "provider",
-        at.toISOString(),
-      );
+      await quota.reconcile(reservation.id, 2, "provider", at.toISOString());
 
       const totals = quota.ledger.usageTotals(
         { provider: "codex", account: "default", pool: "codex" },
@@ -1066,18 +1059,18 @@ describe("provider unavailable", () => {
     try {
       const alerts: string[] = [];
       quota.setAlertSink(async (body) => void alerts.push(body));
-      const decision = await quota.routeAndReserve({
-        agentName: "sam",
-        category: "complex_coding",
-        selection: "strict",
-        candidates: await authorizeForQuotaTest([
-          { tool: "codex", model: "gpt-5.3-codex" },
-        ]),
-      });
-      expect(decision.status).toMatchObject({
-        configured: false,
-        confidence: "missing",
-      });
+      const reservation = quota.reserveLaunch(
+        "sam",
+        required(
+          (
+            await authorizeForQuotaTest([
+              { tool: "codex", model: "gpt-5.3-codex" },
+            ])
+          )[0],
+        ),
+        "complex_coding",
+      );
+      expect(reservation.pool).toBe("unconfigured:gpt-5.3-codex");
       expect(quota.ledger.getActiveReservationForAgent("sam")).not.toBeNull();
       // An ordinary unmetered route is not an anomaly: nothing alerts for it.
       expect(alerts).toHaveLength(0);
@@ -1358,46 +1351,33 @@ describe("pools gate the models they actually meter", () => {
     expect(namesOf("default")).toContain("Opus");
   });
 
-  test("an exhausted model pool still launches and reports its real numbers (§R3)", async () => {
+  test("an exhausted model pool still books, against every pool that meters it (§R3)", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    const decision = await quota.routeAndReserve({
-      agentName: "deep-worker",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: await authorizeForQuotaTest([
-        { tool: "claude", model: "claude-fable-5" },
-      ]),
-    });
-    expect(decision.model).toBe("claude-fable-5");
-    // The decision still names the pool that will drain mid-work — that is
+    const reservation = quota.reserveLaunch(
+      "deep-worker",
+      required(
+        (
+          await authorizeForQuotaTest([
+            { tool: "claude", model: "claude-fable-5" },
+          ])
+        )[0],
+      ),
+      "complex_coding",
+    );
+    expect(reservation.model).toBe("claude-fable-5");
+    // The booking still lands on the pool that will drain mid-work — that is
     // the drain handler's input, not a refusal's.
-    if ("configured" in decision.status) {
-      throw new Error("expected a measured pool");
-    }
-    expect(decision.status.pool).toBe("weekly:Fable");
-  });
-
-  test("strict rank order holds even when the first link's pool is drained (§R3)", async () => {
-    const { quota } = await service([claudeProbe(exhaustedFable)]);
-    await quota.refreshFromProviders(now, { force: true });
-    const decision = await quota.routeAndReserve({
-      agentName: "deep-worker",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: await authorizeForQuotaTest([
-        { tool: "claude", model: "claude-fable-5" },
-        { tool: "claude", model: "claude-opus-4-8" },
-      ]),
-    });
-    // A drained pool does not demote a candidate: rank order is rank order.
-    expect(decision.model).toBe("claude-fable-5");
-    if ("configured" in decision.status) {
-      throw new Error("expected a measured pool");
-    }
-    expect(decision.status.pool).toBe("weekly:Fable");
+    expect(
+      quota.ledger
+        .activeReservations()
+        .filter((row) => row.agentName === "deep-worker")
+        .map((row) => row.pool)
+        .sort(),
+    ).toEqual(["subscription", "weekly:Fable"]);
+    expect(
+      quota.drainFor({ tool: "claude", model: "claude-fable-5" })?.pool,
+    ).toBe("weekly:Fable");
   });
 
   test("a model with no meter of its own is metered by the general pool, never 'unknown'", async () => {
@@ -1460,15 +1440,17 @@ describe("pools gate the models they actually meter", () => {
   test("a mid-session model switch re-keys the run onto the meters it truly spends", async () => {
     const { quota, db } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    await quota.routeAndReserve({
-      agentName: "drifter",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: await authorizeForQuotaTest([
-        { tool: "claude", model: "claude-opus-4-8" },
-      ]),
-    });
+    quota.reserveLaunch(
+      "drifter",
+      required(
+        (
+          await authorizeForQuotaTest([
+            { tool: "claude", model: "claude-opus-4-8" },
+          ])
+        )[0],
+      ),
+      "complex_coding",
+    );
     // A human switches the session to Fable. The agent is already running, so the
     // booking must follow it onto the Fable cap even though that cap is full —
     // refusing would not stop the burn, it would only hide it.
@@ -1487,284 +1469,83 @@ describe("pools gate the models they actually meter", () => {
 });
 
 /**
- * Headroom is not eligibility. Codex sitting at 0% weekly outscores Claude at
- * 63% every time, so ranking on headroom alone promotes the emptiest pool over
- * the question of whether a route can produce a working agent at all — and a
- * provider can be empty precisely because nothing it launches survives Hive's
- * readiness probe. A gate that refuses an exhausted model only to hand the work
- * to a dead route has protected nothing.
+ * Launch cooldown: a route that never proved life is held back for a while,
+ * and a proven start clears it at once. Ranking and passing over cooled-down
+ * routes belongs to the router; what lives here is the record and the clock.
  */
 const BOTH_ROUTES = await authorizeForQuotaTest([
   { tool: "claude" as const, model: "claude-opus-4-8" },
   { tool: "codex" as const, model: "gpt-5.6-sol" },
 ]);
 
-describe("a route that cannot start is not a route", () => {
-  const both = BOTH_ROUTES;
+describe("a route that cannot start is on cooldown", () => {
+  const claudeRoute = required(BOTH_ROUTES[0]);
+  const codexRoute = required(BOTH_ROUTES[1]);
 
-  const generalPool = (
-    provider: "claude" | "codex",
-    pool: string,
-    fivePct: number,
-    weekPct: number,
-  ) => ({
-    provider,
-    account: "default",
-    pool,
-    label: null,
-    models: ["*"],
-    fiveHour: { usedPct: fivePct, windowMinutes: 300, resetsAt: null },
-    weekly: { usedPct: weekPct, windowMinutes: 10_080, resetsAt: null },
-    observedAt: now.toISOString(),
-    source: "provider" as const,
-    confidence: "authoritative" as const,
-  });
-
-  // Both providers are measured and capable. Their unlike windows are gates,
-  // never a cross-provider ranking score.
-  const healthy = async () => {
-    const made = await service([
-      new StubProbe("claude", {
-        status: "ok",
-        pools: [generalPool("claude", "subscription", 10, 60)],
-        catalog: [],
-      }),
-      new StubProbe("codex", {
-        status: "ok",
-        pools: [generalPool("codex", "codex", 0, 0)],
-        catalog: [],
-      }),
-    ]);
-    await made.quota.refreshFromProviders(now, { force: true });
-    return made;
-  };
-
-  test("fair dispatch does not use unlike headroom as a capability ranking", async () => {
-    const { quota } = await healthy();
-    const decision = await quota.routeAndReserve({
-      agentName: "deep-worker",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: both,
-    });
-    expect(decision.tool).toBe("claude");
-  });
-
-  test("a stale measured feed becomes fixed unknown headroom and loses to a healthy pool", async () => {
-    let clock = now;
-    const codexLimit: QuotaLimit = {
-      provider: "codex",
-      account: "default",
-      pool: "codex-manual",
-      models: ["gpt-5.6-sol"],
-      fiveHourAllowance: 100,
-      weeklyAllowance: 1_000,
-      weeklyWindow: "rolling",
-      timezone: "UTC",
-      resetWeekday: 1,
-      resetHour: 0,
-      resetMinute: 0,
-      observationMaxAgeMinutes: 360,
-    };
-    const { quota } = await service(
-      [
-        new StubProbe("claude", {
-          status: "ok",
-          pools: [generalPool("claude", "subscription", 0, 0)],
-          catalog: [],
-        }),
-      ],
-      [codexLimit],
-      () => clock,
+  test("a launch that never proved life puts its route on cooldown", async () => {
+    const { quota } = await service();
+    const first = quota.reserveLaunch(
+      "deep-worker",
+      claudeRoute,
+      "complex_coding",
     );
-    await quota.refreshFromProviders(now, { force: true });
-    clock = new Date(now.getTime() + 31 * 60_000);
-
-    const decision = await quota.routeAndReserve({
-      agentName: "stale-feed",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: both,
-    });
-    expect(pool(quota, "subscription", clock).freshness).toBe("stale");
-    // Unknown (stale) headroom is a dispatch wildcard, not an exclusion: the
-    // deficit tie goes to the first candidate, and the stale status above is
-    // still reported honestly wherever it is printed.
-    expect(decision.tool).toBe("claude");
-  });
-
-  test("a launch that never proved life takes its route out of the running", async () => {
-    const { quota } = await healthy();
-    const first = await quota.routeAndReserve({
-      agentName: "deep-worker",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: both,
-    });
-    expect(first.tool).toBe("claude");
     // The agent never came up. failSpawn settles the reservation and says why.
     await quota.cancel(
-      first.reservation.id,
+      first.id,
       now.toISOString(),
       "no readiness signal within 15s",
     );
 
-    const second = await quota.routeAndReserve({
-      agentName: "deep-worker-2",
-      category: "complex_coding",
-      selection: "strict",
-      candidates: both,
-    });
-    // Claude still has room. Its observed launch failure is stronger evidence.
-    expect(second.tool).toBe("codex");
-    expect(second.warnings.join(" ")).toContain("failed to start");
-    expect(second.warnings.join(" ")).toContain("no readiness signal");
+    const cooldown = quota.launchCooldown(claudeRoute);
+    expect(cooldown).not.toBeNull();
+    expect(cooldown?.reason).toContain("no readiness signal");
+    // The other route carries no such evidence and stays clear.
+    expect(quota.launchCooldown(codexRoute)).toBeNull();
   });
 
-  test("reservation and launch quarantine are keyed by tool, model, and effort", async () => {
-    const { quota } = await healthy();
+  test("reservation and launch cooldown are keyed by tool, model, and effort", async () => {
+    const { quota } = await service();
     const xhigh = {
       tool: "codex" as const,
       model: "gpt-5.6-sol",
       effort: "xhigh",
     };
     const low = { tool: "codex" as const, model: "gpt-5.6-sol", effort: "low" };
-    const failed = await quota.routeAndReserve({
-      agentName: "xhigh-run",
-      category: "complex_coding",
-      selection: "strict",
-      candidates: await authorizeForQuotaTest([xhigh]),
-    });
-    expect(failed.reservation).toMatchObject({
+    const failed = quota.reserveLaunch(
+      "xhigh-run",
+      required((await authorizeForQuotaTest([xhigh]))[0]),
+      "complex_coding",
+    );
+    expect(failed).toMatchObject({
       provider: "codex",
       model: "gpt-5.6-sol",
       effort: "xhigh",
     });
-    await quota.cancel(
-      failed.reservation.id,
-      now.toISOString(),
-      "model refused launch",
-    );
+    await quota.cancel(failed.id, now.toISOString(), "model refused launch");
 
-    const next = await quota.routeAndReserve({
-      agentName: "low-run",
-      category: "complex_coding",
-      selection: "strict",
-      candidates: await authorizeForQuotaTest([xhigh, low]),
-    });
-    expect(next.effort).toBe("low");
-    expect(next.reservation.effort).toBe("low");
     expect(
       quota.ledger.routeHealth("codex", "gpt-5.6-sol", "xhigh")
         ?.consecutiveFailures,
     ).toBe(1);
     expect(quota.ledger.routeHealth("codex", "gpt-5.6-sol", "low")).toBeNull();
+    expect(quota.launchCooldown(xhigh)).not.toBeNull();
+    expect(quota.launchCooldown(low)).toBeNull();
   });
 
-  test("an explicit candidate is warned but not passed over for quarantine", async () => {
-    const { quota } = await healthy();
-    const failed = await quota.routeAndReserve({
-      agentName: "failed",
-      category: "complex_coding",
-      selection: "strict",
-      candidates: both,
-    });
-    await quota.cancel(
-      failed.reservation.id,
-      now.toISOString(),
-      "model refused launch",
-    );
-
-    const retried = await quota.routeAndReserve({
-      agentName: "explicit",
-      category: "complex_coding",
-      selection: "strict",
-      explicitCandidate: true,
-      candidates: both,
-    });
-    expect(retried.tool).toBe(failed.tool);
-    expect(retried.warnings.join(" ")).toContain("explicitly requested");
-  });
-
-  test("the guard stops guarding the moment the route works again", async () => {
-    const { quota } = await healthy();
-    const failed = await quota.routeAndReserve({
-      agentName: "a",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: both,
-    });
-    await quota.cancel(
-      failed.reservation.id,
-      now.toISOString(),
-      "never started",
-    );
-    expect(
-      (
-        await quota.routeAndReserve({
-          agentName: "b",
-          category: "complex_coding",
-          selection: "spread",
-          candidates: both,
-        })
-      ).tool,
-    ).toBe("codex");
+  test("the cooldown lifts the moment the route works again", async () => {
+    const { quota } = await service();
+    const failed = quota.reserveLaunch("a", codexRoute, "complex_coding");
+    await quota.cancel(failed.id, now.toISOString(), "never started");
+    expect(quota.launchCooldown(codexRoute)).not.toBeNull();
 
     // Someone fixes the underlying cause and a codex agent proves life. That is
     // the only evidence that matters, and it supersedes everything Hive
     // concluded from the failure — no operator action, no expiry to wait out.
-    const pinned = await quota.routeAndReserve({
-      agentName: "c",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([required(both[1])]),
-    });
-    quota.markStarted(pinned.reservation.id, now.toISOString());
-
-    expect(
-      (
-        await quota.routeAndReserve({
-          agentName: "d",
-          category: "complex_coding",
-          selection: "spread",
-          candidates: both,
-        })
-      ).tool,
-    ).toBe("codex");
-  });
-
-  test("an only candidate still launches, quarantined or not, and warns", async () => {
-    const { quota } = await healthy();
-    const failed = await quota.routeAndReserve({
-      agentName: "a",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([required(both[1])]),
-    });
-    await quota.cancel(
-      failed.reservation.id,
-      now.toISOString(),
-      "never started",
-    );
-
-    // A human pinning the one model Hive is currently sulking about must still
-    // get their agent. Refusing everything helps nobody; the cooldown is Hive's
-    // own recent bad luck, which is a weaker fact than a human's explicit ask.
-    const pinned = await quota.routeAndReserve({
-      agentName: "b",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([required(both[1])]),
-    });
-    expect(pinned.tool).toBe("codex");
-    expect(pinned.warnings.join(" ")).toContain("no alternative");
+    const pinned = quota.reserveLaunch("b", codexRoute, "complex_coding");
+    quota.markStarted(pinned.id, now.toISOString());
+    expect(quota.launchCooldown(codexRoute)).toBeNull();
   });
 });
-
-describe("a refusal names the way out, and never takes it", () => {});
 
 describe("a spend belongs to the vendor whose model produced it", () => {
   test("the ledger refuses to bill a Claude model to the Codex meter", async () => {

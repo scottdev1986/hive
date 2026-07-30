@@ -46,7 +46,7 @@ Authentication (who is calling) and authorization (what they may do) are separat
 
 ## The terminal-renderer landscape
 
-**Superseded terminal decision (2026-07-16):** the earlier "do not start a libghostty integration" constraint is superseded by [ADR 0001](../adr/0001-native-terminal-foundation.md) and [terminal-stack-transition.html](../design/terminal-stack-transition.html) §§01/§05. Libghostty pinned to commit `73534c4680a809398b396c94ac7f12fcccb7963d` behind the bounded Hive bridge is now binding, conditional on TG1 and TG2. The caution below survives as the fallback posture: tmux/SwiftTerm remain the admission fallback if either gate fails.
+**Superseded terminal decision (2026-07-16):** the earlier "do not start a libghostty integration" constraint is superseded by [ADR 0001](../adr/0001-native-terminal-foundation.md) and [terminal-stack-transition.html](../design/Done/terminal-stack-transition.html) §§01/§05. Libghostty pinned to commit `73534c4680a809398b396c94ac7f12fcccb7963d` behind the bounded Hive bridge is now binding, conditional on TG1 and TG2. The caution below survives as the fallback posture: tmux/SwiftTerm remain the admission fallback if either gate fails.
 
 | Candidate | Layer | What you get | What you must build |
 |---|---|---|---|

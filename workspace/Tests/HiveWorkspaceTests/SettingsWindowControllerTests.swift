@@ -69,10 +69,10 @@ final class SettingsWindowControllerTests: XCTestCase {
 
     private var enabledPolicy: String {
         """
-        {"schemaVersion":2,"revision":1,"updatedAt":"2026-07-13T21:00:00.000Z",
+        {"schemaVersion":3,"revision":1,"updatedAt":"2026-07-13T21:00:00.000Z",
          "provisional":false,"providers":{"grok":"enabled"},
          "models":[{"provider":"grok","model":"grok-4.5","state":"enabled"}],
-         "chains":{}}
+         "global":null,"categories":{}}
         """
     }
 

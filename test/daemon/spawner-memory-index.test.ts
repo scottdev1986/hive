@@ -41,22 +41,26 @@ test("spawn memory comes from the primary checkout, not a stale worktree copy", 
     title: "Stale worktree copy",
   });
   const policy: RoutingPolicy = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     updatedAt: "2026-07-25T00:00:00.000Z",
     provisional: false,
     providers: {},
     models: [],
-    chains: {
-      simple_coding: [
-        {
-          provider: "codex",
-          model: "gpt-test",
-          effort: { mode: "provider-controlled" },
-        },
-      ],
+    global: null,
+    categories: {
+      simple_coding: {
+        mode: "user-weighted",
+        candidates: [
+          {
+            provider: "codex",
+            model: "gpt-test",
+            effort: { mode: "provider-controlled" },
+            weight: 1,
+          },
+        ],
+      },
     },
-    selection: { global: "choice" },
   };
   const admission = {
     engineBuildId: "engine-test",

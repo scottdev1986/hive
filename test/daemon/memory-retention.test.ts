@@ -578,7 +578,7 @@ describe("daemon retention wiring", () => {
         .find((message) => message.to === "maya");
       db.transitionMessage(
         required(warning?.id),
-        "applied",
+        "acknowledged",
         new Date().toISOString(),
       );
       await daemon.reapIdleAgents();

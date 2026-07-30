@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Hive: Agent Integration</title>
-  <link rel="stylesheet" href="hive-design.css">
+  <link rel="stylesheet" href="../hive-design.css">
 </head>
 <body>
   <header class="shell topbar">
@@ -18,7 +18,7 @@
       <div class="hero">
         <p class="eyebrow">Agent integration · reliability contract</p>
         <h1>An agent you can always reach, read, and trust.</h1>
-        <p class="hero-copy">This document defines how provider agents (Claude, Codex, Grok) are integrated into Hive — launch, identity, status, input, permission modes, and lifecycle — and the reliability contract an engineer can hold Hive to. It is written against the designs at HEAD: <a href="terminal-stack-transition.html">Terminal Stack Transition</a>, <a href="agentic-hierarchy.html">The Queen’s Hive</a>, <a href="hive-communication.html">Communication Fabric</a>, and <a href="split-horizon.html">Split Horizon</a>. Where older documents disagree, those four win.</p>
+        <p class="hero-copy">This document defines how provider agents (Claude, Codex, Grok) are integrated into Hive — launch, identity, status, input, permission modes, and lifecycle — and the reliability contract an engineer can hold Hive to. It is written against the designs at HEAD: <a href="terminal-stack-transition.html">Terminal Stack Transition</a>, <a href="../agentic-hierarchy.html">The Queen’s Hive</a>, <a href="hive-communication.html">Communication Fabric</a>, and <a href="../split-horizon.html">Split Horizon</a>. Where older documents disagree, those four win.</p>
         <div class="hero-chips" aria-label="Contract pillars"><span>ALWAYS TYPABLE</span><span>STATUS CURRENT</span><span>IDENTITY KNOWN</span><span>HONEST FAILURE</span></div>
       </div>
     </div>
@@ -207,7 +207,7 @@
       <p>A row is one durable holder of a name; a process incarnation is one launch of it. Every transition that allocates a new incarnation — spawn fallback, crash recovery, critical-control restart — resets the observed identity, re-records the driver it actually launches with, and reissues capability at a fresh epoch. Pane conversation survives that rotation for the same process (§05); a replacement incarnation’s pane starts its own. Teardown captures artifacts before destruction; an idle merged agent is reaped by the daemon on its own timer.</p>
     </div>
 
-    <div class="callout"><strong>Viewer restart without machine loss is the contract — and today’s Workspace does not yet meet it.</strong> Per <a href="terminal-stack-transition.html">Terminal Stack Transition</a> and <a href="split-horizon.html">Split Horizon</a>, windows are viewers over daemon-owned state, so quitting a viewer must never destroy the machine. Today, quitting the Workspace app stops the whole instance, and an ordinary relaunch selects a fresh one: a restart is teardown plus cold start, losing live agents and pane history. The designed fix path is the terminal transition itself — sessiond-owned persistent sessions with Ghostty (or any viewer) attaching and detaching freely — which removes the app from the machine’s lifetime with minimum further change. Until that lands, daemon-side fixes activate only on a deliberately scheduled restart, and nothing in this document assumes the app can be bounced casually.</div>
+    <div class="callout"><strong>Viewer restart without machine loss is the contract — and today’s Workspace does not yet meet it.</strong> Per <a href="terminal-stack-transition.html">Terminal Stack Transition</a> and <a href="../split-horizon.html">Split Horizon</a>, windows are viewers over daemon-owned state, so quitting a viewer must never destroy the machine. Today, quitting the Workspace app stops the whole instance, and an ordinary relaunch selects a fresh one: a restart is teardown plus cold start, losing live agents and pane history. The designed fix path is the terminal transition itself — sessiond-owned persistent sessions with Ghostty (or any viewer) attaching and detaching freely — which removes the app from the machine’s lifetime with minimum further change. Until that lands, daemon-side fixes activate only on a deliberately scheduled restart, and nothing in this document assumes the app can be bounced casually.</div>
   </div>
 </section>
 
@@ -295,7 +295,7 @@
   </main>
 
   <footer class="shell footer">
-    <p>Hive · Agent integration and reliability contract · Cites <a href="terminal-stack-transition.html">Terminal Stack Transition</a>, <a href="agentic-hierarchy.html">The Queen’s Hive</a>, <a href="hive-communication.html">Communication Fabric</a>, <a href="split-horizon.html">Split Horizon</a> as design authority.</p>
+    <p>Hive · Agent integration and reliability contract · Cites <a href="terminal-stack-transition.html">Terminal Stack Transition</a>, <a href="../agentic-hierarchy.html">The Queen’s Hive</a>, <a href="hive-communication.html">Communication Fabric</a>, <a href="../split-horizon.html">Split Horizon</a> as design authority.</p>
   </footer>
 </body>
 </html>

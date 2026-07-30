@@ -217,7 +217,7 @@ describe("HiveDatabase", () => {
       to: "maya",
       body: "begin",
       createdAt: timestamp,
-      deliveredAt: null,
+      notifiedAt: null,
     });
     db.insertMessage(message);
     const attempt = db.beginMessageAttempt({
@@ -917,38 +917,24 @@ describe("HiveDatabase", () => {
       to: "maya",
       body: "The interface is ready.",
       createdAt: timestamp,
-      deliveredAt: null,
       priority: "normal",
-      intent: "instruction",
       state: "queued",
-      injectedAt: null,
+      notifiedAt: null,
       acknowledgedAt: null,
-      appliedAt: null,
-      deadlineAt: null,
-      alertAt: null,
       sequence: 1,
       idempotencyKey: null,
-      capabilityEpoch: null,
-      deliveryDiagnostic: null,
-      deliveryDiagnosticAt: null,
-      deliveryAlertAt: null,
     };
     try {
       expect(db.insertMessage(message)).toEqual(message);
-      expect(db.getUndeliveredMessages("maya")).toEqual([message]);
-      const deliveredAt = "2026-07-09T12:01:00.000Z";
-      expect(db.markMessageDelivered(message.id, deliveredAt)).toEqual({
-        ...message,
-        deliveredAt,
-      });
-      // A second claim returns null exactly like a missing row: a push path
-      // racing another delivery must not report a fresh delivery for a
-      // message someone else already claimed.
+      expect(db.getUnacknowledgedMessages("maya")).toEqual([message]);
       expect(
-        db.markMessageDelivered(message.id, "2026-07-09T12:02:00.000Z"),
-      ).toEqual(null);
-      expect(db.getMessage(message.id)?.deliveredAt).toEqual(deliveredAt);
-      expect(db.getUndeliveredMessages("maya")).toEqual([]);
+        db.transitionMessage(
+          message.id,
+          "notified",
+          "2026-07-09T12:01:00.000Z",
+        ),
+      ).toMatchObject({ state: "notified" });
+      expect(db.getUnacknowledgedMessages("maya")).toHaveLength(1);
       expect(deleteMessageRow(db, message.id)).toEqual(true);
     } finally {
       db.close();
@@ -965,27 +951,18 @@ describe("HiveDatabase", () => {
       to: "maya",
       body: "history",
       createdAt: old,
-      deliveredAt: null,
       priority: "normal",
-      intent: "instruction",
       state: "queued",
-      injectedAt: null,
+      notifiedAt: null,
       acknowledgedAt: null,
-      appliedAt: null,
-      deadlineAt: null,
-      alertAt: null,
       sequence: 1,
       idempotencyKey: null,
-      capabilityEpoch: null,
-      deliveryDiagnostic: null,
-      deliveryDiagnosticAt: null,
-      deliveryAlertAt: null,
       ...overrides,
     });
     try {
       db.insertEvent({ kind: "turn-start", agentName: "maya", timestamp: old });
       db.insertEvent({ kind: "turn-start", agentName: "maya", timestamp: now });
-      db.insertMessage(message({ id: "old-applied", state: "applied" }));
+      db.insertMessage(message({ id: "old-applied", state: "acknowledged" }));
       db.insertMessage(message({ id: "old-queued", sequence: 2 }));
       db.insertApproval({
         id: "old-approved",

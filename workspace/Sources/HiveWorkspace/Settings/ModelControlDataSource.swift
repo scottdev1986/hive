@@ -136,70 +136,63 @@ final class ModelControlDataSource {
         }
     }
 
-    /// nil category = the global fallback chain.
-    func chainEntries(_ category: TaskCategory?) -> [ChainEntry] {
+    /// The stored wire route for a scope; daemon backend only.
+    private func wireRoute(_ category: TaskCategory?) -> RoutingPolicyDocument.WireRoute? {
+        guard case .daemon(let document) = backend else { return nil }
+        if let category { return document.categories[category.rawValue] }
+        return document.global
+    }
+
+    /// nil category = the global route. nil = the scope is unconfigured, or
+    /// (daemon backend) carries a router mode this build cannot name — see
+    /// `routeUnreadableReason`.
+    func route(_ category: TaskCategory?) -> RoutePolicy? {
         switch backend {
-        case .daemon(let document):
-            let wire = category.map { document.chain(for: $0) } ?? document.defaultChain
-            return wire.map {
-                ChainEntry(provider: $0.provider, model: $0.model,
-                           effort: $0.effort.asEffortTarget)
-            }
+        case .daemon:
+            return wireRoute(category)?.asRoutePolicy
         case .placeholder(let policy, _):
-            return category.map { policy.categoryPolicy($0).chain } ?? policy.defaultChain
+            if let category { return policy.categories[category.rawValue] }
+            return policy.global
         case nil:
-            return []
+            return nil
         }
     }
 
-    func linkStatus(_ entry: ChainEntry) -> ChainLinkStatus {
+    /// Non-nil when a stored route exists that this build cannot read or
+    /// rewrite (a newer daemon's router mode or effort mode). The editor
+    /// shows the reason instead of controls whose writes would respell it.
+    func routeUnreadableReason(_ category: TaskCategory?) -> String? {
+        guard let wire = wireRoute(category), !wire.writable else { return nil }
+        return MCCCopy.routeUnreadable
+    }
+
+    func candidateStatus(_ candidate: RouteCandidate) -> RouteCandidateStatus {
         let resolved: Bool
-        if case .available(let models, _)? = snapshot?.providers[entry.provider] {
-            resolved = models.contains { $0.canonicalId == entry.model }
+        if case .available(let models, _)? = snapshot?.providers[candidate.provider] {
+            resolved = models.contains { $0.canonicalId == candidate.model }
         } else {
             resolved = false
         }
-        return ChainLinkStatus.derive(
+        return RouteCandidateStatus.derive(
             rowState: rowState(
-                provider: ProviderID(entry.provider), model: entry.model,
+                provider: ProviderID(candidate.provider), model: candidate.model,
                 available: resolved),
             resolvedInCatalog: resolved)
     }
 
-    var globalSelection: SelectionMode? {
+    /// Whether a scope's route has its own configuration (rather than
+    /// resolving to global). Distinct from `route(_:) != nil` so an
+    /// unreadable stored route never masquerades as an unconfigured one.
+    private func routeConfigured(_ category: TaskCategory?) -> Bool {
         switch backend {
-        case .daemon(let document): return document.globalSelection
-        case .placeholder(let policy, _): return policy.globalSelection
-        case nil: return nil
+        case .daemon:
+            return wireRoute(category) != nil
+        case .placeholder(let policy, _):
+            if let category { return policy.categories[category.rawValue] != nil }
+            return policy.global != nil
+        case nil:
+            return false
         }
-    }
-
-    /// Whether the backend can PERSIST selection modes. A daemon that never
-    /// sent the field — or one speaking a selection vocabulary this build
-    /// cannot write — would reject the mutation, so the control disables with
-    /// a reason instead of failing on every use.
-    var canEditSelection: Bool {
-        switch backend {
-        case .daemon(let document): return document.selectionWritable
-        case .placeholder: return true
-        case nil: return false
-        }
-    }
-
-    /// The exhaustion control persists only in the placeholder store today —
-    /// the daemon document has no field for it yet, and a control that
-    /// silently does not persist is a lie, so the UI hides it on the daemon
-    /// backend until the store grows the field.
-    var canEditExhaustion: Bool {
-        if case .placeholder = backend { return true }
-        return false
-    }
-
-    func exhaustionBehavior(_ category: TaskCategory) -> ExhaustionBehavior {
-        if case .placeholder(let policy, _) = backend {
-            return policy.categoryPolicy(category).exhaustionBehavior
-        }
-        return .refuse
     }
 
     var warnings: [PolicyWarning] {
@@ -209,8 +202,8 @@ final class ModelControlDataSource {
         if !ids.isEmpty, ids.allSatisfy({ !providerMasterOn($0) }) {
             result.append(.noProvidersEnabled)
         }
-        if policyLoaded, chainEntries(nil).isEmpty {
-            result.append(.defaultChainEmpty)
+        if policyLoaded, !routeConfigured(nil) {
+            result.append(.noGlobalRoute)
         }
         return result
     }
@@ -254,51 +247,46 @@ final class ModelControlDataSource {
         ])
     }
 
-    /// nil category = the global fallback chain ("default" on the wire).
-    func setChain(_ category: TaskCategory?, entries: [ChainEntry]) {
-        let wire = entries.map {
-            RoutingPolicyDocument.WireChainEntry(
-                provider: $0.provider, model: $0.model,
-                effort: RoutingPolicyDocument.WireEffort($0.effort))
-        }
-        // The chain CLI has no spelling for never-configured, hive-decides, or
-        // a mode a newer daemon added. Rewriting such a link to the nearest
-        // spelling would change routing the user never touched, so refuse the
-        // whole write and say so.
-        let arguments = wire.map(\.cliArgument)
-        guard arguments.allSatisfy({ $0 != nil }) else {
-            policyWriteError =
-                "This chain contains an effort setting this version of Hive cannot write. "
-                + "Update Hive to edit it — nothing was changed."
+    /// nil category = the global route ("global" on the wire). nil route (or
+    /// zero candidates) clears the scope back to unconfigured.
+    func setRoute(_ category: TaskCategory?, _ route: RoutePolicy?) {
+        let route = route?.candidates.isEmpty == true ? nil : route
+        // A stored route this build cannot fully spell must not be rewritten:
+        // respelling one candidate's effort is a routing change the user
+        // never made. Refuse the whole write and say so.
+        guard wireRoute(category)?.writable != false else {
+            policyWriteError = MCCCopy.routeUnreadable + " Nothing was changed."
             notify()
             return
         }
-        let key = category?.rawValue ?? "default"
+        let wire = route.map(RoutingPolicyDocument.WireRoute.init)
+        let scope = category?.rawValue ?? "global"
         mutate(applyToDocument: { document in
-            document.chains[key] = wire
-        }, applyToPlaceholder: { policy in
             if let category {
-                policy.setCategoryChain(category, chain: entries)
+                document.categories[category.rawValue] = wire
             } else {
-                policy.defaultChain = entries
-                policy.provisional = false
+                document.global = wire
             }
-        }, persist: ["routing", "set-chain", key] + arguments.compactMap { $0 })
-    }
-
-    func setGlobalSelection(_ mode: SelectionMode) {
-        mutate(applyToDocument: { document in
-            document.selection.global = mode.rawValue
+            // Mirror the daemon: naming a model in a route keeps an explicit
+            // enabled row for it (the provider master switch remains the
+            // launch authority).
+            guard let wire else { return }
+            for candidate in wire.candidates {
+                if let index = document.models.firstIndex(where: {
+                    $0.provider == candidate.provider && $0.model == candidate.model
+                }) {
+                    document.models[index].state = "enabled"
+                } else {
+                    document.models.append(RoutingPolicyDocument.ModelRow(
+                        provider: candidate.provider, model: candidate.model,
+                        state: "enabled", effort: candidate.effort))
+                }
+            }
         }, applyToPlaceholder: { policy in
-            policy.setGlobalSelection(mode)
-        }, persist: ["routing", "set-selection", mode.rawValue])
-    }
-
-    func setExhaustionBehavior(_ category: TaskCategory, _ behavior: ExhaustionBehavior) {
-        // Placeholder-only until the daemon document carries the field.
-        mutate(applyToDocument: { _ in }, applyToPlaceholder: { policy in
-            policy.setExhaustionBehavior(category, behavior)
-        }, persist: nil)
+            policy.setRoute(category, route)
+        }, persist: ["routing", "set-route", scope,
+                     route?.mode.rawValue ?? RouterMode.hiveEqual.rawValue]
+            + (wire?.candidates.compactMap(\.cliArgument) ?? []))
     }
 
     private static func upsertRow(

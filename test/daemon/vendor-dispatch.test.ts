@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HiveDatabase } from "../../src/daemon/db";
-import { QuotaService } from "../../src/daemon/quota";
 import { QuotaLedger } from "../../src/daemon/quota-ledger";
 import { CrashRecovery } from "../../src/daemon/recovery";
 import {
@@ -16,11 +15,7 @@ import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
   forEachProvider,
-  QuotaConfigSchema,
-  type QuotaLimit,
 } from "../../src/schemas";
-import { required } from "../required";
-import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 /**
  * Hive knows a closed vendor set, and every dispatch on it must say so
@@ -131,62 +126,6 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
   expect("codex" in billings).toBe(false);
 });
 
-test("a review of an unknown vendor is not silently handed to claude", async () => {
-  const db = new HiveDatabase(join(home, "quota.db"));
-  const ledger = new QuotaLedger(db);
-  ledger.replaceModelCatalog("claude", [
-    {
-      provider: "claude",
-      modelId: "claude-model",
-      displayName: "claude-model",
-      discoveredAt: "2026-07-09T12:00:00.000Z",
-    },
-  ]);
-  ledger.replaceModelCatalog("codex", [
-    {
-      provider: "codex",
-      modelId: "codex-model",
-      displayName: "codex-model",
-      discoveredAt: "2026-07-09T12:00:00.000Z",
-    },
-  ]);
-  const service = new QuotaService(
-    ledger,
-    QuotaConfigSchema.parse({
-      limits: [quotaLimit("claude"), quotaLimit("codex")],
-    }),
-    () => new Date("2026-07-09T12:00:00.000Z"),
-  );
-  const candidates = await authorizeForQuotaTest([
-    { tool: "claude" as const, model: "claude-model" },
-    { tool: "codex" as const, model: "codex-model" },
-  ]);
-
-  // Today's pairing is unambiguous, and must not change.
-  const reviewOfClaude = await service.routeAndReserve({
-    agentName: "maya",
-    category: "code_review",
-    selection: "strict",
-    reviewOfTool: "claude",
-    candidates,
-  });
-  expect(reviewOfClaude.tool).toBe("codex");
-
-  // There is no honest default reviewer, so the pairing must be stated rather
-  // than guessed: a `: "claude"` fallback would pick Claude to review a vendor
-  // it was never told how to pair with.
-  await expect(
-    service.routeAndReserve({
-      agentName: "sam",
-      category: "code_review",
-      selection: "strict",
-      reviewOfTool: UNKNOWN,
-      candidates,
-    }),
-  ).rejects.toThrow(/unknown vendor "future-vendor"/);
-  db.close();
-});
-
 test("a model no catalog claims cannot be billed to any vendor's pool", () => {
   const db = new HiveDatabase(join(home, "billing.db"));
   const ledger = new QuotaLedger(db);
@@ -285,23 +224,6 @@ function reserve(
       expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     },
   ]);
-}
-
-function quotaLimit(provider: "claude" | "codex"): QuotaLimit {
-  return {
-    provider,
-    account: "personal",
-    pool: `${provider}-premium`,
-    models: [`${provider}-model`],
-    fiveHourAllowance: 100,
-    weeklyAllowance: 1000,
-    weeklyWindow: "rolling",
-    timezone: "UTC",
-    resetWeekday: 1,
-    resetHour: 0,
-    resetMinute: 0,
-    observationMaxAgeMinutes: 60,
-  };
 }
 
 /**

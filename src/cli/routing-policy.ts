@@ -1,9 +1,11 @@
 import { canonicalRoutingPolicyJson } from "../daemon/routing-policy-store";
 import {
+  type CandidateEffort,
   type CapabilityProvider,
   CapabilityProviderSchema,
-  type ChainEntry,
-  type EffortTarget,
+  type RouteCandidate,
+  type RouterMode,
+  RouterModeSchema,
   type RoutingCategory,
   RoutingCategorySchema,
   type RoutingPolicy,
@@ -15,7 +17,7 @@ import { operatorFetch } from "./credential";
 
 /**
  * `hive routing policy` / `set-provider` / `set-model` / `set-effort` /
- * `set-chain` / `export` — the Model Control Center's contract. The UI is a
+ * `set-route` / `export` — the Model Control Center's contract. The UI is a
  * separate AppKit process that shells out to these commands; every read and
  * write goes through the daemon (the store's sole writer), and every mutation
  * carries the revision the caller read, so concurrent edits conflict loudly
@@ -87,11 +89,12 @@ function parseProvider(raw: string): CapabilityProvider {
   return parsed.data;
 }
 
-function parseCategory(raw: string): RoutingCategory {
+function parseRouteScope(raw: string): RoutingCategory | "global" {
+  if (raw === "global") return "global";
   const parsed = RoutingCategorySchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(
-      `unknown category ${JSON.stringify(raw)}; categories are ${RoutingCategorySchema.options.join(
+      `unknown route scope ${JSON.stringify(raw)}; scopes are global, ${RoutingCategorySchema.options.join(
         ", ",
       )}`,
     );
@@ -109,7 +112,9 @@ function parseState(raw: string): "enabled" | "disabled" | "unset" {
 /** Explicit effort intent. "none" means the vendor's stated no-effort axis;
  * "provider-controlled" omits the flag without claiming to know the default,
  * and "hive-decides" selects only from source-ordered advertised levels. */
-export function parseEffortTargetArg(raw: string): EffortTarget {
+export function parseEffortTargetArg(
+  raw: string,
+): CandidateEffort | { mode: "never-configured" } {
   if (raw === "never-configured") return { mode: "never-configured" };
   if (raw === "hive-decides") return { mode: "hive-decides" };
   if (raw === "none") return { mode: "none" };
@@ -124,26 +129,40 @@ export function parseEffortTargetArg(raw: string): EffortTarget {
 }
 
 /**
- * One chain link: `provider/model` (effort provider-controlled),
- * `provider/model@LEVEL` (exact effort), or `provider/model@none` (the
- * vendor's stated no-effort axis). The model is always a specific id — there
- * is deliberately no way to write "whatever the vendor picks", and a bare
- * "default" model id is rejected downstream by the schema.
+ * One route candidate: `provider/model` (effort provider-controlled, weight
+ * 1), `provider/model@LEVEL` (exact effort), `provider/model@none` (the
+ * vendor's stated no-effort axis), each optionally suffixed `=WEIGHT` with an
+ * integer 1–100. The model is always a specific id — there is deliberately no
+ * way to write "whatever the vendor picks", and a bare "default" model id is
+ * rejected downstream by the schema.
  */
-export function parseChainEntryArg(raw: string): ChainEntry {
-  const at = raw.lastIndexOf("@");
-  const body = at === -1 ? raw : raw.slice(0, at);
-  const level = at === -1 ? null : raw.slice(at + 1);
-  const effort: EffortTarget =
+export function parseRouteCandidateArg(raw: string): RouteCandidate {
+  const equals = raw.lastIndexOf("=");
+  const target = equals === -1 ? raw : raw.slice(0, equals);
+  let weight = 1;
+  if (equals !== -1) {
+    weight = Number.parseInt(raw.slice(equals + 1), 10);
+    if (!Number.isSafeInteger(weight) || weight < 1 || weight > 100) {
+      throw new Error(
+        `a candidate weight is an integer 1–100; got ${JSON.stringify(raw.slice(equals + 1))}`,
+      );
+    }
+  }
+  const at = target.lastIndexOf("@");
+  const body = at === -1 ? target : target.slice(0, at);
+  const level = at === -1 ? null : target.slice(at + 1);
+  const effort: CandidateEffort =
     level === null
       ? { mode: "provider-controlled" }
       : level === "none"
         ? { mode: "none" }
-        : { mode: "exact", value: level };
+        : level === "hive-decides"
+          ? { mode: "hive-decides" }
+          : { mode: "exact", value: level };
   const slash = body.indexOf("/");
   if (slash === -1 || slash === body.length - 1 || level === "") {
     throw new Error(
-      `a chain entry is provider/model, provider/model@LEVEL, or provider/model@none; got ${JSON.stringify(
+      `a route candidate is provider/model[@LEVEL|@none][=WEIGHT]; got ${JSON.stringify(
         raw,
       )}`,
     );
@@ -152,6 +171,7 @@ export function parseChainEntryArg(raw: string): ChainEntry {
     provider: parseProvider(body.slice(0, slash)),
     model: body.slice(slash + 1),
     effort,
+    weight,
   };
 }
 
@@ -219,37 +239,37 @@ export async function setModelEffort(
   );
 }
 
-export async function setSelectionMode(
-  mode: string,
-  options: { port?: number },
-  expectRevision: string,
-): Promise<void> {
-  if (mode !== "never-configured" && mode !== "auto" && mode !== "choice") {
+function parseRouterMode(raw: string): RouterMode {
+  const parsed = RouterModeSchema.safeParse(raw);
+  if (!parsed.success) {
     throw new Error(
-      `selection mode must be never-configured, auto, or choice; got ${JSON.stringify(mode)}`,
+      `route mode must be ${RouterModeSchema.options.join(" or ")}; got ${JSON.stringify(raw)}`,
     );
   }
-  printPolicy(
-    await applyPolicyMutation(requireDaemonPort(options.port), {
-      op: "set-selection",
-      expectedRevision: parseExpectedRevision(expectRevision),
-      mode,
-    }),
-  );
+  return parsed.data;
 }
 
-export async function setCategoryChain(
-  category: string,
-  entries: string[],
+/** Replace one scope's route. Zero candidates clears the scope back to
+ * unconfigured (`global` cleared refuses automatic routing). */
+export async function setRoute(
+  scope: string,
+  mode: string,
+  candidates: string[],
   expectRevision: string,
   port?: number,
 ): Promise<void> {
   printPolicy(
     await applyPolicyMutation(requireDaemonPort(port), {
-      op: "set-chain",
+      op: "set-route",
       expectedRevision: parseExpectedRevision(expectRevision),
-      category: parseCategory(category),
-      entries: entries.map(parseChainEntryArg),
+      scope: parseRouteScope(scope),
+      route:
+        candidates.length === 0
+          ? null
+          : {
+              mode: parseRouterMode(mode),
+              candidates: candidates.map(parseRouteCandidateArg),
+            },
     }),
   );
 }

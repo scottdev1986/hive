@@ -18,12 +18,11 @@ import {
   retireLegacyRoutingToml,
 } from "../../src/daemon/routing-policy-store";
 import {
-  modelCategoryFit,
   modelPolicyState,
   providerPolicyState,
-  ROUTING_CATEGORIES,
+  resolveRoute,
+  type RoutePolicy,
   type RoutingPolicy,
-  type RoutingPolicyMutation,
 } from "../../src/schemas";
 import { required } from "../required";
 
@@ -47,7 +46,8 @@ describe("fail-closed reading", () => {
     expect(policy.revision).toBe(0);
     expect(policy.providers).toEqual({});
     expect(policy.models).toEqual([]);
-    expect(policy.chains).toEqual({});
+    expect(policy.global).toBeNull();
+    expect(policy.categories).toEqual({});
     expect(providerPolicyState(policy, "grok")).toBe("unconfigured");
     expect(modelPolicyState(policy, "grok", "grok-4.5")).toEqual({
       state: "unconfigured",
@@ -55,60 +55,104 @@ describe("fail-closed reading", () => {
     });
   });
 
-  test("a version-1 policy migrates choices but never invents AUTO", () => {
-    const { selection: _selection, ...current } = store.read(NOW);
-    const legacy = { ...current, schemaVersion: 1 };
-    db.database.run(
-      "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 0, ?, ?)",
-      [NOW.toISOString(), JSON.stringify(legacy)],
-    );
-    const migrated = new RoutingPolicyStore(db).read(NOW);
-    expect(migrated.selection).toEqual({ global: "never-configured" });
-  });
-
-  test("a stored policy with retired keys — a profiling chain, per-category selection — is migrated away rather than throwing", () => {
-    const current = store.read(NOW);
-    const defaultChain = [
-      {
-        provider: "codex" as const,
-        model: "gpt-5.6-sol",
-        effort: { mode: "provider-controlled" as const },
-      },
-    ];
-    // Inject the retired key via JSON so the document looks like a pre-removal
-    // policy without needing the category in today's type system.
-    const withProfiling = {
-      ...current,
-      revision: 3,
-      chains: {
-        default: defaultChain,
-        profiling: defaultChain,
-      },
-      selection: {
-        global: "never-configured" as const,
-        categories: {
-          default: "choice" as const,
-          profiling: "choice",
+  test("a stored V2 chain document migrates to weighted routes without inventing weights or consent", () => {
+    const legacy = {
+      schemaVersion: 2,
+      revision: 6,
+      updatedAt: NOW.toISOString(),
+      provisional: true,
+      providers: { claude: "enabled" },
+      models: [
+        {
+          provider: "claude",
+          model: "claude-fable-5",
+          state: "enabled",
+          effort: { mode: "hive-decides" },
         },
+      ],
+      chains: {
+        default: [
+          {
+            provider: "claude",
+            model: "claude-fable-5",
+            effort: { mode: "exact", value: "high" },
+          },
+          {
+            provider: "codex",
+            model: "gpt-5.6-sol",
+            effort: { mode: "never-configured" },
+          },
+        ],
+        planning: [
+          { provider: "grok", model: "grok-4.5", effort: { mode: "none" } },
+        ],
       },
+      selection: { global: "choice" },
     };
     db.database.run(
-      "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 3, ?, ?)",
-      [NOW.toISOString(), JSON.stringify(withProfiling)],
+      "INSERT INTO routing_policy (id, revision, updatedAt, document) VALUES (1, 6, ?, ?)",
+      [NOW.toISOString(), JSON.stringify(legacy)],
     );
 
     const migrated = new RoutingPolicyStore(db).read(NOW);
 
-    expect(migrated.chains).not.toHaveProperty("profiling");
-    expect(migrated.chains.default).toEqual(defaultChain);
-    // The retired override map goes with it: the global is the whole answer,
-    // and it survives the strip unchanged.
-    expect(migrated.selection).toEqual({ global: "never-configured" });
-    expect(migrated.revision).toBe(4);
-    // Durable: re-open on the same DB does not re-bump, and still has no profiling.
-    const again = new RoutingPolicyStore(db).read(NOW);
-    expect(again.revision).toBe(4);
-    expect(again.chains).not.toHaveProperty("profiling");
+    // Every chain becomes a hive-equal route over the same exact candidates at
+    // weight 1: rank order is dropped, never converted into invented ratings.
+    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.revision).toBe(7);
+    expect(migrated.provisional).toBeTrue();
+    expect(migrated.global).toEqual({
+      mode: "hive-equal",
+      candidates: [
+        {
+          provider: "claude",
+          model: "claude-fable-5",
+          effort: { mode: "exact", value: "high" },
+          weight: 1,
+        },
+        {
+          // never-configured is a model-row state, not a launchable intent.
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          effort: { mode: "provider-controlled" },
+          weight: 1,
+        },
+      ],
+    });
+    expect(migrated.categories).toEqual({
+      planning: {
+        mode: "hive-equal",
+        candidates: [
+          {
+            provider: "grok",
+            model: "grok-4.5",
+            effort: { mode: "none" },
+            weight: 1,
+          },
+        ],
+      },
+    });
+    // Enablement copies through untouched: no new consent is created.
+    expect(migrated.providers).toEqual({ claude: "enabled" });
+    expect(migrated.models).toEqual([
+      {
+        provider: "claude",
+        model: "claude-fable-5",
+        state: "enabled",
+        effort: { mode: "hive-decides" },
+      },
+    ]);
+    const event = db.database
+      .query(
+        "SELECT operation, revision FROM routing_policy_events ORDER BY id DESC LIMIT 1",
+      )
+      .get();
+    expect(event).toEqual({
+      operation: "migrate-v2-weighted-routes",
+      revision: 7,
+    });
+    // Durable: re-open on the same DB does not re-bump.
+    expect(new RoutingPolicyStore(db).read(NOW).revision).toBe(7);
   });
 
   test("a corrupt policy row THROWS — it never degrades to an empty, permissive-looking document", () => {
@@ -188,90 +232,40 @@ describe("fail-closed reading", () => {
   });
 });
 
-describe("capability fit evidence", () => {
-  test("coding chain placement is monotonic upward evidence, never a model-name guess", () => {
+describe("route resolution", () => {
+  const route = (model: string): RoutePolicy => ({
+    mode: "hive-equal",
+    candidates: [
+      {
+        provider: "claude",
+        model,
+        effort: { mode: "provider-controlled" },
+        weight: 1,
+      },
+    ],
+  });
+
+  test("a category's own route answers; otherwise global; otherwise nothing — never an appended fallback", () => {
     const policy: RoutingPolicy = {
       ...store.read(NOW),
-      chains: {
-        standard_coding: [
-          {
-            provider: "codex",
-            model: "gpt-proved",
-            effort: { mode: "hive-decides" },
-          },
-        ],
-      },
+      global: route("claude-fable-5"),
+      categories: { planning: route("claude-opus-5") },
     };
+    expect(resolveRoute(policy, "planning")).toEqual({
+      scope: "planning",
+      route: route("claude-opus-5"),
+    });
+    expect(resolveRoute(policy, "debugging")).toEqual({
+      scope: "global",
+      route: route("claude-fable-5"),
+    });
     expect(
-      modelCategoryFit(policy, "codex", "gpt-proved", "simple_coding").fits,
-    ).toBeTrue();
-    expect(
-      modelCategoryFit(policy, "codex", "gpt-proved", "standard_coding").fits,
-    ).toBeTrue();
-    expect(
-      modelCategoryFit(policy, "codex", "gpt-proved", "complex_coding").fits,
-    ).toBeFalse();
-    expect(
-      modelCategoryFit(policy, "claude", "sounds-strong", "simple_coding").fits,
-    ).toBeFalse();
+      resolveRoute({ ...policy, global: null, categories: {} }, "planning"),
+    ).toBeNull();
   });
 });
 
 describe("mutations and compare-and-set", () => {
-  test("the selection mutation sets the one global mode, and authoring a chain never writes selection", () => {
-    let policy = store.apply(
-      { op: "set-selection", expectedRevision: 0, mode: "choice" },
-      "test",
-      NOW,
-    );
-    expect(policy.selection).toEqual({ global: "choice" });
-
-    // set-chain must not write selection.categories[category] = "choice": a
-    // category the user never ruled on would outrank the control they did set,
-    // and switching the global afterwards would change nothing at all.
-    policy = store.apply(
-      {
-        op: "set-chain",
-        expectedRevision: 1,
-        category: "complex_coding",
-        entries: [
-          {
-            provider: "claude",
-            model: "claude-opus-5",
-            effort: { mode: "exact", value: "max" },
-          },
-        ],
-      },
-      "test",
-      NOW,
-    );
-    expect(policy.selection).toEqual({ global: "choice" });
-
-    policy = store.apply(
-      { op: "set-selection", expectedRevision: 2, mode: "auto" },
-      "test",
-      NOW,
-    );
-    expect(policy.selection).toEqual({ global: "auto" });
-    expect(policy.revision).toBe(3);
-  });
-
-  test("the retired per-category selection mutation is refused on the wire, not ignored", () => {
-    expect(() =>
-      store.apply(
-        {
-          op: "set-selection",
-          expectedRevision: 0,
-          category: "complex_coding",
-          mode: "auto",
-        } as unknown as RoutingPolicyMutation,
-        "test",
-        NOW,
-      ),
-    ).toThrow();
-    expect(store.read(NOW).revision).toBe(0);
-  });
-
   test("every accepted write increments the revision and clears the provisional flag", () => {
     const seeded = store.seedProvisionalBaseline(
       { vendorDefaults: {} },
@@ -441,58 +435,122 @@ describe("mutations and compare-and-set", () => {
     ]);
   });
 
-  test("a chain stores in the user's order, replaces whole, and clears on empty", () => {
-    const chain = store.apply(
+  test("a route replaces its scope whole, and null clears it back to unconfigured", () => {
+    const withRoute = store.apply(
       {
-        op: "set-chain",
+        op: "set-route",
         expectedRevision: 0,
-        category: "complex_coding",
-        entries: [
-          {
-            provider: "claude",
-            model: "claude-fable-5",
-            effort: { mode: "exact", value: "xhigh" },
-          },
-          {
-            provider: "grok",
-            model: "grok-4.5",
-            effort: { mode: "provider-controlled" },
-          },
-        ],
+        scope: "complex_coding",
+        route: {
+          mode: "user-weighted",
+          candidates: [
+            {
+              provider: "claude",
+              model: "claude-fable-5",
+              effort: { mode: "exact", value: "xhigh" },
+              weight: 3,
+            },
+            {
+              provider: "grok",
+              model: "grok-4.5",
+              effort: { mode: "provider-controlled" },
+              weight: 1,
+            },
+          ],
+        },
       },
       "test",
       NOW,
     );
-    expect(chain.chains.complex_coding?.map((entry) => entry.provider)).toEqual(
-      ["claude", "grok"],
-    );
+    expect(
+      withRoute.categories.complex_coding?.candidates.map(
+        (candidate) => candidate.provider,
+      ),
+    ).toEqual(["claude", "grok"]);
     const cleared = store.apply(
       {
-        op: "set-chain",
+        op: "set-route",
         expectedRevision: 1,
-        category: "complex_coding",
-        entries: [],
+        scope: "complex_coding",
+        route: null,
       },
       "test",
       NOW,
     );
-    expect(cleared.chains.complex_coding).toBeUndefined();
+    expect(cleared.categories.complex_coding).toBeUndefined();
   });
 
-  test('a bare "default" model id is rejected — a chain names the specific model that will run', () => {
+  test("setting a route upserts an enabled model row per candidate, keeping an existing effort choice", () => {
+    store.apply(
+      {
+        op: "set-effort",
+        expectedRevision: 0,
+        provider: "claude",
+        model: "claude-fable-5",
+        effort: { mode: "exact", value: "high" },
+      },
+      "test",
+      NOW,
+    );
+    const policy = store.apply(
+      {
+        op: "set-route",
+        expectedRevision: 1,
+        scope: "global",
+        route: {
+          mode: "hive-equal",
+          candidates: [
+            {
+              provider: "claude",
+              model: "claude-fable-5",
+              effort: { mode: "hive-decides" },
+              weight: 1,
+            },
+            {
+              provider: "grok",
+              model: "grok-4.5",
+              effort: { mode: "none" },
+              weight: 1,
+            },
+          ],
+        },
+      },
+      "test",
+      NOW,
+    );
+    expect(policy.global?.candidates).toHaveLength(2);
+    expect(policy.models).toContainEqual({
+      provider: "claude",
+      model: "claude-fable-5",
+      state: "enabled",
+      effort: { mode: "exact", value: "high" },
+    });
+    expect(policy.models).toContainEqual({
+      provider: "grok",
+      model: "grok-4.5",
+      state: "enabled",
+      effort: { mode: "none" },
+    });
+  });
+
+  test('a bare "default" model id is rejected — a route names the specific model that will run', () => {
     expect(() =>
       store.apply(
         {
-          op: "set-chain",
+          op: "set-route",
           expectedRevision: 0,
-          category: "planning",
-          entries: [
-            {
-              provider: "grok",
-              model: "default",
-              effort: { mode: "provider-controlled" },
-            },
-          ],
+          scope: "planning",
+          route: {
+            mode: "hive-equal",
+            candidates: [
+              {
+                provider: "grok",
+                model: "default",
+                effort: { mode: "provider-controlled" },
+                weight: 1,
+              },
+            ],
+          },
         },
         "test",
         NOW,
@@ -500,25 +558,30 @@ describe("mutations and compare-and-set", () => {
     ).toThrow(/not a model/);
   });
 
-  test("a chain naming the same target twice is rejected", () => {
+  test("a route naming the same target twice is rejected", () => {
     expect(() =>
       store.apply(
         {
-          op: "set-chain",
+          op: "set-route",
           expectedRevision: 0,
-          category: "planning",
-          entries: [
-            {
-              provider: "claude",
-              model: "claude-fable-5",
-              effort: { mode: "provider-controlled" },
-            },
-            {
-              provider: "claude",
-              model: "claude-fable-5",
-              effort: { mode: "exact", value: "high" },
-            },
-          ],
+          scope: "planning",
+          route: {
+            mode: "hive-equal",
+            candidates: [
+              {
+                provider: "claude",
+                model: "claude-fable-5",
+                effort: { mode: "provider-controlled" },
+                weight: 1,
+              },
+              {
+                provider: "claude",
+                model: "claude-fable-5",
+                effort: { mode: "exact", value: "high" },
+                weight: 2,
+              },
+            ],
+          },
         },
         "test",
         NOW,
@@ -558,7 +621,7 @@ describe("mutations and compare-and-set", () => {
   });
 });
 
-describe("first-boot seeding — consent is never seeded, entries are exact ids", () => {
+describe("first-boot seeding — consent is never seeded, candidates are exact ids", () => {
   const DEFAULTS = {
     claude: "claude-fable-5",
     codex: "gpt-5.6-sol",
@@ -567,7 +630,7 @@ describe("first-boot seeding — consent is never seeded, entries are exact ids"
     opencode: "opencode/big-pickle",
   } as const;
 
-  test("seeds every category with exact frozen model ids and no enablement", () => {
+  test("seeds ONE global hive-equal route of exact frozen model ids, no per-category routes, no enablement", () => {
     const { seeded, policy } = store.seedProvisionalBaseline(
       {
         vendorDefaults: DEFAULTS,
@@ -577,55 +640,51 @@ describe("first-boot seeding — consent is never seeded, entries are exact ids"
     expect(seeded).toBeTrue();
     expect(policy.revision).toBe(1);
     expect(policy.provisional).toBeTrue();
-    for (const category of ROUTING_CATEGORIES) {
-      const chain = policy.chains[category];
-      expect(chain).toBeDefined();
-      expect(chain?.length).toBe(5);
-      for (const entry of required(chain)) {
-        // Every entry names the specific model that will run — no mode field,
-        // no indirection of any kind.
-        expect(entry.model).toBe(DEFAULTS[entry.provider]);
-        expect(entry.effort).toEqual({ mode: "provider-controlled" });
-      }
+    const global = required(policy.global);
+    expect(global.mode).toBe("hive-equal");
+    expect(global.candidates).toHaveLength(5);
+    for (const candidate of global.candidates) {
+      // Every candidate names the specific model that will run — no mode
+      // field, no indirection of any kind.
+      expect(candidate.model).toBe(DEFAULTS[candidate.provider]);
+      expect(candidate.effort).toEqual({ mode: "provider-controlled" });
+      expect(candidate.weight).toBe(1);
     }
+    expect(policy.categories).toEqual({});
     expect(policy.providers).toEqual({});
     expect(policy.models).toEqual([]);
-    expect(modelPolicyState(policy, "claude", "claude-fable-5").state).toBe(
-      "unconfigured",
-    );
-    expect(modelPolicyState(policy, "codex", "gpt-5.6-sol").state).toBe(
-      "unconfigured",
-    );
-    // Every frozen default is named in the suggested chains but remains off,
+    // Every frozen default is named in the suggested route but remains off,
     // waiting for the user's own click, which is the consent.
-    expect(
-      policy.chains.default?.some((entry) => entry.provider === "grok"),
-    ).toBeTrue();
+    expect(modelPolicyState(policy, "claude", "claude-fable-5")).toEqual({
+      state: "unconfigured",
+      source: "none",
+    });
     expect(modelPolicyState(policy, "grok", "grok-4.5")).toEqual({
       state: "unconfigured",
       source: "none",
     });
   });
 
-  test("an unreadable vendor is skipped in seeded chains — never guessed from training knowledge", () => {
+  test("an unreadable vendor is skipped in the seeded route — never guessed from training knowledge", () => {
     const { policy } = store.seedProvisionalBaseline(
       {
         vendorDefaults: { claude: "claude-fable-5" },
       },
       NOW,
     );
-    for (const chain of Object.values(policy.chains)) {
-      expect(chain.map((entry) => entry.provider)).toEqual(["claude"]);
-    }
+    expect(
+      required(policy.global).candidates.map((candidate) => candidate.provider),
+    ).toEqual(["claude"]);
   });
 
-  test("a caller that could read nothing seeds NOTHING enabled and no chains — unknown never becomes spend or a guessed id", () => {
+  test("a caller that could read nothing seeds NOTHING enabled and no route — unknown never becomes spend or a guessed id", () => {
     const { policy } = store.seedProvisionalBaseline(
       { vendorDefaults: {} },
       NOW,
     );
     expect(policy.models).toEqual([]);
-    expect(policy.chains).toEqual({});
+    expect(policy.global).toBeNull();
+    expect(policy.categories).toEqual({});
     expect(policy.provisional).toBeTrue();
   });
 
@@ -675,16 +734,20 @@ describe("named-instance Model Control inheritance", () => {
     );
     const policy = source.apply(
       {
-        op: "set-chain",
+        op: "set-route",
         expectedRevision: 1,
-        category: "light_research",
-        entries: [
-          {
-            provider: "grok",
-            model: "grok-4.5",
-            effort: { mode: "exact", value: "low" },
-          },
-        ],
+        scope: "light_research",
+        route: {
+          mode: "user-weighted",
+          candidates: [
+            {
+              provider: "grok",
+              model: "grok-4.5",
+              effort: { mode: "exact", value: "low" },
+              weight: 2,
+            },
+          ],
+        },
       },
       "human",
       NOW,
@@ -692,7 +755,7 @@ describe("named-instance Model Control inheritance", () => {
     return { db: sourceDb, policy };
   }
 
-  test("copies chains, model consent, provider switches, and effort into an empty store", () => {
+  test("copies routes, model consent, provider switches, and effort into an empty store", () => {
     const source = userPolicy();
     try {
       const result = store.importDefaultPolicy(source.policy, NOW);
@@ -701,8 +764,8 @@ describe("named-instance Model Control inheritance", () => {
       expect(result.policy.provisional).toBeFalse();
       expect(result.policy.providers).toEqual(source.policy.providers);
       expect(result.policy.models).toEqual(source.policy.models);
-      expect(result.policy.chains).toEqual(source.policy.chains);
-      expect(result.policy.selection).toEqual(source.policy.selection);
+      expect(result.policy.global).toEqual(source.policy.global);
+      expect(result.policy.categories).toEqual(source.policy.categories);
     } finally {
       source.db.close();
     }
@@ -718,7 +781,9 @@ describe("named-instance Model Control inheritance", () => {
       const result = store.importDefaultPolicy(source.policy, NOW);
       expect(result.imported).toBeTrue();
       expect(result.policy.revision).toBe(2);
-      expect(result.policy.chains.light_research?.[0]?.model).toBe("grok-4.5");
+      expect(
+        result.policy.categories.light_research?.candidates[0]?.model,
+      ).toBe("grok-4.5");
     } finally {
       source.db.close();
     }
@@ -756,49 +821,6 @@ describe("named-instance Model Control inheritance", () => {
     } finally {
       provisionalDb.close();
     }
-  });
-});
-
-describe("ordinary Workspace selection overlay", () => {
-  test("changes only selection, preserving consent, chains, effort, and provisional ownership", () => {
-    store.apply(
-      {
-        op: "set-provider",
-        expectedRevision: 0,
-        provider: "codex",
-        state: "enabled",
-      },
-      "human",
-      NOW,
-    );
-    const before = store.apply(
-      {
-        op: "set-chain",
-        expectedRevision: 1,
-        category: "debugging",
-        entries: [
-          {
-            provider: "codex",
-            model: "gpt-5.6-sol",
-            effort: { mode: "exact", value: "high" },
-          },
-        ],
-      },
-      "human",
-      NOW,
-    );
-
-    const result = store.importSelectionPreference({ global: "auto" }, NOW);
-    expect(result.imported).toBeTrue();
-    expect(result.policy.selection).toEqual({ global: "auto" });
-    expect(result.policy.providers).toEqual(before.providers);
-    expect(result.policy.models).toEqual(before.models);
-    expect(result.policy.chains).toEqual(before.chains);
-    expect(result.policy.models[0]?.effort).toEqual({
-      mode: "exact",
-      value: "high",
-    });
-    expect(result.policy.provisional).toBeFalse();
   });
 });
 
@@ -866,7 +888,8 @@ describe("deterministic export", () => {
       canonicalRoutingPolicyJson(policy),
     ) as RoutingPolicy;
     expect(parsed.revision).toBe(policy.revision);
-    expect(parsed.chains).toEqual(policy.chains);
+    expect(parsed.global).toEqual(policy.global);
+    expect(parsed.categories).toEqual(policy.categories);
     expect(parsed.models).toEqual(policy.models);
   });
 });
@@ -910,7 +933,7 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
   // Center remedy, and a throw refuses as "policy unreadable". These tests
   // pin the store's side of that contract over a REAL seeded store; the
   // gate's side is pinned in spawner-impl.test.ts.
-  test("a seeded chain grants no consent — first-boot models REFUSE until the user enables each provider", async () => {
+  test("a seeded route grants no consent — first-boot models REFUSE until the user enables each provider", async () => {
     store.seedProvisionalBaseline(
       {
         vendorDefaults: { claude: "claude-fable-5", codex: "gpt-5.6-sol" },

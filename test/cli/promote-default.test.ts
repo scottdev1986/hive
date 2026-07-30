@@ -1,12 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promoteDefaultModelControl } from "../../src/cli/promote-default";
@@ -17,7 +10,6 @@ import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
 } from "../../src/daemon/routing-policy-store";
-import { SelectionPreferenceStore } from "../../src/daemon/selection-preferences";
 import type { RoutingPolicy } from "../../src/schemas";
 
 const NOW = new Date("2026-07-22T12:00:00.000Z");
@@ -52,24 +44,23 @@ function writeCurrentPolicy(home: string): RoutingPolicy {
       "instance-user",
       NOW,
     );
-    store.apply(
-      {
-        op: "set-chain",
-        expectedRevision: 1,
-        category: "simple_coding",
-        entries: [
-          {
-            provider: "grok",
-            model: "grok-composer-2.5-fast",
-            effort: { mode: "none" },
-          },
-        ],
-      },
-      "instance-user",
-      NOW,
-    );
     return store.apply(
-      { op: "set-selection", expectedRevision: 2, mode: "choice" },
+      {
+        op: "set-route",
+        expectedRevision: 1,
+        scope: "simple_coding",
+        route: {
+          mode: "hive-equal",
+          candidates: [
+            {
+              provider: "grok",
+              model: "grok-composer-2.5-fast",
+              effort: { mode: "none" },
+              weight: 1,
+            },
+          ],
+        },
+      },
       "instance-user",
       NOW,
     );
@@ -95,17 +86,12 @@ test("promote copies an instance policy into an empty default and audits the con
     defaultHome,
     now: NOW,
   });
-  expect(result).toEqual({ sourceRevision: 3, targetRevision: 1 });
+  expect(result).toEqual({ sourceRevision: 2, targetRevision: 1 });
 
   const db = new HiveDatabase(join(defaultHome, "hive.db"));
   try {
     const store = new RoutingPolicyStore(db);
     expectCopied(store.read(NOW), source);
-    expect(
-      new SelectionPreferenceStore(
-        join(defaultHome, "routing-selection.json"),
-      ).read(),
-    ).toEqual(source.selection);
     const event = db.database
       .query(
         "SELECT actor, operation, revision, before, after FROM routing_policy_events",
@@ -157,10 +143,6 @@ test("promote rejects a stale default revision rather than clobbering it", () =>
 test("promote refuses an empty revision-0 source without changing the default", async () => {
   const { currentHome, defaultHome } = fixture();
   const targetPolicy = writeCurrentPolicy(defaultHome);
-  const mirrorPath = join(defaultHome, "routing-selection.json");
-  const mirrorBefore =
-    '{"schemaVersion":1,"selection":{"global":"choice","categories":{}}}\n';
-  writeFileSync(mirrorPath, mirrorBefore);
   const sourceDb = new HiveDatabase(join(currentHome, "hive.db"));
   sourceDb.close();
 
@@ -176,20 +158,15 @@ test("promote refuses an empty revision-0 source without changing the default", 
       targetDb.database
         .query("SELECT COUNT(*) AS count FROM routing_policy_events")
         .get(),
-    ).toEqual({ count: 3 });
+    ).toEqual({ count: 2 });
   } finally {
     targetDb.close();
   }
-  expect(readFileSync(mirrorPath, "utf8")).toBe(mirrorBefore);
 });
 
 test("promote refuses a provisional source without changing the default", async () => {
   const { currentHome, defaultHome } = fixture();
   const targetPolicy = writeCurrentPolicy(defaultHome);
-  const mirrorPath = join(defaultHome, "routing-selection.json");
-  const mirrorBefore =
-    '{"schemaVersion":1,"selection":{"global":"choice","categories":{}}}\n';
-  writeFileSync(mirrorPath, mirrorBefore);
   const sourceDb = new HiveDatabase(join(currentHome, "hive.db"));
   try {
     new RoutingPolicyStore(sourceDb).seedProvisionalBaseline(
@@ -212,11 +189,10 @@ test("promote refuses a provisional source without changing the default", async 
       targetDb.database
         .query("SELECT COUNT(*) AS count FROM routing_policy_events")
         .get(),
-    ).toEqual({ count: 3 });
+    ).toEqual({ count: 2 });
   } finally {
     targetDb.close();
   }
-  expect(readFileSync(mirrorPath, "utf8")).toBe(mirrorBefore);
 });
 
 test("promote refuses when the current home is already the machine default", async () => {
@@ -239,41 +215,9 @@ test("promote refuses when the current home is already the machine default", asy
       db.database
         .query("SELECT COUNT(*) AS count FROM routing_policy_events")
         .get(),
-    ).toEqual({ count: 3 });
+    ).toEqual({ count: 2 });
   } finally {
     db.close();
-  }
-});
-
-test("promote reports a stale selection mirror after the policy succeeds", async () => {
-  const { currentHome, defaultHome } = fixture();
-  const source = writeCurrentPolicy(currentHome);
-  writeCurrentPolicy(defaultHome);
-  const replace = spyOn(
-    SelectionPreferenceStore.prototype,
-    "replace",
-  ).mockRejectedValueOnce(new Error("selection mirror unavailable"));
-  try {
-    await expect(
-      promoteDefaultModelControl({ currentHome, defaultHome, now: NOW }),
-    ).rejects.toThrow(
-      "Model Control was promoted, but the selection mirror is stale. Rerun `hive promote-default` to update ~/.hive/routing-selection.json.",
-    );
-  } finally {
-    replace.mockRestore();
-  }
-
-  const targetDb = new HiveDatabase(join(defaultHome, "hive.db"));
-  try {
-    const target = new RoutingPolicyStore(targetDb);
-    expectCopied(target.read(NOW), source);
-    expect(
-      targetDb.database
-        .query("SELECT COUNT(*) AS count FROM routing_policy_events")
-        .get(),
-    ).toEqual({ count: 4 });
-  } finally {
-    targetDb.close();
   }
 });
 
@@ -342,7 +286,6 @@ test("promote throws on a corrupt target policy without resetting it", async () 
   } finally {
     checked.close();
   }
-  expect(existsSync(join(defaultHome, "routing-selection.json"))).toBeFalse();
 });
 
 test("a fresh instance inherits the promoted policy identically", async () => {

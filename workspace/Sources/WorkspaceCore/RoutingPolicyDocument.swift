@@ -2,9 +2,9 @@ import Foundation
 
 /// The daemon's routing policy document — the durable store behind the Model
 /// Control Center, mirrored from `src/schemas/routing-policy.ts` exactly:
-/// chains carry exact (provider, model, effort) targets and nothing else; a
-/// bare "default" model id is illegal; and the document lists only EXPLICIT
-/// settings.
+/// a route is an UNORDERED set of exact (provider, model, effort) candidates
+/// with integer relative weights; a bare "default" model id is illegal; and
+/// the document lists only EXPLICIT settings.
 ///
 /// FAIL-CLOSED READING, inherited from the schema's one rule: an absent row
 /// means NOT CONFIGURED, and not-configured never means allowed. The readers
@@ -72,32 +72,87 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         }
     }
 
-    public struct WireChainEntry: Codable, Equatable, Sendable {
+    public struct WireRouteCandidate: Codable, Equatable, Sendable {
         public var provider: String
         public var model: String
         public var effort: WireEffort
+        public var weight: Int
 
-        public init(provider: String, model: String, effort: WireEffort) {
+        public init(provider: String, model: String, effort: WireEffort, weight: Int) {
             self.provider = provider
             self.model = model
             self.effort = effort
+            self.weight = weight
         }
 
-        /// The CLI chain-link spelling (`parseChainEntryArg`):
-        /// `provider/model`, `provider/model@LEVEL`, or `provider/model@none`.
+        /// The CLI candidate spelling (`parseRouteCandidateArg`):
+        /// `provider/model[@LEVEL|@none|@hive-decides]=WEIGHT`.
         ///
-        /// NIL when the link's effort has no chain spelling at all — the chain
-        /// CLI cannot express never-configured, hive-decides, or a mode this
-        /// build has never heard of. The caller must REFUSE the write rather
-        /// than pick the nearest spelling: silently rewriting one link's effort
-        /// is a routing change the user never made.
+        /// NIL when the candidate has no spelling at all — never-configured is
+        /// a model-row state, not a launchable intent, and an effort mode this
+        /// build has never heard of must not be respelled. The caller must
+        /// REFUSE the write rather than pick the nearest spelling: silently
+        /// rewriting one candidate's effort is a routing change the user
+        /// never made.
         public var cliArgument: String? {
+            let target: String?
             switch effort {
-            case .providerControlled: return "\(provider)/\(model)"
-            case .none: return "\(provider)/\(model)@none"
-            case .exact(let value): return "\(provider)/\(model)@\(value)"
-            case .neverConfigured, .hiveDecides, .unknown: return nil
+            case .providerControlled: target = "\(provider)/\(model)"
+            case .none: target = "\(provider)/\(model)@none"
+            case .hiveDecides: target = "\(provider)/\(model)@hive-decides"
+            case .exact(let value): target = "\(provider)/\(model)@\(value)"
+            case .neverConfigured, .unknown: target = nil
             }
+            return target.map { "\($0)=\(weight)" }
+        }
+    }
+
+    /// A route as the wire spells it. `mode` stays verbatim so a router mode
+    /// a newer daemon added costs this route its editor, never the whole
+    /// document.
+    public struct WireRoute: Codable, Equatable, Sendable {
+        public var mode: String
+        public var candidates: [WireRouteCandidate]
+
+        public init(mode: String, candidates: [WireRouteCandidate]) {
+            self.mode = mode
+            self.candidates = candidates
+        }
+
+        public init(_ route: RoutePolicy) {
+            mode = route.mode.rawValue
+            candidates = route.candidates.map { candidate in
+                WireRouteCandidate(
+                    provider: candidate.provider,
+                    model: candidate.model,
+                    // nil effort is Hive's pick, not an unanswered question —
+                    // a candidate always answers effort on the wire.
+                    effort: candidate.effort.map { WireEffort($0) } ?? .hiveDecides,
+                    weight: candidate.weight)
+            }
+        }
+
+        public var routerMode: RouterMode? { RouterMode(rawValue: mode) }
+
+        /// The route in editor terms, or nil when this build cannot name the
+        /// mode. Candidate efforts degrade narrowly (unknown → unchosen), and
+        /// the write path separately refuses to respell them.
+        public var asRoutePolicy: RoutePolicy? {
+            guard let routerMode else { return nil }
+            return RoutePolicy(
+                mode: routerMode,
+                candidates: candidates.map {
+                    RouteCandidate(
+                        provider: $0.provider, model: $0.model,
+                        effort: $0.effort.asEffortTarget, weight: $0.weight)
+                })
+        }
+
+        /// Whether every candidate here has a CLI spelling, i.e. whether this
+        /// build may rewrite the route without changing something it cannot
+        /// read.
+        public var writable: Bool {
+            routerMode != nil && candidates.allSatisfy { $0.cliArgument != nil }
         }
     }
 
@@ -117,24 +172,6 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         }
     }
 
-    /// How Hive selects a model: never-configured / auto / choice, exactly as
-    /// `SelectionModeSchema` spells them. Strings stay verbatim so a newer
-    /// daemon's mode costs only this control, never the whole document.
-    /// One mode governs every category; there are no per-category overrides.
-    /// A daemon still sending a per-category key decodes fine, because this
-    /// type ignores it.
-    public struct Selection: Codable, Equatable, Sendable {
-        public var global: String
-
-        public init(global: String = SelectionMode.neverConfigured.rawValue) {
-            self.global = global
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case global
-        }
-    }
-
     public var schemaVersion: Int
     /// Monotonic; every accepted mutation increments it. Writers present the
     /// revision they read — compare-and-set, so concurrent edits conflict
@@ -146,42 +183,15 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
     public var provisional: Bool
     public var providers: [String: String]
     public var models: [ModelRow]
-    public var chains: [String: [WireChainEntry]]
-    public var selection: Selection
-    /// Whether the daemon actually SENT the selection field. False means the
-    /// running daemon predates selection modes: the UI must not offer a
-    /// control whose persist would always fail.
-    public var selectionOnWire: Bool = false
-
-    private enum CodingKeys: String, CodingKey {
-        case schemaVersion, revision, updatedAt, provisional
-        case providers, models, chains, selection
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
-        revision = try container.decode(Int.self, forKey: .revision)
-        updatedAt = try container.decode(String.self, forKey: .updatedAt)
-        provisional = try container.decode(Bool.self, forKey: .provisional)
-        providers = try container.decode([String: String].self, forKey: .providers)
-        models = try container.decode([ModelRow].self, forKey: .models)
-        chains = try container.decode([String: [WireChainEntry]].self, forKey: .chains)
-        // An older daemon has no selection field. Keep its absence explicit
-        // through selectionOnWire; never invent a writable mode for it.
-        let sent = try container.decodeIfPresent(Selection.self, forKey: .selection)
-        selection = sent ?? Selection()
-        selectionOnWire = sent != nil
-    }
+    /// The route for categories without their own. nil (null on the wire)
+    /// means unconfigured: automatic routing refuses rather than inventing a
+    /// candidate set.
+    public var global: WireRoute?
+    public var categories: [String: WireRoute]
 
     public static func decode(from data: Data) throws -> RoutingPolicyDocument {
         try JSONDecoder().decode(RoutingPolicyDocument.self, from: data)
     }
-
-    public var globalSelection: SelectionMode? {
-        SelectionMode(rawValue: selection.global)
-    }
-
 
     // MARK: Fail-closed reading (mirrors providerPolicyState / modelPolicyState)
 
@@ -235,22 +245,10 @@ public struct RoutingPolicyDocument: Codable, Equatable, Sendable {
         modelRow(provider: provider, model: model)?.effort?.asEffortTarget
     }
 
-    /// Whether this build can actually WRITE the daemon's selection setting.
-    ///
-    /// A newer daemon's unrecognised mode is preserved in `selection` but
-    /// disables this control; the app never coerces it to a value it can write.
-    public var selectionWritable: Bool {
-        selectionOnWire && SelectionMode(rawValue: selection.global) != nil
-    }
-
-    public func chain(for category: TaskCategory) -> [WireChainEntry] {
-        chains[category.rawValue] ?? []
-    }
-
-    /// The user-authored global fallback ("default" is a CATEGORY key in the
-    /// store; it is never a model id).
-    public var defaultChain: [WireChainEntry] {
-        chains["default"] ?? []
+    /// A category's own route. Absent means the category resolves to
+    /// `global`; it never means an empty route.
+    public func route(for category: TaskCategory) -> WireRoute? {
+        categories[category.rawValue]
     }
 
     // MARK: View-state bridges

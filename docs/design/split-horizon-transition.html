@@ -1035,25 +1035,25 @@
             <thead><tr><th>Source</th><th>State</th><th>Required UI change</th><th>Boundary that must stay visible</th></tr></thead>
             <tbody>
               <tr>
-                <td><a href="terminal-stack-transition.html">Terminal stack</a></td>
+                <td><a href="Done/terminal-stack-transition.html">Terminal stack</a></td>
                 <td><span class="status implemented">IMPLEMENTED</span></td>
                 <td>Make the selected vendor TUI the center of Live Run. Represent Claude Code, Codex, Grok, Kimi Code, and OpenCode as exact zsh-backed sessions; attach one Ghostty surface live and keep the other sessions event-observed. Show generation, input owner, retained zsh, replay/gap, and replacement. Separate <strong>Stop Provider</strong> from <strong>Terminate Terminal</strong>.</td>
                 <td>Agent, SessionLocator, ProviderRun, zsh, and the vendor TUI are distinct identities. The daemon spawner supports all five tools, while the current Workspace provider presentation canonically covers only Claude/Codex/Grok and must be extended. Off-screen visible-text capture is absent, so background sessions show typed status—not invented terminal thumbnails.</td>
               </tr>
               <tr>
-                <td><a href="hive-communication.html">Communication</a></td>
+                <td><a href="Done/hive-communication.html">Communication</a></td>
                 <td><span class="status implemented">IMPLEMENTED</span></td>
                 <td>Do not add a user-facing inbox or Communications route. Consume delivery state inside daemon recovery, contextual task status, and Attention only when a user decision is actually required.</td>
                 <td><code>queued</code>, <code>injected</code>, <code>agent-acknowledged</code>, and <code>applied</code> are different. Urgent is Codex-only and fails closed elsewhere.</td>
               </tr>
               <tr>
-                <td><a href="hivememory.html">HiveMemory</a></td>
+                <td><a href="Done/hivememory.html">HiveMemory</a></td>
                 <td><span class="status implemented">IMPLEMENTED</span> <span class="status gap-state">UI GAP</span></td>
                 <td>Add a first-class Memory menu and screens for Overview, Library, Recall Lab, and Maintenance. Existing MCP/CLI operations remain the semantic source.</td>
                 <td>The Markdown wiki and episodic store are records; SQLite FTS/vector rows are disposable projections. The UI never reads <code>.hive/memory</code> or <code>episodic.db</code> directly.</td>
               </tr>
               <tr>
-                <td><a href="quota-lifecycle-redesign.html">Quota lifecycle</a></td>
+                <td><a href="Done/quota-lifecycle-redesign.html">Quota lifecycle</a></td>
                 <td><span class="status implemented">IMPLEMENTED</span></td>
                 <td>Models &amp; Quota shows provenance, freshness, reset, unknown/unmetered, local estimate, active reservation, hold, and proven exclusions. Remove quota from routing preference language.</td>
                 <td>Usage never refuses a launch and never supplies a preference score. A stale zero may drive a drain; unknown never does.</td>

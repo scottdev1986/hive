@@ -74,27 +74,32 @@ const discovery = {
 };
 
 const policy: RoutingPolicy = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   revision: 1,
   updatedAt: AT,
   provisional: false,
   providers: {},
   models: [],
-  chains: {
-    complex_coding: [
-      {
-        provider: "claude",
-        model: "claude-fable-5",
-        effort: { mode: "exact", value: "xhigh" },
-      },
-      {
-        provider: "codex",
-        model: "gpt-hidden",
-        effort: { mode: "provider-controlled" },
-      },
-    ],
+  global: null,
+  categories: {
+    complex_coding: {
+      mode: "user-weighted",
+      candidates: [
+        {
+          provider: "claude",
+          model: "claude-fable-5",
+          effort: { mode: "exact", value: "xhigh" },
+          weight: 2,
+        },
+        {
+          provider: "codex",
+          model: "gpt-hidden",
+          effort: { mode: "provider-controlled" },
+          weight: 1,
+        },
+      ],
+    },
   },
-  selection: { global: "auto" },
 };
 
 describe("model inventory", () => {
@@ -119,34 +124,44 @@ describe("model inventory", () => {
       routedCandidate: true,
       roles: [
         {
-          category: "complex_coding",
-          position: 1,
+          scope: "complex_coding",
+          weight: 1,
           effort: { mode: "provider-controlled" },
         },
       ],
     });
   });
 
-  test("explains primary, fallback, and unrouted use in plain words", () => {
+  test("explains route membership and unrouted use in plain words", () => {
     const inventory = buildModelInventory({
       discovery,
       policy,
       now: new Date(AT),
     });
-    expect(inventory.models[0]?.when).toContain("Primary for complex_coding");
-    expect(inventory.models[1]?.when).toContain(
-      "Fallback 1 for complex_coding",
+    expect(inventory.models[0]?.when).toContain(
+      "In the complex_coding route (weight 2)",
     );
-    const unroutedPolicy = {
+    expect(inventory.models[1]?.when).toContain(
+      "In the complex_coding route (weight 1)",
+    );
+    const unroutedPolicy: RoutingPolicy = {
       ...policy,
-      chains: {
-        complex_coding: [required(policy.chains.complex_coding?.[0])],
+      categories: {
+        complex_coding: {
+          mode: "user-weighted",
+          candidates: [
+            required(policy.categories.complex_coding?.candidates[0]),
+          ],
+        },
       },
     };
     const unrouted = buildModelInventory({ discovery, policy: unroutedPolicy });
     expect(
       unrouted.models.find((model) => model.canonicalId === "gpt-hidden")?.when,
     ).toContain("Not used automatically");
+    expect(
+      unrouted.models.find((model) => model.canonicalId === "gpt-spare")?.when,
+    ).toBe("Not in any route; an explicit user request may still select it.");
   });
 
   test("renders the complete inventory and provenance for humans", () => {
@@ -155,7 +170,7 @@ describe("model inventory", () => {
     );
     expect(text).toContain("ALL DISCOVERED MODELS (3/3, INCOMPLETE)");
     expect(text).toContain("gpt-hidden");
-    expect(text).toContain("Fallback 1 for complex_coding");
+    expect(text).toContain("In the complex_coding route (weight 1)");
     expect(text).toContain("CLI 0.144.1");
   });
 
@@ -182,7 +197,7 @@ describe("model inventory", () => {
     expect(text).toContain("codex — UNAVAILABLE: discovery has not run");
   });
 
-  test("a discovered model keeps its routes and every advertised effort", () => {
+  test("a discovered model keeps its route membership and every advertised effort", () => {
     // Ruling: a discovered, entitled model — and every effort level it
     // advertises — must be routable.
     const inventory = buildModelInventory({
@@ -195,7 +210,7 @@ describe("model inventory", () => {
     );
     expect(model.routedCandidate).toBeTrue();
     expect(model.roles).toContainEqual(
-      expect.objectContaining({ category: "complex_coding", position: 0 }),
+      expect.objectContaining({ scope: "complex_coding", weight: 2 }),
     );
     expect(model.effortLevels).toEqual({
       state: "known",
@@ -267,7 +282,7 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
     );
     expect(model).toBeDefined();
     expect(model?.roles).toEqual([]);
-    expect(model?.when).toContain("Not in any category chain");
+    expect(model?.when).toContain("Not in any route");
     expect(model?.effortLevels).toMatchObject({ state: "known-none" });
     const text = formatModelInventory(inventory);
     expect(text).toContain("acme — 1 discovered");

@@ -78,27 +78,22 @@ export const ORCHESTRATOR_BRIEF = [
   `),
 
   formatBriefSection(`
-    Wake only for a user prompt or an injected hive.message envelope from an
-    agent. The envelope is already acknowledged and contains the routing
-    context you need. Quota warnings arrive through that same envelope path;
-    summarize them to the user with their confidence and fallback impact. If
-    truncated is true, call hive_read_message with its id only when the full
-    report is necessary. Do not fetch hive_inbox after a wake. Call
+    Wake only for a user prompt or a compact Hive inbox notice. A notice never
+    contains a message body and never acknowledges anything. Call hive_inbox,
+    read the returned messages, then call hive_ack_message for each message
+    you have read. Call
     hive_status with detail "active" only when the user explicitly requests
     status or continues team work; return a concise active-team summary. Call
     hive_quota_status only when the user asks about quota or a routing warning
     needs current diagnostics. Call hive_token_usage when the user asks for
     session token totals or Hive-control versus worker usage; the control
     share is a lower bound because worker turns mix task work with Hive
-    protocol. Use hive_send to direct agents: normal for ordinary coordination
-    at a turn boundary; steer for prompt non-destructive guidance (mid-turn on
-    Claude and Codex, next-turn degradation on Grok); urgent only when the
-    current work must stop because it cancels the in-flight turn; and critical
-    with an explicit pause/stop/cancel/restrict-writes intent whenever
-    authority must shrink. Treat queued as unseen and injected as handed to
-    the vendor, not heard; only applied or an acknowledgement proves receipt.
-    Use hive_inbox only once after an explicit user request to recover durable
-    messages that could not be injected. Use hive_approvals and hive_approve
+    protocol. Use hive_send to direct agents: normal waits for a safe turn
+    boundary; urgent sends Escape once before the inbox notice. Hive injects
+    only a compact notice, never the message body. On a notice, call
+    hive_inbox, read every message, then call hive_ack_message for each one.
+    Queued and notified are not receipt; only acknowledgement proves reading.
+    Use hive_approvals and hive_approve
     to handle escalation requests. Writer agents land their own finished work
     through hive_land (rebase and retest first; the daemon performs the
     capability-gated fast-forward merge, and the landing protocol is in every

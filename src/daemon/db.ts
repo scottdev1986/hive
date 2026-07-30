@@ -540,24 +540,15 @@ export class HiveDatabase {
         "to" TEXT NOT NULL,
         body TEXT NOT NULL,
         createdAt TEXT NOT NULL,
-        deliveredAt TEXT,
         priority TEXT NOT NULL DEFAULT 'normal',
-        intent TEXT NOT NULL DEFAULT 'instruction',
         state TEXT NOT NULL DEFAULT 'queued',
-        injectedAt TEXT,
+        notifiedAt TEXT,
         acknowledgedAt TEXT,
-        appliedAt TEXT,
-        deadlineAt TEXT,
-        alertAt TEXT,
         sequence INTEGER NOT NULL DEFAULT 0,
-        idempotencyKey TEXT,
-        capabilityEpoch INTEGER,
-        deliveryDiagnostic TEXT,
-        deliveryDiagnosticAt TEXT,
-        deliveryAlertAt TEXT
+        idempotencyKey TEXT
       );
-      CREATE INDEX IF NOT EXISTS messages_recipient_delivery
-        ON messages("to", deliveredAt, createdAt);
+      CREATE INDEX IF NOT EXISTS messages_recipient_state
+        ON messages("to", state, sequence);
       CREATE TABLE IF NOT EXISTS message_attempts (
         attemptId TEXT PRIMARY KEY,
         messageId TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -703,7 +694,6 @@ export class HiveDatabase {
     this.rekeyTerminalHostBindingsOnLocator();
     this.relaxProviderRunAgentIdNullability();
     this.addTerminalHostBindingEvidenceColumns();
-    this.addMessageDeliveryDiagnosticColumns();
     const capabilityColumns = z
       .array(z.object({ name: z.string() }))
       .parse(this.database.query("PRAGMA table_info(capabilities)").all());
@@ -902,43 +892,61 @@ export class HiveDatabase {
     const messageColumnNames = new Set(
       messageColumns.map((column) => column.name),
     );
-    const messageMigrations = [
-      ["priority", "TEXT NOT NULL DEFAULT 'normal'"],
-      ["intent", "TEXT NOT NULL DEFAULT 'instruction'"],
-      ["state", "TEXT NOT NULL DEFAULT 'queued'"],
-      ["injectedAt", "TEXT"],
-      ["acknowledgedAt", "TEXT"],
-      ["appliedAt", "TEXT"],
-      ["deadlineAt", "TEXT"],
-      ["alertAt", "TEXT"],
-      ["sequence", "INTEGER NOT NULL DEFAULT 0"],
-      ["idempotencyKey", "TEXT"],
-      ["capabilityEpoch", "INTEGER"],
-    ] as const;
-    for (const [name, definition] of messageMigrations) {
-      if (!messageColumnNames.has(name)) {
-        this.database.exec(
-          `ALTER TABLE messages ADD COLUMN ${name} ${definition}`,
+    if (messageColumnNames.has("intent")) {
+      this.database.exec(`
+        DROP TABLE IF EXISTS message_attempts;
+        DROP INDEX IF EXISTS messages_queued_critical;
+        DROP INDEX IF EXISTS messages_recipient_delivery;
+        CREATE TABLE messages_next (
+          id TEXT PRIMARY KEY,
+          "from" TEXT NOT NULL,
+          "to" TEXT NOT NULL,
+          body TEXT NOT NULL,
+          createdAt TEXT NOT NULL,
+          priority TEXT NOT NULL DEFAULT 'normal',
+          state TEXT NOT NULL DEFAULT 'queued',
+          notifiedAt TEXT,
+          acknowledgedAt TEXT,
+          sequence INTEGER NOT NULL DEFAULT 0,
+          idempotencyKey TEXT
         );
-      }
+        INSERT INTO messages_next (
+          id, "from", "to", body, createdAt, priority, state, notifiedAt,
+          acknowledgedAt, sequence, idempotencyKey
+        )
+        SELECT
+          id, "from", "to", body, createdAt,
+          CASE WHEN priority = 'urgent' THEN 'urgent' ELSE 'normal' END,
+          CASE
+            WHEN state IN ('agent-acknowledged', 'applied') THEN 'acknowledged'
+            WHEN state = 'injected' THEN 'notified'
+            ELSE 'queued'
+          END,
+          CASE WHEN state = 'injected' THEN injectedAt ELSE NULL END,
+          acknowledgedAt,
+          sequence,
+          idempotencyKey
+        FROM messages;
+        DROP TABLE messages;
+        ALTER TABLE messages_next RENAME TO messages;
+      `);
     }
     this.database.exec(`
       CREATE UNIQUE INDEX IF NOT EXISTS messages_sender_idempotency
       ON messages("from", idempotencyKey)
       WHERE idempotencyKey IS NOT NULL
-    `);
-    // Created after the column migrations above: on an older database the
-    // priority/state/sequence columns do not exist until they run. Critical-
-    // control recovery hits this on every session-start and maintenance tick
-    // and must never pay for the full message history.
-    this.database.exec(`
-      CREATE INDEX IF NOT EXISTS messages_queued_critical
-      ON messages(sequence) WHERE priority = 'critical' AND state = 'queued'
-    `);
-    this.database.exec(`
-      UPDATE messages
-      SET state = 'applied', injectedAt = COALESCE(injectedAt, deliveredAt)
-      WHERE deliveredAt IS NOT NULL AND state = 'queued'
+      ;
+      CREATE INDEX IF NOT EXISTS messages_recipient_state
+      ON messages("to", state, sequence)
+      ;
+      CREATE TABLE IF NOT EXISTS message_attempts (
+        attemptId TEXT PRIMARY KEY,
+        messageId TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        outcome TEXT NOT NULL,
+        recordJson TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS message_attempts_message
+        ON message_attempts(messageId)
     `);
     const recoveredAt = new Date().toISOString();
     this.database.transaction(() => {
@@ -2001,10 +2009,9 @@ export class HiveDatabase {
     this.database
       .query(`
       INSERT INTO messages (
-        id, "from", "to", body, createdAt, deliveredAt, priority, intent,
-        state, injectedAt, acknowledgedAt, appliedAt, deadlineAt, alertAt,
-        sequence, idempotencyKey, capabilityEpoch
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, "from", "to", body, createdAt, priority, state, notifiedAt,
+        acknowledgedAt, sequence, idempotencyKey
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
       .run(
         value.id,
@@ -2012,18 +2019,12 @@ export class HiveDatabase {
         value.to,
         value.body,
         value.createdAt,
-        value.deliveredAt,
         value.priority,
-        value.intent,
         value.state,
-        value.injectedAt,
+        value.notifiedAt,
         value.acknowledgedAt,
-        value.appliedAt,
-        value.deadlineAt,
-        value.alertAt,
         value.sequence,
         value.idempotencyKey,
-        value.capabilityEpoch,
       );
     const stored = this.getMessage(value.id);
     if (stored === null)
@@ -2135,10 +2136,21 @@ export class HiveDatabase {
     return this.database
       .query(`
       SELECT * FROM messages
-      WHERE priority = 'critical' AND state = 'queued'
+      WHERE priority = 'urgent' AND state = 'queued'
       ORDER BY sequence, rowid
     `)
       .all()
+      .map((row) => AgentMessageSchema.parse(row));
+  }
+
+  getUnacknowledgedMessages(agentName: string): AgentMessage[] {
+    return this.database
+      .query(`
+      SELECT * FROM messages
+      WHERE "to" = ? AND state != 'acknowledged'
+      ORDER BY sequence, rowid
+    `)
+      .all(agentName)
       .map((row) => AgentMessageSchema.parse(row));
   }
 
@@ -2197,21 +2209,15 @@ export class HiveDatabase {
   ): AgentMessage | null {
     const current = this.getMessage(id);
     if (current === null) return null;
-    const rank = ["queued", "injected", "agent-acknowledged", "applied"];
+    const rank = ["queued", "notified", "acknowledged"];
     if (rank.indexOf(state) <= rank.indexOf(current.state)) return current;
-    const field =
-      state === "injected"
-        ? "injectedAt"
-        : state === "agent-acknowledged"
-          ? "acknowledgedAt"
-          : "appliedAt";
+    const field = state === "notified" ? "notifiedAt" : "acknowledgedAt";
     this.database
       .query(`
-      UPDATE messages SET state = ?, ${field} = ?,
-        deliveredAt = CASE WHEN ? = 'injected' THEN ? ELSE deliveredAt END
+      UPDATE messages SET state = ?, ${field} = ?
       WHERE id = ?
     `)
-      .run(state, timestamp, state, timestamp, id);
+      .run(state, timestamp, id);
     return this.getMessage(id);
   }
 
@@ -2320,14 +2326,7 @@ export class HiveDatabase {
 
   /** Handed to a recipient, but not yet confirmed to have reached its mind. */
   listInjectedUnapplied(): AgentMessage[] {
-    return this.database
-      .query(`
-      SELECT * FROM messages
-      WHERE state = 'injected' AND appliedAt IS NULL AND injectedAt IS NOT NULL
-      ORDER BY injectedAt, sequence, rowid
-    `)
-      .all()
-      .map((row) => AgentMessageSchema.parse(row));
+    return [];
   }
 
   /**
@@ -2337,18 +2336,12 @@ export class HiveDatabase {
    * can physically see it.
    */
   setMessageDeadline(id: string, deadlineAt: string): AgentMessage | null {
-    this.database
-      .query(`UPDATE messages SET deadlineAt = ? WHERE id = ?`)
-      .run(deadlineAt, id);
+    void deadlineAt;
     return this.getMessage(id);
   }
 
   markMessageAlerted(id: string, timestamp: string): AgentMessage | null {
-    this.database
-      .query(`
-      UPDATE messages SET alertAt = COALESCE(alertAt, ?) WHERE id = ?
-    `)
-      .run(timestamp, id);
+    void timestamp;
     return this.getMessage(id);
   }
 
@@ -2356,12 +2349,7 @@ export class HiveDatabase {
     id: string,
     capabilityEpoch: number,
   ): AgentMessage | null {
-    this.database
-      .query(`
-      UPDATE messages SET capabilityEpoch = COALESCE(capabilityEpoch, ?)
-      WHERE id = ?
-    `)
-      .run(capabilityEpoch, id);
+    void capabilityEpoch;
     return this.getMessage(id);
   }
 
@@ -2369,12 +2357,7 @@ export class HiveDatabase {
     id: string,
     timestamp: string,
   ): AgentMessage | null {
-    this.database
-      .query(`
-      UPDATE messages SET deliveryAlertAt = COALESCE(deliveryAlertAt, ?)
-      WHERE id = ?
-    `)
-      .run(timestamp, id);
+    void timestamp;
     return this.getMessage(id);
   }
 
@@ -2383,29 +2366,13 @@ export class HiveDatabase {
    * and the `deliveryBlocked` status flag read: a delivery that silently never
    * lands is exactly a row that stays here. */
   listBlockedDeliveries(cutoff: string): AgentMessage[] {
-    return this.database
-      .query(`
-      SELECT * FROM messages
-      WHERE deliveredAt IS NULL AND state = 'queued'
-        AND deliveryDiagnostic IS NOT NULL
-        AND createdAt <= ?
-      ORDER BY createdAt, sequence, rowid
-    `)
-      .all(cutoff)
-      .map((row) => AgentMessageSchema.parse(row));
+    void cutoff;
+    return [];
   }
 
   listExpiredUnacknowledged(now: string): AgentMessage[] {
-    return this.database
-      .query(`
-      SELECT * FROM messages
-      WHERE priority IN ('urgent', 'critical')
-        AND deadlineAt IS NOT NULL AND deadlineAt <= ?
-        AND state IN ('queued', 'injected') AND alertAt IS NULL
-      ORDER BY deadlineAt, sequence, rowid
-    `)
-      .all(now)
-      .map((row) => AgentMessageSchema.parse(row));
+    void now;
+    return [];
   }
 
   revokeAgentCapabilities(name: string, timestamp: string): AgentRecord | null {
@@ -2428,16 +2395,7 @@ export class HiveDatabase {
   }
 
   getUndeliveredMessages(agentName: string): AgentMessage[] {
-    return this.database
-      .query(`
-      SELECT * FROM messages
-      WHERE "to" = ? AND deliveredAt IS NULL
-      ORDER BY CASE priority
-        WHEN 'critical' THEN 0 WHEN 'urgent' THEN 1 ELSE 2 END,
-        sequence, rowid
-    `)
-      .all(agentName)
-      .map((row) => AgentMessageSchema.parse(row));
+    return this.getUnacknowledgedMessages(agentName);
   }
 
   /** True while a message addressed to this agent is still queued or
@@ -2446,7 +2404,7 @@ export class HiveDatabase {
     const row = this.database
       .query(`
       SELECT COUNT(*) AS count FROM messages
-      WHERE "to" = ? AND state IN ('queued', 'injected')
+      WHERE "to" = ? AND state != 'acknowledged'
     `)
       .get(agentName) as { count: number };
     return row.count > 0;
@@ -2458,17 +2416,9 @@ export class HiveDatabase {
   ): AgentMessage[] {
     return this.transaction(() => {
       const claimed: AgentMessage[] = [];
-      for (const message of this.getUndeliveredMessages(agentName)) {
-        const result = this.database
-          .query(`
-          UPDATE messages SET deliveredAt = ?
-          WHERE id = ? AND deliveredAt IS NULL
-        `)
-          .run(deliveredAt, message.id);
-        if (result.changes === 1) {
-          claimed.push(AgentMessageSchema.parse({ ...message, deliveredAt }));
-        }
-      }
+      void deliveredAt;
+      for (const message of this.getUndeliveredMessages(agentName))
+        claimed.push(message);
       return claimed;
     });
   }
@@ -2477,15 +2427,8 @@ export class HiveDatabase {
   // other path already delivered comes back null, exactly like a missing one,
   // so a push path cannot report a fresh delivery for a duplicate.
   markMessageDelivered(id: string, deliveredAt: string): AgentMessage | null {
-    // A delivered message's last failure diagnostic is history, not state.
-    const result = this.database
-      .query(`
-      UPDATE messages SET deliveredAt = ?,
-        deliveryDiagnostic = NULL, deliveryDiagnosticAt = NULL
-      WHERE id = ? AND deliveredAt IS NULL
-    `)
-      .run(deliveredAt, id);
-    return result.changes === 1 ? this.getMessage(id) : null;
+    void deliveredAt;
+    return this.getMessage(id);
   }
 
   /** The durable answer to "why is this message still queued": the last
@@ -2497,12 +2440,8 @@ export class HiveDatabase {
     diagnostic: string,
     at: string,
   ): void {
-    this.database
-      .query(`
-      UPDATE messages SET deliveryDiagnostic = ?, deliveryDiagnosticAt = ?
-      WHERE id = ?
-    `)
-      .run(diagnostic.slice(0, 1_024), at, id);
+    void diagnostic;
+    void at;
   }
 
   insertEvent(event: HookEvent): HookEvent {
@@ -2819,7 +2758,9 @@ export class HiveDatabase {
         .query("DELETE FROM events WHERE timestamp < ?")
         .run(cutoff).changes,
       messages: this.database
-        .query("DELETE FROM messages WHERE state = 'applied' AND createdAt < ?")
+        .query(
+          "DELETE FROM messages WHERE state = 'acknowledged' AND createdAt < ?",
+        )
         .run(cutoff).changes,
       approvals: this.database
         .query(

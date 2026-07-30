@@ -137,6 +137,8 @@ const AgentRecordShape = {
   // the daemon can always say which agent closed and when.
   closedAt: z.iso.datetime().optional(),
   quotaReservationId: z.string().min(1).optional(),
+  /** The router decision that authorized this agent's launch. */
+  decisionId: z.string().min(1).optional(),
   controlQuotaReservationId: z.string().min(1).optional(),
   controlMessageId: z.string().min(1).optional(),
   executionIdentity: ExecutionIdentitySchema.optional(),

@@ -14,11 +14,7 @@ import { EpisodicStore } from "../daemon/episodic-store";
 import { GraphifyService } from "../daemon/graphify-service";
 import { currentBuildHash } from "../daemon/handshake";
 import { hiveInstanceSuffix } from "../daemon/instance-identity";
-import {
-  inheritDefaultModelControlSettings,
-  inheritOrdinaryWorkspaceSelection,
-} from "../daemon/instance-settings";
-import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
+import { inheritDefaultModelControlSettings } from "../daemon/instance-settings";
 import {
   acquireDaemonLock,
   cleanupLifecycleFiles,
@@ -48,7 +44,6 @@ import {
   RoutingPolicyStore,
   retireLegacyRoutingToml,
 } from "../daemon/routing-policy-store";
-import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 import { HiveDaemon } from "../daemon/server";
 import {
   type HiveTerminalHostAdapter,
@@ -245,7 +240,7 @@ export async function runDaemon(): Promise<void> {
       `routing.toml is no longer read as policy; preserved at ${retiredToml}`,
     );
   }
-  // First boot only: seed the provisional baseline. Chain entries are EXACT
+  // First boot only: seed the provisional baseline. Route candidates are EXACT
   // model ids frozen from the vendors' live catalogs right now (an unreadable
   // vendor is skipped, never guessed), but the seed writes no enablement state.
   // Enablement is consent, and only the user's own click can grant it.
@@ -268,15 +263,6 @@ export async function runDaemon(): Promise<void> {
     })().catch(() => ({ vendorDefaults: {} }));
     routingPolicy.seedProvisionalBaseline(facts);
   }
-  const ordinarySelection =
-    process.env[ORDINARY_WORKSPACE_RUNTIME] === "1"
-      ? new SelectionPreferenceStore()
-      : undefined;
-  inheritOrdinaryWorkspaceSelection(routingPolicy, {
-    ...(ordinarySelection === undefined
-      ? {}
-      : { preferences: ordinarySelection }),
-  });
   // Live limits come from the providers themselves. All three probes are
   // read-only and start no model turn, so a startup refresh costs nothing but
   // a subprocess.
@@ -369,7 +355,7 @@ export async function runDaemon(): Promise<void> {
     },
     config,
     // Every live spawn is governed by the user's routing policy: the spawn's
-    // category resolves to the user-authored chain, every link passes the
+    // category resolves to the user-authored route, every candidate passes the
     // launch gate, and a corrupt or absent policy refuses rather than routes.
     readRoutingPolicy: () => routingPolicy.read(),
     discoverCapabilities,
@@ -472,9 +458,6 @@ export async function runDaemon(): Promise<void> {
         config.autonomy = value;
       },
     },
-    ...(ordinarySelection === undefined
-      ? {}
-      : { selectionPreferences: ordinarySelection }),
   });
   daemon.start();
   // Daemon must be on a port (and daemon.port written) before HELLO can auth.

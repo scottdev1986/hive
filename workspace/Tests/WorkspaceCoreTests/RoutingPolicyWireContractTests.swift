@@ -3,13 +3,14 @@ import XCTest
 
 /// Contract between the daemon's emitted policy document and this app's
 /// decoder. `Fixtures/routing-policy-wire.json` is a document the daemon may
-/// legitimately emit: it carries every effort mode in `EffortTargetSchema`
-/// and every selection mode in `SelectionModeSchema`.
+/// legitimately emit: it carries every effort mode in `EffortTargetSchema`,
+/// every candidate effort mode, and both router modes.
 ///
 /// Decoding must degrade NARROWLY — an unknown effort mode costs its own
-/// field, never the whole document. A strict throw on one unrecognised value
-/// fails the document, Settings falls back to the provisional store, and
-/// every setting silently stops persisting.
+/// field and an unknown router mode costs its route's editor, never the whole
+/// document. A strict throw on one unrecognised value fails the document,
+/// Settings falls back to the provisional store, and every setting silently
+/// stops persisting.
 final class RoutingPolicyWireContractTests: XCTestCase {
 
     private func wireFixture() throws -> Data {
@@ -26,7 +27,7 @@ final class RoutingPolicyWireContractTests: XCTestCase {
     func testDecodesTheDocumentTheDaemonEmitsToday() throws {
         let document = try RoutingPolicyDocument.decode(from: try wireFixture())
 
-        XCTAssertEqual(document.schemaVersion, 2)
+        XCTAssertEqual(document.schemaVersion, 3)
         XCTAssertEqual(document.revision, 6)
         XCTAssertEqual(document.providerState(ProviderID("claude")), .enabled)
         XCTAssertEqual(document.providerState(ProviderID("grok")), .disabled)
@@ -50,25 +51,30 @@ final class RoutingPolicyWireContractTests: XCTestCase {
             document.modelEffort(provider: ProviderID("codex"), model: "gpt-5.6-sol"),
             .providerControlled)
 
-        // A chain link may carry an effort this build cannot name; the link
-        // itself must still survive, because dropping it would silently
-        // reroute work.
-        let complex = document.chain(for: .complexCoding)
-        XCTAssertEqual(complex.count, 2)
-        XCTAssertEqual(complex[0].effort.asEffortTarget, .exact("high"))
-        XCTAssertEqual(complex[1].model, "gpt-5.6-sol")
-        XCTAssertNil(complex[1].effort.asEffortTarget)
+        // Weighted routes decode whole: mode, every candidate, every weight.
+        let complex = try XCTUnwrap(document.route(for: .complexCoding))
+        XCTAssertEqual(complex.routerMode, .userWeighted)
+        XCTAssertEqual(complex.candidates.count, 2)
+        XCTAssertEqual(complex.candidates[0].effort, .exact("high"))
+        XCTAssertEqual(complex.candidates[0].weight, 3)
+        XCTAssertEqual(complex.candidates[1].model, "gpt-5.6-sol")
+        XCTAssertEqual(complex.candidates[1].effort, .hiveDecides)
+        XCTAssertEqual(complex.candidates[1].weight, 1)
+
+        let global = try XCTUnwrap(document.global)
+        XCTAssertEqual(global.routerMode, .hiveEqual)
+        XCTAssertEqual(global.candidates.count, 2)
     }
 
     /// THE CATEGORY PARITY GUARD, and the drift it exists to make impossible.
     ///
     /// `standard_coding` sat in the daemon's schema for months while this enum
     /// had never heard of it. Settings builds one card per TaskCategory.allCases,
-    /// so the chain simply had no card: the user could not see it, could not
+    /// so the route simply had no card: the user could not see it, could not
     /// configure it, and the daemon routed real work through it anyway — which
-    /// is how a standard_coding spawn came to refuse every link with no way for
-    /// the user to fix it. Both suites were green the whole time, because each
-    /// side only ever checked its own half.
+    /// is how a standard_coding spawn came to refuse every candidate with no
+    /// way for the user to fix it. Both suites were green the whole time,
+    /// because each side only ever checked its own half.
     ///
     /// The fixture is the handshake. Its keys are pinned to the daemon's full
     /// category set by the TS twin (routing-policy.wire-contract.test.ts), so
@@ -77,32 +83,29 @@ final class RoutingPolicyWireContractTests: XCTestCase {
     func testEveryDaemonCategoryIsNameableByThisApp() throws {
         let document = try RoutingPolicyDocument.decode(from: try wireFixture())
 
-        // "default" is the user-authored global fallback. It is a CATEGORY key
-        // in the store but not a task kind, so the app models it as
-        // `defaultChain` rather than a TaskCategory — the one deliberate
-        // asymmetry, asserted here so it stays deliberate.
-        let wireCategories = Set(document.chains.keys).subtracting(["default"])
+        let wireCategories = Set(document.categories.keys)
         let appCategories = Set(TaskCategory.allCases.map(\.rawValue))
 
         XCTAssertEqual(
             appCategories, wireCategories,
             """
             TaskCategory and the daemon's routing categories have drifted. \
-            A daemon category this app cannot name is a chain the user can \
+            A daemon category this app cannot name is a route the user can \
             neither see nor edit while work routes through it; an app category \
-            the daemon does not know is a control that writes a chain the \
+            the daemon does not know is a control that writes a route the \
             daemon will reject.
             """)
-        XCTAssertFalse(
-            document.defaultChain.isEmpty,
-            "the global fallback chain must survive the wire like any other")
+        XCTAssertNotNil(
+            document.global,
+            "the global route must survive the wire like any category's")
 
-        // Every category the app offers resolves to the chain the daemon sent:
+        // Every category the app offers resolves to the route the daemon sent:
         // parity of NAMES is not parity of READS.
         for category in TaskCategory.allCases {
-            XCTAssertFalse(
-                document.chain(for: category).isEmpty,
-                "\(category.rawValue) decoded to an empty chain — the card would render blank")
+            let route = document.route(for: category)
+            XCTAssertEqual(
+                route?.candidates.isEmpty, false,
+                "\(category.rawValue) decoded to no route — the card would render blank")
         }
     }
 
@@ -112,7 +115,7 @@ final class RoutingPolicyWireContractTests: XCTestCase {
     func testUnknownEffortModeAndUnknownFieldDoNotNukeTheDocument() throws {
         let json = """
         {
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "revision": 11,
           "updatedAt": "2026-09-01T00:00:00.000Z",
           "provisional": false,
@@ -122,8 +125,8 @@ final class RoutingPolicyWireContractTests: XCTestCase {
             { "provider": "claude", "model": "claude-opus-4-8", "state": "enabled",
               "effort": { "mode": "thinking-budget", "tokens": 32000 } }
           ],
-          "chains": {},
-          "selection": { "global": "auto", "categories": {} }
+          "global": null,
+          "categories": {}
         }
         """
         let document = try RoutingPolicyDocument.decode(from: Data(json.utf8))
@@ -161,13 +164,13 @@ final class RoutingPolicyWireContractTests: XCTestCase {
     func testAMissingRequiredFieldStillFails() {
         let json = """
         {
-          "schemaVersion": 2,
+          "schemaVersion": 3,
           "updatedAt": "2026-09-01T00:00:00.000Z",
           "provisional": false,
           "providers": {},
           "models": [],
-          "chains": {},
-          "selection": { "global": "auto", "categories": {} }
+          "global": null,
+          "categories": {}
         }
         """
         XCTAssertThrowsError(
@@ -175,67 +178,29 @@ final class RoutingPolicyWireContractTests: XCTestCase {
             "revision is the CAS token — a document without it is unusable, not tolerable")
     }
 
-    /// SELECTION: these are the values emitted by the daemon and sent back by
-    /// `hive routing set-selection`. The control offers only the two decisions;
-    /// never-configured remains a readable state the user can escape.
-    func testSelectionMirrorsTheDaemonContractAndIsWritable() throws {
-        let document = try RoutingPolicyDocument.decode(from: try wireFixture())
-        XCTAssertTrue(document.selectionOnWire)
-        XCTAssertTrue(document.selectionWritable)
-        XCTAssertEqual(document.globalSelection, .neverConfigured)
-        XCTAssertEqual(SelectionMode.neverConfigured.rawValue, "never-configured")
-        XCTAssertEqual(SelectionMode.auto.rawValue, "auto")
-        XCTAssertEqual(SelectionMode.choice.rawValue, "choice")
+    /// A router mode a newer daemon added is preserved verbatim and costs
+    /// that route its editor — never the whole document, and never a rewrite
+    /// into a mode the user did not choose.
+    func testUnknownRouterModeCostsOnlyItsRoute() throws {
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
+        var categories = try XCTUnwrap(json["categories"] as? [String: Any])
+        var planning = try XCTUnwrap(categories["planning"] as? [String: Any])
+        planning["mode"] = "outcome-ranked"
+        categories["planning"] = planning
+        json["categories"] = categories
+
+        let document = try RoutingPolicyDocument.decode(
+            from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(document.revision, 6, "the document still decoded")
+
+        let route = try XCTUnwrap(document.route(for: .planning))
+        XCTAssertEqual(route.mode, "outcome-ranked", "the mode is kept verbatim")
+        XCTAssertNil(route.routerMode)
+        XCTAssertNil(route.asRoutePolicy, "no editor terms for a mode this build cannot name")
+        XCTAssertFalse(route.writable)
         XCTAssertEqual(
-            SelectionMode.userChoices, [.choice, .auto],
-            "never-configured is legible state, not a third user choice")
-    }
-
-    /// A daemon old enough to still send per-category selection overrides must
-    /// decode, not throw: a decoder that rejects the whole document over one
-    /// retired key is how Settings silently fell back to an in-memory store.
-    func testRetiredCategoryOverridesDecodeAndAreIgnored() throws {
-        var json = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
-        json["selection"] = ["global": "choice", "categories": ["planning": "auto"]]
-        let data = try JSONSerialization.data(withJSONObject: json)
-
-        let document = try RoutingPolicyDocument.decode(from: data)
-
-        XCTAssertEqual(document.globalSelection, .choice)
-        XCTAssertTrue(
-            document.selectionWritable,
-            "the retired key is dropped, so the control stays writable")
-    }
-
-    /// A future selection mode is preserved in the document without blanking
-    /// Settings, but this build must not offer a control that would rewrite it.
-    func testUnknownSelectionModeDisablesOnlyItsControl() throws {
-        var json = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
-        var selection = try XCTUnwrap(json["selection"] as? [String: Any])
-        selection["global"] = "future-selection"
-        json["selection"] = selection
-
-        let document = try RoutingPolicyDocument.decode(
-            from: JSONSerialization.data(withJSONObject: json))
-        XCTAssertEqual(document.revision, 6, "the document still decoded")
-        XCTAssertNil(document.globalSelection)
-        XCTAssertEqual(document.selection.global, "future-selection")
-        XCTAssertFalse(document.selectionWritable)
-    }
-
-    /// A daemon predating selection modes never receives a write it cannot
-    /// accept. The rest of its policy document remains readable.
-    func testOlderDaemonWithoutSelectionDisablesOnlyItsControl() throws {
-        var json = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: try wireFixture()) as? [String: Any])
-        json.removeValue(forKey: "selection")
-
-        let document = try RoutingPolicyDocument.decode(
-            from: JSONSerialization.data(withJSONObject: json))
-        XCTAssertEqual(document.revision, 6, "the document still decoded")
-        XCTAssertFalse(document.selectionOnWire)
-        XCTAssertFalse(document.selectionWritable)
+            document.route(for: .complexCoding)?.writable, true,
+            "every other route stays editable")
     }
 }

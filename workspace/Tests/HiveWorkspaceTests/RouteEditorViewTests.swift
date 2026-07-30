@@ -4,7 +4,7 @@ import XCTest
 import WorkspaceCore
 
 @MainActor
-final class ChainEditorViewTests: XCTestCase {
+final class RouteEditorViewTests: XCTestCase {
 
     func testNoEffortMenuItemWritesAnExplicitNone() throws {
         _ = NSApplication.shared
@@ -30,7 +30,7 @@ final class ChainEditorViewTests: XCTestCase {
         let dataSource = ModelControlDataSource(hivePath: hive.path, daemonPort: 4483)
         dataSource.refresh()
         waitForRefresh(dataSource)
-        let editor = ChainSectionView(kind: .category(.simpleCoding), dataSource: dataSource)
+        let editor = RouteSectionView(kind: .category(.simpleCoding), dataSource: dataSource)
         let popupItems = popups(in: editor).flatMap(\.itemArray)
         let item = try XCTUnwrap(
             popupItems.first { $0.title.contains("no effort setting") },
@@ -40,8 +40,9 @@ final class ChainEditorViewTests: XCTestCase {
 
         menu.performActionForItem(at: index)
 
-        let entry = try XCTUnwrap(dataSource.chainEntries(.simpleCoding).last)
-        XCTAssertEqual(entry.effort, .some(EffortTarget.none))
+        let candidate = try XCTUnwrap(dataSource.route(.simpleCoding)?.candidates.last)
+        XCTAssertEqual(candidate.effort, .some(EffortTarget.none))
+        XCTAssertEqual(candidate.weight, 1)
     }
 
     private func waitForRefresh(_ dataSource: ModelControlDataSource) {

@@ -3,19 +3,19 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   CAPABILITY_PROVIDERS,
+  type CandidateEffort,
   type CapabilityProvider,
-  type ChainEntry,
   emptyRoutingPolicy,
   type ModelEnablementDecision,
   modelPolicyState,
   ROUTING_CATEGORIES,
   type RoutingCategory,
+  RoutingCategorySchema,
+  type RoutePolicy,
   type RoutingPolicy,
   type RoutingPolicyMutation,
   RoutingPolicyMutationSchema,
   RoutingPolicySchema,
-  type SelectionPolicy,
-  SelectionPolicySchema,
 } from "../schemas";
 import type { HiveDatabase } from "./db";
 
@@ -82,25 +82,19 @@ export class RoutingPolicyStore {
         after TEXT NOT NULL
       );
     `);
-    // Strip unsupported keys before any schema-strict parse: an unknown category
-    // key or selection.categories map makes
-    // RoutingPolicySchema.safeParse throw on load.
-    this.migrateStoredStripRetiredKeys();
-    this.migrateStoredV1();
+    this.migrateStoredV2();
   }
 
   /**
-   * Strip stored `profiling` categories and per-category selection overrides
-   * before parsing. RoutingPolicySchema rejects unknown keys; it does
-   * not drop them — so load would throw RoutingPolicyCorruptError. Strip and
-   * rewrite, same defensive style as v1 migrate: unparseable JSON is left
-   * alone for the corrupt-row path to surface.
-   *
-   * Dropping an override never changes what a category resolves to by more
-   * than the global already says: the mode it falls back to is the one the
-   * user set on the control that governs everything.
+   * One-shot V2 → V3: ordered chains become unordered hive-equal routes over
+   * the same exact candidates (weight 1 each), and the `default` chain becomes
+   * the global route. Rank order is dropped rather than converted — Hive must
+   * not invent how much more "first" meant than "second"; the user assigns
+   * real weights through set-route whenever they want user-weighted mode.
+   * Enablement copies through untouched: no new consent is created. Anything
+   * that is not a V2 document is left alone for the corrupt-row path.
    */
-  private migrateStoredStripRetiredKeys(now: Date = new Date()): void {
+  private migrateStoredV2(now: Date = new Date()): void {
     const row = this.db.database
       .query("SELECT document FROM routing_policy WHERE id = 1")
       .get() as { document: string } | null;
@@ -111,171 +105,68 @@ export class RoutingPolicyStore {
     } catch {
       return;
     }
-    if (
-      typeof decoded !== "object" ||
-      decoded === null ||
-      Array.isArray(decoded)
-    ) {
-      return;
-    }
-    const doc = { ...(decoded as Record<string, unknown>) };
-    let changed = false;
-
-    if (
-      typeof doc.chains === "object" &&
-      doc.chains !== null &&
-      !Array.isArray(doc.chains) &&
-      Object.hasOwn(doc.chains, "profiling")
-    ) {
-      const { profiling: _removed, ...chains } = doc.chains as Record<
-        string,
-        unknown
-      >;
-      doc.chains = chains;
-      changed = true;
-    }
-
-    if (
-      typeof doc.selection === "object" &&
-      doc.selection !== null &&
-      !Array.isArray(doc.selection) &&
-      Object.hasOwn(doc.selection, "categories")
-    ) {
-      const { categories: _removed, ...selection } = doc.selection as Record<
-        string,
-        unknown
-      >;
-      doc.selection = selection;
-      changed = true;
-    }
-
-    if (!changed) return;
-
-    if (typeof doc.revision === "number" && Number.isFinite(doc.revision)) {
-      doc.revision = doc.revision + 1;
-    }
-    doc.updatedAt = now.toISOString();
-
-    // Prefer canonical v2 form when the rest of the document is already valid;
-    // otherwise keep the stripped raw document so a later v1 migration can run.
-    const parsed = RoutingPolicySchema.safeParse(doc);
-    const after = parsed.success
-      ? canonicalRoutingPolicyJson(parsed.data)
-      : JSON.stringify(doc);
-    const revision = parsed.success
-      ? parsed.data.revision
-      : typeof doc.revision === "number"
-        ? doc.revision
-        : 0;
-    const updatedAt = parsed.success
-      ? parsed.data.updatedAt
-      : typeof doc.updatedAt === "string"
-        ? doc.updatedAt
-        : now.toISOString();
-
-    this.db.database
-      .transaction(() => {
-        this.db.database.run(
-          "UPDATE routing_policy SET revision = ?, updatedAt = ?, document = ? WHERE id = 1",
-          [revision, updatedAt, after],
-        );
-        this.db.database.run(
-          `INSERT INTO routing_policy_events
-           (at, actor, operation, revision, before, after)
-         VALUES (?, 'hive', 'migrate-strip-retired-keys', ?, ?, ?)`,
-          [now.toISOString(), revision, row.document, after],
-        );
-      })
-      .immediate();
-  }
-
-  /**
-   * Version 1 represented preference as spread/strict and let missing model
-   * rows inherit provider enablement. The migration writes the three-state
-   * answer explicitly: selection lands on NEVER_CONFIGURED — the user has not
-   * answered the one control that governs routing, and an authored chain is
-   * not that answer — and only exact targets from a non-provisional user
-   * policy become model consent. Nothing becomes AUTO.
-   */
-  private migrateStoredV1(now: Date = new Date()): void {
-    const row = this.db.database
-      .query("SELECT document FROM routing_policy WHERE id = 1")
-      .get() as { document: string } | null;
-    if (row === null) return;
-    let decoded: unknown;
-    try {
-      decoded = JSON.parse(row.document);
-    } catch {
-      return;
-    }
-    const header = z
-      .object({ schemaVersion: z.literal(1) })
-      .passthrough()
-      .safeParse(decoded);
-    if (!header.success) return;
     const legacy = z
       .object({
-        schemaVersion: z.literal(1),
+        schemaVersion: z.literal(2),
         revision: z.number().int().nonnegative(),
-        updatedAt: z.string(),
         provisional: z.boolean(),
         providers: z.record(z.string(), z.unknown()),
         models: z.array(z.unknown()),
-        chains: z.record(z.string(), z.array(z.unknown())),
+        chains: z.record(
+          z.string(),
+          z.array(
+            z
+              .object({
+                provider: z.string(),
+                model: z.string(),
+                effort: z.object({ mode: z.string() }).passthrough(),
+              })
+              .passthrough(),
+          ),
+        ),
       })
       .passthrough()
       .safeParse(decoded);
     if (!legacy.success) return;
 
-    const models: Record<string, unknown>[] = legacy.data.models.map(
-      (model) => ({
-        ...(model as object),
-        effort: (model as { effort?: unknown }).effort ?? {
-          mode: "never-configured",
-        },
-      }),
-    );
-    if (!legacy.data.provisional) {
-      for (const entries of Object.values(legacy.data.chains)) {
-        for (const entry of entries) {
-          const target = z
-            .object({
-              provider: z.string(),
-              model: z.string(),
-            })
-            .passthrough()
-            .safeParse(entry);
-          if (!target.success) continue;
-          const index = models.findIndex((model) => {
-            const parsed = z
-              .object({ provider: z.string(), model: z.string() })
-              .passthrough()
-              .safeParse(model);
-            return (
-              parsed.success &&
-              parsed.data.provider === target.data.provider &&
-              parsed.data.model === target.data.model
-            );
-          });
-          if (index >= 0) {
-            models[index] = { ...(models[index] as object), state: "enabled" };
-          } else {
-            models.push({
-              ...target.data,
-              state: "enabled",
-              effort: { mode: "never-configured" },
-            });
-          }
-        }
+    const routeOf = (
+      entries: (typeof legacy.data.chains)[string],
+    ): RoutePolicy | null => {
+      const candidates = entries.map((entry) => ({
+        provider: entry.provider as CapabilityProvider,
+        model: entry.model,
+        // never-configured effort is a model-row state, not a launchable
+        // intent; the vendor's own choice is the only non-invented answer.
+        effort: (entry.effort.mode === "never-configured"
+          ? { mode: "provider-controlled" }
+          : entry.effort) as CandidateEffort,
+        weight: 1,
+      }));
+      return candidates.length === 0
+        ? null
+        : { mode: "hive-equal", candidates };
+    };
+
+    let global: RoutePolicy | null = null;
+    const categories: Record<string, RoutePolicy> = {};
+    for (const [key, entries] of Object.entries(legacy.data.chains)) {
+      const route = routeOf(entries);
+      if (route === null) continue;
+      if (key === "default") global = route;
+      else if (RoutingCategorySchema.safeParse(key).success) {
+        categories[key] = route;
       }
     }
+
     const next = RoutingPolicySchema.safeParse({
-      ...legacy.data,
-      schemaVersion: 2,
+      schemaVersion: 3,
       revision: legacy.data.revision + 1,
       updatedAt: now.toISOString(),
-      models,
-      selection: { global: "never-configured" },
+      provisional: legacy.data.provisional,
+      providers: legacy.data.providers,
+      models: legacy.data.models,
+      global,
+      categories,
     });
     if (!next.success) return;
     const after = canonicalRoutingPolicyJson(next.data);
@@ -288,7 +179,7 @@ export class RoutingPolicyStore {
         this.db.database.run(
           `INSERT INTO routing_policy_events
            (at, actor, operation, revision, before, after)
-         VALUES (?, 'hive', 'migrate-v1-explicit-intent', ?, ?, ?)`,
+         VALUES (?, 'hive', 'migrate-v2-weighted-routes', ?, ?, ?)`,
           [now.toISOString(), next.data.revision, row.document, after],
         );
       })
@@ -383,17 +274,17 @@ export class RoutingPolicyStore {
   }
 
   /**
-   * First-boot seeding: when NO policy row exists, write provisional route
-   * suggestions without granting launch consent. Every chain entry names an
-   * exact model id. `vendorDefaults` carries each vendor's current
-   * default AS READ FROM ITS LIVE CATALOG by the caller — frozen here as a
-   * specific id, never re-resolved, never a training-memory guess. A vendor
-   * whose catalog could not be read is simply absent from seeded chains
-   * (skipped, not invented). Efforts seed provider-controlled — never
-   * invented either.
+   * First-boot seeding: when NO policy row exists, write one provisional
+   * GLOBAL route — hive-equal over each vendor's current default model AS
+   * READ FROM ITS LIVE CATALOG by the caller — frozen here as a specific id,
+   * never re-resolved, never a training-memory guess. A vendor whose catalog
+   * could not be read is simply absent (skipped, not invented). Efforts seed
+   * provider-controlled — never invented either. No per-category routes are
+   * seeded: equal-weight sets are identical per category, and a category
+   * without a route resolves to global.
    *
    * ENABLEMENT IS CONSENT, so the seed writes no provider or model enablement
-   * at all. It may suggest exact chain order, but only the user's own click can
+   * at all. It may suggest a candidate set, but only the user's own click can
    * make a provider launchable. A store that already has a policy — even
    * revision 1 from an earlier boot — is left exactly alone.
    */
@@ -409,7 +300,7 @@ export class RoutingPolicyStore {
         ...emptyRoutingPolicy(now.toISOString()),
         revision: 1,
         provisional: true,
-        chains: provisionalBaselineChains(facts.vendorDefaults),
+        global: provisionalBaselineRoute(facts.vendorDefaults),
       });
       this.write(policy, null, "seed-provisional-baseline", "hive", now);
       return { seeded: true, policy };
@@ -446,29 +337,6 @@ export class RoutingPolicyStore {
         provisional: false,
       });
       this.write(next, current, "import-default-policy", "hive", now);
-      return { imported: true, policy: next };
-    })();
-  }
-
-  /** Overlay only the ordinary-Workspace selection preference. */
-  importSelectionPreference(
-    selection: SelectionPolicy,
-    now: Date = new Date(),
-  ): { imported: boolean; policy: RoutingPolicy } {
-    return this.db.database.transaction(() => {
-      const current = this.read(now);
-      const parsed = SelectionPolicySchema.parse(selection);
-      if (current.selection.global === parsed.global) {
-        return { imported: false, policy: current };
-      }
-      const next = RoutingPolicySchema.parse({
-        ...current,
-        revision: current.revision + 1,
-        updatedAt: now.toISOString(),
-        provisional: false,
-        selection: parsed,
-      });
-      this.write(next, current, "import-shared-selection", "hive", now);
       return { imported: true, policy: next };
     })();
   }
@@ -600,38 +468,56 @@ function applyMutation(
         ],
       };
     }
-    case "set-chain": {
-      const chains = { ...policy.chains };
-      if (mutation.entries.length === 0) delete chains[mutation.category];
-      else chains[mutation.category] = mutation.entries;
-      if (mutation.entries.length === 0) return { ...policy, chains };
+    case "set-route": {
+      const next =
+        mutation.scope === "global"
+          ? { ...policy, global: mutation.route }
+          : {
+              ...policy,
+              categories: withRoute(
+                policy.categories,
+                mutation.scope,
+                mutation.route,
+              ),
+            };
+      if (mutation.route === null) return next;
       // Keep an explicit enabled row for the UI's per-model preference. The
       // provider master switch remains the launch authority.
       let models = [...policy.models];
-      for (const entry of mutation.entries) {
+      for (const candidate of mutation.route.candidates) {
         const existing = models.find(
-          (row) => row.provider === entry.provider && row.model === entry.model,
+          (row) =>
+            row.provider === candidate.provider && row.model === candidate.model,
         );
         models = models.filter(
           (row) =>
-            !(row.provider === entry.provider && row.model === entry.model),
+            !(
+              row.provider === candidate.provider &&
+              row.model === candidate.model
+            ),
         );
         models.push({
-          provider: entry.provider,
-          model: entry.model,
+          provider: candidate.provider,
+          model: candidate.model,
           state: "enabled",
-          effort: existing?.effort ?? entry.effort,
+          effort: existing?.effort ?? candidate.effort,
         });
       }
-      // Authoring a chain says which models may do this work, in what order.
-      // It deliberately says nothing about selection. Do not infer a preference
-      // that could outrank the user's explicit selection control.
-      return { ...policy, chains, models };
+      return { ...next, models };
     }
-    case "set-selection":
-      return { ...policy, selection: { global: mutation.mode } };
   }
 }
+
+const withRoute = (
+  categories: RoutingPolicy["categories"],
+  scope: RoutingCategory,
+  route: RoutePolicy | null,
+): RoutingPolicy["categories"] => {
+  const next = { ...categories };
+  if (route === null) delete next[scope];
+  else next[scope] = route;
+  return next;
+};
 
 const modelRow = (
   policy: RoutingPolicy,
@@ -649,65 +535,37 @@ const withoutModelRow = (
     (row) => !(row.provider === provider && row.model === model),
   );
 
-/** All vendors, led by the named one — a deliberate provisional ORDER over
- * the whole union, so a newly added vendor appears in seeded chains instead
- * of being invisible until someone edits policy. */
-const leadWith = (leader: CapabilityProvider): CapabilityProvider[] => [
-  leader,
-  ...CAPABILITY_PROVIDERS.filter((provider) => provider !== leader),
-];
-
 /**
- * The provisional baseline uses an exact
- * model id — the vendor's own current default, read live at seed time and
- * frozen — in an assumed order per category: strong-reasoning vendor first
- * for deep work, the coding specialist first for code-shaped work, the
- * unmetered generalist first for light work to spread load off the coding
- * pools. Assumed, labeled provisional, fully editable; no outcome data backs
- * it yet. The binary ships the ORDER only; every model id comes from the
- * live catalog, and an unreadable vendor is skipped rather than guessed.
+ * The provisional baseline: one hive-equal global route over each vendor's
+ * own current default model, read live at seed time and frozen. Equal weight
+ * is the only non-invented rating; no outcome data backs anything else.
  */
-function provisionalBaselineChains(
+function provisionalBaselineRoute(
   vendorDefaults: Partial<Record<CapabilityProvider, string>>,
-): Partial<Record<RoutingCategory, ChainEntry[]>> {
-  const chainOf = (providers: CapabilityProvider[]): ChainEntry[] =>
-    providers.flatMap((provider) => {
-      const model = vendorDefaults[provider];
-      return model === undefined
-        ? []
-        : [
-            {
-              provider,
-              model,
-              effort: { mode: "provider-controlled" as const },
-            },
-          ];
-    });
-  const claudeLed = chainOf(leadWith("claude"));
-  const codexLed = chainOf(leadWith("codex"));
-  const grokLed = chainOf(leadWith("grok"));
-  const chains: Partial<Record<RoutingCategory, ChainEntry[]>> = {};
-  const assign = (category: RoutingCategory, chain: ChainEntry[]): void => {
-    if (chain.length > 0) chains[category] = chain;
-  };
-  assign("light_research", grokLed);
-  assign("heavy_research", claudeLed);
-  assign("simple_coding", codexLed);
-  assign("standard_coding", codexLed);
-  assign("complex_coding", claudeLed);
-  assign("code_review", codexLed);
-  assign("planning", claudeLed);
-  assign("debugging", claudeLed);
-  assign("summarization", grokLed);
-  assign("default", codexLed);
-  return chains;
+): RoutePolicy | null {
+  const candidates = CAPABILITY_PROVIDERS.flatMap((provider) => {
+    const model = vendorDefaults[provider];
+    return model === undefined
+      ? []
+      : [
+          {
+            provider,
+            model,
+            effort: { mode: "provider-controlled" as const },
+            weight: 1,
+          },
+        ];
+  });
+  return candidates.length === 0
+    ? null
+    : { mode: "hive-equal", candidates };
 }
 
 /**
  * Deterministic serialization keeps policy exports inspectable.
- * Key order is fixed (providers in union order, models sorted, chains in
- * category order; entry order is the user's and is preserved), so identical
- * policy is byte-identical output and two exports diff cleanly.
+ * Key order is fixed (providers in union order, models sorted, categories in
+ * category order; candidates sorted by target), so identical policy is
+ * byte-identical output and two exports diff cleanly.
  */
 export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
   const providers: Record<string, string> = {};
@@ -727,10 +585,18 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
       ...(row.state === undefined ? {} : { state: row.state }),
       effort: row.effort,
     }));
-  const chains: Record<string, ChainEntry[]> = {};
+  const canonicalRoute = (route: RoutePolicy): RoutePolicy => ({
+    mode: route.mode,
+    candidates: [...route.candidates].sort(
+      (left, right) =>
+        left.provider.localeCompare(right.provider) ||
+        left.model.localeCompare(right.model),
+    ),
+  });
+  const categories: Record<string, RoutePolicy> = {};
   for (const category of ROUTING_CATEGORIES) {
-    const chain = policy.chains[category];
-    if (chain !== undefined) chains[category] = chain;
+    const route = policy.categories[category];
+    if (route !== undefined) categories[category] = canonicalRoute(route);
   }
   return `${JSON.stringify(
     {
@@ -738,10 +604,10 @@ export function canonicalRoutingPolicyJson(policy: RoutingPolicy): string {
       revision: policy.revision,
       updatedAt: policy.updatedAt,
       provisional: policy.provisional,
-      selection: { global: policy.selection.global },
       providers,
       models,
-      chains,
+      global: policy.global === null ? null : canonicalRoute(policy.global),
+      categories,
     },
     null,
     2,

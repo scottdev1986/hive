@@ -1,12 +1,13 @@
 # Model Control Center — the honesty contract
 
-Updated: 2026-07-14
-Source: Hive source tree, 2026-07-14
+Updated: 2026-07-30
+Source: Hive source tree, 2026-07-30
 
 ## Summary
 
 The MCC is the settings surface that makes the user the router: it edits the
-routing policy document and renders every provider's measured capacity. Its
+routing policy document — provider and model consent, effort intent, and the
+weighted routes — and renders every provider's measured capacity. Its
 governing rule is not a layout rule — it is an honesty rule, and most of this
 article exists to keep an implementer from shipping a confident lie about money.
 
@@ -50,14 +51,15 @@ component**.
 
 ## Grok IS metered — three sections of the old spec were wrong
 
-The design spec said "Grok has no gauge at all" and gave it the unmetered panel, never a
-meter. **That was already false when this article was written.** The 2026-07-13
-controlled-spend experiment established `config.creditUsagePercent` as a real weekly gauge:
+The original MCC spec said "Grok has no gauge at all" and gave it the unmetered panel,
+never a meter. **That was already false when this article was first written.** The
+2026-07-13 controlled-spend experiment established `config.creditUsagePercent` as a
+real weekly gauge:
 
-- `src/daemon/quota-sources.ts:923-945` reads it as the gauge.
-- `src/cli/model-control.ts:72-83` returns `"metered"` for **all three** providers,
-  and its switch **fails closed** on a vendor nobody classified — a new provider
-  will not silently render as metered-and-empty.
+- `src/daemon/quota-sources.ts` reads it as the gauge.
+- `usageSurface` in `src/cli/model-control.ts` returns `"metered"` for the
+  metered providers, and its switch **fails closed** on a vendor nobody
+  classified — a new provider will not silently render as metered-and-empty.
 
 What survives from that section, and survives *hard*: the **money rails**
 (`onDemandUsed`, `onDemandCap`, `prepaidBalance`) are a **guard, not a gauge**.
@@ -68,16 +70,52 @@ money rails, and they answer different questions. See
 
 Two further sections of that spec were wrong, and the UI must not build them:
 
-- **The `vendor-default` chain mode and its `ChainEntryPicker`.** Deleted from the schema
-  (commit `0dc25c0`; `src/schemas/routing-policy.ts:68-81`). A UI offering it builds a form the daemon
-  will reject.
-- **Per-category `exhaustion_behavior`.** No such field exists. (The
-  `chain.exhaustion_refuse` / `chain.exhaustion_widen` copy strings below therefore have
-  nothing to bind to — they are kept only in case the gap is closed.)
+- **The `vendor-default` entry form and its picker.** Deleted from the schema
+  (commit `0dc25c0`); a route candidate names an exact model, always. A UI
+  offering "whatever the vendor picks" builds a form the daemon will reject.
+- **Per-category `exhaustion_behavior`.** No such field exists, and V3 removed
+  the concept entirely: a category route that refuses everything fails the
+  spawn; it never widens.
 
-And the spec's one stated **blocking dependency is fixed**: `buildModelInventory` is no
-longer two-valued. `src/daemon/model-inventory.ts:212-222` emits `known-none` with a
-detail, and `:301-305` renders all three states. Effort pickers are unblocked.
+And the spec's one stated **blocking dependency is fixed**: `buildModelInventory`
+(`src/daemon/model-inventory.ts`) is no longer two-valued — it emits `known-none`
+with a detail alongside `known` and `unknown`. Effort pickers are unblocked.
+
+## The route editor
+
+Chains are gone. `RouteEditorView.swift` (`RouteSectionView`) renders one
+section per task category plus the **Global route** ("Used when a category has
+no route of its own"), each editing an unordered weighted candidate set:
+
+- **Membership.** The add picker's atom is a (model, effort) pair; each model
+  opens a submenu of its advertised effort levels. Every candidate is an
+  **exact** model — there is no vendor-default candidate and no `"default"`
+  anywhere. Remove is per candidate; zero candidates clears the scope back to
+  unconfigured.
+- **Mode toggle.** "Split:" popup — *Weighted split* (`user-weighted`) or
+  *Equal split* (`hive-equal`). The equal-split caption states the contract:
+  your weights are kept and apply again if you switch back.
+- **Weights.** Editable only in weighted mode, integer 1–100. The copy says
+  what the schema means: *weights are ratings, not percentages — 3/1/1 and
+  60/20/20 are the same split.*
+- **Share preview.** Each candidate shows its normalized expected share
+  (`expectedShare`, "≈N%"), computed the same way as the daemon's
+  `routeShares` (`src/daemon/router.ts`). When some provider holds more than
+  one candidate, a per-provider share summary appears — the router never
+  secretly normalizes by provider, so the UI must show the aggregate share
+  honestly.
+- **A category with no route** shows "No route of its own — uses your Global
+  route." A configured route whose candidates are all off or unavailable warns
+  that spawns routed here **will fail** — it does not pretend a fallback
+  exists.
+- **A stored route this build cannot fully spell is refused, not rewritten**
+  (`ModelControlDataSource.setRoute`): respelling one candidate's effort would
+  be a routing change the user never made. The write fails with
+  `routeUnreadable` copy and nothing changes.
+
+Writing a route mirrors the daemon's `set-route` side effect: naming a model in
+a route keeps an explicit enabled row for it, while the provider master switch
+remains the launch authority.
 
 ## Effort is three-valued
 
@@ -92,7 +130,7 @@ Conflating two of the values is a lie the UI renders.
 > "This model has no effort axis" and "we could not read this model's effort axis" are
 > different facts. **One greyed-out control for both claims knowledge we do not have.**
 
-The policy schema is richer (`src/schemas/routing-policy.ts:49-55`): `never-configured`,
+The policy schema is richer (`EffortTargetSchema`): `never-configured`,
 `hive-decides`, `exact`, `none`, `provider-controlled`. The last two are *not*
 interchangeable with the first two — `provider-controlled` omits the flag and does not
 claim to know the vendor's default, while `hive-decides` picks an exact advertised level
@@ -120,70 +158,76 @@ The review gate. Each is a way to make the screen lie about money.
    (2), because that feed *actually goes quiet*.
 4. **Absolute counts.** "128 of 500" is fiction for every provider.
 5. **`known-none` effort shown as unknown**, or unknown shown as "no effort axis."
-6. **"The authored chain is the outer boundary."** It is preference order, not
-   the outer boundary. Under `choice`, an exhausted category chain walks the Default
-   chain; if every authored link is refused, Hive spreads across the remaining
-   enabled models as a last resort. The user's enablement set is the boundary.
-7. **Blurring empty and exhausted.** A category with no chain uses Default, but if
-   both are empty Hive refuses outright. A non-empty authored search space whose
-   links were all refused is exhausted and earns the enabled-model fallback.
+6. **"If this route fails, Global catches it."** It does not. A category route
+   is an explicit boundary; when every candidate refuses, the spawn refuses.
+   Only a category with **no route of its own** resolves to Global.
+7. **Blurring unconfigured and ineffective.** "No route — uses Global" and
+   "every model in this route is off or unavailable — spawns will fail" are
+   different facts with different copy, and neither widens to "any enabled
+   model."
 8. **A floor refusal shown as "you disabled this."** Capability truth is not user
    policy.
 9. **Provider off but the model toggle still looks on.** Effective state must
-   dominate chrome: `effective = providerEnabled && modelEnabled && modelAvailable`.
-   When effective and preference differ, show **both**.
-10. **Hive's estimate wearing a provider's badge.**
-11. **Stale numbers without an age.**
-12. **Local ledger spend as account quota.**
-13. **Ensemble language.** "Also use", "team of models", an unordered multi-select —
-    all imply parallel execution Hive does not do. It is an **ordered fallback; only
-    one model runs.**
+   dominate chrome, and it comes from `modelPolicyState` — provider-off
+   overrides everything under it; under an enabled provider an absent model
+   state inherits the provider. When effective and preference differ, show
+   **both** ("Your preference: on (not effective)").
+10. **Weights rendered as percentages.** Weights are ratings — 3/1/1 and
+    60/20/20 are the same split. The normalized expected share is a separate,
+    clearly derived figure ("≈N%"), never the stored value.
+11. **Hive's estimate wearing a provider's badge.** And stale numbers without
+    an age, and local ledger spend as account quota.
+12. **Hiding a provider's aggregate share.** One provider with three candidates
+    in an equal split holds three shares. The per-provider summary exists so
+    that fact is visible, not smoothed away.
+13. **Ensemble language.** "Also use", "team of models" — anything implying
+    parallel execution. Weights split *spawns over time*; **each spawn runs on
+    ONE model** (`routesSubtitle` says exactly this).
 14. **A billing-off nag.** Paid overflow off means the wallet is safe.
 15. **An open `ProviderId` union.** `"claude" | "codex" | "grok" | string` reopens
     the Grok-class hole at the UI contract. Closed enum only.
 
 ## The copy catalog (excerpt — do not soften "unknown")
 
-| id | Copy |
-|---|---|
-| `badge.usage_unknown` | Usage unknown |
-| `badge.usage_stale` | Stale reading |
-| `badge.provider_off` | Off — Hive will not invoke this CLI |
-| `badge.includes_estimate` | Includes Hive estimate |
-| `badge.provisional` | Provisional |
-| `badge.unresolvable` | Model no longer offered by this provider |
-| `meter.unknown_body` | Hive has no reading for this window |
-| `meter.silent_feed` | {ProviderTitle} reported no usage data. This surface is experimental and sometimes goes quiet — {ProviderTitle} itself is still available. |
-| `meter.estimated_footnote` | Part of this figure is Hive's estimate of spend since the last provider reading |
-| `effort.none` | This model has no effort setting. |
-| `effort.unknown` | Effort options unknown — {reason} |
-| `effort.provider_controlled` | Vendor default (Hive sends no effort flag) |
-| `model.overridden_by_provider` | Off because {ProviderTitle} is off |
-| `subtitle.fallback` | Ordered fallback — one model at a time. Not an ensemble. |
-| `chain.empty_uses_default` | No chain of its own — uses your Default chain. |
-| `banner.provisional` | Provisional Hive suggestions — edit anytime; no outcome data yet. |
-| `footer.honesty` | Measure or say unknown. Zero means measured zero; blank means Hive cannot tell. |
+From `MCCCopy.swift`; the ids are the Swift constants.
 
-`effort.none` and `effort.unknown` are **not interchangeable**. Rank labels are
-Primary / 2nd / 3rd — never an icon implying parallelism.
+| Constant | Copy |
+|---|---|
+| `badgeUsageUnknown` | Usage unknown |
+| `badgeUsageStale` | Stale reading |
+| `badgeProviderOff` | Off — Hive will not invoke this CLI |
+| `badgeProvisional` | Provisional |
+| `badgeUnresolvable` | Model no longer offered by this provider |
+| `meterUnknownBody` | Hive has no reading for this window |
+| `effortNone` | This model has no effort setting. |
+| `effortProviderControlled` | Vendor decides (Hive sends no effort flag) |
+| `routeEmptyUsesGlobal` | No route of its own — uses your Global route. |
+| `globalRouteSubtitle` | Used when a category has no route of its own. |
+| `modeControlLabel` | Split: |
+| `expectedShare(n)` | ≈n% |
+
+`effortNone` and the unknown-effort copy are **not interchangeable**. There are
+no rank labels and no order affordances anywhere — order carries no meaning in a
+route.
 
 ## The real wire shape
 
-The spec's §9 contract was **wrong**; a UI built to it will not parse the live document.
-The truth is `RoutingPolicySchema` (`src/schemas/routing-policy.ts:133-152`):
+The truth is `RoutingPolicySchema` (`src/schemas/routing-policy.ts`, `schemaVersion: 3`):
 
 - `providers` is a **partial record** of `"enabled" | "disabled"` — absence is a third
   state, `unconfigured`, and it is not permission.
 - `models` is a **flat array** of `ModelPolicy` rows, not a nested map under providers.
-- `chains` is a partial record of category → ordered `ChainEntry[]`.
-- `selection` carries the `never-configured | auto | choice` intent as one global mode.
-  Per-category overrides were removed on 2026-07-27; a document that still carries the
-  retired map decodes, and the map is dropped.
+  Under an **enabled** provider, a model row's absent `state` **inherits the
+  provider** until the user explicitly disables that model; an explicit row
+  overrides the inheritance (`modelPolicyState`, with `source` naming which row
+  answered).
+- `global` is a nullable `RoutePolicy`; `categories` is a partial record of
+  category → `RoutePolicy`. A `RoutePolicy` is `{ mode, candidates }` —
+  unordered, weighted, exact. There is no `chains` field and no `selection`
+  field.
 - `revision` + `provisional` at the top; writers present the revision they read (CAS).
 
-Also contra the spec: an absent model row does **not** inherit provider enablement
-(`modelPolicyState`, :306-320). Provider-on is a master switch, not consent for every
-model discovered tomorrow. `ProviderId` stays a **closed enum**.
+`ProviderId` stays a **closed enum**.
 
 ## Transport: the app is a CLI subprocess, not an HTTP client
 
@@ -195,48 +239,61 @@ is the sole writer.
   with per-field provenance, billing, `usageSurfaces`, quota. **`quota: null` means the
   daemon could not be asked** — not an empty list, and never rendered as 0%.
 - **Write:** `hive routing policy | set-provider | set-model | set-effort |
-  set-selection | set-chain | export` (`src/cli/routing-policy.ts`, dispatched from
-  `src/cli.ts:357-501`).
+  set-route | export` (`src/cli/routing-policy.ts`, dispatched from
+  `src/cli.ts`). `set-selection` and `set-chain` no longer exist — the four
+  mutations are the whole write surface, every one carrying
+  `--expect-revision`. A route candidate on the wire is
+  `provider/model[@LEVEL|@none|@hive-decides][=WEIGHT]`, weight an integer
+  1–100 defaulting to 1.
 
-`set-selection` still CAS-writes the current daemon's policy first. In an ordinary
-fresh Workspace, the daemon then commits that explicit global mutation to the machine
-selection preference before returning success; a stale CAS never reaches the shared
-writer. The shared writer is locked and atomically renamed, so simultaneous Workspace
-writes have a serialized commit order: the last successful commit wins. `hive`,
-`hive claude`, `hive codex`, and `hive grok` all use the same preference—the root
-vendor is not a key.
+There is no machine selection preference file anymore; `routing-selection.json`
+died with the selection modes. Policy state lives in the daemon's store alone.
 
-The Settings controller keeps one data source while the window exists, but `show()` refreshes the model-control snapshot every time the window is shown before restoring the selected page (`workspace/Sources/HiveWorkspace/Settings/SettingsWindowController.swift:90-112`). Reopening Settings therefore cannot present the process's launch-time catalog or quota as if it were current; the in-window Refresh control is an additional explicit refresh, not the only one.
+The Settings controller keeps one data source while the window exists, but
+`SettingsWindowController.show()` refreshes the model-control snapshot every
+time the window is shown before restoring the selected page. Reopening Settings
+therefore cannot present the process's launch-time catalog or quota as if it
+were current; the in-window Refresh control is an additional explicit refresh,
+not the only one.
 
 ## Named instances inherit preferences, not runtime state
 
-Opening `hive --instance <name>` creates an independent daemon and database, but a new application window should not behave like a new user account. On startup, an empty named policy—or Hive's still-untouched provisional suggestions—receives a one-time copy of the default instance's user-authored Model Control document: provider switches, exact model enablement, chains, selection modes, and effort choices. That copy is an audited local revision. It carries the user's existing spend consent on the same machine without coupling the daemons.
+Opening `hive --instance <name>` creates an independent daemon and database, but a new
+application window should not behave like a new user account. On startup, an empty
+named policy — or Hive's still-untouched provisional suggestions — receives a one-time
+copy of the default instance's user-authored Model Control document: provider switches,
+exact model enablement, routes, and effort choices
+(`inheritDefaultModelControlSettings`, `src/daemon/instance-settings.ts`;
+`RoutingPolicyStore.importDefaultPolicy`). That copy is an audited local revision. It
+carries the user's existing spend consent on the same machine without coupling the
+daemons.
 
-The import never overwrites a policy the named instance has edited, never imports a provisional source policy, and never synchronizes later edits. Agents, messages, credentials, ports, process namespaces, and every other runtime resource remain isolated. See `src/daemon/instance-settings.ts` and `RoutingPolicyStore.importDefaultPolicy`.
+The import never overwrites a policy the named instance has edited, never imports a
+provisional source policy, and never synchronizes later edits. Agents, messages,
+credentials, ports, process namespaces, and every other runtime resource remain
+isolated. The reverse direction is explicit and human-initiated: `hive routing
+promote-default` (`RoutingPolicyStore.promote`).
 
-Ordinary `run-*` Workspaces add one narrower rule: after the normal copy/seed step,
-each fresh runtime overlays only the machine global selection. Explicit named/default homes keep later edits local. Consent,
-chains, effort, and runtime state are not in the shared document and remain untouched.
+## Status: built, including the route editor
 
-## Status: partly built, not "not started"
-
-The spec header said "Design spec (not started)" to the end. Shipped: eight AppKit files
-under `workspace/Sources/HiveWorkspace/Settings/` (`ProviderCardView`, `ModelRowView`,
-`ChainEditorView`, `EffortControlView`, `ModelControlDataSource`,
+Shipped under `workspace/Sources/HiveWorkspace/Settings/`: `ProviderCardView`,
+`ModelRowView`, `RouteEditorView`, `EffortControlView`, `ModelControlDataSource`,
 `SettingsPageController`, `SettingsWindowController`, `UsageSettingsController`, plus
-`MCCCopy`), the read surface, and the full write surface. Rendering conventions come
-from [../workspace/ui-design-system.md](../workspace/ui-design-system.md).
+`MCCCopy` — the read surface and the full write surface. The chain editor
+(`ChainEditorView`, move up/down, exhaustion popup) was deleted with the V2
+schema; no UI describes preference as order or fallback. Rendering conventions
+come from [../workspace/ui-design-system.md](../workspace/ui-design-system.md).
 
-**Routing boundary:** under `choice`, authored category and Default chains express
-preference order inside the enabled-model set. If those non-empty chains are exhausted,
-Hive spreads across the remaining enabled models; if both chains are empty, it refuses
-without widening. Empty and exhausted are intentionally different (`src/daemon/spawner-impl.ts:1811-1849`; `test/cli/spawner-impl.test.ts:3538-3674`, `:3827-3838`). Under `auto`, the enabled models that fit the category are the candidate set directly.
+**Routing boundary:** the exact category route when present, else Global, else
+refuse. A configured category route whose candidates all refuse fails the spawn
+— empty and ineffective are intentionally different facts (`resolveRoute`,
+`src/schemas/routing-policy.ts`; `HiveRouter.select`, `src/daemon/router.ts`).
 
 ## See Also
 
 - [routing-policy.md](routing-policy.md) — the document this screen edits
 - [quota-and-headroom.md](quota-and-headroom.md) — what the meters mean
-- [rejected-approaches.md](rejected-approaches.md) — the `vendor-default` picker, and why it is gone
+- [rejected-approaches.md](rejected-approaches.md) — the `vendor-default` picker and the chain editor, and why they are gone
 - [../providers/quota-surfaces.md](../providers/quota-surfaces.md) — the wire contracts behind every meter
 - [../providers/capability-discovery.md](../providers/capability-discovery.md) — where the effort tri-state comes from
 - [../workspace/ui-design-system.md](../workspace/ui-design-system.md) — the rendering system

@@ -131,7 +131,7 @@ describe("idle-agent reap sweep", () => {
       expect(warning?.body).toContain("Persist any findings");
       db.transitionMessage(
         required(warning?.id),
-        "applied",
+        "acknowledged",
         new Date().toISOString(),
       );
       await daemon.reapIdleAgents();
@@ -181,7 +181,7 @@ describe("idle-agent reap sweep", () => {
         .find((message) => message.to === "maya");
       db.transitionMessage(
         required(warning?.id),
-        "applied",
+        "acknowledged",
         new Date().toISOString(),
       );
       await daemon.reapIdleAgents();
@@ -223,7 +223,7 @@ describe("idle-agent reap sweep", () => {
         .find((message) => message.to === "maya");
       db.transitionMessage(
         required(warning?.id),
-        "applied",
+        "acknowledged",
         new Date().toISOString(),
       );
       await daemon.reapIdleAgents();
@@ -418,7 +418,7 @@ describe("idle-agent reap sweep", () => {
         .find((message) => message.to === "maya");
       db.transitionMessage(
         required(warning?.id),
-        "applied",
+        "acknowledged",
         new Date().toISOString(),
       );
       await daemon.reapIdleAgents();

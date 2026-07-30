@@ -13134,19 +13134,7 @@
           "type": "string",
           "enum": [
             "normal",
-            "steer",
-            "urgent",
-            "critical"
-          ]
-        },
-        "intent": {
-          "type": "string",
-          "enum": [
-            "instruction",
-            "pause",
-            "stop",
-            "cancel",
-            "restrict-writes"
+            "urgent"
           ]
         },
         "evidence": {
@@ -13228,7 +13216,6 @@
         "recipientGeneration",
         "adapter",
         "priority",
-        "intent",
         "evidence",
         "byteRange",
         "nativeEndpointReceipt",

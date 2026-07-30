@@ -3,7 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-16
 - Decision scope: pinned Ghostty bridge, local session transport, and release provenance
-- Source of record: [Terminal stack transition](../design/terminal-stack-transition.html), especially §§05, 16, 21, 23, and 28
+- Source of record: [Terminal stack transition](../design/Done/terminal-stack-transition.html), especially §§05, 16, 21, 23, and 28
 
 ## Context
 

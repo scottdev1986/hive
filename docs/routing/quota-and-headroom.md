@@ -1,15 +1,18 @@
-# Quota and Headroom — distribution without a common currency
+# Quota and Headroom — facts without a common currency
 
-Updated: 2026-07-14
-Source: Hive source tree and linked raw measurements, 2026-07-14
+Updated: 2026-07-30
+Source: Hive source tree and linked raw measurements, 2026-07-30
 Raw: `../../raw/grok/grok-spend-sensitivity-experiment.md`, `../../raw/grok/grok-billing-{BEFORE,AFTER1,AFTER3}.json`
 
 ## Summary
 
-Quota is an affordability gate on every candidate. It chooses among survivors under
-`auto`, and as the last resort after a `choice` category plus Default chain are
-exhausted. That chooser uses **weighted-fair deficit over work Hive itself assigned**,
-never cross-vendor quota percentages, because unlike windows are not a common currency.
+**Quota no longer selects anything.** Selection belongs to the router
+(`src/daemon/router.ts`), which distributes by the user's own weights with
+smooth weighted round-robin. Quota's contract narrowed to facts and booking:
+it observes provider usage, reports proven drains and launch-health cooldowns,
+names the pools governing a candidate, and books an already-selected launch.
+**Quota percentages never rank candidates**, because unlike windows are not a
+common currency.
 
 ## The load-bearing argument
 
@@ -25,64 +28,59 @@ five-hour surface at all.
 magnitudes; sorting by remaining-headroom-percent silently asserts they are. Worse, it
 needs an answer for a provider that publishes no number at all — and every answer to
 that is invented. **Never compare a five-hour percentage with a weekly percentage to
-rank providers.** Evaluate each real window as its own affordability gate.
+rank providers.** This argument used to justify quota's own fair-dispatch chooser;
+it now justifies something stronger: quota supplies yes/no facts and the router
+distributes by user weights, so no cross-vendor magnitude comparison exists
+anywhere.
 
-## What the code does
+## The narrowed contract
 
-Two layers, and conflating them is the most common misreading of this system.
+`QuotaService` (`src/daemon/quota.ts`). `routeAndReserve` is **gone** — there is
+no quota-owned selection, no `spread`/`strict` dispatch mode, and the
+`quota_fair_dispatch` history table is dropped on ledger startup
+(`DROP TABLE IF EXISTS quota_fair_dispatch`, `src/daemon/quota-ledger.ts`).
+What remains is exactly what the router and the drain handler consume:
 
-**Policy layer** (`src/schemas/routing-policy.ts:112-126`): `never-configured` | `auto` | `choice`
-— the user's intent. See [routing-policy.md](routing-policy.md).
+- **Observations.** `refreshFromProviders` polls each provider's usage surface and folds
+  authoritative or reported readings into the store, stamped per window; a
+  provider that cannot answer records why, and Hive reports the gap as unknown
+  rather than carrying forward a number nobody measured.
+- **`poolsGoverning(candidate)`** — every pool that meters this model, not the
+  first one that matches. A model with its own cap spends from two meters at
+  once: the account-wide pool and its own. Both govern; the tighter one decides.
+  The router uses the pool names for a handoff's `excludedPoolIds` check.
+- **`drainFor(candidate)`** — is any pool metering this model spent, and when
+  does the drained window reset? One drained window is a drain: a model-scoped
+  cap at zero empties the model even while the general pool has room. An
+  unmetered or unmeasured window cannot be drained — **unknown stays unknown,
+  it never reads as empty** (`drainedWindowFor`). The router turns a proven
+  drain into the `pool-exclusion` refusal; the drain handler uses the same read
+  for hold-versus-handoff.
+- **`launchCooldown(candidate)`** — is this exact route currently known not to
+  start? Eligibility is headroom *and* viability: a gate that refuses an
+  exhausted model only to hand the work to a route that cannot start has
+  protected nothing. Repeat failures hold the route back longer, but the
+  cooldown is capped — a route always gets retried and can always come back.
+  Nothing here knows the name of a vendor or a category; it reports what
+  happened when Hive last tried, and it forgets on a schedule. The router turns
+  it into the `route-health` refusal.
+- **`reserveLaunch(agentName, candidate, category)`** — book one
+  **already-selected** launch against its governing pools, **never refusing for
+  usage**: pool exhaustion is a mid-work condition, handled by the drain
+  handler, and selection belongs to the router. An unmetered candidate is
+  normal for a provider with no usage surface (opencode) or a quiet one; it
+  books against its `unconfigured:` pool, which the status displays already
+  read.
+- **All-drained arithmetic** — `allMeteredDrained` and `nearestDrainResets`
+  feed the drain handler's wait decision when every metered general pool is
+  spent.
 
-**Quota dispatch layer** (`src/daemon/quota.ts:64-78`): `QuotaRouteRequest.selection`
-is `spread` | `strict`. The spawner maps `auto` to `spread` and uses `strict` for the
-authored attempts under `choice` (`src/daemon/spawner-impl.ts:1779-1841`). If the
-category and Default chains are non-empty but exhausted, the final `choice` attempt
-uses `spread` over the remaining enabled models. Every candidate handed to quota has
-**already cleared the full launch gate**; selection never bypasses a gate.
-
-### `strict` (the authored portion of `choice`)
-
-Walk the category and Default chains in the user's order; reserve the first link with
-safe headroom (`src/daemon/quota.ts:1711-1753`). Quota may veto a link, never reorder
-either authored list.
-
-> Authored preference order bypasses distribution. **Reordering an explicit
-> preference for balance would make the preference untrue.** Only after every authored
-> link is refused may Hive use fair dispatch across the remaining enabled models.
-
-A strict candidate whose capacity Hive cannot read still runs, in **compatibility mode**
-(`src/daemon/quota.ts:1677-1709`): an unbounded reservation, a loud "running unconstrained" warning, and no
-pretense of a number. **Meter uncertainty is not capability revocation.**
-
-### `spread` (`auto`, and exhausted-`choice` last resort)
-
-`QuotaLedger.tryReserveFairGroups` (`src/daemon/quota-ledger.ts:1205-1283`) chooses and reserves
-**atomically** — one decision, so two concurrent spawns cannot both see the same
-provider as under-share — by **weighted-fair deficit**. Each historical dispatch
-credits every *eligible* provider an equal share and charges the selected provider one
-unit; largest deficit wins. History lives in `quota_fair_dispatch` (bounded rolling
-window of 1000 rows).
-
-The invariant, from the code (:1218-1224):
-
-> **Quota percentages never enter this comparison, so unlike windows are never
-> compared and a not-metered provider needs no fabricated headroom score.**
-
-This measures the thing it claims to balance: Hive can always count the work it *sent*
-to a provider, even one that publishes no capacity number. Consequences worth knowing:
-
-- **A provider earns no credit for work it could not perform** — a simple-only provider
-  accumulates no claim on later complex work. *A weak model cannot win because it is idle.*
-- **Explicit pins and control restarts create no fairness debt.** A direct user
-  instruction must not distort the next automatic choice.
-- **No catch-up bursts.** A vendor unavailable for a week earned no credit and does not
-  return with a week of debt to repay.
-- **Unknown capacity is excluded from `spread`, not scored** (`src/daemon/quota.ts:1628-1638`):
-  *"AUTO excludes unreadable capacity, while an explicit choice may still run it."*
-
-Its cost is deliberate: it does not optimize consumption near a reset. Quota gates
-prevent unsafe work; distribution declines to pretend incompatible meters form one market.
+The invariant this layout enforces, verbatim from the router's design spec
+(`docs/design/hive-router.html` §08): *quota provides observations and proven
+exclusions; it never supplies a preference multiplier.* 20%, 50%, or 90% used is
+ignored for selection — continuous headroom ranking is a hidden second weighting
+system. Unknown or unmetered remains eligible — unknown is not zero and not
+exhaustion.
 
 ### The 0.15 argument — settled, and worth keeping
 
@@ -106,41 +104,41 @@ real sort*. Choosing zero would starve the vendor and choosing one would slam it
 house bug class — *absence read as the permissive or convenient answer*.
 
 **The prosecution won, and the resolution is the durable part.** Commit `1483ae7`
-(2026-07-13 11:20) deleted the constant *and every cross-provider headroom sort*.
+(2026-07-13) deleted the constant *and every cross-provider headroom sort*.
 The fix was not a better guess at the number — it was **removing the axis on which
 a guess was required at all.** When a design demands a value nobody can measure,
-that is evidence the design is wrong, not that the value needs tuning.
-
-Two adjacent constants died with it and are recorded here so they are not rebuilt:
-`SPREAD_DEADBAND = 0.05` (headroom two pools could differ by and still count as
-"even") existed only to stop the headroom sort from flip-flopping between
-near-equal pools — a symptom of the sort, not a feature.
-`HEADROOM_PRESERVING_CATEGORIES` survives (`src/daemon/quota.ts:56-62`): light work leaves a
-reserve floor untouched so heavy work still has somewhere to land.
+that is evidence the design is wrong, not that the value needs tuning. The V3
+router finishes the thought: the weighted-fair deficit chooser that replaced the
+sort has itself been replaced by the router's smooth weighted round-robin over
+**user-authored weights**, and quota keeps no distribution history at all.
 
 ## Effort
 
-Five-valued in policy (`src/schemas/routing-policy.ts:49-55`), resolved per chain link
-(`src/daemon/spawner-impl.ts:1519-1565`). An explicit `request.effort` outranks the link.
-`exact` is validated against the model's own record; `none` means the vendor stated
-there is no effort axis; `never-configured` refuses.
+Five-valued in policy (`EffortTargetSchema`, `src/schemas/routing-policy.ts`);
+a route candidate carries the four launchable values (`CandidateEffortSchema` —
+`never-configured` is a model-row state, not a launchable intent). Resolution is
+per candidate in the router's launch gate (`linkEffort`,
+`src/daemon/spawner-impl.ts`). An explicit `request.effort` outranks the
+candidate. `exact` is validated against the model's own record; `none` means the
+vendor stated there is no effort axis; `never-configured` on a model row makes
+`provider-controlled` resolution refuse rather than guess.
 
-**`provider-controlled`** omits the link-level flag unless the model row carries a
-standing exact or Hive-decides choice (`src/daemon/spawner-impl.ts:1549-1564`). Otherwise the
-launch gate uses the vendor's honest default (`src/daemon/spawner-impl.ts:1636-1668`): Claude
-passes no flag; Grok and Codex take
-their *discovered* default; Codex's CLI requires a flag, so it last-resorts to
-`"medium"` — the one remaining invented value, scoped to a CLI that will not start
-without one.
+**`provider-controlled`** omits the candidate-level flag unless the model row
+carries a standing exact or Hive-decides choice. Otherwise the launch gate uses
+the vendor's honest default: Claude passes no flag; Grok and Codex take their
+*discovered* default; Codex's CLI requires a flag, so it last-resorts to
+`"medium"` — the one remaining invented value, scoped to a CLI that will not
+start without one.
 
-**`hive-decides`** is built (`src/daemon/effort.ts:63-110`) and is *not* the same
-thing: it picks an exact advertised level and records it. Hive orders the model's
-**advertised** levels using `PROVED_EFFORT_ORDER` — per-provider ordering semantics
-proved from vendor documentation, not model knowledge — then picks by the category's
-coding tier (simple → lowest, complex → highest). An advertised level whose ordering
-is unproved makes AUTO **refuse**: array position is never silently promoted into
-meaning. (The live Grok cache returns `high, medium, low`, proving raw array order is
-not a portable ordering contract.)
+**`hive-decides`** is built (`resolveAutoEffort`, `src/daemon/effort.ts`) and is
+*not* the same thing: it picks an exact advertised level and records it. Hive
+orders the model's **advertised** levels using `PROVED_EFFORT_ORDER` —
+per-provider ordering semantics proved from vendor documentation, not model
+knowledge — then picks by the category's coding tier (simple → lowest, complex →
+highest). An advertised level whose ordering is unproved makes it **refuse**:
+array position is never silently promoted into meaning. (The live Grok cache
+returns `high, medium, low`, proving raw array order is not a portable ordering
+contract.)
 
 ## The task rubric
 
@@ -198,38 +196,36 @@ consented, affordable, and behind its earned share — not because another vendo
 is low."* Leaning on a vendor whenever other meters are low is not distribution; it
 recreates the load-concentration bug this router exists to remove.
 
-`src/cli/model-control.ts:72-83` classifies all three providers as `"metered"`;
-`src/daemon/quota-sources.ts:920-945` reads the gauge while keeping the money rails in
+`usageSurface` in `src/cli/model-control.ts` classifies the metered providers;
+`src/daemon/quota-sources.ts` reads the gauge while keeping the money rails in
 the schema *specifically so parsers cannot confuse them with it*. Deeper wire facts live
 in [../providers/quota-surfaces.md](../providers/quota-surfaces.md).
 
-## Proposals and open questions (NOT built)
+## What the V2 proposals became
 
-Much of the retired routing-distribution proposal *did* land in `1483ae7`: the
-three-state selection intent, `standard_coding`, weighted fair dispatch, and
-Hive-decides effort are all real. These parts did **not**, and are recorded as intent,
-not description:
+The retired routing-distribution proposal's unbuilt items are worth an update,
+because the V3 router landed several of them under different names:
 
-- **`SelectionIntent<T>` as a generic type** — the three-state *idea* landed as
-  `SelectionModeSchema`; the generic does not exist.
-- **`WindowMetering` as a union** (`METERED | NOT_METERED | READ_FAILED` as a
-  first-class type carrying positive wire evidence). The distinction is real and
-  load-bearing — a gauge Hive *expected* and could not read is not the same as a vendor
-  that has none — but today it is only implicit.
-- **User-authored provider scheduling weights / opportunity credits.** Fair dispatch runs
-  with implicit equal weight per eligible provider; there is no weight field and no user
-  surface for one. The design's honesty argument is worth keeping: *a scheduling weight
-  claims only desired work share, never capacity* — which is why it beat asking the user
-  to declare a capacity percentage for an unmetered vendor.
-- **A "why this agent?" decision record.** Quota returns a `reason` string and warnings,
-  but nothing persists the candidates considered and the stage each was refused at.
-  *"A user should not need logs to discover that another model was considered or why one
-  disappeared."*
+- **User-authored provider scheduling weights** — landed, better: per-candidate
+  integer weights 1–100 on the route itself (`RouteCandidateSchema`). The
+  honesty argument survived intact: *a weight claims only desired work share,
+  never capacity* — which is why it beat asking the user to declare a capacity
+  percentage for an unmetered vendor.
+- **A "why this agent?" decision record** — landed as the `launch_decisions`
+  ledger plus the per-candidate `CandidateEvaluation` refusals surfaced in every
+  no-candidate error. *"A user should not need logs to discover that another
+  model was considered or why one disappeared."*
+- **`WindowMetering` as a first-class union** (`METERED | NOT_METERED |
+  READ_FAILED` carrying positive wire evidence) — still not built. The
+  distinction is real and load-bearing — a gauge Hive *expected* and could not
+  read is not the same as a vendor that has none — but today it is only
+  implicit in availability/freshness fields.
 
 ## See Also
 
-- [routing-policy.md](routing-policy.md) — the chains and the gate quota is downstream of
+- [routing-policy.md](routing-policy.md) — the routes, the router, and the gate quota is downstream of
 - [model-control-center.md](model-control-center.md) — how a meter may and may not be rendered
-- [rejected-approaches.md](rejected-approaches.md) — headroom sorting, and why it lost
+- [rejected-approaches.md](rejected-approaches.md) — headroom sorting and quota-owned selection, and why they lost
+- [../design/hive-router.html](../design/hive-router.html) — the router design spec, §08 quota contract
 - [../providers/quota-surfaces.md](../providers/quota-surfaces.md) — the vendor wire contracts
 - [../providers/grok.md](../providers/grok.md) — the vendor, end to end

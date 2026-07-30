@@ -224,7 +224,7 @@ async function expectFailedInjectionPreserved(
     expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
     expect(db.getMessage(queued.id)).toMatchObject({
       state: "queued",
-      deliveredAt: null,
+      notifiedAt: null,
     });
   });
 }

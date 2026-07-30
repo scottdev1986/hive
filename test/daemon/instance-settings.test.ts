@@ -1,15 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { HiveDatabase } from "../../src/daemon/db";
-import {
-  inheritDefaultModelControlSettings,
-  inheritOrdinaryWorkspaceSelection,
-} from "../../src/daemon/instance-settings";
+import { inheritDefaultModelControlSettings } from "../../src/daemon/instance-settings";
 import { RoutingPolicyStore } from "../../src/daemon/routing-policy-store";
-import { SelectionPreferenceStore } from "../../src/daemon/selection-preferences";
 
 test("a named instance reads the live default database and imports Model Control once", () => {
   const root = mkdtempSync(join(tmpdir(), "hive-instance-settings-"));
@@ -32,16 +28,20 @@ test("a named instance reads the live default database and imports Model Control
     );
     source.apply(
       {
-        op: "set-chain",
+        op: "set-route",
         expectedRevision: 1,
-        category: "simple_coding",
-        entries: [
-          {
-            provider: "codex",
-            model: "gpt-5.6-sol",
-            effort: { mode: "exact", value: "high" },
-          },
-        ],
+        scope: "simple_coding",
+        route: {
+          mode: "user-weighted",
+          candidates: [
+            {
+              provider: "codex",
+              model: "gpt-5.6-sol",
+              effort: { mode: "exact", value: "high" },
+              weight: 2,
+            },
+          ],
+        },
       },
       "human",
     );
@@ -50,6 +50,13 @@ test("a named instance reads the live default database and imports Model Control
     target.seedProvisionalBaseline({
       vendorDefaults: { codex: "old-suggestion" },
     });
+    // Inheriting from the instance's own home is a no-op, never a self-copy.
+    expect(
+      inheritDefaultModelControlSettings(target, {
+        currentHome: namedHome,
+        sourceHome: namedHome,
+      }),
+    ).toBeFalse();
     expect(
       inheritDefaultModelControlSettings(target, {
         currentHome: namedHome,
@@ -57,10 +64,11 @@ test("a named instance reads the live default database and imports Model Control
       }),
     ).toBeTrue();
     expect(target.read().providers.codex).toBe("enabled");
-    expect(target.read().chains.simple_coding?.[0]).toMatchObject({
+    expect(target.read().categories.simple_coding?.candidates[0]).toEqual({
       provider: "codex",
       model: "gpt-5.6-sol",
       effort: { mode: "exact", value: "high" },
+      weight: 2,
     });
 
     // A later local edit is ownership: inheritance is one-time, not sync.
@@ -84,170 +92,6 @@ test("a named instance reads the live default database and imports Model Control
   } finally {
     namedDb.close();
     defaultDb.close();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("selection written in one ordinary runtime overlays a later fresh runtime", async () => {
-  const root = mkdtempSync(join(tmpdir(), "hive-ordinary-selection-"));
-  const defaultHome = join(root, "default");
-  const firstHome = join(root, "run-first");
-  const secondHome = join(root, "run-second");
-  const thirdHome = join(root, "run-third");
-  const preferencePath = join(root, "routing-selection.json");
-  mkdirSync(defaultHome, { recursive: true });
-  mkdirSync(firstHome, { recursive: true });
-  mkdirSync(secondHome, { recursive: true });
-  mkdirSync(thirdHome, { recursive: true });
-  const defaultDb = new HiveDatabase(join(defaultHome, "hive.db"));
-  const firstDb = new HiveDatabase(join(firstHome, "hive.db"));
-  const secondDb = new HiveDatabase(join(secondHome, "hive.db"));
-  const thirdDb = new HiveDatabase(join(thirdHome, "hive.db"));
-  try {
-    const source = new RoutingPolicyStore(defaultDb);
-    source.apply(
-      {
-        op: "set-provider",
-        expectedRevision: 0,
-        provider: "codex",
-        state: "enabled",
-      },
-      "human",
-    );
-    source.apply(
-      {
-        op: "set-chain",
-        expectedRevision: 1,
-        category: "debugging",
-        entries: [
-          {
-            provider: "codex",
-            model: "gpt-5.6-sol",
-            effort: { mode: "exact", value: "high" },
-          },
-        ],
-      },
-      "human",
-    );
-
-    const first = new RoutingPolicyStore(firstDb);
-    expect(
-      inheritDefaultModelControlSettings(first, {
-        currentHome: firstHome,
-        sourceHome: defaultHome,
-      }),
-    ).toBeTrue();
-    const selected = first.apply(
-      { op: "set-selection", expectedRevision: 1, mode: "choice" },
-      "human",
-    );
-    const preferences = new SelectionPreferenceStore(preferencePath);
-    await preferences.apply(
-      { op: "set-selection", expectedRevision: 1, mode: "choice" },
-      selected.selection,
-    );
-
-    const second = new RoutingPolicyStore(secondDb);
-    expect(
-      inheritDefaultModelControlSettings(second, {
-        currentHome: secondHome,
-        sourceHome: defaultHome,
-      }),
-    ).toBeTrue();
-    expect(
-      inheritOrdinaryWorkspaceSelection(second, {
-        ordinaryWorkspace: true,
-        preferences,
-      }),
-    ).toBeTrue();
-    expect(second.read().selection).toEqual({ global: "choice" });
-    expect(second.read().providers).toEqual({ codex: "enabled" });
-    expect(second.read().chains.debugging?.[0]?.model).toBe("gpt-5.6-sol");
-    expect(second.read().models[0]?.effort).toEqual({
-      mode: "exact",
-      value: "high",
-    });
-
-    const changed = first.apply(
-      { op: "set-selection", expectedRevision: 2, mode: "auto" },
-      "human",
-    );
-    await preferences.apply(
-      { op: "set-selection", expectedRevision: 2, mode: "auto" },
-      changed.selection,
-    );
-    expect(preferences.read()).toEqual({ global: "auto" });
-
-    const third = new RoutingPolicyStore(thirdDb);
-    expect(
-      inheritDefaultModelControlSettings(third, {
-        currentHome: thirdHome,
-        sourceHome: defaultHome,
-      }),
-    ).toBeTrue();
-    expect(
-      inheritOrdinaryWorkspaceSelection(third, {
-        ordinaryWorkspace: true,
-        preferences,
-      }),
-    ).toBeTrue();
-    expect(third.read().selection).toEqual({ global: "auto" });
-  } finally {
-    thirdDb.close();
-    secondDb.close();
-    firstDb.close();
-    defaultDb.close();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("missing/corrupt shared selection never overwrites named or default policy", () => {
-  const root = mkdtempSync(join(tmpdir(), "hive-selection-boundary-"));
-  const preferencePath = join(root, "routing-selection.json");
-  const db = new HiveDatabase(":memory:");
-  const target = new RoutingPolicyStore(db);
-  const preferences = new SelectionPreferenceStore(preferencePath);
-  const warnings: string[] = [];
-  try {
-    target.apply(
-      { op: "set-selection", expectedRevision: 0, mode: "choice" },
-      "named-user",
-    );
-    expect(
-      inheritDefaultModelControlSettings(target, {
-        currentHome: root,
-        sourceHome: root,
-      }),
-    ).toBeFalse();
-    expect(
-      inheritOrdinaryWorkspaceSelection(target, {
-        ordinaryWorkspace: false,
-        preferences: { read: () => ({ global: "auto" }) },
-      }),
-    ).toBeFalse();
-    expect(target.read().selection.global).toBe("choice");
-
-    expect(
-      inheritOrdinaryWorkspaceSelection(target, {
-        ordinaryWorkspace: true,
-        preferences,
-        warn: (warning) => warnings.push(warning),
-      }),
-    ).toBeFalse();
-    expect(warnings).toEqual([]);
-
-    writeFileSync(preferencePath, "not json\n");
-    expect(
-      inheritOrdinaryWorkspaceSelection(target, {
-        ordinaryWorkspace: true,
-        preferences,
-        warn: (warning) => warnings.push(warning),
-      }),
-    ).toBeFalse();
-    expect(warnings[0]).toContain("Could not inherit");
-    expect(target.read().selection.global).toBe("choice");
-  } finally {
-    db.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

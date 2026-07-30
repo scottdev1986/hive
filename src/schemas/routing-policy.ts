@@ -5,12 +5,12 @@ import {
 } from "./capability";
 
 /**
- * The user's routing policy — the store behind the Model Control Center and,
- * once the AuthorizedLaunch gate lands, the router's only source of standing
- * preference. Chains carry exact (provider, model, effort) targets and nothing else;
- * order is semantic (primary first, a fallback chain, never parallel); a
- * bare "default" string that looks like a model id is illegal, and no legal
- * form expresses "whatever the vendor picks".
+ * The user's routing policy — the store behind the Model Control Center and
+ * the router's only source of standing preference. A route is an UNORDERED
+ * set of exact (provider, model, effort) candidates with integer relative
+ * weights; there is no fallback ladder and order carries no meaning. The
+ * router selects one candidate with smooth weighted round-robin: user weights
+ * in `user-weighted` mode, effective weight 1 for everyone in `hive-equal`.
  *
  * FAIL-CLOSED READING, the rule every consumer must inherit: an absent row
  * means NOT CONFIGURED, and not-configured never means allowed. The helpers
@@ -18,10 +18,8 @@ import {
  * re-derives it by hand is how a null becomes permission again.
  */
 
-/** `default` is the
- * user-authored global fallback chain, consulted when a category is empty.
- * `long_context` is deliberately NOT a category — it returns as a requirement
- * modifier on spawn, not as a routing bucket. */
+/** `long_context` is deliberately NOT a category — it arrives as a
+ * requirement modifier on spawn, not as a routing bucket. */
 export const ROUTING_CATEGORIES = [
   "light_research",
   "heavy_research",
@@ -56,6 +54,16 @@ export const EffortTargetSchema = z.discriminatedUnion("mode", [
 ]);
 export type EffortTarget = z.infer<typeof EffortTargetSchema>;
 
+/** A route candidate always answers effort: never-configured is a model-row
+ * state, not a launchable intent, so it cannot appear on a candidate. */
+export const CandidateEffortSchema = z.discriminatedUnion("mode", [
+  z.strictObject({ mode: z.literal("hive-decides") }),
+  z.strictObject({ mode: z.literal("exact"), value: z.string().min(1) }),
+  z.strictObject({ mode: z.literal("none") }),
+  z.strictObject({ mode: z.literal("provider-controlled") }),
+]);
+export type CandidateEffort = z.infer<typeof CandidateEffortSchema>;
+
 /** A model id that could be mistaken for a routing instruction is refused
  * outright: quiet defaults return the moment "default" parses as a model. */
 const ExactModelIdSchema = z
@@ -63,35 +71,49 @@ const ExactModelIdSchema = z
   .min(1)
   .refine((model) => model !== "default", {
     message:
-      'a chain names the specific model that will run; "default" is not a model',
+      'a route names the specific model that will run; "default" is not a model',
   });
 
 /**
- * One link of a fallback chain: a specific (provider, model, effort). There
- * is deliberately NO other form — no "vendor default", no moving pointer of
- * any kind. A default that quietly wins is the defect this store exists to
- * delete, and vendors move their defaults server-side mid-session; an indirection that cannot be
- * written cannot bite.
+ * One exact candidate: a specific (provider, model, effort) with an integer
+ * relative weight. Weights are ratings, not percentages — 60/20/20 and 3/1/1
+ * express the same distribution — and zero is illegal: disablement stays the
+ * explicit provider/model enablement control, never a weight.
  */
-export const ChainEntrySchema = z.strictObject({
+export const RouteCandidateSchema = z.strictObject({
   provider: CapabilityProviderSchema,
   model: ExactModelIdSchema,
-  effort: EffortTargetSchema,
+  effort: CandidateEffortSchema,
+  weight: z.number().int().min(1).max(100),
 });
-export type ChainEntry = z.infer<typeof ChainEntrySchema>;
+export type RouteCandidate = z.infer<typeof RouteCandidateSchema>;
 
-const chainTargetKey = (entry: ChainEntry): string =>
-  `${entry.provider}\0${entry.model}`;
+export const routeTargetKey = (entry: {
+  provider: CapabilityProvider;
+  model: string;
+}): string => `${entry.provider}\0${entry.model}`;
 
-/** An ordered fallback chain: index 0 is the primary. Duplicate targets are
- * rejected — a chain that names the same model twice is a reorder bug, not a
- * preference. */
-export const RoutingChainSchema = z
-  .array(ChainEntrySchema)
-  .refine(
-    (entries) => new Set(entries.map(chainTargetKey)).size === entries.length,
-    { message: "a chain must not name the same target twice" },
-  );
+/**
+ * `user-weighted` selects by the stored integer weights; `hive-equal` gives
+ * every eligible candidate effective weight 1 while the stored weights stay
+ * intact, so switching modes loses no preference information.
+ */
+export const RouterModeSchema = z.enum(["user-weighted", "hive-equal"]);
+export type RouterMode = z.infer<typeof RouterModeSchema>;
+
+/** An unordered candidate set. Duplicate targets are rejected — a route that
+ * names the same model twice is an editing bug, not a stronger preference. */
+export const RoutePolicySchema = z.strictObject({
+  mode: RouterModeSchema,
+  candidates: z
+    .array(RouteCandidateSchema)
+    .min(1)
+    .refine(
+      (entries) => new Set(entries.map(routeTargetKey)).size === entries.length,
+      { message: "a route must not name the same target twice" },
+    ),
+});
+export type RoutePolicy = z.infer<typeof RoutePolicySchema>;
 
 export const ModelPolicySchema = z.strictObject({
   provider: CapabilityProviderSchema,
@@ -105,41 +127,16 @@ export const ModelPolicySchema = z.strictObject({
 export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
 
 /**
- * How every category picks among its chain's ELIGIBLE links (every link still
- * passes the full launch gate first — selection never bypasses a gate):
- *
- * - `never-configured`: the user has not answered; automatic routing refuses.
- * - `auto`: Hive considers every explicitly enabled model whose policy fit
- *   clears the category, then distributes among the capable providers.
- * - `choice`: the category's exact chain is the user's ordered preference.
- */
-export const SelectionModeSchema = z.enum([
-  "never-configured",
-  "auto",
-  "choice",
-]);
-export type SelectionMode = z.infer<typeof SelectionModeSchema>;
-
-/**
- * One selection mode governs every category. Do not write per-category
- * overrides as a side effect of authoring a chain: a category the user has
- * never ruled on would
- * silently outranked the control they had — and the global switch read as
- * broken because nothing was left for it to govern.
- */
-export const SelectionPolicySchema = z.strictObject({
-  global: SelectionModeSchema,
-});
-export type SelectionPolicy = z.infer<typeof SelectionPolicySchema>;
-
-/**
  * The whole policy document. Only EXPLICIT settings appear: an absent provider
  * is unconfigured; under an enabled provider, an absent model state inherits
- * that provider until the user explicitly disables the model.
+ * that provider until the user explicitly disables the model. `global` is the
+ * route for categories without their own; a category route that refuses every
+ * candidate does NOT fall through to global — the category was an explicit
+ * boundary, not the first half of a hidden fallback chain.
  */
 export const RoutingPolicySchema = z
   .strictObject({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     /** Monotonic; every accepted mutation increments it. Writers must present
      * the revision they read (compare-and-set) so concurrent edits conflict
      * loudly instead of clobbering silently. */
@@ -154,13 +151,13 @@ export const RoutingPolicySchema = z
       z.enum(["enabled", "disabled"]),
     ),
     models: z.array(ModelPolicySchema),
-    chains: z.partialRecord(RoutingCategorySchema, RoutingChainSchema),
-    selection: SelectionPolicySchema,
+    global: RoutePolicySchema.nullable(),
+    categories: z.partialRecord(RoutingCategorySchema, RoutePolicySchema),
   })
   .superRefine((policy, context) => {
     const targets = new Set<string>();
     for (const [index, model] of policy.models.entries()) {
-      const target = chainTargetKey(model);
+      const target = routeTargetKey(model);
       if (targets.has(target)) {
         context.addIssue({
           code: "custom",
@@ -177,70 +174,39 @@ export type RoutingPolicy = z.infer<typeof RoutingPolicySchema>;
  * and "nothing configured" is not "everything permitted". */
 export function emptyRoutingPolicy(updatedAt: string): RoutingPolicy {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 0,
     updatedAt,
     provisional: false,
     providers: {},
     models: [],
-    chains: {},
-    selection: { global: "never-configured" },
+    global: null,
+    categories: {},
   };
 }
 
-export interface CategoryFitDecision {
-  fits: boolean;
-  basis: string;
+/**
+ * The one resolution rule: the exact category route when present, else
+ * `global`, else nothing. A configured category never appends global after a
+ * refusal, and there is no third tier.
+ */
+export function resolveRoute(
+  policy: RoutingPolicy,
+  category: RoutingCategory,
+): { scope: RoutingCategory | "global"; route: RoutePolicy } | null {
+  const own = policy.categories[category];
+  if (own !== undefined) return { scope: category, route: own };
+  if (policy.global !== null) return { scope: "global", route: policy.global };
+  return null;
 }
 
-/**
- * Policy-authored capability fit. Hive does not infer strength from a model
- * name or provider. An exact chain placement is the user's positive evidence;
- * coding tiers are monotonic, so complex proves standard and simple, while
- * standard proves simple. Other categories require exact membership.
- */
-export function modelCategoryFit(
-  policy: RoutingPolicy,
-  provider: CapabilityProvider,
-  model: string,
-  category: RoutingCategory,
-): CategoryFitDecision {
-  const has = (candidate: RoutingCategory): boolean =>
-    (policy.chains[candidate] ?? []).some(
-      (entry) => entry.provider === provider && entry.model === model,
-    );
-  const label = `${provider}/${model}`;
-  if (category === "simple_coding") {
-    const evidence = (
-      ["complex_coding", "standard_coding", "simple_coding"] as const
-    ).find(has);
-    return evidence === undefined
-      ? {
-          fits: false,
-          basis: `${label} has no explicit coding-tier fit evidence`,
-        }
-      : { fits: true, basis: `${label} is explicitly placed in ${evidence}` };
-  }
-  if (category === "standard_coding") {
-    const evidence = (["complex_coding", "standard_coding"] as const).find(has);
-    return evidence === undefined
-      ? {
-          fits: false,
-          basis: `${label} has no standard-or-complex fit evidence`,
-        }
-      : { fits: true, basis: `${label} is explicitly placed in ${evidence}` };
-  }
-  if (category === "complex_coding") {
-    return has(category)
-      ? { fits: true, basis: `${label} is explicitly placed in complex_coding` }
-      : { fits: false, basis: `${label} has no explicit complex fit evidence` };
-  }
-  return has(category)
-    ? { fits: true, basis: `${label} is explicitly placed in ${category}` }
-    : {
-        fits: false,
-        basis: `${label} has no explicit ${category} fit evidence`,
-      };
+/** Effective weight for one decision: stored rating in user-weighted mode,
+ * exactly 1 for everyone in hive-equal. */
+export function effectiveWeight(
+  mode: RouterMode,
+  candidate: RouteCandidate,
+): number {
+  return mode === "hive-equal" ? 1 : candidate.weight;
 }
 
 /**
@@ -271,17 +237,11 @@ export const RoutingPolicyMutationSchema = z.discriminatedUnion("op", [
     effort: z.union([EffortTargetSchema, z.literal("unset")]),
   }),
   z.strictObject({
-    op: z.literal("set-chain"),
+    op: z.literal("set-route"),
     expectedRevision: z.number().int().nonnegative(),
-    category: RoutingCategorySchema,
-    entries: RoutingChainSchema,
-  }),
-  z.strictObject({
-    op: z.literal("set-selection"),
-    expectedRevision: z.number().int().nonnegative(),
-    /** The one selection mode, and it is always explicit: there is no "unset"
-     * and no per-category form to fall back from. */
-    mode: SelectionModeSchema,
+    scope: z.union([RoutingCategorySchema, z.literal("global")]),
+    /** null clears the scope back to unconfigured. */
+    route: RoutePolicySchema.nullable(),
   }),
 ]);
 export type RoutingPolicyMutation = z.infer<typeof RoutingPolicyMutationSchema>;

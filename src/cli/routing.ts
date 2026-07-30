@@ -17,16 +17,20 @@ import {
   knownBillings,
   readBillingWithMemory,
 } from "../daemon/usage-credits";
-import type { ChainEntry, EffortTarget, RoutingPolicy } from "../schemas";
+import type {
+  EffortTarget,
+  RouteCandidate,
+  RoutePolicy,
+  RoutingPolicy,
+} from "../schemas";
 import { forEachProvider, providersOf, ROUTING_CATEGORIES } from "../schemas";
 
 /**
- * `hive routing` — the auditability answer for the policy-era router: what
- * the user's chains say, what the vendors' catalogs hold, what the account
- * is billed, and what the escalation record has measured. There is no
- * derived table any more because there is no derivation: the user is the
- * router, and this prints their policy verbatim next to the live facts the
- * launch gate will check it against.
+ * `hive routing` — the auditability answer: what the user's routes say, what
+ * the vendors' catalogs hold, what the account is billed, and what the
+ * escalation record has measured. There is no derived table because there is
+ * no derivation: the user is the router, and this prints their policy
+ * verbatim next to the live facts the launch gate will check it against.
  */
 
 const describeEffort = (effort: EffortTarget): string =>
@@ -36,23 +40,33 @@ const describeEffort = (effort: EffortTarget): string =>
       ? "@none"
       : "";
 
-const describeEntry = (entry: ChainEntry): string =>
-  `${entry.provider}/${entry.model}${describeEffort(entry.effort)}`;
+const describeCandidate = (candidate: RouteCandidate): string =>
+  `${candidate.provider}/${candidate.model}${describeEffort(candidate.effort)}=${candidate.weight}`;
 
-function formatChains(policy: RoutingPolicy): string[] {
+const describeRoute = (route: RoutePolicy): string =>
+  `[${route.mode}] ${route.candidates.map(describeCandidate).join(", ")}`;
+
+function formatRoutes(policy: RoutingPolicy): string[] {
   const lines = [
     `Routing policy — revision ${policy.revision}` +
       (policy.provisional
         ? " (provisional Hive suggestions — edit anytime)"
         : ""),
   ];
+  lines.push(
+    `  ${"global".padEnd(16)}${
+      policy.global === null
+        ? "no route — automatic routing refuses"
+        : describeRoute(policy.global)
+    }`,
+  );
   for (const category of ROUTING_CATEGORIES) {
-    const chain = policy.chains[category];
+    const route = policy.categories[category];
     lines.push(
       `  ${category.padEnd(16)}${
-        chain === undefined || chain.length === 0
-          ? "no chain — falls back to the default chain"
-          : chain.map(describeEntry).join(" → ")
+        route === undefined
+          ? "no route — resolves to global"
+          : describeRoute(route)
       }`,
     );
   }
@@ -123,7 +137,7 @@ export async function printRouting(): Promise<void> {
   }
 
   const lines = [
-    ...formatChains(policy),
+    ...formatRoutes(policy),
     "",
     `  billing    ${describeBilling(billings)}`,
     ...providersOf(discovery).map((provider) => {

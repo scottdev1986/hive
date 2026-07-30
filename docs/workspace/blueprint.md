@@ -79,7 +79,7 @@ It lost on product grounds after the first field test of a shipped release. Rend
 
 The decision would be reopened by a SwiftTerm accessibility-conformance failure or by vendor TUIs becoming un-embeddable — **not** by the transcript evidence, which was never the problem. Evidence that a thing *works* is not evidence that it should *ship*.
 
-Two corollaries: tmux as *truth* lost and stays lost (capture-pane scraping is never authoritative). The earlier decisions to keep tmux as the *survival substrate* and defer libghostty are superseded by [ADR 0001](../adr/0001-native-terminal-foundation.md) and [terminal-stack-transition.html](../design/terminal-stack-transition.html) §§01/§05: pinned libghostty behind the bounded Hive bridge is binding, while tmux/SwiftTerm remain the admission fallback only if TG1 or TG2 fails. Alacritty, `libghostty-vt`, and WezTerm's crates are parser/core layers, not AppKit surfaces.
+Two corollaries: tmux as *truth* lost and stays lost (capture-pane scraping is never authoritative). The earlier decisions to keep tmux as the *survival substrate* and defer libghostty are superseded by [ADR 0001](../adr/0001-native-terminal-foundation.md) and [terminal-stack-transition.html](../design/Done/terminal-stack-transition.html) §§01/§05: pinned libghostty behind the bounded Hive bridge is binding, while tmux/SwiftTerm remain the admission fallback only if TG1 or TG2 fails. Alacritty, `libghostty-vt`, and WezTerm's crates are parser/core layers, not AppKit surfaces.
 
 ## Release safety gates
 

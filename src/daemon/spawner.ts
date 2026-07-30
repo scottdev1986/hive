@@ -10,8 +10,8 @@ import type { AuthorizedLaunch } from "./authorized-launch";
 
 export const SpawnRequestSchema = z.strictObject({
   task: z.string().min(1),
-  /** The task category. The user's policy maps it to an ordered fallback
-   * chain of exact models; the first link that clears the launch gate runs. */
+  /** The task category. The router resolves it to the user's configured
+   * candidate set and selects one exact model fairly. */
   category: RoutingCategorySchema,
   name: z.string().optional(),
   tool: CapabilityProviderSchema.optional(),
@@ -39,6 +39,9 @@ export const SpawnRequestSchema = z.strictObject({
   readOnly: z.boolean().optional(),
   /** Durable C5 bundle this replacement must pick up before writing. */
   handoffId: z.string().uuid().optional(),
+  /** Quota pools proven drained for this request: a handoff replacement must
+   * not land back on the pool that just drained its source. */
+  excludedPoolIds: z.array(z.string().min(1)).optional(),
 });
 
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
@@ -65,8 +68,4 @@ export interface Spawner {
      * downstream matches no hook and loses every event silently. */
     providerRunId: string,
   ): Promise<void>;
-  restartForControl?(
-    agent: AgentRecord,
-    message: AgentMessage,
-  ): Promise<AgentRecord>;
 }

@@ -1,7 +1,7 @@
 import Foundation
 
 /// User policy for the Model Control Center: what is enabled, at what effort,
-/// and which ordered chain serves each task category.
+/// and which weighted route serves each task category.
 ///
 /// The daemon owns the durable routing document. `ProvisionalPolicyStore`
 /// remains the compatibility fallback for a daemon that cannot export that
@@ -22,6 +22,7 @@ public enum TaskCategory: String, CaseIterable, Codable, Sendable {
     case planning = "planning"
     case debugging = "debugging"
     case summarization = "summarization"
+    case unclassified = "default"
 
     public var label: String {
         switch self {
@@ -34,6 +35,7 @@ public enum TaskCategory: String, CaseIterable, Codable, Sendable {
         case .planning: return "Planning"
         case .debugging: return "Debugging"
         case .summarization: return "Summarization"
+        case .unclassified: return "Everything else"
         }
     }
 }
@@ -49,49 +51,44 @@ public enum EffortTarget: Equatable, Codable, Sendable {
     case providerControlled
 }
 
-// MARK: - Chain entries
+// MARK: - Routes
 
-/// How sure Hive is about a provisional chain entry. Nothing claims
-/// `measured` until outcome telemetry exists.
-public enum ChainConfidence: String, Equatable, Codable, Sendable {
-    case documented
-    case assumed
+/// How a route picks one candidate per spawn. `userWeighted` selects by the
+/// stored integer weights; `hiveEqual` gives every candidate an effective
+/// weight of 1 while the stored weights stay intact, so switching modes loses
+/// no preference information.
+public enum RouterMode: String, CaseIterable, Codable, Sendable {
+    case userWeighted = "user-weighted"
+    case hiveEqual = "hive-equal"
 }
 
-/// One link in an ordered fallback chain. THE ATOM IS A (MODEL, EFFORT)
+/// One member of an UNORDERED candidate set. THE ATOM IS A (MODEL, EFFORT)
 /// PAIR: fable-5@high and fable-5@low are two different routing choices, and
 /// the same model may sit at different efforts in different categories.
 ///
-/// Every entry names an EXACT model. There is no vendor-default entry type
-/// and no bare "default" token: a default that quietly wins is exactly what
-/// this feature removes. The user is the router; the chain shows precisely
-/// which model runs, at which effort.
-public struct ChainEntry: Equatable, Codable, Sendable {
+/// Every candidate names an EXACT model. There is no vendor-default candidate
+/// type and no bare "default" token: a default that quietly wins is exactly
+/// what this feature removes. The user is the router; the route shows
+/// precisely which models can run, at which effort, in what proportion.
+public struct RouteCandidate: Equatable, Codable, Sendable {
     public var provider: String
     /// The canonical model id — the daemon store's grain (no variant; a
     /// context-window entitlement is not a different routing target).
     public var model: String
-    /// Effort is per chain LINK, not per model. NIL = no effort choice
-    /// this build can name — the wire's never-configured/hive-decides, or a
-    /// mode a newer daemon added. It renders as unchosen; it is never
-    /// silently promoted to an effort the user did not pick.
+    /// Effort is per candidate, not per model. NIL = Hive picks from the
+    /// model's advertised levels (`hive-decides` on the wire) — it renders as
+    /// unchosen because it is not a standing user choice.
     public var effort: EffortTarget?
-    /// Why this entry sits where it does — shown in the task view so the
-    /// user can make informed overrides instead of guessing. Provisional
-    /// seeds always say "assumed"; nothing wears authority it lacks.
-    public var note: String?
-    public var confidence: ChainConfidence?
+    /// A rating, not a percentage: 60/20/20 and 3/1/1 express the same
+    /// distribution. Integer 1–100; zero is illegal — disablement stays the
+    /// explicit provider/model enablement control, never a weight.
+    public var weight: Int
 
-    public init(
-        provider: String, model: String,
-        effort: EffortTarget?,
-        note: String? = nil, confidence: ChainConfidence? = nil
-    ) {
+    public init(provider: String, model: String, effort: EffortTarget?, weight: Int = 1) {
         self.provider = provider
         self.model = model
         self.effort = effort
-        self.note = note
-        self.confidence = confidence
+        self.weight = weight
     }
 
     /// The identity the no-duplicates rule compares.
@@ -100,36 +97,38 @@ public struct ChainEntry: Equatable, Codable, Sendable {
     }
 }
 
-/// What a category does when its deliberate chain exists but every link gated
-/// out. Default is REFUSE; widening to the global chain is per-category opt-in.
-/// An *empty* chain is a different thing — it quietly uses the Default chain.
-public enum ExhaustionBehavior: String, Codable, Sendable {
-    case refuse
-    case useGlobalFallback = "use_global_fallback"
-}
+/// An unordered weighted candidate set. Order carries no meaning; there is no
+/// fallback ladder anywhere.
+public struct RoutePolicy: Equatable, Codable, Sendable {
+    public var mode: RouterMode
+    public var candidates: [RouteCandidate]
 
-/// The daemon's selection vocabulary, verbatim. `neverConfigured` is a state
-/// the user may need to escape, never an option the control offers.
-public enum SelectionMode: String, Codable, Sendable {
-    case neverConfigured = "never-configured"
-    case auto
-    case choice
+    public init(mode: RouterMode, candidates: [RouteCandidate]) {
+        self.mode = mode
+        self.candidates = candidates
+    }
 
-    /// The two decisions a user can make. This is deliberately not all cases:
-    /// unanswered is shown as a warning, not offered as a choice.
-    public static let userChoices: [SelectionMode] = [.choice, .auto]
-}
+    /// The fraction of routed spawns this candidate is expected to receive:
+    /// weight/sum(weights) under `userWeighted`, 1/n under `hiveEqual`.
+    public func expectedShare(of candidate: RouteCandidate) -> Double {
+        guard !candidates.isEmpty else { return 0 }
+        switch mode {
+        case .hiveEqual:
+            return 1 / Double(candidates.count)
+        case .userWeighted:
+            let total = candidates.reduce(0) { $0 + $1.weight }
+            guard total > 0 else { return 0 }
+            return Double(candidate.weight) / Double(total)
+        }
+    }
 
-public struct CategoryPolicy: Equatable, Codable, Sendable {
-    public var chain: [ChainEntry]
-    public var exhaustionBehavior: ExhaustionBehavior
-
-    public init(
-        chain: [ChainEntry] = [],
-        exhaustionBehavior: ExhaustionBehavior = .refuse
-    ) {
-        self.chain = chain
-        self.exhaustionBehavior = exhaustionBehavior
+    /// Expected share summed per provider, for the aggregate preview.
+    public var providerShares: [String: Double] {
+        var shares: [String: Double] = [:]
+        for candidate in candidates {
+            shares[candidate.provider, default: 0] += expectedShare(of: candidate)
+        }
+        return shares
     }
 }
 
@@ -191,32 +190,26 @@ public struct ProviderPolicy: Equatable, Codable, Sendable {
 
 public struct ModelControlPolicy: Equatable, Codable, Sendable {
     public var providers: [String: ProviderPolicy]
-    public var categories: [String: CategoryPolicy]
-    /// The global fallback chain. Never deletable; the one chain that must
-    /// not be empty.
-    public var defaultChain: [ChainEntry]
+    /// A category's own route, keyed by the wire category name. A category
+    /// with no route of its own resolves to `global`; a category route that
+    /// refuses every candidate does NOT fall through to global.
+    public var categories: [String: RoutePolicy]
+    /// The route for categories without their own. nil = unconfigured, and
+    /// automatic routing refuses rather than inventing a candidate set.
+    public var global: RoutePolicy?
     /// True until the user edits — drives the provisional banner.
     public var provisional: Bool
-    /// How Hive selects a model, app-wide; categories may override.
-    public var globalSelection: SelectionMode
 
     public init(
         providers: [String: ProviderPolicy] = [:],
-        categories: [String: CategoryPolicy] = [:],
-        defaultChain: [ChainEntry] = [],
-        provisional: Bool = true,
-        globalSelection: SelectionMode = .neverConfigured
+        categories: [String: RoutePolicy] = [:],
+        global: RoutePolicy? = nil,
+        provisional: Bool = true
     ) {
         self.providers = providers
         self.categories = categories
-        self.defaultChain = defaultChain
+        self.global = global
         self.provisional = provisional
-        self.globalSelection = globalSelection
-    }
-
-    public mutating func setGlobalSelection(_ mode: SelectionMode) {
-        globalSelection = mode
-        provisional = false
     }
 
     // MARK: Reads
@@ -242,8 +235,8 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
             modelAvailable: available)
     }
 
-    public func categoryPolicy(_ category: TaskCategory) -> CategoryPolicy {
-        categories[category.rawValue] ?? CategoryPolicy()
+    public func route(_ category: TaskCategory) -> RoutePolicy? {
+        categories[category.rawValue]
     }
 
     // MARK: Mutations (all mark the policy user-edited)
@@ -277,36 +270,23 @@ public struct ModelControlPolicy: Equatable, Codable, Sendable {
         provisional = false
     }
 
-    public mutating func setCategoryChain(_ category: TaskCategory, chain: [ChainEntry]) {
-        var policy = categories[category.rawValue] ?? CategoryPolicy()
-        policy.chain = chain
-        categories[category.rawValue] = policy
+    /// nil category = the global route. nil route clears the scope back to
+    /// unconfigured.
+    public mutating func setRoute(_ category: TaskCategory?, _ route: RoutePolicy?) {
+        if let category {
+            categories[category.rawValue] = route
+        } else {
+            global = route
+        }
         provisional = false
-    }
-
-    public mutating func setExhaustionBehavior(_ category: TaskCategory, _ behavior: ExhaustionBehavior) {
-        var policy = categories[category.rawValue] ?? CategoryPolicy()
-        policy.exhaustionBehavior = behavior
-        categories[category.rawValue] = policy
-        provisional = false
-    }
-
-    /// Move a chain link. Primary is index 0; order is the policy.
-    public static func move(_ chain: [ChainEntry], from source: Int, to destination: Int) -> [ChainEntry] {
-        guard chain.indices.contains(source), destination >= 0, destination < chain.count,
-              source != destination else { return chain }
-        var next = chain
-        let entry = next.remove(at: source)
-        next.insert(entry, at: destination)
-        return next
     }
 }
 
-// MARK: - Chain effectiveness
+// MARK: - Candidate effectiveness
 
-/// Whether a chain link can actually run right now, and if not, why — so a
-/// struck row can say what is true instead of just looking sad.
-public enum ChainLinkStatus: Equatable, Sendable {
+/// Whether a route candidate can actually run right now, and if not, why — so
+/// a struck row can say what is true instead of just looking sad.
+public enum RouteCandidateStatus: Equatable, Sendable {
     case effective
     case providerOff
     case modelDisabled
@@ -317,11 +297,11 @@ public enum ChainLinkStatus: Equatable, Sendable {
     /// silently dropped and never launched.
     case unresolvable
 
-    /// The one derivation both policy backends share: a link's status is its
-    /// model's row state plus whether the live catalog still resolves it.
+    /// The one derivation both policy backends share: a candidate's status is
+    /// its model's row state plus whether the live catalog still resolves it.
     public static func derive(
         rowState: ModelRowState, resolvedInCatalog: Bool
-    ) -> ChainLinkStatus {
+    ) -> RouteCandidateStatus {
         guard resolvedInCatalog else { return .unresolvable }
         switch rowState {
         case .enabled: return .effective
@@ -333,17 +313,17 @@ public enum ChainLinkStatus: Equatable, Sendable {
     }
 
     public static func derive(
-        entry: ChainEntry,
+        candidate: RouteCandidate,
         policy: ModelControlPolicy,
         snapshot: ModelControlSnapshot
-    ) -> ChainLinkStatus {
-        let provider = ProviderID(entry.provider)
+    ) -> RouteCandidateStatus {
+        let provider = ProviderID(candidate.provider)
         if !policy.providerEnabled(provider) { return .providerOff }
-        guard case .available(let models, _) = snapshot.providers[entry.provider] else {
+        guard case .available(let models, _) = snapshot.providers[candidate.provider] else {
             return .unresolvable
         }
         guard let record = models.first(where: {
-            $0.canonicalId == entry.model
+            $0.canonicalId == candidate.model
         }) else {
             return .unresolvable
         }
@@ -359,9 +339,9 @@ public enum ChainLinkStatus: Equatable, Sendable {
 public enum PolicyWarning: Equatable, Sendable {
     /// "No providers enabled — Hive cannot spawn agents…"
     case noProvidersEnabled
-    /// "Your Default chain is empty. Categories with no chain of their own
+    /// "You have no Global route. Categories without a route of their own
     /// have nowhere to go."
-    case defaultChainEmpty
+    case noGlobalRoute
 
     public static func derive(
         policy: ModelControlPolicy, snapshot: ModelControlSnapshot
@@ -371,8 +351,8 @@ public enum PolicyWarning: Equatable, Sendable {
         if !ids.isEmpty, ids.allSatisfy({ !policy.providerEnabled($0) }) {
             warnings.append(.noProvidersEnabled)
         }
-        if policy.defaultChain.isEmpty {
-            warnings.append(.defaultChainEmpty)
+        if policy.global == nil {
+            warnings.append(.noGlobalRoute)
         }
         return warnings
     }
@@ -380,13 +360,10 @@ public enum PolicyWarning: Equatable, Sendable {
 
 // MARK: - Provisional store (PLACEHOLDER)
 
-/// PLACEHOLDER POLICY SOURCE — NOT the durable store.
-///
-/// The daemon-side SQLite policy store does not exist yet; when it lands,
-/// enablement and its seeded-off reason come from
-/// the daemon's contract and this seam is replaced with a read. Until then
-/// this seeds an in-memory policy from the LIVE discovery catalog and the
-/// same billing facts the daemon will use:
+/// PLACEHOLDER POLICY SOURCE — NOT the durable store; used only when the
+/// running daemon cannot export the policy document. Seeds an in-memory
+/// policy from the LIVE discovery catalog and the same billing facts the
+/// daemon uses:
 ///
 /// - Providers whose billing is VERIFIED COVERED (credits known off — a plan
 ///   wall, not a bill) seed their models enabled.
@@ -394,16 +371,13 @@ public enum PolicyWarning: Equatable, Sendable {
 ///   `seededOff`: fully visible, deliberately off, awaiting the user's
 ///   consent. "Ready to use" must never mean "already spending money on
 ///   something the user never touched".
-/// - Categories start empty (they use the Default chain); the Default chain
-///   gets a labeled vendor-default link per provider that is both available
-///   and not seeded off.
+/// - Categories start with no route (they resolve to global); the global
+///   route seeds one equal-weight candidate per consented provider — its
+///   effective-default model, effort left to the vendor. Equal weight is the
+///   only non-invented rating; no outcome data backs anything else.
 ///
 /// It never invents a measurement, and nothing persists across launches.
 public enum ProvisionalPolicyStore {
-
-    /// The citation every seeded entry carries. Provisional means provisional:
-    /// no entry claims outcome evidence that does not exist.
-    static let assumedNote = "Assumed order — no Hive outcome data yet."
 
     public static func seed(from snapshot: ModelControlSnapshot) -> ModelControlPolicy {
         var providers: [String: ProviderPolicy] = [:]
@@ -416,65 +390,21 @@ public enum ProvisionalPolicyStore {
             providers[id.rawValue] = ProviderPolicy(
                 enabled: true, absentModelEnablement: enablement)
         }
-        let policy = ModelControlPolicy(
+        return ModelControlPolicy(
             providers: providers,
-            categories: seedCategories(from: snapshot, providers: providers),
-            defaultChain: seedChain(
-                from: snapshot, providers: providers,
-                effortIntent: "medium",
-                why: "Mid effort, diversified across vendors."),
+            global: seedGlobalRoute(from: snapshot, providers: providers),
             provisional: true)
-        return policy
     }
 
-    /// The provisional routing table: every category gets an ordered chain of
-    /// (model @ effort) atoms resolved from the LIVE
-    /// catalog — never ids frozen in the binary — with a note saying why.
-    /// Only consented (billing-verified) providers are seeded; an unconsented
-    /// vendor's models must never be pre-wired into spending positions.
-    private static func seedCategories(
+    /// One equal-weight candidate per consented, available provider: its
+    /// effective-default model with effort left to the vendor — nothing here
+    /// invents a level, and an unconsented vendor's models must never be
+    /// pre-wired into spending positions.
+    private static func seedGlobalRoute(
         from snapshot: ModelControlSnapshot,
         providers: [String: ProviderPolicy]
-    ) -> [String: CategoryPolicy] {
-        // (effort intent, why this order) per category.
-        let plans: [(TaskCategory, String, String)] = [
-            (.complexCoding, "high", "Strongest available at high effort for hard code."),
-            (.debugging, "high", "Coding-capable models at high effort; kept separate from complex coding for future evidence."),
-            (.codeReview, "high", "Prefers a different vendor than the usual producer, at high effort."),
-            (.planning, "high", "Strong reasoning first."),
-            (.heavyResearch, "high", "Strong reasoning / synthesis at high effort."),
-            (.simpleCoding, "medium", "Vendor defaults at medium effort for routine changes."),
-            (.standardCoding, "medium", "The everyday coding default: vendor defaults at medium effort."),
-            (.lightResearch, "low", "Cheap and fast first; spreads work off the coding pools."),
-            (.summarization, "low", "Cheapest competent choice first."),
-        ]
-        var categories: [String: CategoryPolicy] = [:]
-        for (category, effortIntent, why) in plans {
-            var chain = seedChain(
-                from: snapshot, providers: providers,
-                effortIntent: effortIntent, why: why)
-            // Code review prefers vendor independence: rotate so the first
-            // link is not the same vendor every other category leads with.
-            if category == .codeReview, chain.count > 1 {
-                chain.append(chain.removeFirst())
-            }
-            categories[category.rawValue] = CategoryPolicy(
-                chain: chain, exhaustionBehavior: .refuse)
-        }
-        return categories
-    }
-
-    /// One entry per consented, available provider: its effective-default
-    /// model at the intended effort — but only an effort the vendor actually
-    /// advertises; otherwise the entry stays provider-controlled. Nothing here
-    /// invents a level.
-    private static func seedChain(
-        from snapshot: ModelControlSnapshot,
-        providers: [String: ProviderPolicy],
-        effortIntent: String,
-        why: String
-    ) -> [ChainEntry] {
-        var chain: [ChainEntry] = []
+    ) -> RoutePolicy? {
+        var candidates: [RouteCandidate] = []
         for id in snapshot.providerIDs {
             guard providers[id.rawValue]?.absentModelEnablement == .enabled,
                   case .available(let models, let effectiveDefault)? =
@@ -483,25 +413,14 @@ public enum ProvisionalPolicyStore {
                 .flatMap { defaultId in models.first { $0.canonicalId == defaultId } }
                 ?? models.first { $0.hidden.value != true }
             guard let flagship else { continue }
-            let effort: EffortTarget
-            var effortNote = ""
-            switch EffortAxis.derive(from: flagship) {
-            case .known(let levels, _) where levels.contains(effortIntent):
-                effort = .exact(effortIntent)
-            case .none:
-                effort = .none
-                effortNote = " This model has no effort setting."
-            default:
-                effort = .providerControlled
-                effortNote = " Effort left to the vendor — \(effortIntent) is not advertised."
-            }
-            chain.append(ChainEntry(
+            candidates.append(RouteCandidate(
                 provider: id.rawValue,
                 model: flagship.canonicalId,
-                effort: effort,
-                note: "\(assumedNote) \(why)\(effortNote)",
-                confidence: .assumed))
+                effort: .providerControlled,
+                weight: 1))
         }
-        return chain
+        return candidates.isEmpty
+            ? nil
+            : RoutePolicy(mode: .hiveEqual, candidates: candidates)
     }
 }

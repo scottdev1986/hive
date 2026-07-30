@@ -1,7 +1,6 @@
 import {
   CAPABILITY_PROVIDERS,
   type CapabilityProvider,
-  CapabilityProviderSchema,
   type CapabilityRecord,
   DEFAULT_PERCENT_ESTIMATES,
   type QuotaConfidence,
@@ -18,7 +17,6 @@ import {
   type QuotaUnconfiguredStatus,
   type QuotaWindowStatus,
   type RoutingCategory,
-  unknownVendor,
 } from "../schemas";
 import {
   type AuthorizedLaunch,
@@ -40,45 +38,10 @@ import {
 const HOUR_MS = 60 * 60 * 1_000;
 const DAY_MS = 24 * HOUR_MS;
 
-export type QuotaRouteCandidate = AuthorizedLaunch;
 type QuotaCandidateIdentity = Pick<
   AuthorizedLaunch,
   "tool" | "model" | "effort"
 >;
-
-export interface QuotaRouteRequest {
-  agentName: string;
-  category: RoutingCategory;
-  /**
-   * How to pick among the already gated candidates. `spread` performs atomic
-   * fair dispatch over Hive-observed assignments; `strict` preserves the
-   * caller's exact order. Quota remains a per-candidate affordability gate.
-   */
-  selection: "spread" | "strict";
-  explicitTool?: CapabilityProvider;
-  /** A human named this exact model; catalog quarantine warns but does not veto. */
-  explicitCandidate?: boolean;
-  reviewOfTool?: CapabilityProvider;
-  candidates: QuotaRouteCandidate[];
-}
-
-export interface QuotaRouteDecision {
-  authorized: AuthorizedLaunch;
-  tool: CapabilityProvider;
-  model: string;
-  effort?: string;
-  reservation: QuotaReservation;
-  status: QuotaStatus;
-  reason: string;
-  /**
-   * What the caller should say out loud about this route. A spawn that succeeds
-   * with a pool near its limit, or that fell back off an exhausted model, is not
-   * a silent success — the orchestrator is promised a warning under quota
-   * pressure, and this is where it comes from. Empty when every governing pool
-   * is comfortable.
-   */
-  warnings: string[];
-}
 
 export interface ControlQuotaRequest extends QuotaCandidateIdentity {
   agentName: string;
@@ -282,16 +245,6 @@ export function describeRemaining(
   return window.remaining === null
     ? "unknown"
     : `${window.remaining.toFixed(1)}${unit}`;
-}
-
-export class QuotaExhaustedError extends Error {
-  constructor(
-    message: string,
-    readonly fallback?: QuotaRouteCandidate,
-  ) {
-    super(message);
-    this.name = "QuotaExhaustedError";
-  }
 }
 
 export interface CodexRateLimitWindow {
@@ -849,9 +802,9 @@ export class QuotaService {
    * Nothing here knows the name of a vendor or a category. It reports what happened
    * when Hive last tried, and it forgets on a schedule.
    */
-  private quarantinedUntil(
+  launchCooldown(
     candidate: QuotaCandidateIdentity,
-    now: Date,
+    now: Date = this.clock(),
   ): { until: string; reason: string } | null {
     const health = this.ledger.routeHealth(
       candidate.tool,
@@ -891,23 +844,6 @@ export class QuotaService {
       candidate.model,
       candidate.effort ?? null,
       at,
-    );
-  }
-
-  /** The pool with the least room: the one that actually governs the run. */
-  private tightest(
-    entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
-  ): { limit: ResolvedQuotaLimit; status: QuotaPoolStatus } {
-    const room = (entry: {
-      limit: ResolvedQuotaLimit;
-      status: QuotaPoolStatus;
-    }) =>
-      Math.min(
-        entry.status.fiveHour.remainingPct ?? Number.POSITIVE_INFINITY,
-        entry.status.weekly.remainingPct ?? Number.POSITIVE_INFINITY,
-      );
-    return entries.reduce((tightest, entry) =>
-      room(entry) < room(tightest) ? entry : tightest,
     );
   }
 
@@ -1510,189 +1446,50 @@ export class QuotaService {
   }
 
   /**
-   * Route and book, but never refuse for usage. Selection is
-   * unchanged in kind: `spread` fairly shares work across providers by
-   * Hive-observed dispatch deficit, `strict` walks rank order. What is gone
-   * is the veto: pool exhaustion is a mid-work condition, handled by the
-   * drain handler, never a reason to stop a launch. Consent, enablement,
-   * and capability refusals are the launch gate's, and are untouched here.
+   * Book one already-selected launch against its governing pools, never
+   * refusing for usage: pool exhaustion is a mid-work condition, handled by
+   * the drain handler, and selection belongs to the router. An unmetered
+   * candidate is normal for a provider with no usage surface (opencode) or a
+   * quiet one; it books against its `unconfigured:` pool, which is what the
+   * status displays already read.
    */
-  async routeAndReserve(
-    request: QuotaRouteRequest,
-  ): Promise<QuotaRouteDecision> {
-    for (const candidate of request.candidates)
-      requireAuthorizedLaunch(candidate);
+  reserveLaunch(
+    agentName: string,
+    candidate: AuthorizedLaunch,
+    category: RoutingCategory,
+  ): QuotaReservation {
+    requireAuthorizedLaunch(candidate);
     const now = this.clock();
-    if (
-      request.reviewOfTool !== undefined &&
-      !CapabilityProviderSchema.safeParse(request.reviewOfTool).success
-    ) {
-      return unknownVendor(request.reviewOfTool as never, "review provider");
-    }
-    let candidates = request.candidates.filter(
-      (candidate) =>
-        request.explicitTool === undefined ||
-        candidate.tool === request.explicitTool,
+    const entries = this.limitsFor(candidate).map((limit) => ({
+      limit,
+      status: this.statusForLimit(limit, now),
+    }));
+    const known = entries.filter(
+      (entry) => this.measured(entry.status, entry.limit) !== null,
     );
-    if (
-      request.reviewOfTool !== undefined &&
-      request.category === "code_review"
-    ) {
-      candidates = candidates.filter(
-        (candidate) => candidate.tool !== request.reviewOfTool,
-      );
-    }
-    if (candidates.length === 0) {
-      throw new QuotaExhaustedError(
-        `Requested provider ${request.explicitTool} has no route for ${request.category}`,
-      );
-    }
-
-    const evaluated = candidates.map((candidate) => {
-      const entries = this.limitsFor(candidate).map((limit) => ({
-        limit,
-        status: this.statusForLimit(limit, now),
-      }));
-      const known = entries.filter(
-        (entry) => this.measured(entry.status, entry.limit) !== null,
-      );
-      // An unmetered candidate is normal for a provider with no usage surface
-      // (opencode) or a
-      // quiet one. It books against its `unconfigured:` pool, which is what
-      // the status displays already read.
-      if (entries.length === 0 || known.length === 0) {
-        return {
-          candidate,
-          entries: [],
-          unknown: true,
-        };
-      }
-      return { candidate, entries, unknown: false };
-    });
-
-    // Viability, before distribution gets a vote. A route Hive has just watched fail
-    // to produce a working agent is not a route, however much quota it has. This
-    // cooldown is failure evidence, not usage, and the ruling does not touch it.
-    const quarantine = new Map<
-      (typeof evaluated)[number],
-      { until: string; reason: string }
-    >();
-    for (const item of evaluated) {
-      const held = this.quarantinedUntil(item.candidate, now);
-      if (held !== null) quarantine.set(item, held);
-    }
-    const viable = request.explicitCandidate
-      ? evaluated
-      : evaluated.filter((item) => !quarantine.has(item));
-    // If every route is quarantined, try anyway rather than refuse everything.
-    const attemptable = viable.length > 0 ? viable : evaluated;
-    const quarantineWarnings = request.explicitCandidate
-      ? [...quarantine.values()].map(
-          (held) =>
-            `The explicitly requested route recently failed to start (${held.reason}); ` +
-            `launching anyway because the model was explicitly requested.`,
-        )
-      : attemptable === evaluated
-        ? [...quarantine.values()].map(
-            (held) =>
-              `Every candidate route recently failed to start (${held.reason}); ` +
-              `launching anyway because there is no alternative.`,
-          )
-        : [...quarantine.entries()].map(
-            ([item, held]) =>
-              `${item.candidate.tool}/${item.candidate.model} was passed over: it ` +
-              `failed to start (${held.reason}) and is retried after ${held.until}.`,
-          );
-
-    /** The observation rows one candidate books against: its metering
-     * pools, or its `unconfigured:` pool when nothing meters it. */
-    const inputsFor = (
-      item: (typeof attemptable)[number],
-    ): ReserveQuotaInput[] =>
-      item.entries.length === 0
+    const inputs: ReserveQuotaInput[] =
+      entries.length === 0 || known.length === 0
         ? [
             {
               id: crypto.randomUUID(),
-              agentName: request.agentName,
-              provider: item.candidate.tool,
+              agentName,
+              provider: candidate.tool,
               account: "default",
-              pool: `unconfigured:${item.candidate.model}`,
-              model: item.candidate.model,
-              effort: item.candidate.effort ?? null,
-              category: request.category,
+              pool: `unconfigured:${candidate.model}`,
+              model: candidate.model,
+              effort: candidate.effort ?? null,
+              category,
               estimatedUnits: 10,
               now: iso(now),
               expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
             },
           ]
-        : this.reservationInputs(
-            request.agentName,
-            item.candidate,
-            item.entries,
-            request.category,
-            now,
-          );
-
-    if (request.selection === "spread") {
-      const fair = this.ledger.reserveFairGroups(
-        attemptable.map((item) => ({
-          provider: item.candidate.tool,
-          inputs: inputsFor(item),
-        })),
-      );
-      const item = attemptable[fair.candidateIndex];
-      const primary = fair.reservations[0];
-      if (item === undefined || primary === undefined) {
-        throw new Error("Quota fairness returned an empty reservation");
-      }
-      const governing =
-        item.entries.length === 0 ? undefined : this.tightest(item.entries);
-      return {
-        ...item.candidate,
-        authorized: item.candidate,
-        reservation: primary,
-        status:
-          governing === undefined
-            ? this.gapStatus(item.candidate.tool, item.candidate.model, {
-                reserved: 0,
-                fiveHourRecorded: 0,
-                weeklyRecorded: 0,
-              })
-            : this.statusForLimit(governing.limit, now),
-        reason:
-          "capability-cleared weighted fair dispatch over Hive-observed assignments",
-        warnings: quarantineWarnings,
-      };
-    }
-
-    // strict: rank order, first attemptable candidate. It always exists —
-    // usage cannot empty this list anymore.
-    const item = attemptable[0];
-    if (item === undefined) {
-      throw new Error("no candidate to route");
-    }
-    const reservations = this.ledger.reserveGroupUnchecked(inputsFor(item));
-    const reservation = reservations[0];
+        : this.reservationInputs(agentName, candidate, entries, category, now);
+    const reservation = this.ledger.reserveGroupUnchecked(inputs)[0];
     if (reservation === undefined) {
       throw new Error("Quota ledger returned an empty reservation");
     }
-    const governing =
-      item.entries.length === 0 ? undefined : this.tightest(item.entries);
-    return {
-      ...item.candidate,
-      authorized: item.candidate,
-      reservation,
-      status:
-        governing === undefined
-          ? this.gapStatus(item.candidate.tool, item.candidate.model, {
-              reserved: 0,
-              fiveHourRecorded: 0,
-              weeklyRecorded: 0,
-            })
-          : this.statusForLimit(governing.limit, now),
-      reason: "the user's chosen link",
-      warnings: quarantineWarnings,
-    };
+    return reservation;
   }
 
   async reserveControlRun(

@@ -21,8 +21,8 @@ enum MCCCopy {
         "Provisional Hive suggestions — edit anytime; no outcome data yet."
     static let warnNoProviders =
         "No providers enabled — Hive cannot spawn agents until at least one provider is turned on."
-    static let warnDefaultChainEmpty =
-        "Your Global fallback chain is empty. Categories with no chain of their own have nowhere to go."
+    static let warnNoGlobalRoute =
+        "You have no Global route. Categories without a route of their own cannot spawn automatically."
 
     // Badges
 
@@ -100,54 +100,51 @@ enum MCCCopy {
         "\(model), off by default, awaiting your consent. Enabling authorises spend."
     }
 
-    // Models, chains, warnings
+    // Models, routes, warnings
 
     static func modelOverriddenByProvider(_ providerTitle: String) -> String {
         "Off because \(providerTitle) is off"
     }
     static let modelPreferenceOnOverridden = "Your preference: on (not effective)"
     static let modelDisabledSelf = "Disabled"
-    static let selectionSubtitle =
-        "Each task runs on ONE model. Preference follows your ranking; No preference " +
-        "lets Hive spread work among enabled models that fit the task."
-    static let rankTooltip =
-        "In Preference mode, Hive honors this ranking."
-    static let selectionControlLabel = "Model selection:"
-    static let selectionPreference = "Preference (choice)"
-    static let selectionNoPreference = "No preference (auto)"
-    static let selectionUnconfigured = "Unconfigured — choose one"
-    static let selectionUnreadable =
-        "This version of Hive cannot read the daemon's model selection — update Hive to "
-        + "see and change this. Your other settings still save normally."
-
-    static func selectionTitle(_ mode: SelectionMode) -> String {
+    static let routesSubtitle =
+        "Each spawn runs on ONE model, picked from the route's candidates. " +
+        "Weighted split follows the weights you set; Equal split gives every " +
+        "candidate the same share."
+    static func modeTitle(_ mode: RouterMode) -> String {
         switch mode {
-        case .neverConfigured: return selectionUnconfigured
-        case .auto: return selectionNoPreference
-        case .choice: return selectionPreference
+        case .userWeighted: return "Weighted split"
+        case .hiveEqual: return "Equal split"
         }
     }
-
-    static func selectionCaption(_ mode: SelectionMode) -> String {
+    static func modeCaption(_ mode: RouterMode) -> String {
         switch mode {
-        case .neverConfigured:
-            return "Routed spawns refuse until you choose Preference or No preference."
-        case .auto:
-            return "No preference: Hive spreads work across your enabled models."
-        case .choice:
-            return "Preference: Hive honors your ranking, then tries other enabled models "
-                + "when the preferred ones are exhausted. A spawn can still refuse if every "
-                + "eligible model is unavailable or out of capacity."
+        case .userWeighted:
+            return "Hive splits spawns by the weights you set. Weights are ratings, "
+                + "not percentages — 3/1/1 and 60/20/20 are the same split."
+        case .hiveEqual:
+            return "Every candidate gets the same share. Your weights are kept "
+                + "and apply again if you switch back."
         }
     }
-    static let chainEmptyUsesDefault = "No chain of its own — uses your Global fallback chain."
-    static let chainAllIneffective = "Every model in this chain is off or unavailable."
-    static let chainExhaustionRefuse =
-        "If every model here is unavailable, spawns for this category will fail."
-    static let chainExhaustionWiden =
-        "If every model here is unavailable, Hive will use your Global fallback chain."
-    static let defaultChainTitle = "Global fallback"
-    static let defaultChainSubtitle = "Used when a category has no chain of its own."
+    static let modeControlLabel = "Split:"
+    static let routeUnreadable =
+        "This version of Hive cannot read this route — update Hive to see and "
+        + "edit it. Your other settings still save normally."
+    static let routeEmptyUsesGlobal = "No route of its own — uses your Global route."
+    static let routeAllIneffective =
+        "Every model in this route is off or unavailable. Spawns routed here "
+        + "will fail until one is available."
+    static let globalRouteTitle = "Global route"
+    static let globalRouteSubtitle = "Used when a category has no route of its own."
+    static func expectedShare(_ percent: Int) -> String { "≈\(percent)%" }
+    static func expectedShareTooltip(_ percent: Int) -> String {
+        "Expected share of this route's spawns: about \(percent)%"
+    }
+    static func providerShares(_ shares: [(title: String, percent: Int)]) -> String {
+        "Per provider: " + shares.map { "\($0.title) ≈\($0.percent)%" }
+            .joined(separator: " · ")
+    }
 
     // Accessibility
 
@@ -166,19 +163,10 @@ enum MCCCopy {
     static func a11yMeterUnknown(_ windowLabel: String) -> String {
         "\(windowLabel): usage unknown"
     }
-    static func a11yChainRank(_ model: String, _ n: Int, _ total: Int) -> String {
-        "\(model), rank \(n) of \(total). Rank is preference and tie-break, not a strict order."
+    static func a11yRouteCandidate(_ model: String, _ sharePercent: Int) -> String {
+        "\(model), expected share about \(sharePercent) percent"
     }
-
-    // Rank labels. "Preferred", not "Primary": rank is preference and
-    // tie-break under the capacity spread, never "this one always goes first".
-
-    static func rankLabel(_ index: Int) -> String {
-        switch index {
-        case 0: return "Preferred"
-        case 1: return "2nd"
-        case 2: return "3rd"
-        default: return "\(index + 1)th"
-        }
+    static func a11yWeight(_ model: String) -> String {
+        "Weight for \(model)"
     }
 }

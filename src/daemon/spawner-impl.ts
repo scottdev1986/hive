@@ -23,7 +23,6 @@ import {
   type CapabilityProvider,
   CapabilityProviderSchema,
   type CapabilityRecord,
-  type ChainEntry,
   type EffortTarget,
   type ExecutionIdentity,
   type FlatAssignment,
@@ -33,7 +32,6 @@ import {
   isLiveAgent,
   isOrchestratorName,
   type ModelEnablementDecision,
-  modelCategoryFit,
   ORCHESTRATOR_NAME,
   type RoutingCategory,
   type RoutingPolicy,
@@ -60,6 +58,7 @@ import { hiveCliSpawnArgv } from "./lifecycle";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
 import type { QuotaService } from "./quota";
 import { waitForMcpReporting, watchForProofOfLife } from "./readiness";
+import { type CandidateGate, HiveRouter, type LaunchDecision } from "./router";
 import {
   type CommandOutput,
   parseProcessTable,
@@ -707,6 +706,8 @@ const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
+  // The raw handle rides along for the router's decision/balance tables.
+  | "database"
   | "getAgentById"
   | "getActiveProviderRunByTerminal"
   | "getLiveAgentByName"
@@ -1233,6 +1234,7 @@ export class HiveSpawner implements Spawner {
     CapabilityProvider,
     { at: number; value: Promise<AccountBilling | null> }
   >();
+  private routerInstance: HiveRouter | undefined;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
@@ -1254,6 +1256,42 @@ export class HiveSpawner implements Spawner {
       (dependencies.createWorktree === undefined
         ? unavailableAgentNames
         : async () => new Set());
+  }
+
+  /** The router, over the daemon's database and the quota facts that gate
+   * eligibility. Quota facts are wired only when quota is enabled — with it
+   * off there is no cooldown or drain evidence, and every route is clear. */
+  private router(): HiveRouter {
+    if (this.routerInstance === undefined) {
+      const quota =
+        this.dependencies.quota?.config.enabled === true
+          ? this.dependencies.quota
+          : undefined;
+      this.routerInstance = new HiveRouter({
+        db: this.dependencies.db,
+        readPolicy: () => {
+          if (this.dependencies.readRoutingPolicy === undefined) {
+            throw new Error("no routing policy source is configured");
+          }
+          return this.dependencies.readRoutingPolicy();
+        },
+        ...(quota === undefined
+          ? {}
+          : {
+              launchCooldown: (candidate: AuthorizedLaunch) =>
+                quota.launchCooldown(candidate),
+              drainedPool: (candidate: AuthorizedLaunch) => {
+                const drained = quota.drainFor(candidate);
+                return drained === null
+                  ? null
+                  : { pool: drained.pool, resetsAt: drained.resetsAt };
+              },
+              poolsGoverning: (candidate: AuthorizedLaunch) =>
+                quota.poolsGoverning(candidate).map((status) => status.pool),
+            }),
+      });
+    }
+    return this.routerInstance;
   }
 
   private daemonPort(): number {
@@ -1603,10 +1641,10 @@ export class HiveSpawner implements Spawner {
     tool: CapabilityProvider,
     model: string,
   ): Promise<string | null> {
-    // Quota routing already combines the daemon's refreshed provider readings
-    // with live reservations. Starting a second throwaway vendor CLI here, and
-    // again during final revalidation, made spawn latency proportional to CLI
-    // startup without adding a newer decision than routeAndReserve makes.
+    // The quota service already combines the daemon's refreshed provider
+    // readings with live reservations. Starting a second throwaway vendor CLI
+    // here, and again during final revalidation, made spawn latency
+    // proportional to CLI startup without adding newer evidence.
     if (this.dependencies.quota?.config.enabled === true) return null;
     const readBilling = this.dependencies.readBilling;
     if (readBilling === undefined) return null;
@@ -1835,12 +1873,12 @@ export class HiveSpawner implements Spawner {
         assignmentAt,
       );
       const controlPrompt = [
-        `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
+        `HIVE CONTROL ${message.id} (capability epoch ${agent.capabilityEpoch}).`,
         ...(assignment === undefined ? [] : [assignmentPrompt(assignment)]),
         message.body,
         "Your prior process was stopped and its worktree was preserved.",
         "This process is read-only. Do not resume implementation or landing.",
-        `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}, capabilityEpoch=${message.capabilityEpoch}.`,
+        `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}.`,
         `Previous assignment for context only: ${agent.taskDescription}`,
       ].join("\n\n");
       const instructionPath = await writeLaunchPrompt(
@@ -2206,13 +2244,11 @@ export class HiveSpawner implements Spawner {
         `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
       );
     }
-    // What governs this spawn: the user's routing policy — the ordered
-    // fallback chain the user authored for this task category — and nothing
-    // else. No tier ladder, no preferred-vendor table, no vendor default to
-    // fall through to: the chain is walked IN USER ORDER, every link runs
-    // the full launch gate, the first link that passes wins, and a category
-    // whose links all refuse falls back to the user's global default chain
-    // before REFUSING with every reason. A corrupt policy store throws out
+    // What governs this spawn: the user's routing policy — the candidate
+    // set the user configured for this task category — and nothing else. The
+    // router resolves the category route (else global, else refuses), runs
+    // every candidate through the full launch gate, and selects one fairly
+    // by smooth weighted round-robin. A corrupt policy store throws out
     // of read() and the spawn refuses: "I could not read your policy" is
     // never answered as "you have no policy" (unknown-read-as-permission).
     const readPolicy = (): RoutingPolicy => {
@@ -2274,6 +2310,9 @@ export class HiveSpawner implements Spawner {
       // never read before the walk assigns the authorized launch.
       tool = request.tool ?? "claude";
     }
+    // Minted before routing: the agent id doubles as the router's idempotent
+    // requestId, so a retried spawn cannot consume a second selection slot.
+    const agentId = crypto.randomUUID();
     let executionIdentity: ExecutionIdentity | undefined;
     let quotaReservationId: string | undefined;
     let effort: string | undefined;
@@ -2500,204 +2539,94 @@ export class HiveSpawner implements Spawner {
       }
       return result.authorized;
     };
+    /** The router's per-candidate launch gate: effort resolution plus the
+     * complete AuthorizedLaunch mint. An explicitly requested tool narrows
+     * the route here rather than in policy. */
+    const gateCandidate: CandidateGate = async (candidate) => {
+      if (request.tool !== undefined && candidate.provider !== request.tool) {
+        return {
+          refusal: {
+            gate: "policy",
+            detail: `tool=${request.tool} was explicitly requested`,
+          },
+        };
+      }
+      let effortValue: string | undefined;
+      try {
+        effortValue = await linkEffort(candidate, readPolicy());
+      } catch (error) {
+        return {
+          refusal: {
+            gate: "effort",
+            detail: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      const gate = await authorizeCandidate({
+        tool: candidate.provider,
+        model: candidate.model,
+        ...(effortValue === undefined ? {} : { effort: effortValue }),
+      });
+      return gate.refusal !== undefined
+        ? {
+            refusal: {
+              gate: gate.refusal.reason,
+              detail: gate.refusal.detail,
+            },
+          }
+        : { authorized: gate.authorized };
+    };
     let authorized: AuthorizedLaunch;
+    let decision: LaunchDecision;
     if (explicitModel !== undefined) {
       // A user-named model is the only candidate and is never substituted:
-      // it passes the same gates as any link (a pin is a route, not a
-      // consent), and unsafe quota fails the spawn with the capacity report
-      // instead of sliding to a different model.
-      const raw: RawLaunchCandidate = {
+      // it passes the same gates as any candidate (a pin is a route, not a
+      // consent), bypasses weighted selection, and never mutates balance.
+      authorized = await requireGate({
         tool,
         model: explicitModel,
         ...(request.effort === undefined ? {} : { effort: request.effort }),
-      };
-      const gated = await requireGate(raw);
-      if (this.dependencies.quota?.config.enabled === true) {
-        await this.dependencies.quotaReady?.();
-        const decision = await this.dependencies.quota.routeAndReserve({
-          agentName: name,
-          category: request.category,
-          selection: "strict",
-          explicitTool: tool,
-          explicitCandidate: true,
-          ...(request.reviewOfTool === undefined
-            ? {}
-            : { reviewOfTool: request.reviewOfTool }),
-          candidates: [gated],
-        });
-        authorized = decision.authorized;
-        quotaReservationId = decision.reservation.id;
-      } else {
-        authorized = gated;
-      }
-    } else {
-      // THE CHAIN SELECTION. The category's chain names the CAPABLE models,
-      // best first; it does not always try the first choice, because a strict
-      // walk burns the primary's pool to zero while the others sit idle.
-      // EVERY link passes the full launch gate first — selection never
-      // bypasses a gate — and then the user's selection mode picks among the
-      // eligible: `spread` (default) by remaining headroom, rank-biased;
-      // `strict` in rank order. A chain whose links all refuse falls back to
-      // the user's global default chain, walked the same way; when that too
-      // is exhausted, `choice` spreads over the remaining enabled models;
-      // only when those also refuse does the spawn REFUSE with every reason.
-      const policy = readPolicy();
-      const category = request.category;
-      const selection = policy.selection.global;
-      if (selection === "never-configured") {
-        throw new Error(
-          `Cannot spawn ${name}: model selection is never-configured. ` +
-            "Choose Hive decides or an exact chain in the Model Control Center.",
-        );
-      }
-      const attempts: string[] = [];
-      const tried = new Set<string>();
-      const gateChain = async (
-        entries: readonly ChainEntry[],
-        source: string,
-      ): Promise<AuthorizedLaunch[]> => {
-        const eligible: AuthorizedLaunch[] = [];
-        for (const entry of entries) {
-          const key = `${entry.provider}\0${entry.model}`;
-          if (tried.has(key)) continue;
-          tried.add(key);
-          const label = `${source}: ${entry.provider}/${entry.model}`;
-          if (request.tool !== undefined && entry.provider !== request.tool) {
-            attempts.push(
-              `${label} — skipped: tool=${request.tool} was explicitly requested`,
-            );
-            continue;
-          }
-          let effortValue: string | undefined;
-          try {
-            effortValue = await linkEffort(entry, policy);
-          } catch (error) {
-            attempts.push(
-              `${label} — effort: ${error instanceof Error ? error.message : String(error)}`,
-            );
-            continue;
-          }
-          const gate = await authorizeCandidate({
-            tool: entry.provider,
-            model: entry.model,
-            ...(effortValue === undefined ? {} : { effort: effortValue }),
-          });
-          if (gate.refusal !== undefined) {
-            attempts.push(
-              `${label} — ${gate.refusal.reason}: ${gate.refusal.detail}`,
-            );
-            continue;
-          }
-          eligible.push(gate.authorized);
-        }
-        return eligible;
-      };
-      const selectFrom = async (
-        eligible: AuthorizedLaunch[],
-        quotaSelection = selection === "auto"
-          ? ("spread" as const)
-          : ("strict" as const),
-      ): Promise<{
-        authorized: AuthorizedLaunch;
-        reservationId?: string;
-      } | null> => {
-        const [firstEligible] = eligible;
-        if (firstEligible === undefined) return null;
-        if (this.dependencies.quota?.config.enabled !== true) {
-          // Without quota there is no headroom to spread by; rank order is
-          // the only honest signal left, for either mode.
-          return { authorized: firstEligible };
-        }
-        try {
-          await this.dependencies.quotaReady?.();
-          const decision = await this.dependencies.quota.routeAndReserve({
-            agentName: name,
-            category,
-            selection: quotaSelection,
-            ...(request.tool === undefined
-              ? {}
-              : { explicitTool: request.tool }),
-            ...(request.reviewOfTool === undefined
-              ? {}
-              : { reviewOfTool: request.reviewOfTool }),
-            candidates: eligible,
-          });
-          return {
-            authorized: decision.authorized,
-            reservationId: decision.reservation.id,
-          };
-        } catch (error) {
-          attempts.push(
-            `quota: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          return null;
-        }
-      };
-      const categoryChain: ChainEntry[] =
-        selection === "auto"
-          ? policy.models.flatMap((row) => {
-              if (row.state !== "enabled") return [];
-              const fit = modelCategoryFit(
-                policy,
-                row.provider,
-                row.model,
-                category,
-              );
-              if (!fit.fits) {
-                attempts.push(`fit: ${fit.basis}`);
-                return [];
-              }
-              return [
-                {
-                  provider: row.provider,
-                  model: row.model,
-                  effort: row.effort,
-                },
-              ];
-            })
-          : (policy.chains[category] ?? []);
-      const defaultChain =
-        selection === "choice" && category !== "default"
-          ? (policy.chains.default ?? [])
-          : [];
-      if (categoryChain.length === 0 && defaultChain.length === 0) {
-        throw new Error(
-          `Cannot spawn ${name}: category ${category} has no chain and the ` +
-            "global default chain is empty. Configure a chain in the Model " +
-            "Control Center.",
-        );
-      }
-      const fallbackChain: ChainEntry[] =
-        selection === "choice"
-          ? policy.models.flatMap((row) =>
-              row.state === "enabled"
-                ? [
-                    {
-                      provider: row.provider,
-                      model: row.model,
-                      effort: row.effort,
-                    },
-                  ]
-                : [],
-            )
-          : [];
-      let chosen = await selectFrom(await gateChain(categoryChain, category));
-      chosen ??= await selectFrom(await gateChain(defaultChain, "default"));
-      chosen ??= await selectFrom(
-        await gateChain(fallbackChain, "fallback"),
-        "spread",
+      });
+      decision = this.router().recordExplicitDecision(
+        agentId,
+        request.category,
+        authorized,
       );
-      if (chosen === null) {
-        throw new Error(
-          `Cannot spawn ${name}: every link of the ${category} chain` +
-            `${defaultChain.length > 0 ? " and the global default chain" : ""} ` +
-            `${fallbackChain.length > 0 ? "and the remaining enabled models " : ""}` +
-            `was refused:\n  ${attempts.join("\n  ")}\n` +
-            "Enable a model or edit the chain in the Model Control Center.",
-        );
+    } else {
+      const selection = await this.router().select(
+        {
+          requestId: agentId,
+          category: request.category,
+          requirements: { reviewOfProvider: request.reviewOfTool ?? null },
+          excludedPoolIds: request.excludedPoolIds ?? [],
+        },
+        gateCandidate,
+      );
+      if (selection.outcome === "refused") {
+        const refusal = selection.refusal;
+        const detail =
+          refusal.kind === "no-candidate"
+            ? `${refusal.detail}:\n  ${refusal.evaluations
+                .map(
+                  (evaluation) =>
+                    `${evaluation.candidate.provider}/${evaluation.candidate.model} — ` +
+                    `${evaluation.refusal?.gate}: ${evaluation.refusal?.detail}`,
+                )
+                .join("\n  ")}\n` +
+              "Enable a model or edit the route in the Model Control Center."
+            : refusal.detail;
+        throw new Error(`Cannot spawn ${name}: ${detail}`);
       }
-      authorized = chosen.authorized;
-      quotaReservationId = chosen.reservationId;
+      authorized = selection.authorized;
+      decision = selection.decision;
+    }
+    if (this.dependencies.quota?.config.enabled === true) {
+      await this.dependencies.quotaReady?.();
+      quotaReservationId = this.dependencies.quota.reserveLaunch(
+        name,
+        authorized,
+        request.category,
+      ).id;
     }
     tool = authorized.tool;
     const model: string = authorized.model;
@@ -2736,7 +2665,6 @@ export class HiveSpawner implements Spawner {
           unknownVendor(tool, "execution identity");
       }
     }
-    const agentId = crypto.randomUUID();
     const sessiondPolicy =
       await this.dependencies.sessiond.prepareAgentCreation({
         agentId,
@@ -2822,6 +2750,7 @@ export class HiveSpawner implements Spawner {
       createdAt: timestamp,
       lastEventAt: timestamp,
       ...(quotaReservationId === undefined ? {} : { quotaReservationId }),
+      decisionId: decision.decisionId,
       ...(executionIdentity === undefined ? {} : { executionIdentity }),
       recoveryAttempts: 0,
       capabilityEpoch: 0,
@@ -2963,7 +2892,7 @@ export class HiveSpawner implements Spawner {
             record,
             command,
             expectedExecutable,
-            record.quotaReservationId ?? record.id,
+            decision.decisionId,
             providerRunId,
           );
         };
@@ -3053,6 +2982,7 @@ export class HiveSpawner implements Spawner {
         if (quotaReservationId !== undefined) {
           this.dependencies.quota?.markStarted(quotaReservationId);
         }
+        this.router().recordLaunchResult(decision.decisionId, "started");
       } catch (error) {
         // Nothing thrown here has been past the transport. Building the argv,
         // writing the config, and handing the command to the terminal host all
@@ -3221,6 +3151,9 @@ export class HiveSpawner implements Spawner {
     // quarantine would punish a healthy route for an empty meter.
     const vendorDrain =
       layer === "model" && classifyVendorDrainError(record.tool, failureReason);
+    if (record.decisionId !== undefined && layer === "model" && !vendorDrain) {
+      this.router().recordLaunchResult(record.decisionId, "launch-failed");
+    }
     if (record.quotaReservationId !== undefined) {
       try {
         // A model-layer failure reached the provider and may quarantine that

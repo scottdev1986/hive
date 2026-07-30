@@ -56,7 +56,7 @@ function codexCapability(): CapabilityRecord {
 
 function codexRoutingPolicy(): RoutingPolicy {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     revision: 1,
     updatedAt: observedAt,
     provisional: false,
@@ -69,16 +69,18 @@ function codexRoutingPolicy(): RoutingPolicy {
         effort: { mode: "exact", value: "medium" },
       },
     ],
-    chains: {
-      default: [
+    global: {
+      mode: "user-weighted",
+      candidates: [
         {
           provider: "codex",
           model: "gpt-sessiond-live",
           effort: { mode: "exact", value: "medium" },
+          weight: 1,
         },
       ],
     },
-    selection: { global: "choice" },
+    categories: {},
   };
 }
 

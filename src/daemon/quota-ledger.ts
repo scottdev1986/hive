@@ -52,7 +52,6 @@ export class QuotaDatabase implements LedgerDatabase {
 const QUOTA_MIGRATION_META_KEY = "defaultHiveQuotaMigrationV1";
 const SHARED_QUOTA_TABLES = [
   "quota_observations",
-  "quota_fair_dispatch",
   "quota_alerts",
   "quota_pools",
   "quota_model_catalog",
@@ -499,13 +498,7 @@ export class QuotaLedger {
         ON quota_reservations(provider, account, pool, status);
       CREATE INDEX IF NOT EXISTS quota_reservations_agent
         ON quota_reservations(agentName, status);
-      CREATE TABLE IF NOT EXISTS quota_fair_dispatch (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        selectedAt TEXT NOT NULL,
-        selectedProvider TEXT NOT NULL,
-        eligibleProviders TEXT NOT NULL,
-        reservationId TEXT NOT NULL
-      );
+      DROP TABLE IF EXISTS quota_fair_dispatch;
       CREATE TABLE IF NOT EXISTS quota_observations (
         provider TEXT NOT NULL,
         account TEXT NOT NULL,
@@ -1268,128 +1261,6 @@ export class QuotaLedger {
         input.purpose ?? "agent",
         input.controlMessageId ?? null,
       );
-  }
-
-  /**
-   * Atomically choose and reserve by weighted-fair deficit over Hive-observed
-   * assignments. Every historical dispatch credits each provider that was
-   * eligible an equal share and charges the selected provider one unit. A
-   * sole-capable dispatch therefore creates no debt. Quota percentages never
-   * enter this comparison, so unlike windows are never compared and a
-   * not-metered provider needs no fabricated headroom score.
-   *
-   * There is no headroom veto on the chosen candidate: dispatch picks,
-   * booking never refuses (§05 — usage never blocks a spawn).
-   */
-  reserveFairGroups(
-    candidates: Array<{
-      provider: CapabilityProvider;
-      inputs: ReserveQuotaInput[];
-    }>,
-  ): { candidateIndex: number; reservations: QuotaReservation[] } {
-    if (candidates.length === 0)
-      throw new Error("fair dispatch requires a candidate");
-    return this.immediate(() => {
-      if (candidates.some((candidate) => candidate.inputs.length === 0)) {
-        throw new Error("a fair reservation must name at least one pool");
-      }
-      const active = candidates.map((candidate, candidateIndex) => ({
-        ...candidate,
-        candidateIndex,
-      }));
-      while (active.length > 0) {
-        const providers = [
-          ...new Set(active.map((candidate) => candidate.provider)),
-        ];
-        const deficit = new Map(providers.map((provider) => [provider, 0]));
-        const rows = (
-          this.db.database
-            .query(`
-          SELECT selectedProvider, eligibleProviders
-          FROM quota_fair_dispatch ORDER BY id DESC LIMIT 1000
-        `)
-            .all() as Array<{
-            selectedProvider: string;
-            eligibleProviders: string;
-          }>
-        ).reverse();
-        for (const row of rows) {
-          let eligible: CapabilityProvider[];
-          let selected: CapabilityProvider;
-          try {
-            eligible = z
-              .array(CapabilityProviderSchema)
-              .parse(JSON.parse(row.eligibleProviders));
-            selected = CapabilityProviderSchema.parse(row.selectedProvider);
-          } catch {
-            throw new QuotaLedgerUnknownError(
-              "its fair-dispatch history is unreadable",
-            );
-          }
-          const relevant = eligible.filter((provider) => deficit.has(provider));
-          if (relevant.length === 0) continue;
-          for (const provider of relevant) {
-            const current = deficit.get(provider);
-            if (current === undefined) {
-              throw new Error(`Missing quota deficit for ${provider}`);
-            }
-            deficit.set(provider, current + 1 / relevant.length);
-          }
-          if (deficit.has(selected)) {
-            const current = deficit.get(selected);
-            if (current === undefined) {
-              throw new Error(`Missing quota deficit for ${selected}`);
-            }
-            deficit.set(selected, current - 1);
-          }
-        }
-        for (const provider of providers) {
-          const current = deficit.get(provider);
-          if (current === undefined) {
-            throw new Error(`Missing quota deficit for ${provider}`);
-          }
-          deficit.set(provider, current + 1 / providers.length);
-        }
-        const providerOrder = [...providers].sort((left, right) => {
-          const leftDeficit = deficit.get(left) ?? 0;
-          const rightDeficit = deficit.get(right) ?? 0;
-          return (
-            rightDeficit - leftDeficit ||
-            providers.indexOf(left) - providers.indexOf(right)
-          );
-        });
-        const chosen = providerOrder.flatMap((provider) =>
-          active.filter((candidate) => candidate.provider === provider),
-        )[0];
-        if (chosen === undefined) {
-          throw new Error("Fair quota selection produced no candidate");
-        }
-        const primary = chosen.inputs[0];
-        if (primary === undefined) {
-          throw new Error("a fair reservation must name at least one pool");
-        }
-        for (const input of chosen.inputs) this.insert(input, primary.id);
-        this.db.database
-          .query(`
-          INSERT INTO quota_fair_dispatch
-            (selectedAt, selectedProvider, eligibleProviders, reservationId)
-          VALUES (?, ?, ?, ?)
-        `)
-          .run(
-            primary.now,
-            chosen.provider,
-            JSON.stringify(providers),
-            primary.id,
-          );
-        return {
-          candidateIndex: chosen.candidateIndex,
-          reservations: chosen.inputs.map((input) =>
-            this.requireReservation(input.id),
-          ),
-        };
-      }
-      throw new Error("unreachable: fair dispatch without a candidate");
-    });
   }
 
   insertUnboundedReservation(input: ReserveQuotaInput): QuotaReservation {
