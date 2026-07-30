@@ -153,7 +153,7 @@ export function kimiUsageWindowPercent(detail: {
         ? Number.NaN
         : limit - Number(detail.remaining)
       : Number(detail.used);
-  if (!Number.isFinite(used) || used < 0) return null;
+  if (!Number.isFinite(used) || used < 0 || used > limit) return null;
   return (used / limit) * 100;
 }
 

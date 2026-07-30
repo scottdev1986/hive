@@ -442,7 +442,8 @@ export class MemoryEmbeddingService {
     }
     return (
       'embedding_provider is "api" and an API key is set, but no API ' +
-      "embedding provider ships in this build — semantic memory is unavailable"
+      "embedding provider ships in this build (HM-5 is local-only per plan " +
+      "D4) — semantic memory is unavailable"
     );
   }
 

@@ -5,6 +5,7 @@ import { HIVE_VERSION } from "../version";
 import {
   KimiHttpUsageTransport,
   KimiUsagesResponseSchema,
+  type KimiUsageProbeResult,
   type KimiUsageTransport,
   kimiUsageWindowMinutes,
   kimiUsageWindowPercent,
@@ -1290,8 +1291,7 @@ const kimiIsoOrNull = (value: string | undefined): string | null => {
  * Turn one /usages response into a discovered pool. The payload is
  * account-wide — one weekly quota and a set of rate windows with no model
  * names anywhere — so there is exactly one pool and it carries `["*"]`. The
- * shortest rate window is the five-hour one, matching this file's rule of
- * ordering by duration rather than by name; the weekly's 7-day length is the
+ * 300-minute rate window is the five-hour one; the weekly's 7-day length is the
  * documented refresh, not a payload field. Both windows are things this
  * surface meters, so a missing or unparseable number is `unknown`, never
  * `not-metered`. The membership level is the vendor's own plan name, used as
@@ -1331,11 +1331,10 @@ export function readingsFromKimiUsages(
       ),
       detail: entry.detail,
     }))
-    .filter(
+    .find(
       (entry): entry is typeof entry & { minutes: number } =>
-        entry.minutes !== null,
-    )
-    .sort((left, right) => left.minutes - right.minutes)[0];
+        entry.minutes === 300,
+    );
   const fiveHourPercent =
     fiveHourEntry === undefined
       ? null
@@ -1380,7 +1379,16 @@ export class KimiQuotaProbe implements QuotaProbe {
   ) {}
 
   async read(): Promise<QuotaProbeResult> {
-    const payload = await this.transport.readUsage(HANDSHAKE_TIMEOUT_MS);
+    let payload: KimiUsageProbeResult;
+    try {
+      payload = await this.transport.readUsage(HANDSHAKE_TIMEOUT_MS);
+    } catch (error) {
+      return {
+        status: "unavailable",
+        reason:
+          error instanceof Error ? error.message : "kimi usage probe failed",
+      };
+    }
     if (payload.status !== "ok") {
       return { status: "unavailable", reason: payload.reason };
     }

@@ -1667,6 +1667,31 @@ describe("a route that cannot start is not a route", () => {
     expect(quota.ledger.routeHealth("codex", "gpt-5.6-sol", "low")).toBeNull();
   });
 
+  test("an explicit candidate is warned but not passed over for quarantine", async () => {
+    const { quota } = await healthy();
+    const failed = await quota.routeAndReserve({
+      agentName: "failed",
+      category: "complex_coding",
+      selection: "strict",
+      candidates: both,
+    });
+    await quota.cancel(
+      failed.reservation.id,
+      now.toISOString(),
+      "model refused launch",
+    );
+
+    const retried = await quota.routeAndReserve({
+      agentName: "explicit",
+      category: "complex_coding",
+      selection: "strict",
+      explicitCandidate: true,
+      candidates: both,
+    });
+    expect(retried.tool).toBe(failed.tool);
+    expect(retried.warnings.join(" ")).toContain("explicitly requested");
+  });
+
   test("the guard stops guarding the moment the route works again", async () => {
     const { quota } = await healthy();
     const failed = await quota.routeAndReserve({
@@ -1881,7 +1906,7 @@ describe("kimi usage probe", () => {
     expect(pool?.confidence).toBe("reported");
   });
 
-  test("the shortest rate window is the five-hour one, wherever it sits in the array", () => {
+  test("the 300-minute rate window is five-hour wherever it sits in the array", () => {
     const pools = readingsFromKimiUsages(
       {
         usage: KIMI_USAGES.usage,
@@ -1915,6 +1940,41 @@ describe("kimi usage probe", () => {
       now.toISOString(),
     );
     expect(unplaceable).toEqual([]);
+  });
+
+  test("does not label a non-300-minute rate window as five-hour", () => {
+    const pools = readingsFromKimiUsages(
+      {
+        usage: KIMI_USAGES.usage,
+        limits: [
+          {
+            window: { duration: 60, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "100", used: "10" },
+          },
+        ],
+      },
+      "default",
+      now.toISOString(),
+    );
+    expect(pools[0]?.fiveHour).toBeNull();
+    expect(pools[0]?.fiveHourMeterState).toBe("unknown");
+  });
+
+  test("rejects percentages above 100 instead of publishing them", () => {
+    const pools = readingsFromKimiUsages(
+      {
+        usage: { limit: "100", used: "101" },
+        limits: [
+          {
+            window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+            detail: { limit: "100", remaining: "-1" },
+          },
+        ],
+      },
+      "default",
+      now.toISOString(),
+    );
+    expect(pools).toEqual([]);
   });
 
   test("a weekly-only payload keeps the weekly meter and says five-hour unknown", () => {
@@ -1967,6 +2027,16 @@ describe("kimi usage probe", () => {
     expect(result).toEqual({
       status: "unavailable",
       reason: "no readable kimi credential file",
+    });
+  });
+
+  test("a rejected transport promise is normalized as unavailable", async () => {
+    const probe = new KimiQuotaProbe({
+      readUsage: () => Promise.reject(new Error("transport rejected")),
+    });
+    await expect(probe.read()).resolves.toEqual({
+      status: "unavailable",
+      reason: "transport rejected",
     });
   });
 });

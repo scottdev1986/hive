@@ -1581,11 +1581,18 @@ export class QuotaService {
       const held = this.quarantinedUntil(item.candidate, now);
       if (held !== null) quarantine.set(item, held);
     }
-    const viable = evaluated.filter((item) => !quarantine.has(item));
+    const viable = request.explicitCandidate
+      ? evaluated
+      : evaluated.filter((item) => !quarantine.has(item));
     // If every route is quarantined, try anyway rather than refuse everything.
     const attemptable = viable.length > 0 ? viable : evaluated;
-    const quarantineWarnings =
-      attemptable === evaluated
+    const quarantineWarnings = request.explicitCandidate
+      ? [...quarantine.values()].map(
+          (held) =>
+            `The explicitly requested route recently failed to start (${held.reason}); ` +
+            `launching anyway because the model was explicitly requested.`,
+        )
+      : attemptable === evaluated
         ? [...quarantine.values()].map(
             (held) =>
               `Every candidate route recently failed to start (${held.reason}); ` +
