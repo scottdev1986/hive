@@ -270,8 +270,8 @@ describe("grok session telemetry", () => {
     expect(telemetry.contextPct).toEqual(6);
     // The last record is turn_completed, so the turn ended: this is the
     // observable that settles a grok row to idle. Nothing else reports it --
-    // grok drives no control channel -- which is why bridget's row sat at
-    // "spawning" for her whole life.
+    // grok drives no control channel -- so without this read a grok row never
+    // leaves "spawning".
     expect(telemetry.turnCompleted).toEqual(true);
     expect(telemetry.lastActivityAt).not.toEqual(null);
   });
@@ -396,13 +396,12 @@ describe("graphify call counting", () => {
     ).toBeNull();
   });
 
-  // The count bridget really made: graph_locate x1, get_node x2,
+  // The calls this fixture really made: graph_locate x1, get_node x2,
   // get_neighbors x2, query_graph x1. Grok wraps every MCP call in one native
   // `use_tool`, so all 16 of these records are titled "use_tool" and the
   // called tool's name lives at rawInput.tool_name. A counter keyed on the
-  // record's name reads zero against this very file -- which is what shipped,
-  // and what made a vendor that was using the graph look like one that never
-  // touched it.
+  // record's title reads zero against this very file, making a vendor that is
+  // using the graph look like one that never touched it.
   test("counts grok use_tool records by rawInput.tool_name, not the record title", () => {
     expect(countGraphifyCallLines(GROK_UPDATES, "grok")).toEqual(6);
     expect(GROK_UPDATES).toContain('"title":"use_tool"');

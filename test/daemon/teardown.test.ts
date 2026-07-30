@@ -127,7 +127,7 @@ describe("reapProcessTree", () => {
   });
 
   test("kills a detached child that was reparented to init", async () => {
-    // THE BUG OBSERVATION CAUGHT, and the reason capture is a separate step.
+    // Why capture is a separate step, and has to run first.
     //
     // The agent nohup'ed a command (101). Stopping the terminal tears the
     // pane down: the shell (100) dies, and 101 — which ignored the SIGHUP —
@@ -392,11 +392,10 @@ describe("reapProcessTree", () => {
   });
 
   test("a positively-absent root with a broker NOT_FOUND is a completed teardown", async () => {
-    // The 2026-07-27 collapse shape: the host self-terminated (lease expiry)
-    // long before teardown ran, so the probe correctly finds no root and the
-    // broker has already reaped the session. Two independent absences are a
-    // completed teardown, not "could not be verified"
-    // (planning/2026-07-27-spawn-collapse-root-cause.md).
+    // The collapse shape: the host self-terminated on lease expiry long before
+    // teardown ran, so the probe correctly finds no root and the broker has
+    // already reaped the session. Two independent absences are a completed
+    // teardown, not "could not be verified".
     const sessionLocator = {
       schemaVersion: 1 as const,
       instanceId: "hive-fixture",
@@ -483,8 +482,9 @@ describe("reapProcessTree", () => {
   });
 
   test("refuses capture after the root has vanished", async () => {
-    // The negative control for the test above: this is what the broken version
-    // did, and it is why "the tests passed" was not "the process is dead".
+    // The negative control for the test above: capturing after the root is gone
+    // returns an empty tree, which would read as "nothing survived" rather than
+    // as "nothing was measured".
     const { dependencies, alive } = world([
       { pid: 100, ppid: 1, command: "-zsh" },
       { pid: 101, ppid: 100, command: "nohup long-build" },

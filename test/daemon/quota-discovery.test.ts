@@ -202,8 +202,8 @@ describe("the real Grok payload, verbatim off the wire", () => {
     ),
   ) as GrokBillingResponse;
 
-  // Positive control: creditUsagePercent is the gauge the prior "unmeasurable"
-  // finding missed. If this key is renamed, the assertion fails instead of
+  // Positive control: creditUsagePercent is the one gauge the weekly meter
+  // reads. If it is renamed, this assertion fails instead of the meter
   // silently reporting null as "vendor is quiet".
   test("reads creditUsagePercent as the weekly used percent", () => {
     const [routable] = readingsFromGrokBilling(
@@ -251,7 +251,7 @@ describe("the real Grok payload, verbatim off the wire", () => {
       config: {
         ...raw.config,
         creditUsagePercent: undefined,
-        // Deliberate wrong key — the failure mode that burned earlier probes.
+        // Deliberate wrong key.
         credit_usage_percent: 2.0,
       },
     } as GrokBillingResponse;
@@ -260,19 +260,16 @@ describe("the real Grok payload, verbatim off the wire", () => {
       "default",
       now.toISOString(),
     );
-    // The 2.0 under the wrong key is NEVER read. That is the property this test
-    // was written for and it still holds.
+    // The 2.0 under the wrong key is never read.
     expect(routable?.weekly?.usedPct).not.toBe(2.0);
-    // It now reads 0, not unknown, because xAI omits `creditUsagePercent` while
-    // usage rounds to zero and its own client decodes that absence as 0% —
-    // measured, including the absent → `1` transition under deliberate spend.
+    // It reads 0, not unknown: xAI omits `creditUsagePercent` when usage rounds
+    // to zero, and its own client decodes that absence as 0%.
     //
-    // KNOWN HAZARD, recorded here because this fixture is exactly it: a genuine
-    // RENAME of the gauge is indistinguishable from zero on the wire, so this
-    // would report an empty meter for an account that might be full. The
-    // vendor's own TUI has the same blind spot. What guards it is shape
-    // measurement, not this decode: `prototypes/vendors/grok-billing-shape.ts`
-    // pins the live payload's key set and fails when the wire moves.
+    // KNOWN HAZARD, and this fixture is exactly it: a genuine RENAME of the
+    // gauge is indistinguishable from rounded-to-zero on the wire, so this
+    // decode would report an empty meter for an account that might be full. The
+    // vendor's own TUI has the same blind spot. Only pinning the payload's key
+    // set catches a rename; this decode cannot.
     expect(routable?.weekly?.usedPct).toBe(0);
     expect(routable?.weekly?.resetsAt).toBe("2026-07-19T17:18:56.768Z");
     expect(routable?.weeklyMeterState).toBe("metered");
@@ -283,9 +280,8 @@ describe("the real Grok payload, verbatim off the wire", () => {
     // The other half of the decode, and the reason absence and malformation
     // must not collapse: here the vendor tried to tell us something and we
     // could not parse it. Reading that as 0 would publish an empty meter for a
-    // pool we failed to measure.
-    // A number the vendor sent that cannot be a percentage: the surface is
-    // still recognisable, so the pool survives with an unknown meter.
+    // pool we failed to measure. The surface is still recognisable, so the pool
+    // survives — with an unknown meter.
     for (const bad of [150, -1]) {
       const [routable] = readingsFromGrokBilling(
         {
@@ -658,8 +654,8 @@ describe("startup quota discovery", () => {
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      // Usage never refuses a spawn anymore: the booking lands, and the
-      // decision still reports the measured, nearly-spent pool it came from.
+      // Usage never refuses a spawn: the booking lands, and the decision still
+      // reports the measured, nearly-spent pool it came from.
       const decision = await quota.routeAndReserve({
         agentName: "sam",
         category: "complex_coding",
@@ -681,9 +677,9 @@ describe("startup quota discovery", () => {
 });
 
 describe("notification-driven quota updates", () => {
-  // Regression: observeCodexRateLimits used to look up a configured pool first
-  // and drop the reading when none existed, so an installation without a
-  // quota.toml threw away every authoritative percentage Codex handed it.
+  // observeCodexRateLimits must not require a configured pool to land a
+  // reading: an installation with no quota.toml would then throw away every
+  // authoritative percentage Codex hands it.
   test("stores an app-server reading when no pool is configured", async () => {
     const { quota, db } = await service();
     try {
@@ -1083,8 +1079,7 @@ describe("provider unavailable", () => {
         confidence: "missing",
       });
       expect(quota.ledger.getActiveReservationForAgent("sam")).not.toBeNull();
-      // Compatibility mode is gone, and with it the "running unconstrained"
-      // warning — nothing alerts for an ordinary unmetered route.
+      // An ordinary unmetered route is not an anomaly: nothing alerts for it.
       expect(alerts).toHaveLength(0);
     } finally {
       db.close();
@@ -1274,11 +1269,11 @@ async function codexPools(
 }
 
 /**
- * The incident these exist for: on 2026-07-11 the orchestrator put two deep-tier
- * agents on claude-fable-5 while the Fable weekly pool sat at 99%. The number was
- * measured, fresh, and provider-sourced — and it gated nothing, because the pool
- * that carried it was bound to no model at all. A number you measure but never
- * join to the decision is worth exactly as much as no number.
+ * A pool bound to no model gates nothing. A measured, fresh, provider-sourced
+ * 99% on the Fable weekly cap still lets the orchestrator route deep-tier
+ * agents onto claude-fable-5 if that reading is never joined to a model id — a
+ * number you measure but never join to the decision is worth exactly as much
+ * as no number. These tests hold the join.
  */
 describe("pools gate the models they actually meter", () => {
   // Verbatim shape of a claude 2.1.207 `initialize` models[] block.
@@ -1397,7 +1392,7 @@ describe("pools gate the models they actually meter", () => {
         { tool: "claude", model: "claude-opus-4-8" },
       ]),
     });
-    // The old fallback is gone with the refusal: rank order is rank order.
+    // A drained pool does not demote a candidate: rank order is rank order.
     expect(decision.model).toBe("claude-fable-5");
     if ("configured" in decision.status) {
       throw new Error("expected a measured pool");
@@ -1408,11 +1403,11 @@ describe("pools gate the models they actually meter", () => {
   test("a model with no meter of its own is metered by the general pool, never 'unknown'", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    // Opus has no dedicated weekly cap and never did. Reporting it as an
-    // unconfigured gap invented a pool that does not exist — and an
-    // "unconstrained" model is the most attractive route there is, so the phantom
-    // actively pulled traffic onto itself.
-    // (Codex still reports a gap here, and should: this install probed only
+    // Opus has no dedicated weekly cap. Reporting that as an unconfigured gap
+    // would invent a pool that does not exist — and an "unconstrained" model is
+    // the most attractive route there is, so the phantom would pull traffic
+    // onto itself.
+    // (Codex does report a gap here, and should: this install probed only
     // Claude, so Hive has genuinely never read a Codex number. That is the honest
     // kind of unknown — it names a provider it cannot see, instead of inventing a
     // pool for a model it can.)
@@ -1493,12 +1488,11 @@ describe("pools gate the models they actually meter", () => {
 
 /**
  * Headroom is not eligibility. Codex sitting at 0% weekly outscores Claude at
- * 63% every time, so ranking on headroom alone silently promoted the emptiest
- * pool over the question of whether a route could produce a working agent at
- * all — and on 2026-07-11 deep-tier Codex could not: Hive's readiness probe
- * killed any Codex agent that thought before its first tool call. A gate that
- * refuses an exhausted model only to hand the work to a dead route has
- * protected nothing.
+ * 63% every time, so ranking on headroom alone promotes the emptiest pool over
+ * the question of whether a route can produce a working agent at all — and a
+ * provider can be empty precisely because nothing it launches survives Hive's
+ * readiness probe. A gate that refuses an exhausted model only to hand the work
+ * to a dead route has protected nothing.
  */
 const BOTH_ROUTES = await authorizeForQuotaTest([
   { tool: "claude" as const, model: "claude-opus-4-8" },
@@ -1792,9 +1786,9 @@ describe("a spend belongs to the vendor whose model produced it", () => {
           provider: "codex",
           account: "default",
           pool: "codex",
-          // Exactly the row sitting in the live ledger: tier routing picked
-          // tool=codex while the caller had pinned a Claude model, and the ledger
-          // recorded the impossible pair without ever asking whether it could exist.
+          // The impossible pair tier routing can produce: tool=codex while the
+          // caller pinned a Claude model. The ledger has to refuse it rather
+          // than record a spend against a meter that cannot have produced it.
           model: "claude-opus-4-8",
           category: "simple_coding",
           estimatedUnits: 4,

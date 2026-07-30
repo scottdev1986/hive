@@ -1,6 +1,6 @@
 import { required } from "../required";
-// Wake-delta memory injection (HiveMemory HM-3 WP6, board #120, plan D6):
-// the delta composer (wiki-log parsing, pitfall section, token budget), the
+// Wake-delta memory injection: the delta composer (wiki-log parsing, pitfall
+// section, token budget), the
 // per-agent high-water mark, and the delivery-lane integration that carries
 // the delta into a delivered message.
 

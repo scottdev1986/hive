@@ -7,15 +7,14 @@ import { AgentMessageSchema } from "../../src/schemas/message";
 /**
  * `state` must be evidence, not optimism.
  *
- * The push path has said so since the busy-pane measurement (see `markInjected`):
- * handing bytes over proves injection, and only a turn boundary proves the
- * recipient acted. The PULL paths did not follow. `inbox` wrote "applied" for a
- * normal message the moment it was FETCHED, and `orchestratorInbox` wrote it for
- * every message — both with `injectedAt` still null, a combination the lifecycle
- * cannot otherwise produce. Because `listInjectedUnapplied` requires a non-null
- * `injectedAt`, those rows were invisible to reconciliation AND to the stalled
- * sweep: the strongest claim in the system, recorded on no evidence, in a shape
- * that guaranteed nobody would ever re-examine it.
+ * Handing bytes over proves injection, and only a turn boundary proves the
+ * recipient acted — the rule `markInjected` keeps on the push path, and the pull
+ * paths have to keep too. Stamping "applied" when `inbox` merely FETCHES a
+ * message leaves `injectedAt` null, a combination the lifecycle cannot otherwise
+ * produce; and because `listInjectedUnapplied` requires a non-null `injectedAt`,
+ * such a row is invisible to reconciliation AND to the stalled sweep. That is the
+ * strongest claim in the system, recorded on no evidence, in a shape that
+ * guarantees nobody ever re-examines it.
  */
 
 const AT = "2026-07-09T12:00:00.000Z";

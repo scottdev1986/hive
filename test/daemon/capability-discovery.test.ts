@@ -774,8 +774,8 @@ describe("kimi provider list → capability records", () => {
       "kimi-code/kimi-for-coding",
     ]);
     // Chain seeds, chain entries, and `kimi -m` all carry canonicalId
-    // verbatim, so launchToken and canonicalId must be one id — the bug
-    // behind "model no longer offered" on every seeded kimi link.
+    // verbatim, so launchToken and canonicalId must be one id. Two spellings
+    // make every seeded kimi link read "model no longer offered".
     for (const record of records) {
       expect(record.launchToken).toBe(record.canonicalId);
     }
@@ -799,8 +799,7 @@ describe("kimi provider list → capability records", () => {
   test("the seed-path invariant: the effective default resolves against the catalog", () => {
     // The first-boot seed writes vendorDefaults from effectiveDefault and the
     // workspace derives a link's status by canonicalId match; if the two
-    // spellings diverge, every seeded kimi row reads "model no longer
-    // offered". This is the regression the badge reported.
+    // spellings diverge, every seeded kimi row reads "model no longer offered".
     const records = recordsFromKimiProviderList(KIMI_PAYLOAD, OBSERVED_AT);
     expect(
       records.some(

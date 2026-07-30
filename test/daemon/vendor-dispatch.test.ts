@@ -23,25 +23,24 @@ import { required } from "../required";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 
 /**
- * Hive knows a closed vendor set, and for a long time it said so only by
- * implication: `tool === "claude" ? claudeThing : codexThing`. A third vendor
- * would have compiled, run, and been treated as Codex everywhere — its
- * transcript parsed by Codex's parser, its crash resumed with Codex's flags,
- * its adoption counted off a rollout file it never wrote. Every number would
- * have been wrong and plausible, which is the worst thing a number can be.
+ * Hive knows a closed vendor set, and every dispatch on it must say so
+ * explicitly. A site written as `tool === "claude" ? claudeThing : codexThing`
+ * treats a third vendor as Codex everywhere — its transcript parsed by Codex's
+ * parser, its crash resumed with Codex's flags, its adoption counted off a
+ * rollout file it never wrote. Every number would be wrong and plausible,
+ * which is the worst thing a number can be.
  *
- * These tests assert the property, not the shape. Each one drives a converted
+ * These tests assert the property, not the shape. Each one drives a dispatch
  * site with a vendor Hive does not know and asserts two things: it fails, and
  * it fails loudly enough to name the vendor. Each also asserts that Codex's
- * machinery was never touched — so a switch that quietly defaulted back to
- * codex would fail here rather than pass. Asserting only "it threw" would not
+ * machinery was never touched — so a switch that quietly defaults back to
+ * codex fails here rather than passes. Asserting only "it threw" would not
  * distinguish the two; asserting "a switch statement exists" would test
  * nothing at all.
  *
- * The vendor is cast in, because the whole point of the refactor is that the
- * compiler no longer permits it. `AgentRecordSchema` rejects it on the way
- * into the database too — these casts reach past both walls on purpose, to
- * prove the innermost one holds.
+ * The vendor is cast in because the compiler does not otherwise permit it.
+ * `AgentRecordSchema` rejects it on the way into the database too — these
+ * casts reach past both walls on purpose, to prove the innermost one holds.
  */
 const UNKNOWN = "future-vendor" as unknown as CapabilityProvider;
 
@@ -173,9 +172,9 @@ test("a review of an unknown vendor is not silently handed to claude", async () 
   });
   expect(reviewOfClaude.tool).toBe("codex");
 
-  // The old ternary's `: "claude"` fallback would have picked Claude to review
-  // a vendor it had never been told how to pair with. There is no honest
-  // default here, so the pairing must be stated, not guessed.
+  // There is no honest default reviewer, so the pairing must be stated rather
+  // than guessed: a `: "claude"` fallback would pick Claude to review a vendor
+  // it was never told how to pair with.
   await expect(
     service.routeAndReserve({
       agentName: "sam",
@@ -244,9 +243,9 @@ test("a model no catalog claims cannot be billed to any vendor's pool", () => {
     state: "unclaimed",
   });
 
-  // The defect: an unrecognized model name was read as "no provable
-  // contradiction", and the spend was billed as asked. Restore that and this
-  // reservation succeeds against the Claude pool.
+  // Reading an unrecognized model name as "no provable contradiction" bills the
+  // spend as asked: allow that and this reservation succeeds against the Claude
+  // pool, attributing a Grok run to Claude's meter.
   expect(() => reserve(ledger, "claude", "grok-4-fast")).toThrow(
     /Refusing to bill unidentifiable model "grok-4-fast" to the claude meter/,
   );

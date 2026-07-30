@@ -1,7 +1,6 @@
 import { required } from "../required";
-// Trigger protocol (HiveMemory HM-3 WP7, board #120, plan §3 item 3, article
-// lesson A1): queen/operator trigger words execute memory recall/writes at
-// the daemon and the labeled result replaces the delivered body; agent
+// Trigger protocol: queen/operator trigger words execute memory recall/writes
+// at the daemon and the labeled result replaces the delivered body; agent
 // senders carry no trigger authority and their text is delivered verbatim.
 
 import { Database } from "bun:sqlite";

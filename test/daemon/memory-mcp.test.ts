@@ -304,8 +304,8 @@ describe("memory MCP tools", () => {
         source: "agent",
         status: "verified",
         verified: "2026-07-10",
-        // Defect D2: the vector projection's outcome — this daemon has no
-        // semantic leg wired, so the write is keyword-searchable only.
+        // The vector projection's outcome — this daemon has no semantic leg
+        // wired, so the write is keyword-searchable only.
         embedding: "unavailable:disabled",
       });
       expect(written.body).toBeUndefined();

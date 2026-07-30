@@ -1,7 +1,6 @@
-// The HiveMemory plan §5 MCP surface: memory_note (episodic fact write with
-// dedup refusal), memory_recall (the trigger protocol's ranked bundle as a
-// tool), memory_promote (D3 queen/operator-only pitfall promotion with a
-// redaction gate).
+// The memory MCP surface: memory_note (episodic fact write with dedup refusal),
+// memory_recall (the trigger protocol's ranked bundle as a tool), memory_promote
+// (queen/operator-only pitfall promotion with a redaction gate).
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

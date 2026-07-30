@@ -17,12 +17,12 @@ import type { AgentRecord } from "../../../src/schemas";
 import { required } from "../../required";
 
 /**
- * The 2026-07-21 messaging regression, at the layer that has to end it.
+ * Automated delivery must never type over a human's unsubmitted draft.
  *
- * A human typed into an agent's pane and the viewer transport was then lost.
- * The arbiter orphaned the human claim to protect the unsubmitted draft (#40
- * never-steal). Automated delivery must leave that draft untouched and queued
- * for a human decision. An actively held human claim has the same exclusion.
+ * When a human types into an agent's pane and the viewer transport is then lost,
+ * the arbiter orphans the human claim rather than dropping the draft. Automated
+ * delivery has to leave that draft untouched and queued for a human decision.
+ * An actively held human claim has the same exclusion.
  */
 
 const timestamp = "2026-07-21T12:00:00.000Z";

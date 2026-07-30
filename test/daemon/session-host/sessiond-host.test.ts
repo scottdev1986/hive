@@ -1051,7 +1051,7 @@ describe("sessiond wire framing", () => {
   test("projects frozen list, inspect and terminate straight to the host", async () => {
     const brokers: RecordingClient[] = [];
     const host = new SessiondHost({
-      // INSPECT no longer reaches the broker: it is asked of the host itself.
+      // INSPECT does not reach the broker: it is asked of the host itself.
       ...directInspect(inspectionWire, [session], termination),
     });
 
@@ -1068,9 +1068,9 @@ describe("sessiond wire framing", () => {
     });
     expect(terminated).toEqual(termination);
     expect(Object.hasOwn(terminated, "schemaVersion")).toBe(false);
-    // No broker connection at all. Each of these used to cost an authenticated
-    // HELLO through a relay; they are now asked of the terminal that owns the
-    // answer, which is what removes the single accept loop from the fleet path.
+    // No broker connection at all. Routing these through a relay costs an
+    // authenticated HELLO each and puts one accept loop in front of the whole
+    // fleet; asking the terminal that owns the answer removes both.
     expect(brokers).toHaveLength(0);
   });
 

@@ -13,12 +13,12 @@ import { known, unknown } from "../../src/schemas/capability";
 import { required } from "../required";
 
 /**
- * The availability fix, and the outage that motivated it.
+ * Two different questions, which one function must never answer at once:
+ *   "would this cost the user money?" -> the spend guard. Asks them.
+ *   "can this model even run?"        -> availability. Never asks; picks another.
  *
- * Two different questions were being answered by one function, and the confusion
- * cost us both an outage and a misroute:
- *   "would this cost him money?"  -> the spend guard. Asks him.
- *   "can this model even run?"    -> availability. Never asks him; picks another.
+ * Collapsing them produces both a blackout (a quiet surface refusing every
+ * spawn) and a misroute (a free-but-refused model chosen over a working one).
  */
 
 const AT = "2026-07-12T02:00:00.000Z";
@@ -53,9 +53,9 @@ describe("an exhausted pool nothing can pay for means UNAVAILABLE, not free", ()
     const spent = billing({ modelUtilization: { fable: 100 } });
     // The spend guard is not wrong — there is genuinely no charge...
     expect(spendRisk(spent, "Fable").state).toBe("no-spend");
-    // ...but "no charge" was being read as "use it", and the vendor will refuse
-    // the request. That is the misroute the user predicted: deep would keep
-    // landing on a model that cannot run instead of falling through to Opus.
+    // ...but reading "no charge" as "use it" is the misroute: the vendor refuses
+    // the request, so deep keeps landing on a model that cannot run instead of
+    // falling through to Opus.
     expect(poolAvailability(spent, "Fable").state).toBe("exhausted");
   });
 
@@ -78,8 +78,8 @@ describe("an exhausted pool nothing can pay for means UNAVAILABLE, not free", ()
       "available",
     );
     expect(poolAvailability(normal, "Sonnet").state).toBe("available");
-    // And the model that DOES have a pool, with headroom, stays available: he pays
-    // for that capacity and excluding it early is the harm the deleted cutoff did.
+    // And the model that DOES have a pool, with headroom, stays available: the
+    // user pays for that capacity, so excluding it before it is spent is harm.
     expect(poolAvailability(normal, "Fable").state).toBe("available");
   });
 
@@ -101,7 +101,7 @@ describe("the billing reader heals itself", () => {
       read: async () => billing({ modelUtilization: { fable: 17 } }),
       now: () => new Date(AT),
     });
-    // Now it goes quiet. Without the memory this refused every Claude spawn.
+    // Now it goes quiet. Without the memory, that refuses every Claude spawn.
     const healed = await readBillingWithMemory("claude", {
       read: async () => {
         calls += 1;

@@ -10,9 +10,9 @@ import {
 } from "../../src/daemon/landing";
 
 // Every case here is built on a real git repo and driven through the real
-// landBranch. A landing diagnostic that is only ever tested against a mocked git
-// proves nothing: the whole bug was that the message and the reality disagreed,
-// and a mock would have happily reported the wrong message and passed.
+// landBranch. A landing diagnostic tested only against a mocked git proves
+// nothing: the failure mode is a message that disagrees with what git actually
+// did, and a mock reports whatever message the test expects and passes.
 
 function git(root: string, args: string[]): string {
   const result = Bun.spawnSync(["git", "-C", root, ...args], {
@@ -31,7 +31,8 @@ function git(root: string, args: string[]): string {
 
 /** `main`, plus a writer branch one commit ahead that touches `app.ts` and adds
  * `feature.ts` and `assets/logo.png` — the latter inside a directory that does
- * not exist on main, which is the shape of the untracked-collision incident. */
+ * not exist on main, so an untracked copy of it collides as a whole directory
+ * rather than as a path. */
 async function repo(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "hive-land-"));
   git(root, ["init", "-b", "main"]);
@@ -70,11 +71,11 @@ describe("runGit", () => {
         "--ff-only",
         "no-such-branch",
       ]);
-      // Bun sets `Subprocess.killed` on *any* exited process, so the old code's
-      // `if (proc.killed && exitCode !== 0)` fired here and reported "git merge
-      // timed out after 30000ms" — for a command that failed in milliseconds and
-      // had already said precisely what was wrong. The flag must come from our
-      // own deadline firing, and nowhere else.
+      // Bun sets `Subprocess.killed` on *any* exited process, so a test of
+      // `proc.killed && exitCode !== 0` reports "git merge timed out after
+      // 30000ms" for a command that failed in milliseconds and already said
+      // precisely what was wrong. `timedOut` must come from our own deadline
+      // firing, and nowhere else.
       expect(result.exitCode).not.toBe(0);
       expect(result.timedOut).toBe(false);
       expect(result.stderr).toContain("not something we can merge");
@@ -215,10 +216,10 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
   test("an untracked directory is seen file-by-file, not skipped as one `dir/` line", async () => {
     const root = await repo();
     try {
-      // The incident's exact shape: the whole directory is untracked, so plain
-      // `status --porcelain` collapses it to `?? assets/` — which matches no
-      // file path — and diagnosis used to miss it entirely, handing the agent
-      // git's raw "untracked working tree files would be overwritten by merge".
+      // The whole directory is untracked, so plain `status --porcelain`
+      // collapses it to `?? assets/` — which matches no file path. Diagnosis
+      // that only compares paths misses the collision entirely and hands the
+      // agent git's raw "untracked working tree files would be overwritten".
       await mkdir(join(root, "assets"));
       await writeFile(
         join(root, "assets", "logo.png"),

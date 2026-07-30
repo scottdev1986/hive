@@ -1323,8 +1323,8 @@ describe("contextPct can say 'unknown'", () => {
     const path = join(home, "legacy-contextpct.db");
     const retiredViewerColumn = ["terminal", "Handle"].join("");
     // A database from before unknown was representable: contextPct REAL NOT NULL,
-    // carrying the numbers that made this a bug — computed against a hardcoded
-    // 200k window while the agent ran a 1M one, so 100% when it was really ~22%.
+    // carrying a number computed against a hardcoded 200k window while the agent
+    // ran a 1M one — 100% when the truth was nearer 22%.
     const legacy = new Database(path, { create: true });
     legacy.exec(`
       CREATE TABLE agents (
@@ -1365,12 +1365,11 @@ describe("contextPct can say 'unknown'", () => {
       ).toBe(false);
 
       const zoe = db.getAgentByName("zoe");
-      // The 100 is gone, not migrated forward: it was computed against the wrong
-      // denominator and carrying it across would preserve the exact lie this
-      // column is being reshaped to stop telling. Unknown until re-observed.
+      // The 100 is dropped, not migrated forward: it was computed against the
+      // wrong denominator, and carrying it across would preserve the exact lie
+      // a nullable column exists to stop telling. Unknown until re-observed.
       expect(zoe?.contextPct).toBeNull();
-      // And the rebuild copied everything else, including a column the old
-      // hand-maintained copy list had already started forgetting.
+      // Everything else survives, including columns the rebuild does not name.
       expect(zoe?.liveModel).toBe("claude-opus-4-8");
       expect(zoe?.model).toBe("claude-fable-5");
       expect(zoe?.status).toBe("dead");
@@ -1396,9 +1395,9 @@ describe("contextPct can say 'unknown'", () => {
     }
   });
 
-  // The rebuild used to copy only the columns this build knows the name of, and
-  // drop the rest — while its own comment claimed it could not. A newer Hive's
-  // column, erased by an older one; a hand-added column, erased by any of them.
+  // A rebuild that copies only the columns this build knows the name of erases a
+  // newer Hive's column when an older one opens the database, and erases a
+  // hand-added column every time.
   test("a column the rebuild has never heard of survives it, values and all", () => {
     const path = join(home, "stray-column.db");
     const legacy = new Database(path, { create: true });
@@ -1453,9 +1452,9 @@ describe("contextPct can say 'unknown'", () => {
     }
   });
 
-  // Foreign keys go off for the rebuild, and a throw in between used to leave
-  // them off for the rest of the connection's life — silently, and long after
-  // the failed migration that caused it had been forgotten.
+  // Foreign keys go off for the rebuild. A throw in between must not leave them
+  // off for the rest of the connection's life: nothing would report it, and the
+  // failed migration that caused it is long forgotten by the time it matters.
   test("a rebuild that throws still restores foreign key enforcement", () => {
     const db = new HiveDatabase(join(home, "rebuild-throws.db"));
     try {
@@ -1522,9 +1521,9 @@ describe("contextPct can say 'unknown'", () => {
         "turn-start",
       ]);
 
-      // The 2026-07-11 stale-port shape: turn-ends keep landing while every
-      // turn-start is orphaned. The reader must surface it as-is so the
-      // derivation can refuse to call it "idle".
+      // The stale-port shape: turn-ends keep landing while every turn-start is
+      // orphaned. The reader must surface it as-is so the derivation can refuse
+      // to call it "idle".
       db.insertEvent({
         kind: "turn-end",
         agentName: "orchestrator",

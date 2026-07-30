@@ -15,7 +15,7 @@ import type { AgentRecord } from "../../src/schemas";
 import { QuotaConfigSchema } from "../../src/schemas";
 
 /**
- * The drain handler (§R4–R7): hold when a window resets within the hour,
+ * The drain handler: hold when a window resets within the hour,
  * handoff when it does not, wait-or-preserve when everything is drained, and
  * vendor rate-limit errors routed to drains instead of the crash quarantine.
  */
@@ -452,7 +452,7 @@ describe("the drain handler", () => {
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
 
     // Both the errored (already down) agent and the still-live one are retained
-    // with a memory each; C5 owns replacement construction.
+    // with a memory each; building the replacement is not this handler's job.
     expect(h.memories).toHaveLength(2);
     expect(h.memories[0]?.summary).toContain("hive/maya-server");
     expect(h.memories[0]?.summary).toContain(
@@ -490,8 +490,8 @@ describe("the drain handler", () => {
 
     await h.drain.onVendorError(opencodeAgent, "429 Too Many Requests");
     expect(h.db.getAgentById("agent-otto")!.status).toBe("failed");
-    // The agent was already terminal: C4 retains its work and reports the C5
-    // replacement seam without inventing a handoff.
+    // The agent is already terminal, so its work is retained and the
+    // replacement seam is reported without inventing a handoff for it.
     expect(h.replacements).toHaveLength(1);
     expect(h.replacements[0]?.drain).toEqual({
       provider: "opencode",
@@ -594,8 +594,8 @@ describe("the R7 estimate boundary (drainedWindowFor)", () => {
       fiveHour: windowStatus("available", 0, at(30)),
       weekly: windowStatus("unknown", null),
     };
-    // §R7: the stale-but-measured window is the estimate the drain handler
-    // may use — and an unknown window still cannot read as empty.
+    // A stale-but-measured window is an estimate the drain handler may use — and
+    // an unknown window still cannot read as empty.
     expect(drainedWindowFor([status])).toEqual({
       pool: "subscription",
       window: "fiveHour",

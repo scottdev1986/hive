@@ -227,9 +227,9 @@ describe("provider completeness: unavailable is a legal state, absent is impossi
   });
 
   test("a fourth, fake provider appears everywhere — readable as itself, unreadable as unavailable — with no edit to any other file", () => {
-    // The governing acceptance test in miniature: a vendor Hive's inventory
-    // code was never edited for must still be IMPOSSIBLE to erase. It may be
-    // unavailable; it may never be absent.
+    // The whole property in miniature: a vendor Hive's inventory code was never
+    // edited for must still be IMPOSSIBLE to erase. It may be unavailable; it
+    // may never be absent.
     const acme = {
       ...record("codex", "acme-omega-1", { efforts: [] }),
       provider: "acme",

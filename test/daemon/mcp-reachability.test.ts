@@ -10,7 +10,7 @@ import type { Spawner, SpawnRequest } from "../../src/daemon/spawner";
 import { actingAs } from "../../src/daemon/testing";
 
 /**
- * #57: the daemon-side half of the reachability signal. A vendor MCP client
+ * The daemon-side half of the reachability signal. A vendor MCP client
  * proves its reporting channel by initializing against /mcp with the agent's
  * own credential; the daemon records exactly that, per subject, so the
  * launch path can refuse an agent that is alive but permanently mute.

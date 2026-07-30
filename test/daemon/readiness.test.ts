@@ -39,9 +39,10 @@ const BASELINE = "2026-07-11T00:00:00.000Z";
 
 describe("proof of life", () => {
   test("a model that only thinks is alive — the bug that made deep-tier Codex unspawnable", async () => {
-    // No hook event, no rollout write, no tool call: exactly the state that got
-    // liam and ethan killed at 15s. The screen is redrawing, which is the whole
-    // point — thinking emits a heartbeat even though it emits no actions.
+    // No hook event, no rollout write, no tool call — the state a deep-tier
+    // model is in while it reasons, and the one a short deadline kills. The
+    // screen is redrawing, which is the whole point: thinking emits a heartbeat
+    // even though it emits no actions.
     const proof = await watchForProofOfLife(
       "s",
       BASELINE,
@@ -76,11 +77,10 @@ describe("proof of life", () => {
   });
 
   test("a spinning wrapper over a dead child is DEAD, however lively the screen", async () => {
-    // The whole defect, reproduced. A wrapper prints a clock once a second while
-    // the provider it launched has already exited; the pane changes on every
-    // poll. Measured against a real terminal, this animates 5 of 5 polls — and
-    // the old predicate ("three pane changes") called that a healthy launch and
-    // recorded a dead provider as a successful spawn.
+    // A wrapper prints a clock once a second while the provider it launched has
+    // already exited, so the pane changes on every poll — against a real
+    // terminal, 5 of 5. A predicate that counts pane changes alone reads that as
+    // a healthy launch and records a dead provider as a successful spawn.
     let tick = 0;
     const proof = await watchForProofOfLife(
       "s",
@@ -104,10 +104,9 @@ describe("proof of life", () => {
   });
 
   test("a thinking agent still lives — the redraw counts when the agent is the one drawing", async () => {
-    // The guard against fixing one bug by restoring another. Same ticking pane
-    // as the deep-tier Codex case, and the only difference from the test above
-    // is that the launched process is genuinely running: no hook event, no
-    // rollout write, no tool call, and it must still read as alive.
+    // The counter-case to the dead-child test above: same ticking pane, and the
+    // only difference is that the launched process is genuinely running. No hook
+    // event, no rollout write, no tool call, and it must still read as alive.
     const proof = await watchForProofOfLife(
       "s",
       BASELINE,
@@ -236,8 +235,9 @@ describe("proof of life", () => {
       }),
     );
     expect(proof.alive).toBe(false);
-    // The old probe waited out 15 polls. A positive test for silence beats a
-    // stopwatch: this is not a loosening of the fail-loud contract.
+    // A positive test for silence settles in QUIET_LIMIT polls, well inside the
+    // 15 a stopwatch would burn — and that is a tightening, not a loosening, of
+    // the fail-loud contract.
     expect(polls).toBe(QUIET_LIMIT);
     expect(QUIET_LIMIT).toBeLessThan(15);
   });

@@ -17,10 +17,10 @@ import type { AgentRecord, ProviderRun } from "../../src/schemas";
 import { required } from "../required";
 
 /**
- * #102: a codex agent parked on its own TUI approval popup was unreachable by
- * every party at once — hive_approvals was empty, steer and urgent had no tool
- * boundary to inject at, and the pane refused input. The agent was killed with
- * committed work stranded.
+ * A codex agent parked on its own TUI approval popup is unreachable by every
+ * party at once unless Hive models the state: hive_approvals is empty, steer and
+ * urgent have no tool boundary to inject at, and the pane refuses ordinary
+ * input. The only way out is killing the agent and stranding its committed work.
  *
  * These tests model that state: the vendor says it is waiting (its
  * PermissionRequest hook), and the decision has to reach the pane as the
@@ -244,7 +244,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
         description: "Bash: curl -sS -o /dev/null https://example.com",
       });
 
-      // The state that used to be invisible is now a decision queen can make.
+      // The vendor's own popup becomes a decision queen can see and make.
       expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
       const approvals = textValue(
         await client.callTool({ name: "hive_approvals", arguments: {} }),

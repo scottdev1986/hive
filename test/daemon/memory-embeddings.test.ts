@@ -1,8 +1,8 @@
-// Unit tests for the HiveMemory HM-5 semantic leg (board #122, plan D4):
-// vector-store CRUD + prune, cosine ranking, the hybrid RRF recall blend,
-// the unavailable-degradation contract, and config validation. The embedder
-// is ALWAYS mocked here — `bun test` never downloads a model. The real-model
-// paraphrase-recall gate lives in test/memory-embedding-live.test.ts behind
+// Unit tests for memory recall's semantic leg: vector-store CRUD + prune,
+// cosine ranking, the hybrid RRF recall blend, the unavailable-degradation
+// contract, and config validation. The embedder is ALWAYS mocked here —
+// `bun test` never downloads a model. The real-model paraphrase-recall gate
+// lives in test/memory-embedding-live.test.ts behind
 // HIVE_LIVE_MEMORY_EMBEDDINGS=1.
 
 import { Database } from "bun:sqlite";
@@ -584,9 +584,9 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
       repoRoot: () => repo,
       semantic: () => Promise.resolve(null),
     });
-    // The rows are the exact pre-HM-5 output — same hits, same order. The
-    // envelope's semantic discriminator INTENTIONALLY differs (defect D2):
-    // an unwired leg is "disabled", a leg that answered null is degraded.
+    // The rows are identical either way — same hits, same order. Only the
+    // envelope's semantic discriminator differs, and it must: an unwired leg is
+    // "disabled", a leg that answered null is degraded.
     expect(unavailable.pitfalls).toEqual(without.pitfalls);
     expect(unavailable.articles).toEqual(without.articles);
     expect(without.state).toBe("ok");
@@ -786,10 +786,10 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
 describe("nativeLoadFailure — the diagnostic must not name a false cause", () => {
   // The tokenizers loader inside the bundle swallows its real error and reports
   // the last leg of a per-arch cascade, so a dlopen failure on the universal
-  // binding used to surface as a missing `@anush008/tokenizers-darwin-arm64`
-  // package that is not supposed to exist. Two agents and the orchestrator
-  // chased that false cause. This is the check that the loader reports the
-  // native library's OWN error instead.
+  // binding surfaces as a missing `@anush008/tokenizers-darwin-arm64` package
+  // that is not supposed to exist — a cause nobody can act on, because it does
+  // not exist. This asserts the diagnostic carries the native library's OWN
+  // error instead.
   const roots: string[] = [];
   afterEach(async () => {
     await Promise.all(
@@ -818,7 +818,7 @@ describe("nativeLoadFailure — the diagnostic must not name a false cause", () 
     const failure = await nativeLoadFailure(bundlePath);
     expect(failure).not.toBeNull();
     expect(failure).toContain("tokenizers.darwin-universal-abc123.node");
-    // The point of the fix: the real reason, not the cascade's last leg.
+    // The real reason, not the cascade's last leg.
     expect(failure).not.toContain("tokenizers-darwin-arm64");
   });
 

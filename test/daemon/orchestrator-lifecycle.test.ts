@@ -591,12 +591,10 @@ describe("event-driven orchestrator lifecycle", () => {
   /**
    * A preview that drops the finding is not a preview, it is a summons.
    *
-   * The cap cut a prefix, and a report is written the other way round: it opens
-   * with what the agent was asked to do and closes with what it found. So the
-   * cut landed on the punchline — four times in one session, once on the very
-   * line "THREE FINDINGS THAT CHANGE DESIGN:", losing all three — and the
-   * orchestrator had to spend a hive_read_message on the whole body anyway,
-   * which is the cost the cap existed to avoid.
+   * A report is written opening-first: what the agent was asked to do, then what
+   * it found. A cap that keeps a prefix therefore cuts the punchline, and the
+   * orchestrator has to spend a hive_read_message on the whole body anyway —
+   * exactly the cost the cap exists to avoid.
    */
   test("a long report keeps its findings: the middle is cut, never the punchline", () => {
     const findings = [
@@ -629,7 +627,7 @@ describe("event-driven orchestrator lifecycle", () => {
     expect(envelope.truncated).toEqual(true);
     expect(envelope.ref).toContain("hive_read_message");
 
-    // What the orchestrator actually needed, and never got.
+    // Both ends survive: the ask and every finding.
     expect(envelope.body).toContain("Task: audit the routing table.");
     for (const finding of findings) {
       expect(envelope.body).toContain(finding);

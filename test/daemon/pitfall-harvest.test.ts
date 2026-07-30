@@ -1,6 +1,6 @@
 import { required } from "../required";
-// HiveMemory HM-2 WP5 (board #72): the mistake-harvest pipeline. Unit-level
-// coverage of harvestPitfalls (clustering, dedup contract, advisory links,
+// The mistake-harvest pipeline. Unit-level coverage of harvestPitfalls
+// (clustering, dedup contract, advisory links,
 // clean sessions) plus MCP-level coverage of the memory_pitfall tool and the
 // cross-agent shared-knowledge loop: agent A's harvested pitfall, once
 // verified, surfaces for agent B via pitfall-check and ranks first in the

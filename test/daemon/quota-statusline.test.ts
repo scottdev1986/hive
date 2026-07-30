@@ -108,12 +108,12 @@ describe("statusLine quota telemetry", () => {
         observedAt: new Date(now.getTime() + 1_000).toISOString(),
       });
 
-      // The reading wins. Hive used to keep its own 80 as a floor, on the
-      // reasoning that an optimistic external number must never free capacity it
-      // knew it had spent — but it never *knew*, it guessed, and the floor let
-      // the guess outrank the measurement. That is how `hive quota` came to
-      // publish 12% of the Codex week as used, stamped `authoritative`, while
-      // the provider and the user's own screen both said 0%.
+      // The reading wins. Keeping Hive's own 80 as a floor — on the reasoning
+      // that an optimistic external number must never free capacity Hive knows
+      // it spent — lets a guess outrank a measurement, because Hive never knew
+      // it, it estimated it. That is how `hive quota` publishes a fabricated
+      // percentage stamped `authoritative` while the provider and the user's own
+      // screen both say something lower.
       expect(poolStatus(quota).fiveHour.used).toBe(20);
     } finally {
       db.close();

@@ -1,5 +1,5 @@
-// Defect D2: embedding degradation is LOUD at every surface a user or agent
-// sees. These tests pin the recall envelope's semantic discriminator
+// Embedding degradation is LOUD at every surface a user or agent sees.
+// These tests pin the recall envelope's semantic discriminator
 // (hybrid / degraded:<state> / disabled) with its unclamplable warning line,
 // the write responses' embedding outcome field, the CLI printer's quiet-
 // unless-degraded line, and the memory.embeddings status section.

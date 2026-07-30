@@ -96,7 +96,7 @@ describe("the positive control: the reader sees real values before it trusts an 
   });
 
   test("a MISSING credit key is unknown, NEVER false", () => {
-    // The bug this exists to prevent: a guessed or renamed key reads back as
+    // The failure mode this prevents: a guessed or renamed key reads back as
     // absent, absent renders as "credits off", "credits off" renders as "this
     // model cannot run" — and Hive silently disables a model the user is happily
     // using, with every test still green.
@@ -192,10 +192,9 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
   const billing = accountBillingFromUsage(LIVE, AT);
 
   test("with credits OFF, nothing can be charged — so the guard NEVER fires", () => {
-    // The load-bearing case, and the state of this account today. A request past
-    // the plan limit is REFUSED, not billed. A guard that nags a user who cannot
-    // be charged is a broken guard, and one he learns to click through is worse
-    // than none.
+    // The load-bearing case. A request past the plan limit is REFUSED, not
+    // billed. A guard that nags a user who cannot be charged is a broken guard,
+    // and one they learn to click through is worse than none.
     const spent = accountBillingFromUsage(
       {
         ...LIVE,
@@ -254,7 +253,8 @@ describe("the spend guard keys on MONEY, never on a model name", () => {
       AT,
     );
     // A false positive here is what trains a user to click through the prompt,
-    // which destroys the guard as surely as a false negative empties his wallet.
+    // which destroys the guard as surely as a false negative empties their
+    // wallet.
     expect(spendRisk(on, "Fable").state).toBe("no-spend");
   });
 

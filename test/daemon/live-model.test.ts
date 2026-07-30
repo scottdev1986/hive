@@ -17,9 +17,9 @@ const turn = (type: string, model?: string): string =>
 
 describe("lastAssistantModel", () => {
   test("a session that switched models mid-run reports the model it switched TO", () => {
-    // This is the whole bug, in one file: zoe's transcript holds 9 turns of
-    // claude-fable-5 and 347 of claude-opus-4-8, because the user typed /model.
-    // Only the last one is true now, so we scan backwards.
+    // A transcript holds every model the session ever ran, because the user can
+    // type /model at any point. Only the last one is true, so we scan backwards
+    // — a forward or majority read reports the abandoned model.
     const tail = [
       turn("assistant", "claude-fable-5"),
       turn("user"),
@@ -70,13 +70,12 @@ describe("readLiveClaudeModel", () => {
     const worktree = await mkdtemp(join(tmpdir(), "hive-wt-"));
     try {
       // Worktrees are recycled, so a fresh agent's project directory still holds
-      // every dead predecessor's transcript. This is the window that bit us: the
-      // agent has spawned and hook traffic has already named its session, but it
-      // has not answered once, so its own transcript does not exist yet and the
-      // *only* file in the directory is the dead predecessor's. The newest-file
-      // rule read that file and stamped its model onto the live row — an
-      // opus-4.8 agent reported claude-sonnet-5, inherited from a dead sonnet
-      // spawn, and then quietly corrected itself a turn later.
+      // every dead predecessor's transcript. The dangerous window: the agent has
+      // spawned and hook traffic has already named its session, but it has not
+      // answered once, so its own transcript does not exist yet and the *only*
+      // file in the directory is the dead predecessor's. A newest-file rule reads
+      // that file and stamps the predecessor's model onto the live row, then
+      // quietly corrects itself a turn later.
       const directory = claudeProjectDirectory(worktree, home);
       await mkdir(directory, { recursive: true });
       await writeFile(

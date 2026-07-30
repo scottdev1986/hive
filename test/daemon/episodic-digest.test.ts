@@ -1,6 +1,6 @@
 import { required } from "../required";
-// HiveMemory HM-2 WP4: the deterministic session-digest compiler, rolling
-// re-synthesis, the drift audit, and retention-reference compatibility.
+// The deterministic session-digest compiler, rolling re-synthesis, the drift
+// audit, and retention-reference compatibility.
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
@@ -86,7 +86,7 @@ describe("compileDigest", () => {
       expect(outcomes).toContain(`[e${ids.landed}]`);
       expect(outcomes).not.toContain(`[e${ids.error}]`);
 
-      // Failures: the error event, with its pointer (WP5 harvester input).
+      // Failures: the error event, with the pointer the pitfall harvest reads.
       const failures = required(body.split("## Failures")[1]?.split("##")[0]);
       expect(failures).toContain(`[e${ids.error}]`);
       expect(failures).toContain("TypeError");
@@ -102,7 +102,8 @@ describe("compileDigest", () => {
       expect(body).not.toContain(`e${ids.otherAgent}`);
       expect(body).not.toContain("Unrelated agent");
 
-      // Persisted provenance is the WP3 retention reference-check shape.
+      // Persisted provenance is the shape the retention sweep's reference check
+      // reads.
       const provenance = JSON.parse(required(digest?.provenance)) as {
         eventIds: number[];
         sessionId: string;

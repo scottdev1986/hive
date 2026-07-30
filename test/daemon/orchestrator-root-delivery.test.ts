@@ -118,8 +118,8 @@ describe("SessiondOrchestratorRootDelivery", () => {
         },
       },
     });
-    // The host's own reason, not a bucket: a refusal that cannot name itself is
-    // what made the 2026-07-21 root wake unreadable.
+    // The host's own reason, not a bucket: a refusal that cannot name itself
+    // leaves a failed root wake unreadable.
     await expect(
       delivery.deliverMessage("agent report", { message_id: "message-1" }),
     ).resolves.toEqual({ delivered: false, reason: "claim denied" });

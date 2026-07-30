@@ -1,5 +1,5 @@
-// HiveMemory HM-2 WP4: the memory_digest MCP tool (read + drill-down +
-// absent-vs-empty + budget clamp) and the daemon's digest compile triggers
+// The memory_digest MCP tool (read + drill-down + absent-vs-empty + budget
+// clamp) and the daemon's digest compile triggers
 // (agent session end/kill and landing/completion events), including their
 // failure isolation from the lifecycle paths that fire them.
 import { afterEach, describe, expect, test } from "bun:test";
@@ -266,8 +266,8 @@ describe("memory_digest MCP tool", () => {
       const empty = await readDigest(clientWith, { digestId: 99 });
       expect(empty.state).toBe("empty");
       expect(empty.detail).toContain("digest with id 99");
-      // Positive control: a digest that exists is visible before any
-      // negative is trusted (S3.7 DoD 11).
+      // Positive control: prove a digest that exists IS visible before trusting
+      // the empty answers above.
       episodic.appendEvent({
         ts: T0,
         agent: "agent-maya",

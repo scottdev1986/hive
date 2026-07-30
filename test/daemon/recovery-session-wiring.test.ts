@@ -1,16 +1,16 @@
 // Recovery's createRecoverySession dep must reach the spawner WITH ITS RECEIVER.
 //
-// The daemon used to hoist the method off the spawner
-// (`const fn = this.spawner.createRecoverySession`) and call it bare. That
-// type-checks — detaching a method is perfectly legal — but inside the method
-// `this` is undefined, so every crash resume died on
-// "undefined is not an object (evaluating 'this.createSession')" and then could
-// not verify teardown. Recovery could not relaunch ANY agent.
+// Hoisting the method off the spawner (`const fn =
+// this.spawner.createRecoverySession`) and calling it bare type-checks —
+// detaching a method is perfectly legal — but inside the method `this` is
+// undefined, so every crash resume dies on "undefined is not an object
+// (evaluating 'this.createSession')" and cannot then verify teardown. Recovery
+// relaunches nothing at all.
 //
 // WHY THIS TEST LOOKS AT THE WIRING AND NOT AT A FULL RESUME. Every other
 // recovery test constructs CrashRecovery directly and passes its own dep, which
-// proves the function and not the wiring the daemon builds — which is exactly how
-// this defect survived a green suite. Driving a real resume to the call site
+// proves the function and not the wiring the daemon builds — so a broken
+// receiver leaves the whole suite green. Driving a real resume to the call site
 // needs an authorized launch, a sessiond locator, an adapter and vendor
 // executables; that fixture would test five other things and bury this one. So
 // this reads the dep the daemon actually constructed and calls it, with a spawner
@@ -66,7 +66,7 @@ describe("the daemon's recovery wiring", () => {
     expect(wired).toBeDefined();
     if (wired === undefined) return;
 
-    // Under the defect this rejects with
+    // Wired without its receiver, this rejects with
     // "undefined is not an object (evaluating 'this.createSession')".
     await wired(record, "codex --resume x", "codex", "grant", "run");
     expect(spawner.recoverySessions).toEqual(["victim"]);

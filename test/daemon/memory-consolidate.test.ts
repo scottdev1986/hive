@@ -1,7 +1,7 @@
-// Unit tests for the HM-5 offline consolidation dedup pass (board #122, plan
-// D1 layer 3): bucket thresholds, report-first read-only mode, --apply
-// supersession semantics (articles through the normal write path, facts
-// through bi-temporal invalidation), the similar bucket's never-auto-apply
+// Unit tests for the offline consolidation dedup pass: bucket thresholds,
+// report-first read-only mode, --apply supersession semantics (articles
+// through the normal write path, facts through bi-temporal
+// invalidation), the similar bucket's never-auto-apply
 // rule, the unavailable-degradation contract, and the retention sweep's
 // candidate count. The embedder is ALWAYS mocked with controlled vectors —
 // `bun test` never downloads a model.

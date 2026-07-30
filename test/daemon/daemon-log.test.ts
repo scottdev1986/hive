@@ -1,4 +1,4 @@
-// The durable daemon warning sink (defect D2): timestamped appends to
+// The durable daemon warning sink: timestamped appends to
 // $HIVE_HOME/logs/daemon.log, size-capped single-rollover rotation, and the
 // never-break-the-daemon contract (an unwritable log dir is a no-op), plus
 // the daemon-level wiring that lands embedding state transitions in the file.

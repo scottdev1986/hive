@@ -451,9 +451,9 @@ describe("C0 provider-run identity", () => {
     });
     inspections = 0;
     // Not having observed the provider is not evidence that it failed. A
-    // terminal that is up is left up: this used to terminate the session and
-    // throw, which at 31 wide killed agents whose vendor TUI was rendered and
-    // running, and left no audit when the terminate itself failed.
+    // terminal that is up is left up: terminating and throwing here kills agents
+    // whose vendor TUI is rendered and running, and leaves no audit at all when
+    // the terminate itself fails.
     await expect(
       spawner.createRecoverySession(
         record,

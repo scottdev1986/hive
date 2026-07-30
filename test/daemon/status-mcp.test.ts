@@ -365,9 +365,9 @@ describe("WP7 MCP status tools", () => {
     expect(daemon.status.listEvents()).toHaveLength(0);
   });
 
-  // The acceptance bar: an agent knows its assignment id and generation from its
-  // spawn prompt and can read them back from hive_status. Nothing anywhere hands
-  // it a req_ value, so requiring one made the tool uncallable.
+  // An agent knows its assignment id and generation from its spawn prompt and
+  // can read them back from hive_status. Nothing anywhere hands it a req_ value,
+  // so requiring one would make the tool uncallable.
   test("accepts a report carrying only values the caller can discover", async () => {
     const { daemon } = harness();
     const token = daemon.capabilities.mint("maya", "reader", {

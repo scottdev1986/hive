@@ -409,8 +409,8 @@ test("declines with the arbiter's reason and never submits when the claim is den
   });
   client.close();
 
-  // The decline carries the arbiter's own diagnostic out — the #68 live proof
-  // failed guessing between a denied claim and a broken wire.
+  // The decline carries the arbiter's own diagnostic out: without it, a denied
+  // claim and a broken wire are indistinguishable to the caller.
   expect(result).toEqual({
     kind: "claim-declined",
     detail: "claim denied: input already claimed",

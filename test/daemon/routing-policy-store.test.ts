@@ -226,10 +226,9 @@ describe("mutations and compare-and-set", () => {
     );
     expect(policy.selection).toEqual({ global: "choice" });
 
-    // THE REGRESSION this guards: set-chain used to write
-    // selection.categories[category] = "choice", so a category the user had
-    // never ruled on outranked the control they had set, and switching the
-    // global afterwards changed nothing at all.
+    // set-chain must not write selection.categories[category] = "choice": a
+    // category the user never ruled on would outrank the control they did set,
+    // and switching the global afterwards would change nothing at all.
     policy = store.apply(
       {
         op: "set-chain",

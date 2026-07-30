@@ -79,11 +79,11 @@ function strandedDaemon(branches: UnmergedBranch[] = [DAVID_BRANCH]) {
 
 describe("stranded-branch reconciliation", () => {
   test("reports a branch with unlanded commits that no agent row owns at all", async () => {
-    // This is david, exactly: the branch ref survived, its terminal session is
-    // gone, and the agents table has no row for it — the database
-    // was reset out from under it. Every other sweep in the daemon iterates
-    // agent rows, so this branch is invisible to all of them. The agents table
-    // is deliberately left EMPTY here; that is the whole point of the test.
+    // The branch ref survives, its terminal session is gone, and the agents
+    // table has no row for it — the database was reset out from under it. Every
+    // other sweep in the daemon iterates agent rows, so this branch is invisible
+    // to all of them. The agents table is deliberately left EMPTY here; that is
+    // the whole point of the test.
     const { db, daemon, removedWorktrees } = strandedDaemon();
     try {
       await daemon.reconcileStrandedBranches();
@@ -122,8 +122,8 @@ describe("stranded-branch reconciliation", () => {
 
   test("stays quiet about a live agent still working on its own branch", async () => {
     // Work in progress is not stranded work. A writer agent with commits on its
-    // own branch — which is every writer agent, including the one that shipped
-    // this check — must not be reported as abandoned.
+    // own branch — which is every writer agent — must not be reported as
+    // abandoned.
     const { db, daemon } = strandedDaemon();
     db.insertAgent(agent({ status: "working" }));
     try {

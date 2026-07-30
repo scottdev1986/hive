@@ -1,10 +1,10 @@
-// Adversarial tests for the Phase 0 authorization boundary.
+// Adversarial tests for the daemon's authorization boundary.
 //
 // Every test here is written from the attacker's side: it asserts that a thing
-// which *looks* legitimate is refused. The two tests at the bottom assert the
-// opposite — that the orchestrator and a self-scoped writer keep working —
-// because an authorization layer that only denies is indistinguishable from a
-// broken daemon.
+// which *looks* legitimate is refused. A few assert the opposite — that the
+// orchestrator and a self-scoped writer keep working — because an
+// authorization layer that only denies is indistinguishable from a broken
+// daemon.
 //
 // Nothing in this file touches live work: an in-memory database, a stub
 // spawner that launches nothing, and a stub landBranch that runs no git.
@@ -82,8 +82,8 @@ function harness(
   const landFailures = { count: options.landFailsTimes ?? 0 };
   // Unknown by default: this harness has no git, and "we could not read the
   // branch" is exactly what the daemon must treat as a reason to ask, not as a
-  // reason to grant. Every pre-existing re-arm test below therefore proves the
-  // fail-closed path.
+  // reason to grant. Every re-arm test below therefore runs the fail-closed
+  // path unless it passes its own readiness.
   const readiness: LandReadiness = options.readiness ?? {
     pending: null,
     rebased: null,
@@ -1138,9 +1138,9 @@ describe("audit", () => {
   });
 });
 
-// The re-arm is where Hive was spending humans. Two things it must never do:
-// ask for an approval that grants nothing (the branch is already merged), and
-// grant one on evidence it does not have.
+// The re-arm is where Hive spends humans. Two things it must never do: ask for
+// an approval that grants nothing (the branch is already merged), and grant one
+// on evidence it does not have.
 describe("a spent land grant is measured before a human is asked", () => {
   const pendingRearms = (db: HiveDatabase): number =>
     db
@@ -1155,7 +1155,7 @@ describe("a spent land grant is measured before a human is asked", () => {
 
   test("an already-landed branch files no re-arm approval at all", async () => {
     // main..branch is empty: there is nothing to merge, so there is nothing to
-    // grant. This is the no-op approval agents were declining by hand.
+    // grant, and asking a human costs them a decline for no change at all.
     const { daemon, db, landed } = harness({
       readiness: { pending: 0, rebased: true },
     });

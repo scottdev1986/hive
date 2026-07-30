@@ -239,9 +239,8 @@ describe("idle-agent reap sweep", () => {
   });
 
   test("refuses to reap dirty or unmerged work, and says so out loud", async () => {
-    // The refusal is the safety property and it stays. What changed is that it
-    // is no longer silent: this test used to assert an empty inbox, which meant
-    // an agent could sit here holding unlanded commits forever with nobody told.
+    // The refusal is the safety property, and it must not be silent: an agent
+    // holding unlanded commits sits here forever unless something says so.
     const { db, daemon, removedWorktrees } = reapDaemon({
       assessStrandedWork: async () => ({
         dirtyFiles: ["src/wip.ts"],

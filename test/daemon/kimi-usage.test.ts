@@ -20,7 +20,7 @@ import {
 } from "../../src/daemon/usage-credits";
 
 /**
- * Kimi's usage surface (#usage): GET /usages with the CLI's OAuth credential,
+ * Kimi's usage surface: GET /usages with the CLI's OAuth credential,
  * refreshing an expired token with the CLI's exact grant. Every test uses a
  * fake credential file under a temp KIMI_CODE_HOME and a fake fetch — the
  * real ~/.kimi-code is never touched.
@@ -301,15 +301,15 @@ describe("kimi usage probe", () => {
 /**
  * The five-hour window arrives with `remaining` and no `used`.
  *
- * `KimiUsageWindowSchema` required `used`, so every payload carrying a rate
- * window failed validation — and because the failure was at the top-level
- * object it took the account's WEEKLY window down with it, a window that had
- * parsed perfectly. `KimiQuotaProbe` then reported "no usable usage reading"
- * while the endpoint was answering, so Hive went blind on a live provider and
- * had no second source to fall back to (kimi has no push feed).
+ * `KimiUsageWindowSchema` must therefore not require `used`. Requiring it fails
+ * every payload that carries a rate window, and because the failure is at the
+ * top-level object it takes the account's WEEKLY window down with it — a window
+ * that parsed perfectly. `KimiQuotaProbe` then reports "no usable usage reading"
+ * while the endpoint is answering, and Hive goes blind on a live provider with
+ * no second source to fall back to (kimi has no push feed).
  *
  * The body below is the literal shape `GET /usages` returned from kimi 0.29.1
- * on 2026-07-26. Reproduced by prototypes/vendors/kimi-usage-windows.ts.
+ * on 2026-07-26.
  */
 describe("kimi /usages window counters", () => {
   const OBSERVED = "2026-07-26T16:00:00.000Z";

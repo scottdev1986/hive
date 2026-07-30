@@ -115,9 +115,9 @@ describe("the stranded-worktree sweep", () => {
     const db = new HiveDatabase(join(directory, "hive.db"));
     const removals: string[] = [];
     // The agent is long gone, so nobody is left to say the work landed. Git is
-    // asked again, and it now answers that nothing is missing from main —
-    // which is exactly the cherry-picked case that used to strand a worktree
-    // forever, because a cherry-pick keeps the change and takes a new sha.
+    // asked again and answers that nothing is missing from main — the
+    // cherry-picked case, where the change is on main under a new sha. Trusting
+    // the sha alone strands the worktree forever.
     const daemon = daemonWith({ unmergedCommits: 0, removals, db });
     try {
       db.recordStrandedWorktree(entry);

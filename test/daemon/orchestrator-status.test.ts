@@ -41,11 +41,10 @@ describe("deriveOrchestratorStatus", () => {
    * The contradiction case, and the reason this function exists.
    *
    * A turn cannot end without starting, so two turn-ends in a row means the
-   * root's turn-start hook is not reaching the daemon. This is measured history,
-   * not a hypothetical: between 2026-07-11T19:39Z and 2026-07-12T10:58Z the root
-   * posted 231 turn-ends and zero turn-starts after a port change orphaned that
-   * one hook. A "newest is turn-end, so it's idle" rule would have painted the
-   * dot a confident yellow for 15 hours while the root worked without pause.
+   * root's turn-start hook is not reaching the daemon — a port change orphaning
+   * that one hook leaves hundreds of turn-ends and zero turn-starts. A "newest
+   * is turn-end, so it's idle" rule paints the dot a confident yellow for as
+   * long as that lasts, while the root works without pause.
    *
    * Say nothing instead. The field is omitted, the dot is gray, gray is unknown,
    * and unknown is the truth.

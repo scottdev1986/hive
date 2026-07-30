@@ -41,7 +41,8 @@ describe("composer leases", () => {
   test("orchestrator.typing blocks both root address aliases", async () => {
     const home = await mkdtemp(join(tmpdir(), "hive-composer-orch-"));
     try {
-      // Pre-rename / rename-window marker still written as orchestrator.typing.
+      // The marker is written under the root's `orchestrator` spelling, and both
+      // aliases must read it.
       const marker = composerLeasePath("orchestrator", home);
       await mkdir(dirname(marker), { recursive: true });
       await writeFile(marker, "");

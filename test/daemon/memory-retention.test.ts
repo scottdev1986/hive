@@ -39,7 +39,7 @@ function retentionConfig(
 }
 
 // Global-scope memory lives under HIVE_HOME, so the whole file runs against a
-// disposable home (same posture as server.test.ts).
+// disposable home.
 let tempRoot = "";
 let previousHiveHome: string | undefined;
 
@@ -64,7 +64,7 @@ function openStore(path: string): EpisodicStore {
   return new EpisodicStore(path);
 }
 
-/** Seeds a digest row directly (bypassing WP4's compiler) so the sweep is
+/** Seeds a digest row directly, bypassing the digest compiler, so the sweep is
  * tested against provenance shapes it must recognize, not compiler output. */
 function seedDigest(storePath: string, provenance: string): void {
   const seed = new Database(storePath);

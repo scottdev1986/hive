@@ -193,7 +193,7 @@ describe("quota persistence and reservations", () => {
       nextUsageSeq: 1,
     });
 
-    // The reinstalled trigger makes the same old write path safe from now on.
+    // The reinstalled trigger makes that same write path safe.
     db.database.exec(`
       UPDATE quota_usage_sequence SET next = 2 WHERE id = 0;
       INSERT INTO quota_usage (
@@ -437,8 +437,8 @@ describe("quota persistence and reservations", () => {
         }),
       ),
     );
-    // §R3: usage never refuses a spawn anymore, so both siblings book; the
-    // liveness-aware expiry below is the still-valid half of this test.
+    // Usage never refuses a spawn, so both siblings book; what this test pins is
+    // the liveness-aware expiry below.
     expect(
       results.filter((result) => result.status === "fulfilled"),
     ).toHaveLength(2);
