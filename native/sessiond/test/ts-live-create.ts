@@ -29,6 +29,7 @@ import {
   type CapabilityRecord,
   known,
   type RoutingPolicy,
+  TERMINAL_LIMITS,
   unknown,
 } from "../../../src/schemas";
 
@@ -122,7 +123,7 @@ async function waitForExactProcessAbsence(
   throw new Error(`owned sessiond process ${pid} outlived visibility expiry`);
 }
 
-test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry", async () => {
+test("TypeScript gates a real DirectHost, clean stop, and publisher-death survival", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
   // Keep runtime/sessiond/hosts/<session>/host.sock below macOS's 104-byte
   // AF_UNIX path limit. That per-session path is longer than the broker
@@ -650,16 +651,23 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
 
         process.kill(workspacePublisher.pid, "SIGKILL");
         await workspacePublisher.exited;
-        await Promise.all([
-          waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
-          waitForExactProcessAbsence(
-            spawnedProvider.pid,
-            spawnedProvider.startToken,
-          ),
-        ]);
-        const expired = await adapter.inspect(expiryLocator);
-        expect(expired.presence).not.toBe("present");
-        expect(expired.visibility.state).toBe("expired");
+        // A running host holds its own lease open, so a terminal outlives the
+        // workspace that published it: only an explicit termination ends one.
+        // Nothing infers a terminal's death, because reading an unrenewed
+        // lease as death kills working agents whose vendor TUI is rendered and
+        // running. Waiting past the deadline is what proves it no longer
+        // decides — the lease bounds the wire's expiresAt and the input-claim
+        // window, not whether the terminal may live.
+        await Bun.sleep(TERMINAL_LIMITS.visibilityExpiryMilliseconds + 1_000);
+        expect(macProcessIdentity(spawnedHost.pid).startToken).toBe(
+          spawnedHost.startToken,
+        );
+        expect(macProcessIdentity(spawnedProvider.pid).startToken).toBe(
+          spawnedProvider.startToken,
+        );
+        const survived = await adapter.inspect(expiryLocator);
+        expect(survived.presence).toBe("present");
+        expect(survived.visibility.state).not.toBe("expired");
       } finally {
         await killExactProcess(
           workspacePublisher.pid,
