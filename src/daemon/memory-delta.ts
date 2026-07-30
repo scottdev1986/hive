@@ -1,8 +1,7 @@
-// Wake-delta memory injection (HiveMemory HM-3 WP6, board #120; plan
-// 2026-07-22-hivememory-epic-rework.md §3 item 2, decision D6).
+// Wake-delta injection gives an agent relevant memory when it wakes.
 //
-// Recall is system-triggered, never left to agent goodwill (article lesson
-// A1/A2): when an agent wakes — a message is delivered to it, or its crashed
+// Recall is system-triggered, never left to agent goodwill: when an agent
+// wakes — a message is delivered to it, or its crashed
 // session is resumed — the daemon injects a bounded memory delta over the
 // ordinary message-delivery lane, so it needs no vendor hook support (Grok
 // has none). The delta carries two things:

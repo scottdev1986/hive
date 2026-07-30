@@ -1,6 +1,5 @@
-// The mistake-harvest pipeline (HiveMemory HM-2 WP5, board #72;
-// planning/2026-07-22-hivememory-epic-rework.md §4 HM-2): at session
-// boundaries, fold the session's failure events into candidate pitfall
+// At session boundaries, the mistake-harvest pipeline folds failure events
+// into candidate pitfall
 // articles in the REPO wiki so the next agent — a different agent — starts
 // from "we burned ourselves before" instead of re-learning it.
 //
@@ -8,9 +7,9 @@
 // status `unverified` and source `orchestrator`, and promotion to `verified`
 // is the queen/human's ordinary memory_write self-supersede — no new
 // mechanics. Promotion to GLOBAL scope is likewise out of scope here by
-// design: that is the separate human-approved memory_promote path (WP8).
-// This module only ever writes scope "repo"; the seam for WP8 is that the
-// scope is a constant, not a parameter a caller can smuggle in.
+// design: that is the separate human-approved memory_promote path.
+// This module only ever writes scope "repo"; the scope is a constant, not a
+// parameter a caller can smuggle in.
 //
 // Like every other memory projection, harvest is a derived write off the
 // hot path: per-candidate failures are captured in the report, never thrown

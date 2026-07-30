@@ -51,8 +51,8 @@ export async function processEvent(
   event: HookEvent,
 ): Promise<void> {
   const parsed = HookEventSchema.parse(event);
-  // One root identity at ingress: legacy/case-varied orchestrator events
-  // register and store as queen so status, token usage, and consumers agree.
+  // Normalize case-varied orchestrator events at ingress so status, token
+  // usage, and consumers agree.
   const value = {
     ...parsed,
     agentName: canonicalOrchestratorName(parsed.agentName),
@@ -64,7 +64,7 @@ export async function processEvent(
       : recordProviderHookEvent(deps.db, eventAgent, value);
   if (value.providerRunId !== undefined && providerEvent === null) {
     // A run-bound hook speaks only for that exact active ProviderRun. Do not
-    // let a stale worktree hook mutate the legacy lifecycle row after the
+    // let a stale worktree hook mutate the lifecycle row after the
     // normalized ingestion path rejected it.
     return;
   }
@@ -148,9 +148,9 @@ export async function processEvent(
                     ? "awaiting-approval"
                     : value.kind === "notification"
                       ? // The vendor's own dialog. Claude raises this hook when it is
-                        // BLOCKED asking for permission, and Hive used to hold the
-                        // agent's status here — so a session parked on a dialog went
-                        // on reporting "working" forever and told nobody. Any other
+                        // BLOCKED asking for permission. Do not hold the agent's
+                        // status here: a session parked on a dialog would report
+                        // "working" forever and tell nobody. Any other
                         // notification (notably idle_prompt, which an idle agent
                         // emits while doing nothing) still changes nothing.
                         isPermissionPrompt(value)

@@ -236,9 +236,9 @@ export class OrchestratorSessiondController {
       return ready;
     } catch (error) {
       // A launch that could not be verified is not a terminal that must die.
-      // This used to terminate the session on the way out; that killed queens
-      // whose terminal was up and whose provider was running, and when the
-      // terminate itself failed it left a killed host with no audit at all.
+      // Do not terminate here: the terminal and provider may be running even
+      // when verification fails, and a failed termination leaves a killed host
+      // with no audit.
       if (locator !== null) {
         this.dependencies.bindings.releaseUncreatedTerminalHostSession(locator);
       }

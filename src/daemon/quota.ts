@@ -418,9 +418,8 @@ export class QuotaService {
    * These percentages are the most authoritative quota signal Hive ever sees, and
    * they arrive on every turn. They are stored whether or not anyone wrote a
    * `quota.toml`: an unconfigured install discovers its pool from this very
-   * payload. (Hive used to look up a configured pool first and drop the reading
-   * when none existed, which is how an installation could run for weeks with an
-   * empty observation table and nothing but its own estimates.)
+   * payload. Do not require a configured pool: that would drop readings when
+   * none exists and leave the observation table with only estimates.
    *
    * Windows are identified by duration rather than by position, so a plan that
    * reports its weekly bucket first cannot silently invert the two.
@@ -1252,14 +1251,10 @@ export class QuotaService {
       // only spend it cannot know about is what happened *after* it. That, and
       // only that, is what Hive adds.
       //
-      // Hive used to take max(its whole ledger, the reading), on the reasoning
-      // that an optimistic provider number must never free capacity Hive knew it
-      // had spent. But Hive never knew: those ledger rows are its own
+      // Do not take max(the whole ledger, the reading): ledger rows are Hive's
+      // own
       // `estimatesPct` guesses, written at `confidence: "estimated"`. The floor
-      // therefore let a guess outrank a measurement, and it did — on 2026-07-11
-      // Codex reported 0% of the weekly window used, Hive's estimates summed to
-      // 12%, and `hive quota` published 12% under `source: provider,
-      // confidence: authoritative`. The user could see the real number on his own
+      // therefore let a guess outrank a measurement. The user can see the real number on their own
       // screen. A confidently wrong number is worse than an admitted unknown, and
       // an estimate wearing a measurement's badge is the worst of both.
       const unverified = observationValid ? afterObservation : 0;
@@ -1515,8 +1510,7 @@ export class QuotaService {
   }
 
   /**
-   * Route and book — but never refuse for usage
-   * (docs/design/quota-lifecycle-redesign.html §05). Selection is
+   * Route and book, but never refuse for usage. Selection is
    * unchanged in kind: `spread` fairly shares work across providers by
    * Hive-observed dispatch deficit, `strict` walks rank order. What is gone
    * is the veto: pool exhaustion is a mid-work condition, handled by the
@@ -1562,8 +1556,8 @@ export class QuotaService {
       const known = entries.filter(
         (entry) => this.measured(entry.status, entry.limit) !== null,
       );
-      // An unmetered candidate is not a special warned case anymore — it is
-      // the normal case for a provider with no usage surface (opencode) or a
+      // An unmetered candidate is normal for a provider with no usage surface
+      // (opencode) or a
       // quiet one. It books against its `unconfigured:` pool, which is what
       // the status displays already read.
       if (entries.length === 0 || known.length === 0) {
@@ -2080,7 +2074,7 @@ export class QuotaService {
 }
 
 // ---------------------------------------------------------------------------
-// Drain detection (§07, docs/design/quota-lifecycle-redesign.html).
+// Drain detection.
 // ---------------------------------------------------------------------------
 
 /** One drained metering window: which pool, which window, when it resets
@@ -2096,7 +2090,7 @@ export interface DrainedWindow {
  * window reset? One drained window is a drain: a model-scoped cap at zero
  * empties the model even while the general pool has room.
  *
- * §04 — the user-ruled estimate exception lives HERE and nowhere else: when
+ * The estimate exception lives here and nowhere else: when
  * the provider's API is down this reads the last-known windows
  * (statusForLimit already carries them, provenance-stamped "stale") and
  * treats them as the estimate the user accepted for the drain decision only.

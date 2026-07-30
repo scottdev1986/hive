@@ -1,12 +1,10 @@
-// The tiered-retention sweep (HiveMemory HM-2 WP3, board #72;
-// planning/story-m3-s37-digests-lifecycle.md DoD 5 + DoD 7). One pass does
-// three things against the daemon's own memory state:
+// The tiered-retention sweep does three things against the daemon's own
+// memory state:
 //
 //   1. Ages out the raw hot tier: episodic `events` rows older than
 //      `events_hot_days` are deleted — EXCEPT any row a digest's provenance
 //      still references, because a referenced event is a drill-down target
-//      (DoD 6's reference-check spirit, adapted: WorkManifest does not exist
-//      yet, digests do as a table).
+//      because a referenced event is still a drill-down target.
 //   2. Never touches `facts` or `digests`: `facts_retention` and
 //      `digests_retention` are "forever" by invariant, not by knob — facts
 //      are bi-temporal history and the digest is the downsample the aged
@@ -27,8 +25,8 @@ import { countConsolidationCandidates } from "./memory-consolidate";
 export interface RetentionSweepReport {
   eventsDeleted: number;
   articlesDemoted: Array<{ scope: MemoryScope; id: string }>;
-  /** Stored-vector pairs at or above the consolidation similar threshold
-   * (HiveMemory HM-5, D1 layer 3): count only, never applied here — the
+  /** Stored-vector pairs at or above the consolidation similar threshold:
+   * count only, never applied here — the
    * drift signal that tells the operator `hive memory consolidate` is worth
    * a run. */
   consolidationCandidates: number;
@@ -36,8 +34,7 @@ export interface RetentionSweepReport {
 
 const DAY_MS = 24 * 3_600_000;
 
-// WP4's digest compiler owns the provenance shape; the reference check knows
-// only this contract: an event pointer is a positive integer under a key
+// The reference check recognizes an event pointer as a positive integer under a key
 // bearing "event" (`eventId`, `eventIds`, `events`, …) or an object shaped
 // `{ type|kind: "event", id: <int> }` anywhere in the JSON tree.
 function collectReferencedEventIds(
@@ -140,8 +137,7 @@ export async function runRetentionSweep(options: {
     }
   }
 
-  // (4) Consolidation drift signal (HiveMemory HM-5, D1 layer 3): count
-  // duplicate candidate pairs in the vector store so a growing pile is
+  // Count duplicate candidate pairs in the vector store so a growing pile is
   // visible in the sweep report. Count only — consolidation is an offline,
   // operator-run pass, never something the sweep applies.
   report.consolidationCandidates = countConsolidationCandidates(episodic);

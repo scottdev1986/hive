@@ -1,5 +1,5 @@
-// Trigger protocol (HiveMemory HM-3 WP7, board #120; plan
-// 2026-07-22-hivememory-epic-rework.md §3 item 3, article lesson A1).
+// Explicit memory triggers let the queen or operator recall and write memory
+// through the daemon.
 //
 // Recitation is not compliance: instructions in ambient context lose to the
 // vendor's own system prompt, but a trigger invoked IN THE USER TURN is
@@ -89,7 +89,7 @@ export interface MemoryTriggerDeps {
   /** The daemon's FTS index over the wiki; null degrades recall to an honest
    * "surface absent" block (writes still execute). */
   memory: Pick<MemoryIndex, "search"> | null;
-  /** The semantic leg (HiveMemory HM-5, board #122): cosine top-k over the
+  /** The semantic leg: cosine top-k over the
    * vector store, or null when embeddings are unavailable. Undefined degrades
    * to the FTS-only bundle. */
   semantic?: (
@@ -100,19 +100,19 @@ export interface MemoryTriggerDeps {
     id: string;
     score: number;
   }> | null>;
-  /** The semantic leg's one-word state (defect D2), consulted when the leg
+  /** The semantic leg's one-word state, consulted when the leg
    * answered null so the recall envelope can name WHY it is FTS-only
    * (degraded:embedding-runtime-missing, not a silent keyword-only result). */
   semanticStatus?: () => string;
   /** The daemon's serialized writeMemoryFact (file lock + FTS upsert). The
-   * optional embedding outcome (defect D2) says what happened to the write's
+   * optional embedding outcome says what happened to the write's
    * vector projection so the confirmation can say when it is keyword-only. */
   write: (
     input: MemoryWriteInput,
   ) => Promise<MemoryWriteFileResult & { embedding?: string }>;
   /** The audit sink; null skips the episodic `memory-trigger` event. */
   episodic: Pick<EpisodicStore, "appendEvent"> | null;
-  /** Durable warning sink (defect D2) for trigger machinery failures;
+  /** Durable warning sink for trigger machinery failures;
    * undefined logs to the console only. */
   log?: (message: string) => void;
 }
@@ -140,7 +140,7 @@ const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
 const todayIsoDate = (): string => new Date().toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
-// The shared recall bundle (HiveMemory plan §5): the trigger protocol's
+// The trigger protocol's
 // "recall:" path and the memory_recall MCP tool render the SAME ranked bundle
 // — wiki FTS hits partitioned into pitfalls and articles with verification
 // labels — so the formatting lives here exactly once.
@@ -168,7 +168,7 @@ export const MEMORY_RECALL_HINT_NOTE =
 export interface MemoryRecallBundle {
   /** absent = no wiki search index wired; empty = searched, no matches. */
   state: "ok" | "empty" | "absent";
-  /** What the semantic leg contributed to THIS bundle (defect D2): "hybrid"
+  /** What the semantic leg contributed to this bundle: "hybrid"
    * — semantic search actually ran and was blended; "disabled" — the leg is
    * not wired (or provider config keeps it off); "degraded:<state>" — the
    * leg is down and these results are keyword-only, named with the distinct
@@ -180,7 +180,7 @@ export interface MemoryRecallBundle {
 
 export type MemoryRecallSemantic = "hybrid" | "disabled" | `degraded:${string}`;
 
-/** The loud line every degraded recall surface carries (defect D2). Kept as
+/** The loud line every degraded recall surface carries. Kept as
  * a function of the state label so the trigger lane and the memory_recall
  * tool render byte-identical wording. */
 export function memoryRecallDegradedWarning(state: string): string {
@@ -197,9 +197,8 @@ export function formatMemoryRecallRow(row: MemoryRecallRow): string {
 }
 
 /**
- * Reciprocal-rank fusion (HiveMemory HM-5, board #122): the blend between
- * the FTS leg and the semantic leg. Fixed weights by design — no tuning
- * knobs (plan D4: embeddings buy paraphrase recall, not correctness). Both
+ * Reciprocal-rank fusion blends the FTS and semantic legs. Fixed weights have
+ * no tuning knobs because embeddings buy paraphrase recall, not correctness. Both
  * legs weigh equally; k=60 is the standard RRF constant from Cormack et al.
  * 2009, dampening head-of-list dominance so a leg's #1 does not swamp the
  * other leg entirely.
@@ -212,12 +211,12 @@ const RECALL_RRF_K = 60;
  * row carries no kind, so kinds resolve from the on-disk articles (the same
  * pattern as memory_query pitfall-check).
  *
- * Hybrid retrieval (HM-5): when deps.semantic is wired AND answers (non-null),
+ * When deps.semantic is wired and answers (non-null),
  * its cosine top-k is RRF-blended with the FTS ranking — a paraphrase the
  * porter tokenizer cannot match still ranks. When the semantic leg is absent
  * or unavailable (null), the bundle's ROWS are byte-identical to the FTS-only
  * output — a test pins this — while the envelope's `semantic` field
- * (defect D2) says out loud that the leg did not run, and why.
+ * says out loud that the leg did not run, and why.
  */
 export async function buildMemoryRecallBundle(
   query: string,
@@ -227,7 +226,7 @@ export async function buildMemoryRecallBundle(
   >,
   limit = 8,
 ): Promise<MemoryRecallBundle> {
-  // The envelope discriminator (defect D2): names what the semantic leg
+  // The envelope discriminator names what the semantic leg
   // contributed, so "FTS-only because embeddings are down" is never
   // indistinguishable from a genuine keyword-only result. In the absent
   // state nothing was searched at all; the field then reports the leg's
@@ -292,8 +291,8 @@ export async function buildMemoryRecallBundle(
       (hit.status === "verified" ? null : hit.status),
     pitfall: pitfallKeys.has(`${hit.scope}:${hit.id}`),
   });
-  // FTS-only: the unavailable-degradation contract. This path is the exact
-  // pre-HM-5 behavior — same hits, same order, same rows.
+  // FTS-only keeps the same hits, order, and rows when semantic search is
+  // unavailable.
   if (semantic === null) {
     const rows = hits.map(toRow);
     return {
@@ -381,7 +380,7 @@ async function executeRecall(
     `🧠 Hive memory recall for '${query}' — ${outcome} (${SYSTEM_NOTE(context.from, "recall:")})`;
 
   const bundle = await buildMemoryRecallBundle(query, deps);
-  // The degradation warning rides directly under the header (defect D2): it
+  // The degradation warning rides directly under the header: it
   // is part of the envelope, not a result row, so budget clamping can never
   // cut it, and an FTS-only empty result is never mistaken for a genuine
   // no-match.

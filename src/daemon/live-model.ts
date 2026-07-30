@@ -23,7 +23,7 @@
  *
  * Codex is not guessed at. Its rollouts do not record a model name, so this
  * returns null and the spawn-time value stands, which is honest: an unknown
- * model is unknown, and decision 6's routing would rather see the intention
+ * model is unknown, and routing needs the intention
  * than a fabrication.
  */
 import { open } from "node:fs/promises";
@@ -63,14 +63,13 @@ async function readTail(path: string): Promise<string | null> {
  * This agent's own `<session>.jsonl`, named by the session id hook traffic
  * already put on its row.
  *
- * It used to be "the newest transcript in the worktree's project directory",
- * and that is a different agent's file more often than it sounds. Worktrees are
+ * Do not use the newest transcript in the worktree's project directory: it is
+ * often a different agent's file. Worktrees are
  * reused across respawns, so a fresh agent's directory still holds every dead
  * predecessor's transcript, and until its own first assistant turn lands the
- * newest file in there is the *predecessor's*. Hive stamped that model onto the
- * live row: an opus-4.8 agent reported `claude-sonnet-5`, inherited from a dead
- * sonnet spawn in the same worktree, and then silently corrected itself a turn
- * later. It read low and transiently false, which is the worst way for this
+ * newest file in there is the *predecessor's*. That can stamp a dead agent's
+ * model onto the live row until the next turn. It reads low and transiently
+ * false, which is the worst way for this
  * particular number to be wrong — the rule it feeds is "no claude agent below
  * opus-4.8", so an operator who looked at the wrong moment saw a violation that
  * was not real, and could just as easily have missed one that was.

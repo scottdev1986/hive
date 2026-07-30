@@ -573,7 +573,7 @@ export class QuotaLedger {
       this.db.database.exec(
         `ALTER TABLE quota_pools ADD COLUMN ${column} TEXT NOT NULL DEFAULT 'unknown'`,
       );
-      // A stored duration proves the window was metered. A legacy null proves
+      // A stored duration proves the window was metered. A null proves
       // nothing, so it remains unknown until a provider explicitly says more.
       this.db.database.exec(
         `UPDATE quota_pools SET ${column} = 'metered' WHERE ${duration} IS NOT NULL`,
@@ -607,10 +607,9 @@ export class QuotaLedger {
       );
       addedObservationColumns = true;
     }
-    // Rows written before per-window provenance existed carry a real reading
-    // for both windows under a single row-level stamp. Backfill them HERE,
-    // once, at the moment the columns appear: every row present then is by
-    // definition a legacy one. Doing it at read time instead would have to
+    // Rows present when per-window provenance columns are added carry a real
+    // reading for both windows under a single row-level stamp. Backfill them
+    // once when the columns appear. Doing it at read time would have to
     // guess, and there is now a second row shape that looks identical — a
     // reset-only row, whose windows are deliberately unstamped because the
     // vendor stated a boundary and no gauge. Guessing would hand that row a
@@ -1880,9 +1879,9 @@ export class QuotaLedger {
     if (row === null) return null;
     try {
       // No backfill here. A null `*ObservedAt` means exactly what the schema
-      // says — that window was never observed — because legacy rows were
-      // stamped once at migration time (see the ALTER above). Inferring it at
-      // read time cannot distinguish a legacy row from a reset-only one.
+      // says — that window was never observed. Existing rows are stamped when
+      // the columns are added; read-time inference cannot distinguish one of
+      // those rows from a reset-only row.
       return QuotaObservationSchema.parse(row);
     } catch (error) {
       throw new Error(

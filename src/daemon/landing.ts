@@ -244,7 +244,7 @@ export interface UntrackedCollision {
  * porcelain collapses a fully-untracked directory to one `dir/` line, which
  * can never match a file path the branch adds, so the most ordinary shape of
  * this collision (a user drops `assets/*.png` into the repo, an agent commits
- * them) used to sail straight past diagnosis into git's raw refusal.
+ * them) otherwise sail straight past diagnosis into git's raw refusal.
  * Identity is by content hash, never name or size: `git hash-object` on the
  * working-tree file against the branch's blob at the same path.
  */
@@ -291,8 +291,7 @@ export async function untrackedCollisions(
  * What the primary checkout can prove about a branch before anyone is asked to
  * approve anything. Both fields are three-valued on purpose: `null` is "we
  * could not read it", which is evidence of nothing and must never be read as a
- * yes (see the `unknown-read-as-permission` memory — a classifier's null
- * disarmed both guards that existed to refuse).
+ * yes. Treating a classifier's null as permission disarms refusal guards.
  *
  * Committed history only: `rev-list` and `merge-base` see the branch's commits,
  * never the working tree, so this reader cannot repeat the `git status`

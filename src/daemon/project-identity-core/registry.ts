@@ -32,7 +32,7 @@ export interface Tombstone {
   identityKey: string;
   formerHiveUuid: string;
   reason: TombstoneReason;
-  /** The evidence that used to be at this path. Kept so an audit can explain the refusal. */
+  /** The displaced path evidence retained to explain the refusal. */
   formerEvidence: FsEvidence;
 }
 export interface ProjectRegistrySnapshot {
@@ -118,7 +118,7 @@ export class ProjectRegistry {
    * This is the only reliable way to follow a move: a rename preserves inode and
    * birthtime, while a bookmark will abandon the moved directory the moment anything
    * reoccupies its old path. st_dev is deliberately excluded because mount device
-   * numbers can change across reboots. Used to *offer a rebind*, never to attach silently.
+   * numbers can change across reboots. Use it to *offer a rebind*, never to attach silently.
    */
   findByEvidence(evidence: FsEvidence): ProjectRecord | null {
     for (const record of this.byUuid.values()) {

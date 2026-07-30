@@ -1,8 +1,7 @@
-// The offline consolidation dedup pass (HiveMemory HM-5, board #122; plan
-// 2026-07-22-hivememory-epic-rework.md decision D1 layer 3): pairwise cosine
-// over the vector store, bucketed at the ratified thresholds — ≥0.95 is an
-// identical duplicate (recommend: keep newer, supersede older), 0.85–0.95 is
-// similar (recommend: human review / Possibly-related link). This runs ONLY
+// The offline consolidation pass compares vectors pairwise. Similarity at or
+// above `CONSOLIDATION_IDENTICAL_THRESHOLD` is an identical duplicate;
+// similarity at or above `CONSOLIDATION_SIMILAR_THRESHOLD` recommends human
+// review. This runs only
 // as an explicit offline pass, never inline in the write path.
 //
 // Report-first posture: without `apply` the pass changes nothing and exits
@@ -11,11 +10,11 @@
 // write paths: wiki articles supersede the older into the newer via
 // writeMemoryFact (supersedes chain, raw observations preserved, scope index
 // and log stay consistent — append + superseded_by semantics, never merged
-// bodies, per D1's pitfall rule applied to every article), episodic facts
+// bodies), episodic facts
 // invalidate with a supersededBy pointer (the row stays; bi-temporal history
 // is never destroyed). The similar bucket is NEVER auto-applied: false
 // merges destroy information irreversibly, so the bias is toward duplicate
-// bloat (D1).
+// bloat.
 //
 // The pass needs the real semantic surface: rows missing from the vector
 // store are embedded on demand via the embedding service, and when the
@@ -106,7 +105,7 @@ function candidatePairs(rows: ScannedSource[]): ConsolidationCandidate[] {
   return pairs;
 }
 
-/** The count-only form the retention sweep surfaces (WP3 wiring): how many
+/** The count-only form the retention sweep surfaces: how many
  * stored-vector pairs sit at or above the similar threshold. Cheap by
  * contract — no embedding, no applying, just the drift signal in the sweep
  * report so a growing duplicate pile is visible in daemon logs. */

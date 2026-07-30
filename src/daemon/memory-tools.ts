@@ -195,8 +195,7 @@ export function registerMemoryTools(
             reportedRawPath,
             similarCandidates,
           ),
-          // Defect D2: what actually happened to this write's vector
-          // projection — "indexed", "queued", or "unavailable:<state>".
+          // What happened to this write's vector projection.
           embedding: written.embedding,
         },
         "fact",
@@ -259,8 +258,7 @@ export function registerMemoryTools(
     },
   );
 
-  // The L0/L1 read side of the episodic store (HiveMemory HM-1 WP2). One
-  // tool, declared classes, server-enforced per-class token ceilings with
+  // One episodic query tool serves declared classes with per-class token ceilings,
   // loud in-band truncation, and scoping derived from the caller's
   // capability identity and the daemon's own project — there is no project
   // parameter at all.
@@ -296,8 +294,8 @@ export function registerMemoryTools(
     },
   );
 
-  // The L2 read side of the episodic store (HiveMemory HM-2 WP4): session
-  // digests with drill-down. The digest is a hint-not-authority navigation
+  // Session digests provide drill-down into the episodic store. The digest is
+  // a hint-not-authority navigation
   // aid compiled deterministically from the typed record; the eventId
   // drill-down is the hint-to-authority path to the exact source rows.
   server.registerTool(
@@ -327,8 +325,8 @@ export function registerMemoryTools(
     },
   );
 
-  // The focused pitfall surface (HiveMemory HM-2 WP5): the mistake-harvest
-  // read path. Pitfall-kind articles only — an agent checking "has anyone
+  // The focused pitfall surface reads pitfall-kind articles only. An agent
+  // checking "has anyone
   // burned themselves here before" never wades through the whole wiki.
   // search with no query lists every pitfall (optionally scope-filtered);
   // search with a query runs the same FTS memory_search uses, filtered to
@@ -473,10 +471,10 @@ export function registerMemoryTools(
           : { confidence: input.confidence }),
         ...(input.validAt === undefined ? {} : { validAt: input.validAt }),
       });
-      // Semantic-leg index maintenance (HM-5): failure-isolated, and a later
+      // Semantic index maintenance is failure-isolated, and a later
       // invalidate is covered by the prune pass on the rebuild boundary —
       // only currently-believed facts stay indexed. The outcome rides the
-      // response (defect D2).
+      // response.
       const embedding: MemoryEmbeddingWriteOutcome =
         deps.embeddingIndex === null
           ? "unavailable:disabled"
@@ -566,7 +564,7 @@ export function registerMemoryTools(
       const omittedPitfalls = bundle.pitfalls.length - keptPitfalls.length;
       const omittedArticles = bundle.articles.length - keptArticles.length;
       const omitted = omittedPitfalls + omittedArticles;
-      // Defect D2: the envelope discriminates hybrid / degraded:<state> /
+      // The envelope discriminates hybrid / degraded:<state> /
       // disabled so FTS-only-because-embeddings-are-down is never
       // indistinguishable from a genuine keyword-only result. The warning is
       // envelope-level (field + note block), never a row — budget clamping

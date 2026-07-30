@@ -3,11 +3,11 @@
  *
  * The orchestrator is not a spawned agent and has no agents-table row (db.ts's
  * `setOrchestratorTerminal` is explicit about it), so it has no `status` column
- * to read. The Workspace used to paper over that by inventing the status word
+ * to read. Do not invent the status word
  * "running" in Swift — a word in no vocabulary here — which its dot correctly
  * degraded to "unknown", and the root's dot was therefore gray forever. The root
  * is alive by definition whenever the Workspace is running; gray was a lie of
- * omission. See docs/daemon/orchestrator-status.md.
+ * omission.
  *
  * The root's turns ARE observable. Claude hooks post `turn-start` on
  * UserPromptSubmit and `turn-end` on Stop; Codex rollouts persist exact

@@ -1,5 +1,5 @@
-// Cross-project pitfall promotion (HiveMemory plan D3, board #71/#119 §5):
-// the ONLY way memory crosses a project boundary. A human/queen-approved copy
+// This is the only way memory crosses a project boundary. A human- or
+// queen-approved copy
 // of a generalized REPO-scope pitfall lands in the GLOBAL wiki as a new
 // article with `origin_project` provenance. Facts and raw events are never
 // promoted, no scope is ever shared, and the copy happens only after a
@@ -76,7 +76,7 @@ export function scanPromotionRedaction(
 
 /**
  * The `origin_project` provenance block appended to the promoted copy's body
- * (D3: project hiveUuid + original repo-scope id + promotion date), so a
+ * (project hiveUuid + original repo-scope id + promotion date), so a
  * global article always names the project and article it was generalized
  * from.
  */

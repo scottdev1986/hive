@@ -1,14 +1,13 @@
-// The semantic memory leg (HiveMemory HM-5 core, board #122; plan
-// 2026-07-22-hivememory-epic-rework.md decision D4): local fastembed-class
-// ONNX embeddings plus the vector index maintained in the episodic store.
+// Semantic memory uses local ONNX embeddings plus the vector index maintained
+// in the episodic store.
 //
 // Posture, mirroring graphify's healthy/unhealthy stance: the semantic
 // surface is either AVAILABLE (model loaded, dimension asserted) or
 // UNAVAILABLE with a plain-language detail — it NEVER crashes the daemon and
 // NEVER fabricates vectors (hash pseudo-embeddings are the named failure
-// mode from the design research). When it is unavailable, recall degrades to
-// exactly today's FTS-only bundle. There is deliberately no automatic
-// fallback machinery (D4): `embedding_provider: "api"` is a manual escape
+// mode). When it is unavailable, recall degrades to the FTS-only bundle. There
+// is deliberately no automatic fallback machinery: `embedding_provider:
+// "api"` is a manual escape
 // hatch, not a failover — the knob parses and reports an honest
 // not-configured/not-implemented state, and that is all it does.
 //
@@ -18,12 +17,11 @@
 // Hive-owned models dir (~/.hive/models, HIVE_HOME-respecting), not any
 // global default cache.
 //
-// Where the fastembed runtime itself comes from (defect D1): the deployed
-// daemon is a single-file `bun build --compile` binary, and a compiled binary
-// cannot resolve a package's bare-specifier dependency graph from a real
-// node_modules directory — fastembed's own `import "onnxruntime-node"` fails,
+// The deployed daemon is a single-file `bun build --compile` binary. A compiled
+// binary cannot resolve a package's bare-specifier dependency graph from a
+// real node_modules directory — fastembed's own `import "onnxruntime-node"` fails,
 // and the onnxruntime .node/.dylib natives cannot ride inside the single
-// file. What a compiled binary CAN do (spiked 2026-07-22) is dynamic-import a
+// file. A compiled binary can dynamic-import a
 // pre-bundled single ESM file by absolute path, whose internal runtime
 // `require()` of relative native assets then loads fine. So the runtime ships
 // as an EXTERNAL bundle under ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME
@@ -59,8 +57,8 @@ export type MemoryEmbeddingStatus =
   | { state: "unavailable"; detail: string };
 
 /** The one-word state every user-facing surface (recall envelope, write
- * responses, hive_status) carries (defect D2). The four embedding-* labels
- * are the distinct D1 runtime failure modes; "unavailable" is any other
+ * responses, hive_status) carries. The four embedding-* labels are the
+ * distinct runtime failure modes; "unavailable" is any other
  * failure; "disabled" is provider config that keeps the leg off. */
 export type MemoryEmbeddingStateLabel =
   | "ready"
@@ -79,7 +77,7 @@ const DISTINGUISHED_FAILURE_LABELS = [
   "embedding-runtime-unverified",
 ] as const;
 
-/** Extract the state label an unavailable detail string carries. The D1
+/** Extract the state label an unavailable detail string carries. The
  * loader throws errors whose message starts with the distinct label, and the
  * service's failure detail preserves it — anything else is the generic
  * "unavailable". */
@@ -92,7 +90,7 @@ export function embeddingStateLabelFromDetail(
   return "unavailable";
 }
 
-/** What actually happened to a write's vector projection (defect D2):
+/** What actually happened to a write's vector projection:
  * "indexed" — the vector is stored; "queued" — the first-ever embed is
  * loading the model, so the projection runs in the background rather than
  * blocking the write inside the memory lock; "unavailable:<state>" — the
@@ -107,8 +105,8 @@ export interface MemoryEmbeddingConfig {
   model: MemoryEmbeddingModel;
 }
 
-/** The env var the "api" knob checks. HM-5 ships no API provider; the knob
- * exists so the config surface is ratified and the error is honest (D4). */
+/** The env var the "api" knob checks. Hive ships no API provider; the knob
+ * exists so the config surface is accepted and the error is honest. */
 export const MEMORY_EMBEDDING_API_KEY_ENV = "HIVE_EMBEDDING_API_KEY";
 
 /** Where local models cache. Hive-owned, HIVE_HOME-respecting — never the
@@ -325,8 +323,8 @@ async function embedderFromRuntime(
   };
 }
 
-/** Load a local fastembed model. The runtime resolves dynamically (external
- * bundle, then repo node_modules — see the header) so nothing pays the module
+/** Load a local fastembed model. The runtime resolves from the external bundle
+ * and then repo node_modules, so nothing pays the module
  * (or the ~90 MB model download) until the first real embed. */
 async function loadLocalEmbedder(
   model: MemoryEmbeddingModel,
@@ -388,7 +386,7 @@ export class MemoryEmbeddingService {
     private readonly options: {
       cacheDir?: string;
       load?: MemoryEmbedderLoad;
-      /** State-transition sink (defect D2): the daemon wires its durable log
+      /** State-transition sink: the daemon wires its durable log
        * here so a READY/UNAVAILABLE transition persists somewhere readable —
        * console output alone has no reader on the deployed daemon. */
       log?: (message: string) => void;
@@ -422,7 +420,7 @@ export class MemoryEmbeddingService {
     return { state: "pending" };
   }
 
-  /** The one-word state for user-facing surfaces (defect D2). The api knob
+  /** The one-word state for user-facing surfaces. The api knob
    * reports "disabled": it is provider config keeping the leg off, not a
    * runtime failure. */
   stateLabel(): MemoryEmbeddingStateLabel {
@@ -444,8 +442,7 @@ export class MemoryEmbeddingService {
     }
     return (
       'embedding_provider is "api" and an API key is set, but no API ' +
-      "embedding provider ships in this build (HM-5 is local-only per plan " +
-      "D4) — semantic memory is unavailable"
+      "embedding provider ships in this build — semantic memory is unavailable"
     );
   }
 
@@ -515,8 +512,8 @@ export interface SemanticArticleHit {
  * store's vector table on the memory write paths and answers brute-force
  * cosine top-k queries over it. Index maintenance is failure-isolated — an
  * embedding failure is logged and the write it rode on still succeeds, with
- * the projection's outcome reported back (indexed/queued/unavailable:<state>,
- * defect D2) so the write response can say what actually happened; recall
+ * the projection's outcome reported back (indexed/queued/unavailable:<state>)
+ * so the write response can say what actually happened; recall
  * with an unavailable surface returns null (the caller then renders the
  * FTS-only bundle, labeled degraded).
  */

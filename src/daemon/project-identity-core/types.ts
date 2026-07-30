@@ -99,7 +99,7 @@ export type RebindReason =
 
 export type SetupReason =
   | "NEW_PROJECT"
-  /** The path was previously bound to a Hive that no longer lives here. Never auto-inherit. */
+  /** The path is bound to a Hive that no longer lives here. Never auto-inherit. */
   | "TOMBSTONED_PATH";
 
 /** The resolver never mutates on ambiguity; it returns a state a human must resolve. */
@@ -124,7 +124,7 @@ export type Resolution =
       key: ProjectKey;
       reason: SetupReason;
       evidence: FsEvidence;
-      /** Set when a tombstone covers this path: the Hive that used to live here. */
+      /** Set when a tombstone covers this path: the Hive recorded there. */
       formerHiveUuid?: string;
       detail?: string;
     }
