@@ -276,6 +276,67 @@ describe("WP7 MCP status tools", () => {
     expect(db.getAgentByName("maya")?.status).toBe("idle");
   });
 
+  test("a phantom Grok subagent session proves liveness but rebinds nothing", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent({
+      ...agent(),
+      tool: "grok",
+      model: "grok-4",
+      status: "idle",
+      toolSessionId: "grok-session",
+    });
+    const runId = "018f1e90-7b5a-7cc0-8000-000000000232";
+    db.insertProviderRun({
+      runId,
+      agentId: "agent-maya",
+      terminal: locator,
+      provider: "grok",
+      model: "grok-4",
+      effort: null,
+      conversationId: "grok-session",
+      pid: 4200,
+      startToken: "4200:1",
+      foregroundProcessGroupId: 4200,
+      capabilityEpoch: 0,
+      launchGrantId: "grok-subagent-test",
+      startedAt: AT,
+      endedAt: null,
+      state: "running",
+      exitReason: null,
+    });
+
+    // A grok scheduled task spawns a subagent session in the agent's
+    // worktree; its hooks carry the agent's run id with the subagent's own
+    // session id. It must not mark the idle agent working, must not become
+    // the recorded session identity, and must not enter the status spine —
+    // but it is still proof a process with this name is alive.
+    await daemon.processEvent({
+      kind: "turn-start",
+      agentName: "maya",
+      providerRunId: runId,
+      timestamp: "2026-07-16T12:00:01.000Z",
+      toolSessionId: "phantom-subagent-session",
+    });
+    const after = db.getAgentByName("maya");
+    expect(after?.status).toBe("idle");
+    expect(after?.toolSessionId).toBe("grok-session");
+    expect(after?.lastEventAt).toBe("2026-07-16T12:00:01.000Z");
+    expect(
+      daemon.status
+        .listEvents()
+        .filter((event) => event.kind === "status.turn"),
+    ).toHaveLength(0);
+
+    await daemon.processEvent({
+      kind: "turn-start",
+      agentName: "maya",
+      providerRunId: runId,
+      timestamp: "2026-07-16T12:00:02.000Z",
+      toolSessionId: "grok-session",
+    });
+    expect(db.getAgentByName("maya")?.status).toBe("working");
+  });
+
   test("keeps one agent entity across live, snapshot, and resumed reduction", async () => {
     const { daemon } = harness();
     await daemon.processEvent({

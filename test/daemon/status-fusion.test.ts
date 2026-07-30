@@ -127,6 +127,53 @@ describe("status fusion", () => {
     });
   });
 
+  test("a source superseding its own turn history is progression, not conflict", () => {
+    const status = fuseAgentStatus(
+      [
+        event(
+          1,
+          "status.turn",
+          "provider-hook",
+          { value: "working" },
+          "2026-07-16T12:00:00.000Z",
+        ),
+        event(
+          2,
+          "status.turn",
+          "provider-hook",
+          { value: "idle" },
+          "2026-07-16T12:00:05.000Z",
+        ),
+        event(
+          3,
+          "status.turn",
+          "provider-hook",
+          { value: "working" },
+          "2026-07-16T12:00:10.000Z",
+        ),
+      ],
+      identity,
+      new Date("2026-07-16T12:00:11.000Z"),
+    );
+    expect(status.turnState).toMatchObject({ value: "working" });
+    expect(status.conflicts).toEqual([]);
+  });
+
+  test("two sources currently disagreeing on the turn still conflict", () => {
+    const status = fuseAgentStatus(
+      [
+        event(1, "status.turn", "provider-hook", { value: "idle" }),
+        event(2, "status.turn", "provider-app-server", { value: "working" }),
+      ],
+      identity,
+      new Date(AT),
+    );
+    expect(status.turnState).toMatchObject({ value: "working" });
+    expect(status.conflicts).toEqual([
+      "turnState: provider-hook=idle conflicts with provider-app-server=working",
+    ]);
+  });
+
   test("falls back to labeled low-confidence telemetry when hooks are missing", () => {
     const status = fuseAgentStatus(
       [

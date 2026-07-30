@@ -71,6 +71,12 @@ export async function processEvent(
     // entirely left every agent with a stale or missing run row reading as
     // silent — frozen lastEventAt, "no turn events at all" deafness
     // warnings — for its whole life.
+    // The event's session identity is exactly the claim that was rejected,
+    // so it must never rebind toolSessionId: a grok scheduled task spawns
+    // subagent sessions in the agent's worktree whose hooks carry the
+    // agent's run id with the subagent's own session id, and adopting that
+    // id makes the subagent session the crash-resume target and the
+    // model/context lookup key.
     if (value.kind !== "tool-boundary") deps.db.insertEvent(value);
     const rejected = deps.db.getAgentByName(value.agentName);
     if (
@@ -82,9 +88,6 @@ export async function processEvent(
       deps.db.upsertAgent({
         ...rejected,
         lastEventAt: new Date(value.timestamp).toISOString(),
-        ...(value.toolSessionId === undefined
-          ? {}
-          : { toolSessionId: value.toolSessionId }),
       });
     }
     return;

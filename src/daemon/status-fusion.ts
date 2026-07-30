@@ -178,7 +178,27 @@ const choose = <T>(
   );
   const winner = ordered[0];
   if (winner === undefined) return null;
+  // A source that later reported a different value superseded itself; that is
+  // progression, so only each source's newest candidate may dispute the
+  // winner. Comparing the whole history made every agent with one completed
+  // turn report "provider-hook=idle conflicts with provider-hook=working"
+  // on every fusion for the rest of its life.
+  const sourceKey = (candidate: Candidate<T>): string =>
+    `${candidate.event.source.kind}:${candidate.event.source.id}`;
+  const newestPerSource = new Map<string, number>();
+  for (const candidate of ordered) {
+    const key = sourceKey(candidate);
+    const observedAt = Date.parse(candidate.event.source.observedAt);
+    const prior = newestPerSource.get(key);
+    if (prior === undefined || observedAt > prior) {
+      newestPerSource.set(key, observedAt);
+    }
+  }
   for (const candidate of ordered.slice(1)) {
+    const observedAt = Date.parse(candidate.event.source.observedAt);
+    if (observedAt < (newestPerSource.get(sourceKey(candidate)) ?? 0)) {
+      continue;
+    }
     if (candidate.value !== winner.value) {
       conflicts.push(
         `${field}: ${candidate.event.source.kind}=${String(candidate.value)} conflicts with ` +
