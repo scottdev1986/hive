@@ -1,7 +1,7 @@
 import Foundation
 import WorkspaceCore
 
-/// The Model Control Center copy catalog — exact strings from the spec (§13).
+/// The Model Control Center copy catalog.
 /// Do not rephrase in ways that soften "unknown". There is deliberately no
 /// "falls back to any enabled model" string anywhere: that behavior does not
 /// exist and must not be promised.
@@ -53,7 +53,7 @@ enum MCCCopy {
     /// absence is attributed to the PLAN, positively and confidently, because
     /// the probe answered: saying "unknown" here would blame a read that
     /// worked, and saying nothing at all would leave a reader who came looking
-    /// for this window unable to tell the two apart (§2.3).
+    /// for this window unable to tell the two apart.
     static let badgeNotMetered = "Not metered"
     static func meterNotMeteredBody(_ windowLabel: String) -> String {
         "Your plan does not meter a \(windowLabel.lowercased()). " +

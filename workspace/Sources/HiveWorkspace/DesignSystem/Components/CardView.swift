@@ -2,7 +2,7 @@ import AppKit
 
 /// The grouped-inset card every settings surface sits on: rounded continuous
 /// corners, a quiet fill over the window background, a hairline stroke.
-/// `dashed` marks an unavailable provider (spec §7.4) — a visibly different
+/// `dashed` marks an unavailable provider with a visibly different
 /// border that does not rely on color.
 class CardView: NSView {
 
@@ -57,7 +57,7 @@ class CardView: NSView {
 }
 
 /// The muted inset block inside a card — the unmetered panel and override
-/// notes use it. Secondary grouped fill, never error red (spec §7.5).
+/// notes use it. Secondary grouped fill, never error red.
 class InsetPanelView: NSView {
 
     let contentStack = NSStackView()

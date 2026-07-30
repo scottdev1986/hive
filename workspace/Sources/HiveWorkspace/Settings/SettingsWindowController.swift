@@ -27,8 +27,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         container.view = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 820))
         // Pin the window's idea of the content size. Without this, AppKit
         // adopts the content's Auto Layout FITTING width at display time and
-        // overrides any frame we set (this window once opened wider than the
-        // screen that way).
+        // overrides any frame we set and can open the window wider than the screen.
         container.preferredContentSize = NSSize(width: width, height: 820)
 
         let window = NSWindow(contentViewController: container)
@@ -68,8 +67,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             width: Theme.Metric.minContentWidth + 2 * Theme.Space.page, height: 420)
         // The user's own saved frame wins when one exists; otherwise the
         // window opens at a sensible default CLAMPED TO THE SCREEN — it must
-        // never open off it (AppKit's fitting-size pass once opened this
-        // window wider than the display). Verification runs (explicit width)
+        // never open off it; AppKit's fitting-size pass can open this window
+        // wider than the display. Verification runs (explicit width)
         // skip the autosave entirely so they never fight a saved frame and
         // never overwrite the user's.
         let restored: Bool

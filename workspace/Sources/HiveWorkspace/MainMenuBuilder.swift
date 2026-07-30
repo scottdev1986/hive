@@ -15,7 +15,6 @@ enum MainMenuBuilder {
         appMenu.addItem(withTitle: "About Hive Workspace",
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        // The Model Control Center (docs/routing/model-control-center.md).
         // Resolved through the responder chain to the AppDelegate, like the
         // autonomy items below.
         appMenu.addItem(withTitle: "Settings…",

@@ -7,7 +7,7 @@ import WorkspaceCore
 /// `hive model-control-snapshot` (capabilities, billing, quota; always real)
 /// and `hive routing export` (the daemon's policy document). When the policy
 /// store answers, IT is the backend: every toggle persists through the
-/// daemon's CAS contract. When it cannot (a daemon that predates the store),
+/// daemon's CAS contract. When the daemon does not expose the store,
 /// the backend falls back to the loudly-labeled in-memory provisional policy
 /// and the UI says so — changes then do not persist, and nothing pretends
 /// they do.
@@ -33,7 +33,7 @@ final class ModelControlDataSource {
     enum PolicyBackend {
         case daemon(RoutingPolicyDocument)
         /// PLACEHOLDER — in-memory only. `reason` is the measured explanation
-        /// (usually: the running daemon predates the policy store).
+        /// (usually: the running daemon does not expose the policy store).
         case placeholder(ModelControlPolicy, reason: String)
     }
 

@@ -2,7 +2,7 @@ import AppKit
 import WorkspaceCore
 
 /// One model under a provider card: enable switch, name + id, three-valued
-/// effort control, and the override chrome (spec §7.4).
+/// effort control, and the override chrome.
 ///
 /// The switch is a FINANCIAL CONSENT CONTROL: flipping it on authorises Hive
 /// to spend on this model, with no later prompt. Rows whose billing cannot be

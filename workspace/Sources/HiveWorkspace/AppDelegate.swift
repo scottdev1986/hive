@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var composerLeases: ComposerLeaseStore?
     /// The daemon's live agent-autonomy dial as last reported by the feed or
     /// confirmed by a `hive autonomy` set. nil means unknown (no feed yet, or
-    /// the daemon predates the dial) — the menu items disable rather than
+    /// the daemon does not expose the dial) — the menu items disable rather than
     /// guess.
     private(set) var currentAutonomy: String?
     /// How long to wait before restarting a feed that exited. One second in the

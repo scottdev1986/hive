@@ -165,10 +165,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// The one shared command entry: menu items, keyboard shortcuts, clicks,
     /// double-clicks, and accessibility actions all end here.
     func dispatch(_ command: WorkspaceCommand) {
-        // Closing an agent pane closes the PANE, never the agent (#64).
-        // This branch used to shell out to `hive kill`, which is how three
-        // agents died on 2026-07-20 from close gestures the user never meant
-        // as kills. The product truth is #60 in reverse: terminal lifecycle is
+        // Never kill an agent when closing its pane: terminal lifecycle is
         // decoupled from agent lifecycle, so the view goes away and the agent
         // runs on headless. The userClosed suppression keeps the feed from
         // rebuilding the pane while that agent is still listed live — ending
@@ -251,7 +248,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// gains one or two agents — every ordinary case, and every case the pane
     /// contract tests assert — still has its views the moment `applyFeed`
     /// returns. Only the surplus of an unusually wide snapshot is deferred,
-    /// which is the only case that was ever too much for one turn.
+    /// because that case exceeds one turn's budget.
     private func admitPane(_ paneID: PaneID) {
         guard pendingAdmissions.isEmpty, admittedThisTurn < Self.paneAdmissionsPerTurn else {
             pendingAdmissions.append(paneID)

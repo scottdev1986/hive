@@ -48,7 +48,7 @@ class SettingsPageController: NSViewController {
         // and wide windows get a column, never a sprawl. Its priority sits
         // BELOW NSLayoutPriorityWindowSizeStayPut (500): at 500 or above the
         // layout pass resizes the WINDOW to satisfy it instead of shrinking
-        // the column — which is how this window once grew past the screen.
+        // the column, which can grow the window past the screen.
         let fullWidth = contentStack.widthAnchor.constraint(
             equalTo: documentView.widthAnchor, constant: -2 * Theme.Space.page)
         fullWidth.priority = .init(490)
@@ -267,7 +267,7 @@ class SettingsPageController: NSViewController {
     @objc func refreshTapped(_ sender: Any?) {
         // Re-probe. If a value that was known becomes unknown, the meter
         // changes state — the snapshot is replaced wholesale, so nothing
-        // stale can keep wearing a fresh label (spec §14).
+        // stale can keep wearing a fresh label.
         dataSource.refresh()
     }
 }

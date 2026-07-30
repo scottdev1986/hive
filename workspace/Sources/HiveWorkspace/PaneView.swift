@@ -32,11 +32,11 @@ final class PaneView: NSView {
     /// `update(state:)` rewrites detailLabel and re-hides failureBadge on every
     /// feed tick, so a failure that is not re-applied there is visible for one
     /// tick and then gone — leaving a pane that reads healthy while nothing is
-    /// attached. Terminal once set: §26 give-up never un-gives-up.
+    /// attached. Once set, terminal failure remains visible.
     private(set) var terminalFailure: (detail: String, badge: String, evidence: String)?
 
     /// The renderer is past its escalating retry budget but still reconnecting
-    /// (#90). It clears when recovery succeeds instead of latching give-up.
+    /// It clears when recovery succeeds instead of latching give-up.
     private var rendererRecovering: String?
 
     /// Last header text the feed wrote, so a recovered renderer restores it
@@ -45,7 +45,7 @@ final class PaneView: NSView {
 
     /// Installs the same exact-generation sessiond terminal for Queen or an
     /// agent. Role changes the session's command and metadata, never the pane
-    /// lifecycle (§26).
+    /// lifecycle.
     func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
         if let current = sessiondTerminal {
             guard current.paneLocator != terminal.paneLocator else {
@@ -61,7 +61,7 @@ final class PaneView: NSView {
             terminalView.frame = contentView.bounds
             contentView.addSubview(terminalView)
             sessiondTerminal = terminal
-            // §26 bounded recovery: surface a visible failure on the pane
+            // Surface a visible failure on the pane after bounded recovery
             // instead of a silently frozen frame (fires on the main thread from
             // the recovery timer). A renderer that is still reconnecting says
             // so transiently, and only a loss retrying cannot fix latches.
@@ -280,7 +280,7 @@ final class PaneView: NSView {
         detailLabel.toolTip = terminalFailure.evidence
     }
 
-    /// #90: the renderer is past its escalating budget but still reconnecting.
+    /// The renderer is past its escalating budget but still reconnecting.
     /// nil clears it, and it never touches the sticky give-up, which would
     /// leave a dead-looking pane that is in fact recovering.
     func showRendererRecovering(_ evidence: String?) {

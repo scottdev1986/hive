@@ -742,7 +742,7 @@ final class SmokeRunner {
                   "the indicator follows a keyboard focus move")
         }
 
-        // 9. Closing a pane closes the PANE, never the agent (#64): the attach
+        // 9. Closing a pane closes the pane, never the agent: the attach
         //    client dies, the pane view goes away, and no kill is issued —
         //    the agent's session survives its pane.
         if let closeTarget {

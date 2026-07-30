@@ -6,8 +6,8 @@ import WorkspaceCore
 /// exhaustion control.
 ///
 /// The language is fallback language everywhere: rank labels are "Primary",
-/// "2nd", "3rd"; nothing here ever says or implies "also run" or "ensemble"
-/// (spec §8.2). An empty category is informational (it uses the Default
+/// "2nd", "3rd"; nothing here ever says or implies "also run" or "ensemble".
+/// An empty category is informational (it uses the Default
 /// chain); an exhausted deliberate chain is a different fact with its own
 /// per-category control (Refuse vs use Default), defaulting to Refuse.
 final class ChainSectionView: NSView {
@@ -61,7 +61,6 @@ final class ChainSectionView: NSView {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // ── Header
         let titleText: String
         var subtitleText: String?
         switch kind {
@@ -89,7 +88,6 @@ final class ChainSectionView: NSView {
             return
         }
 
-        // ── Empty chain
         if entries.isEmpty {
             switch kind {
             case .category:
@@ -110,7 +108,6 @@ final class ChainSectionView: NSView {
             return
         }
 
-        // ── Rows
         let statuses = entries.map { dataSource.linkStatus($0) }
         let allIneffective = !statuses.contains(.effective)
         for (index, entry) in entries.enumerated() {
@@ -156,7 +153,6 @@ final class ChainSectionView: NSView {
 
         stack.addArrangedSubview(makeAddButton())
 
-        // ── Exhaustion control (categories with a deliberate chain only).
         // Hidden on the daemon backend until the store carries the field —
         // a control that silently does not persist is a lie.
         if case .category(let category) = kind, dataSource.canEditExhaustion {
@@ -275,7 +271,6 @@ final class ChainSectionView: NSView {
 
     @objc private func addEntry(_ sender: NSMenuItem) {
         guard let box = sender.representedObject as? ChainEntryBox else { return }
-        // No duplicate chain targets (governing doc §2.3 validation).
         guard !chain.contains(where: { $0.targetKey == box.entry.targetKey }) else { return }
         writeChain(chain + [box.entry])
     }

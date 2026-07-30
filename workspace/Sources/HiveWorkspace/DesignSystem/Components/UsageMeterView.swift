@@ -3,7 +3,6 @@ import WorkspaceCore
 
 /// One usage window: label, track, value, reset caption.
 ///
-/// The honesty contract is structural here (spec §7.6):
 /// - `.measured` draws a determinate fill; "0% used" only ever means a real 0.
 /// - `.unknown` draws NO track at all — a dotted rule and "Usage unknown".
 ///   There is no code path that renders an empty bar for missing data.
@@ -19,7 +18,7 @@ final class UsageMeterView: NSView {
     private let topRow = NSStackView()
     private let stack = NSStackView()
 
-    /// Near-limit thresholds as fractions of REMAINING (spec §3.3). These are
+    /// Near-limit thresholds as fractions of remaining capacity. These are
     /// the shipped config defaults; a later read surface can carry live values.
     private let warningRemainingPct: Double
     private let criticalRemainingPct: Double

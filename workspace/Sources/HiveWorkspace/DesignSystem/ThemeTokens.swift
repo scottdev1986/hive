@@ -2,13 +2,12 @@ import AppKit
 
 /// THE HIVE WORKSPACE DESIGN SYSTEM — tokens.
 ///
-/// This file, the components beside it in `DesignSystem/Components/`, and the
-/// rules in `docs/workspace/ui-design-system.md` are the one
-/// visual language for the whole app: settings, terminal pane chrome, the
+/// These tokens and the components beside them form the visual language for
+/// the whole app: settings, terminal pane chrome, the
 /// agent feed, the attention queue, headers, and status indicators alike.
 /// Build new surfaces from these tokens; do not invent parallel ones.
 ///
-/// Ground rules (the doc has the full versions):
+/// Ground rules:
 /// - System semantic colors and dynamic derivatives only — light/dark, the
 ///   user's accent color, and Increase Contrast come for free. No hex that
 ///   works in one appearance.
@@ -80,9 +79,7 @@ extension Theme {
 
     /// The app-wide ramp. Roles, not places: a terminal pane header and a
     /// settings card header at the same hierarchy level use the same token.
-    /// (The legacy top-level constants `bodyFont` / `monoFont` / `headerFont`
-    /// / `captionFont` in Theme.swift predate this ramp and map to `body`,
-    /// `monoBody`, `headline`, and `caption`.)
+    /// Top-level font aliases map to this ramp so every surface shares roles.
     enum Font {
         /// Page titles (one per window).
         static let largeTitle = NSFont.systemFont(ofSize: 22, weight: .semibold)

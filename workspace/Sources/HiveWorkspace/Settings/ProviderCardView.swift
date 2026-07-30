@@ -4,7 +4,7 @@ import WorkspaceCore
 /// One provider: official mark, title, master toggle, billing chips, honest
 /// usage block, and the disclosure into its model rows.
 ///
-/// State matrix per spec §7.4. The usage block mounts exactly one of:
+/// The usage block mounts exactly one of:
 /// - `UsageMeterView`s (metered, with per-window unknown/stale states)
 /// - a silent-feed unknown block (metered vendor, no reading)
 /// - `UnmeteredPanelView` (vendor publishes no capacity — deliberate)
@@ -134,7 +134,7 @@ final class ProviderCardView: CardView {
         let billing = snapshot?.billing[provider.rawValue] ?? nil
         switch BillingChip.derive(from: billing) {
         case .paidOverflowOff:
-            // Calm: the wallet is safe. Never a nag (spec §3.4).
+            // Calm: the wallet is safe. Never a nag.
             chips.append(CapsuleBadge(
                 text: MCCCopy.badgePaidOverflowOff, symbol: "lock", style: .neutral))
         case .creditsAvailable:
@@ -333,7 +333,7 @@ final class ProviderCardView: CardView {
     }
 }
 
-/// The unmetered vendor panel (spec §7.5): same card chrome as everyone else,
+/// The unmetered vendor panel: same card chrome as everyone else,
 /// a muted inset, `info.circle`, and copy that names the condition. No hollow
 /// meter track, no error red, no bare "N/A" — this vendor is a first-class
 /// citizen with an unmeasurable surface, and the panel must look designed.

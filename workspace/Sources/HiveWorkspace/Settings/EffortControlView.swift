@@ -1,7 +1,7 @@
 import AppKit
 import WorkspaceCore
 
-/// The three-valued effort control (spec §2.4). Three states, three visibly
+/// The three-valued effort control. Three states, three visibly
 /// different treatments — a picker only ever exists when the vendor listed
 /// levels, and the two no-picker states carry different words because they
 /// are different facts:

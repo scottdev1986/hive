@@ -4,7 +4,7 @@ import WorkspaceCore
 /// Display metadata for providers. The well-known vendors get their official
 /// marks and product titles; a provider this table has never heard of still
 /// renders — its own id as the title, an SF Symbol as the mark — so a fourth
-/// vendor appears on the screen instead of vanishing from it (spec §3.1).
+/// vendor appears on the screen instead of vanishing from it.
 enum ProviderBranding {
 
     static func title(for id: ProviderID) -> String {
@@ -38,7 +38,7 @@ enum ProviderBranding {
 
 /// The official vendor mark, tinted to `labelColor` as a template image so it
 /// is dark-safe by construction. A missing asset falls back to an SF Symbol —
-/// never a broken image frame (spec §12).
+/// never a broken image frame.
 final class ProviderMarkView: NSImageView {
 
     init(provider: ProviderID, size: CGFloat = Theme.Metric.markSize) {

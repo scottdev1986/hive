@@ -3,7 +3,7 @@ import HiveTerminalKit
 import WorkspaceCore
 
 /// Drives one pane's `HiveTerminalView` against the pane's EXACT sessiond
-/// session (B2.2: attach + live output; input is B2.3).
+/// session, including attach, live output, and input.
 ///
 /// The fence is the invariant: every attach uses the exact `sessionLocator`
 /// held by the pane — never a name lookup — and a grant whose locator differs
@@ -28,8 +28,8 @@ final class SessiondPaneTerminal {
     private var hasAttachedSuccessfully = false
     private(set) var degraded = false
     /// Reserved for conditions retrying cannot fix. A recoverable loss must
-    /// never land here: a resting "renderer disconnected" pane is the defect
-    /// #90 rules out.
+    /// never land here: a resting "renderer disconnected" pane is a defect.
+    /// Retryable failures remain visible without permanently giving up.
     private(set) var gaveUp = false
     /// The current failure reason while degraded or given up (nil while live).
     private(set) var lastFailure: String?
@@ -102,19 +102,19 @@ final class SessiondPaneTerminal {
     func start() {
         guard !hasStarted, !detached else { return }
         hasStarted = true
-        // Apply C1 theme BEFORE attach so journal replay paints onto the
-        // themed surface. applyHiveConfiguration after processOutput can
-        // wipe the VT (blank pane while journal is full — hubert finding).
+        // Apply the theme before attach so journal replay paints onto the
+        // themed surface. Applying configuration after processOutput can wipe
+        // the VT while the journal is full, leaving a blank pane.
         view?.prepareThemeBeforeAttach()
         beginAttach(afterSeq: 0)
     }
 
     /// Renderer detach only: the logical pane, the session, and the daemon's
-    /// close/kill authority are untouched (§26 — detach never claims close).
+    /// close/kill authority are untouched. Detach never claims close.
     func detach() {
         detached = true
         stopRecovery()
-        // #40: clean release before transport close so host claim does not orphan.
+        // Release the claim before closing transport so the host claim cannot orphan.
         view?.releaseClaimBestEffort()
         transport?.close()
         transport = nil
@@ -180,8 +180,7 @@ final class SessiondPaneTerminal {
             // panes stalled the main queue for 10,000 ms; off main the worst
             // stall in the same run was 1.9 ms.
             //
-            // Only the fence and the publish stay on main, and the panes now
-            // attach concurrently rather than one after another.
+            // Only the fence and publish stay on main so panes attach concurrently.
             let client = try view.prepareAttach(
                 grant: grant,
                 afterSeq: afterSeq,
@@ -291,9 +290,7 @@ final class SessiondPaneTerminal {
                     // keystroke. pumpHostFrame mirrors the cheap UI state to
                     // main on its own.
                     //
-                    // No coalescing: batching only ever existed to cut the
-                    // number of main-queue blocks. Off the main queue there is
-                    // nothing to coalesce, and applying one frame at a time
+                    // Do not coalesce frames off the main queue: applying one at a time
                     // keeps the client's lock hold short so a keystroke can
                     // overtake queued output instead of waiting out a batch.
                     view.pumpHostFrame(first, frameBinding: binding)
