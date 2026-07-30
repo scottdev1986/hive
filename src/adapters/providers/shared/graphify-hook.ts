@@ -14,7 +14,9 @@ export type GraphifyHookKind =
   | "claude-search"
   | "claude-read"
   | "codex"
-  | "grok";
+  | "grok"
+  | "kimi"
+  | "opencode";
 
 /** Total over known hook kinds at compile time: `filter` is what the vendor's
  * hook fires on, `gate` is whether that vendor spends the one decline. The
@@ -52,6 +54,26 @@ const GRAPHIFY_HOOK_FILTERS: Record<
     ].join("\n"),
     gate: true,
   },
+  // Kimi's user-level hook carries no matcher either, so this arm filters on
+  // the hook input's tool_name: Read, Grep and Glob are its structural tools,
+  // and the lowercase binary names catch search shelled out through Bash.
+  kimi: {
+    filter: [
+      '    case "$input" in *graphify-out/*) exit 0 ;; esac',
+      `    case "$input" in *'"tool_name":"Read"'*|*'"tool_name":"Grep"'*|*'"tool_name":"Glob"'*|*grep*|*ripgrep*|*"rg "*|*"find "*|*"fd "*) ;; *) exit 0 ;; esac`,
+    ].join("\n"),
+    gate: true,
+  },
+  // opencode has no shell hook surface; its Hive-written plugin
+  // (tool.execute.before) builds this input itself with opencode's lowercase
+  // tool names and throws the decline reason back at the model.
+  opencode: {
+    filter: [
+      '    case "$input" in *graphify-out/*) exit 0 ;; esac',
+      `    case "$input" in *'"tool_name":"read"'*|*'"tool_name":"grep"'*|*'"tool_name":"glob"'*|*'"tool_name":"list"'*|*ripgrep*|*"rg "*|*"find "*|*"fd "*) ;; *) exit 0 ;; esac`,
+    ].join("\n"),
+    gate: true,
+  },
 };
 
 /** Carried in a double-quoted shell assignment and then into JSON, so it holds
@@ -71,7 +93,7 @@ const DECLINE_MESSAGE =
 
 export function graphifyHookPath(
   worktreePath: string,
-  toolDirectory: ".claude" | ".codex" | ".grok",
+  toolDirectory: ".claude" | ".codex" | ".grok" | ".kimi-code" | ".opencode",
 ): string {
   return join(worktreePath, toolDirectory, GRAPHIFY_HOOK_SCRIPT);
 }
@@ -98,8 +120,10 @@ export async function writeGraphifyHook(
     'input="$(/bin/cat)"',
     'spent="$0.gate"',
     // Any graph call spends the gate, whichever arm sees it: an agent already
-    // working graph-first must never be declined for its follow-up read.
-    'case "$input" in *graph_locate*|*graphify__*) /usr/bin/touch "$spent" 2>/dev/null; exit 0 ;; esac',
+    // working graph-first must never be declined for its follow-up read. The
+    // third pattern is opencode's naming: its MCP tools are `<server>_<tool>`
+    // with a single underscore, which the double-underscore pattern misses.
+    `case "$input" in *graph_locate*|*graphify__*|*'"tool_name":"graphify_'*) /usr/bin/touch "$spent" 2>/dev/null; exit 0 ;; esac`,
     'case "$kind" in',
     ...Object.entries(GRAPHIFY_HOOK_FILTERS).flatMap(
       ([kind, { filter, gate }]) => [

@@ -171,6 +171,67 @@ describe("graphify PreToolUse hook", () => {
     expect(after.additionalContext).toContain("graph_locate");
   });
 
+  test("kimi and opencode gate on tool_name, and each vendor's graph naming spends the gate", async () => {
+    for (const [kind, structural, graphCall] of [
+      [
+        "kimi",
+        '{"tool_name":"Grep","tool_input":{"pattern":"reserveQuota"}}',
+        // Kimi names MCP tools mcp__<server>__<tool>, like Claude.
+        '{"tool_name":"mcp__graphify__query_graph","tool_input":{"question":"where"}}',
+      ],
+      [
+        "opencode",
+        '{"tool_name":"grep","tool_input":{"pattern":"reserveQuota"}}',
+        // opencode names MCP tools <server>_<tool> — a single underscore the
+        // double-underscore spend pattern would miss.
+        '{"tool_name":"graphify_query_graph","tool_input":{"question":"where"}}',
+      ],
+    ] as const) {
+      await armGate();
+      const declined = JSON.parse(
+        (await run(kind, structural)).stdout,
+      ).hookSpecificOutput;
+      expect(declined.permissionDecision).toBe("deny");
+      // Retrying the identical call is the recovery path: it must run.
+      const retry = JSON.parse(
+        (await run(kind, structural)).stdout,
+      ).hookSpecificOutput;
+      expect(retry.permissionDecision).toBeUndefined();
+
+      // A graph call in this vendor's own naming spends the gate silently, so
+      // graph-first work is never declined.
+      await armGate();
+      expect((await run(kind, graphCall)).stdout.length).toBe(0);
+      const after = JSON.parse(
+        (await run(kind, structural)).stdout,
+      ).hookSpecificOutput;
+      expect(after.permissionDecision).toBeUndefined();
+    }
+  });
+
+  test("kimi and opencode non-structural calls are silent", async () => {
+    await armGate();
+    for (const [kind, input] of [
+      ["kimi", '{"tool_name":"Edit","tool_input":{"path":"src/x.ts"}}'],
+      [
+        "kimi",
+        '{"tool_name":"mcp__hive__hive_send","tool_input":{"to":"queen"}}',
+      ],
+      [
+        "opencode",
+        '{"tool_name":"bash","tool_input":{"command":"git status"}}',
+      ],
+      [
+        "opencode",
+        '{"tool_name":"hive_hive_send","tool_input":{"to":"queen"}}',
+      ],
+    ] as const) {
+      expect((await run(kind, input)).stdout.length).toBe(0);
+    }
+    // Nothing structural was seen, so the session's decline is still unspent.
+    expect(stat(`${path}.gate`)).rejects.toThrow();
+  });
+
   test("a dead server is a fast, successful no-op", async () => {
     // Armed on purpose: a broken graphify must not gate anything.
     await armGate();

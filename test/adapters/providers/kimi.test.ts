@@ -110,6 +110,11 @@ describe("Kimi adapter", () => {
     expect(config).toContain('event = "Stop"');
     expect(config).toContain("HIVE_AGENT_NAME");
     expect(config).toContain("'/opt/hive' event turn-end");
+    // The graphify gate rides the same Hive-owned block: a PreToolUse entry
+    // that runs the worktree-local script only for a Hive launch that has one.
+    expect(config).toContain('event = "PreToolUse"');
+    expect(config).toContain("[ -x .kimi-code/hive-graphify-hook.sh ]");
+    expect(config).toContain("exec .kimi-code/hive-graphify-hook.sh kimi");
 
     const wrapped = wrapKimiWithTurnHookContext("kimi -m model", {
       name: "maya",
@@ -162,6 +167,11 @@ describe("Kimi adapter", () => {
       url: "http://127.0.0.1:7799/mcp",
     });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+    // The gate script the user-level PreToolUse hook runs, executable and
+    // dispatching on the kimi arm.
+    const hookPath = join(root, ".kimi-code", "hive-graphify-hook.sh");
+    expect((await stat(hookPath)).mode & 0o111).toBe(0o111);
+    expect(await readFile(hookPath, "utf8")).toContain("kimi)");
 
     // A respawn moves the port and a missing graphify URL removes the stale
     // endpoint.
@@ -174,6 +184,7 @@ describe("Kimi adapter", () => {
       bearerTokenEnvVar: HIVE_CAPABILITY_TOKEN_ENV,
     });
     expect(respawned.mcpServers.graphify).toBeUndefined();
+    expect(stat(hookPath)).rejects.toThrow();
   });
 
   test("prepareSpawn keeps the token out of argv and the launch command", async () => {

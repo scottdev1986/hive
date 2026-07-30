@@ -19,7 +19,10 @@ import {
 } from "../schemas";
 import { SHIPPED_SKILLS } from "../skills/shipped";
 import { grokHookFilename, ownsGrokHook } from "./providers/grok-cli";
-import { OPENCODE_TURN_PLUGIN_PATH } from "./providers/opencode-cli";
+import {
+  OPENCODE_GRAPHIFY_PLUGIN_PATH,
+  OPENCODE_TURN_PLUGIN_PATH,
+} from "./providers/opencode-cli";
 import {
   nativeSkillDirectory,
   provisionedSkillLinks,
@@ -598,10 +601,14 @@ const HIVE_WORKTREE_CONFIG: readonly string[] = [
   ".codex/hive-notify.sh",
   ".codex/hive-graphify-hook.sh",
   ".grok/config.toml",
+  ".grok/hive-graphify-hook.sh",
   ".kimi-code/mcp.json",
   ".kimi-code/AGENTS.md",
+  ".kimi-code/hive-graphify-hook.sh",
   "opencode.json",
+  ".opencode/hive-graphify-hook.sh",
   OPENCODE_TURN_PLUGIN_PATH,
+  OPENCODE_GRAPHIFY_PLUGIN_PATH,
   SKILL_LINK_MANIFEST,
 ];
 

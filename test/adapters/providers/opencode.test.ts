@@ -179,6 +179,18 @@ describe("opencode adapter", () => {
     // so read-only has to be global or the subagent keeps bash and edit.
     expect(written.permission).toEqual({ edit: "deny", bash: "deny" });
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+    // The decline-once gate: the shared script plus the plugin that adapts
+    // opencode's tool.execute.before to it and relays only an explicit deny.
+    const hookPath = join(root, ".opencode", "hive-graphify-hook.sh");
+    expect((await stat(hookPath)).mode & 0o111).toBe(0o111);
+    expect(await readFile(hookPath, "utf8")).toContain("opencode)");
+    const plugin = await readFile(
+      join(root, ".opencode", "plugins", "hive-graphify-gate.ts"),
+      "utf8",
+    );
+    expect(plugin).toContain('"tool.execute.before"');
+    expect(plugin).toContain(JSON.stringify([hookPath, "opencode"]));
+    expect(plugin).toContain('"deny"');
 
     // A respawn without a fresh token or brief keeps both, and a missing
     // graphify URL removes the stale endpoint.
@@ -200,6 +212,61 @@ describe("opencode adapter", () => {
     });
     expect(respawned.mcp.graphify).toBeUndefined();
     expect(respawned.agent.hive).toEqual(written.agent.hive);
+    // No graphify means no gate: both the script and its plugin are removed
+    // rather than leaving a plugin shelling out to a deleted script.
+    expect(stat(hookPath)).rejects.toThrow();
+    expect(
+      stat(join(root, ".opencode", "plugins", "hive-graphify-gate.ts")),
+    ).rejects.toThrow();
+  });
+
+  test("the written gate plugin declines once, then passes graph-first work", async () => {
+    const root = await worktree();
+    // The script only gates when the graphify endpoint answers like a live
+    // MCP server, so the test serves one.
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () =>
+        Response.json(
+          {
+            jsonrpc: "2.0",
+            error: { message: "Bad Request: Missing session ID" },
+          },
+          { status: 400, headers: { Connection: "close" } },
+        ),
+    });
+    try {
+      await writeOpencodeAgentConfig(root, {
+        daemonPort: 4317,
+        graphifyUrl: `http://127.0.0.1:${server.port}/mcp`,
+      });
+      const { HiveGraphifyGate } = (await import(
+        join(root, ".opencode", "plugins", "hive-graphify-gate.ts")
+      )) as {
+        HiveGraphifyGate: () => Promise<
+          Record<
+            string,
+            (
+              input: { tool: string },
+              output: { args?: unknown },
+            ) => Promise<void>
+          >
+        >;
+      };
+      const before = (await HiveGraphifyGate())["tool.execute.before"];
+      if (before === undefined) throw new Error("hook missing");
+      // The first structural search is declined with the gate message…
+      await expect(
+        before({ tool: "grep" }, { args: { pattern: "reserveQuota" } }),
+      ).rejects.toThrow("Graphify gate");
+      // …and the identical retry runs: the decline is spent.
+      await before({ tool: "grep" }, { args: { pattern: "reserveQuota" } });
+      // Non-structural calls pass silently either way.
+      await before({ tool: "hive_hive_send" }, { args: { to: "queen" } });
+    } finally {
+      server.stop(true);
+    }
   });
 
   test("a writer's agent carries no permission set, so bash stays reachable", async () => {

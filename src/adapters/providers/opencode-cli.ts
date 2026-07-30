@@ -1,8 +1,9 @@
 import { readFileSync, realpathSync } from "node:fs";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import { graphifyHookPath, writeGraphifyHook } from "./shared/graphify-hook";
 import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./shared/orchestrator-role";
 import { isRecord, readProjectConfig } from "./shared/project-config";
 import { resolveProviderExecutable } from "./shared/provider-executable";
@@ -137,6 +138,66 @@ export const OPENCODE_TURN_PLUGIN_PATH = join(
   "hive-turn-events.ts",
 );
 
+/** The graphify gate plugin, Hive-written like the turn plugin above and
+ * excluded from stranded-work checks the same way. */
+export const OPENCODE_GRAPHIFY_PLUGIN_PATH = join(
+  ".opencode",
+  "plugins",
+  "hive-graphify-gate.ts",
+);
+
+/**
+ * opencode has no shell hook surface, but its plugins' `tool.execute.before`
+ * runs before every tool call — built-in and MCP alike — and a throw there
+ * fails the call with the thrown message as the tool error the model reads.
+ * That is a PreToolUse-equivalent, so this plugin adapts it to the shared
+ * gate script: it feeds the call as hook-input JSON, and relays only an
+ * explicit deny. Everything else — no script, dead graphify, advisory-only
+ * output, malformed output — passes the call through untouched, because a
+ * nudge failure must never block an agent tool call.
+ */
+async function writeOpencodeGraphifyGatePlugin(
+  worktreePath: string,
+  hookScriptPath: string,
+): Promise<void> {
+  const path = join(worktreePath, OPENCODE_GRAPHIFY_PLUGIN_PATH);
+  const source = `// Written by Hive. Declines the session's first structural search until the
+// graph gets a look; the shared hook script holds the once-per-session gate.
+export const HiveGraphifyGate = async () => ({
+  "tool.execute.before": async (
+    input: { tool: string },
+    output: { args?: unknown },
+  ) => {
+    let decline: string | undefined;
+    try {
+      const child = Bun.spawn(${JSON.stringify([hookScriptPath, "opencode"])}, {
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      child.stdin.write(
+        JSON.stringify({ tool_name: input.tool, tool_input: output.args ?? {} }),
+      );
+      child.stdin.end();
+      const raw = await new Response(child.stdout).text();
+      await child.exited;
+      const hook = JSON.parse(raw).hookSpecificOutput;
+      if (
+        hook.permissionDecision === "deny" &&
+        typeof hook.permissionDecisionReason === "string"
+      ) {
+        decline = hook.permissionDecisionReason;
+      }
+    } catch {}
+    if (decline !== undefined) throw new Error(decline);
+  },
+});
+`;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, source, { mode: 0o600 });
+  await chmod(path, 0o600);
+}
+
 /**
  * OpenCode loads project plugins at startup. Its session.idle event is the
  * provider-owned completion signal, so this plugin reports only that boundary
@@ -248,6 +309,18 @@ export async function writeOpencodeAgentConfig(
   // opencode.json the project already had — including any credentials the
   // user's own servers keep in it.
   await chmod(path, 0o600);
+  // The decline-once gate rides a project plugin (opencode's PreToolUse
+  // surface); a missing URL removes both halves rather than leaving a plugin
+  // that shells out to a deleted script.
+  const hookScript = graphifyHookPath(worktreePath, ".opencode");
+  await writeGraphifyHook(hookScript, options.graphifyUrl);
+  if (options.graphifyUrl === undefined) {
+    await rm(join(worktreePath, OPENCODE_GRAPHIFY_PLUGIN_PATH), {
+      force: true,
+    });
+  } else {
+    await writeOpencodeGraphifyGatePlugin(worktreePath, hookScript);
+  }
 }
 
 interface OpencodeSessionEntry {

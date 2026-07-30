@@ -11,6 +11,11 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { shellQuote } from "../../daemon/session-host/shell-session";
 import { HIVE_CAPABILITY_TOKEN_ENV } from "./shared/capability-env";
+import {
+  GRAPHIFY_HOOK_SCRIPT,
+  graphifyHookPath,
+  writeGraphifyHook,
+} from "./shared/graphify-hook";
 import { isRecord, readProjectConfig } from "./shared/project-config";
 import { resolveProviderExecutable } from "./shared/provider-executable";
 import {
@@ -211,9 +216,12 @@ export function wrapKimiWithTurnHookContext(
 }
 
 /**
- * Install the documented Kimi Stop hook once. Stop is emitted immediately
- * before Kimi returns to its input box, which is the provider's authoritative
- * turn-idle boundary.
+ * Install the documented Kimi hooks once: Stop, emitted immediately before
+ * Kimi returns to its input box (the provider's authoritative turn-idle
+ * boundary), and PreToolUse for the graphify gate. Kimi reads hooks only from
+ * this user-level config, so the gate entry is generic — it runs the
+ * worktree-local hook script when the session's cwd has one and a Hive launch
+ * environment is present, and is inert everywhere else.
  */
 export async function writeKimiTurnHook(
   hiveCommand: readonly string[] = ["hive"],
@@ -232,12 +240,23 @@ export async function writeKimiTurnHook(
     '--instance-id "$HIVE_INSTANCE_ID"',
     '--provider-run-id "$HIVE_PROVIDER_RUN_ID"',
   ].join(" ");
+  const gateScript = join(".kimi-code", GRAPHIFY_HOOK_SCRIPT);
   const block = [
     KIMI_TURN_HOOK_START,
     "[[hooks]]",
     'event = "Stop"',
     `command = ${JSON.stringify(
       `if [ -n "$HIVE_AGENT_NAME" ]; then ${command}; fi`,
+    )}`,
+    "timeout = 5",
+    "[[hooks]]",
+    'event = "PreToolUse"',
+    // Kimi runs hook commands in the session's cwd with the tool-call JSON on
+    // stdin, and honors hookSpecificOutput.permissionDecision "deny" — the
+    // exact contract the generated script emits. `exec` hands that stdin
+    // through untouched.
+    `command = ${JSON.stringify(
+      `if [ -n "$HIVE_AGENT_NAME" ] && [ -x ${gateScript} ]; then exec ${gateScript} kimi; fi`,
     )}`,
     "timeout = 5",
     KIMI_TURN_HOOK_END,
@@ -291,6 +310,12 @@ export async function writeKimiAgentConfig(
   // mcp.json the project already had — including any credentials the user's own
   // servers keep in it.
   await chmod(path, 0o600);
+  // The gate script the user-level PreToolUse hook (writeKimiTurnHook) runs
+  // when the session's cwd holds one; a missing URL removes it and its marker.
+  await writeGraphifyHook(
+    graphifyHookPath(worktreePath, ".kimi-code"),
+    options.graphifyUrl,
+  );
 }
 
 export function kimiSessionsDirectory(home = kimiHome()): string {
