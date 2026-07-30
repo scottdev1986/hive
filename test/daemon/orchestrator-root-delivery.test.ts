@@ -78,6 +78,37 @@ function attemptDb(active: ProviderRun | null = providerRun) {
   };
 }
 
+/** A MessageDelivery wired to a live root host that accepts every write. */
+function queenDeliveryHarness(db: HiveDatabase) {
+  const writes: Uint8Array[] = [];
+  const rootDelivery = new SessiondOrchestratorRootDelivery({
+    db,
+    current: () => sessiondRoot,
+    ready: () => true,
+    input: {
+      async writeAutomated(input) {
+        writes.push(input.bytes);
+        return { outcome: "injected", receipt: inputReceipt };
+      },
+    },
+  });
+  const delivery = new MessageDelivery(
+    db,
+    {
+      sendSessionMessage: async () => {
+        throw new Error("queen delivery must use the root protocol");
+      },
+    },
+    undefined,
+    rootDelivery,
+    undefined,
+    undefined,
+    // Deterministic: never inherit a composer lease from the ambient rig.
+    () => false,
+  );
+  return { writes, delivery };
+}
+
 describe("SessiondOrchestratorRootDelivery", () => {
   test("confirms injection only from the root INPUT_SUBMIT receipt", async () => {
     const calls: unknown[] = [];
@@ -209,6 +240,83 @@ describe("SessiondOrchestratorRootDelivery", () => {
       delivered: false,
       reason: "no active provider run is bound to the root terminal",
     });
+  });
+
+  test("a normal notice never submits into an open root turn", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    db.insertEvent({
+      kind: "turn-start",
+      agentName: ORCHESTRATOR_NAME,
+      timestamp: "2026-07-30T21:48:00.000Z",
+    });
+    const { writes, delivery } = queenDeliveryHarness(db);
+
+    const message = await delivery.send(
+      "maya",
+      ORCHESTRATOR_NAME,
+      "david closed.",
+    );
+
+    // The payload is a composer submission (bracketed paste + Enter). Landing
+    // it mid-turn makes the provider cancel the turn's pending tool calls as
+    // a human rejection, so an open turn must hold the notice, visibly.
+    expect(writes).toHaveLength(0);
+    expect(db.getMessage(message.id)?.state).toBe("queued");
+    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toMatchObject({
+      messageId: message.id,
+      diagnostic: "root provider has an open turn; waiting for turn-end",
+    });
+    db.close();
+  });
+
+  test("the held notice delivers and reaches notified at turn-end", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    db.insertEvent({
+      kind: "turn-start",
+      agentName: ORCHESTRATOR_NAME,
+      timestamp: "2026-07-30T21:48:00.000Z",
+    });
+    const { writes, delivery } = queenDeliveryHarness(db);
+    const message = await delivery.send(
+      "maya",
+      ORCHESTRATOR_NAME,
+      "david closed.",
+    );
+    expect(writes).toHaveLength(0);
+
+    db.insertEvent({
+      kind: "turn-end",
+      agentName: ORCHESTRATOR_NAME,
+      timestamp: "2026-07-30T21:49:00.000Z",
+    });
+    // The trigger process-event fires on the root's turn-end hook.
+    await delivery.flushQueued(ORCHESTRATOR_NAME);
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toBeUndefined();
+    db.close();
+  });
+
+  test("urgent queen mail still delivers during an open turn", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    db.insertEvent({
+      kind: "turn-start",
+      agentName: ORCHESTRATOR_NAME,
+      timestamp: "2026-07-30T21:48:00.000Z",
+    });
+    const { writes, delivery } = queenDeliveryHarness(db);
+
+    const message = await delivery.send("maya", ORCHESTRATOR_NAME, "Stop.", {
+      priority: "urgent",
+    });
+
+    expect(writes).toHaveLength(1);
+    expect(db.getMessage(message.id)?.state).toBe("notified");
+    db.close();
   });
 
   test("keeps repeatedly declined queen mail queued and visible as blocked", async () => {

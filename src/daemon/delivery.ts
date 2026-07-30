@@ -11,6 +11,7 @@ import {
 } from "../schemas";
 import { isComposerLeased } from "./composer-lease";
 import type { HiveDatabase } from "./db";
+import { deriveOrchestratorStatus } from "./orchestrator-status";
 import type { PaneProcessState } from "./resources";
 import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
 import {
@@ -278,6 +279,25 @@ export class MessageDelivery {
       const urgent = queued.some((message) => message.priority === "urgent");
       const rootProtocol = this.rootProtocol;
       if (rootProtocol === undefined) return [];
+      if (
+        !urgent &&
+        deriveOrchestratorStatus(
+          this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
+        ) === "working"
+      ) {
+        // The root write is a composer submission (bracketed paste + Enter),
+        // and a submission into an open turn is an interrupt: the provider
+        // cancels the turn's still-pending tool calls as a human rejection
+        // while the daemon-side work runs on. Hold normal mail on a MEASURED
+        // open turn only — newest signal is turn-start — so an absent or
+        // contradictory turn record never silences the queen. The root's
+        // turn-end hook flushes this queue at the genuine safe point.
+        this.declines.set(ORCHESTRATOR_NAME, {
+          messageId: first.id,
+          reason: "root provider has an open turn; waiting for turn-end",
+        });
+        return [];
+      }
       const outcome = await rootProtocol.deliverMessage(
         this.formatNotice(messages, urgent),
         {
