@@ -100,7 +100,7 @@ extension TokenUsageSession {
     /// every measured orchestrator subject. It is the same aggregate the card's
     /// control bucket already displays, so collapsing can neither lose usage nor
     /// double-count it. An orchestrator generation with no reading is not in
-    /// that sum and stays listed in `unknownSubjects`, exactly as before.
+    /// that sum and stays listed in `unknownSubjects`.
     /// The genuine workers — role == "worker" EXACTLY, mirroring the daemon's
     /// workerSessions aggregate (src/daemon/token-usage.ts). Partitioning by
     /// exclusion instead would let a future role drift silently into WORKERS; the
@@ -119,14 +119,8 @@ extension TokenUsageSession {
     }
 
     public var usageRows: [TokenUsageRow] {
-        // The orchestrator collapses into a single row from its own daemon
-        // aggregate. Workers (role == "worker", exactly) are listed individually,
-        // then any unrecognised role — visible, but kept out of the worker
-        // partition.
         let orchestrators = subjects.filter { $0.role == "orchestrator" }
         var rows: [TokenUsageRow] = []
-        // Backup orchestrators are relaunches of the ONE orchestrator, so they
-        // collapse into a single row showing the daemon's own control aggregate.
         if let orchestratorRow = collapsedRow(
             name: "Queen", generations: orchestrators, counts: hiveControl.counts) {
             rows.append(orchestratorRow)

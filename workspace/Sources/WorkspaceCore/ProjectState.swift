@@ -146,12 +146,11 @@ public final class ProjectState {
     /// The master pane is the selected orchestrator terminal, created by the
     /// window at open — the feed's `agents` array only describes worker agents.
     ///
-    /// It is seeded "unknown" and NOT a status word of its own. It used to be
-    /// seeded "running", a word that exists in no daemon vocabulary, which the
-    /// dot's (correct) unknown-word rule degraded to gray — so the root, which is
-    /// alive by definition whenever this app is running, showed a permanently
-    /// gray "unknown" dot. The lesson is not "pick a better constant": ANY
-    /// constant here is a fabrication. The real status arrives on the feed's
+    /// It is seeded "unknown", which is not a status word of its own. Do not
+    /// seed a concrete word here: ANY constant is a fabrication, and one outside
+    /// the daemon's vocabulary is degraded to gray by the dot's unknown-word
+    /// rule — permanently marking the root, alive by definition whenever this app
+    /// runs, as a gray "unknown". The real status arrives on the feed's
     /// `orchestrator` field and is applied below; until the first snapshot lands,
     /// "unknown" is the honest word, and gray is the honest colour.
     @discardableResult
@@ -220,10 +219,9 @@ public final class ProjectState {
                 userClosed.remove(paneID)
                 continue
             }
-            // The user closed this agent's pane; the agent itself keeps
-            // running (#64: a pane close never kills), so the feed still lists
-            // it as live. Building its pane again here is what made the X look
-            // broken — the pane came back a second after it went away.
+            // The user closed this agent's pane; a pane close never kills the
+            // agent, so the feed still lists it as live. Do not rebuild its pane
+            // here: it would reappear a second after the user dismissed it.
             if userClosed.contains(paneID) { continue }
             if var pane = panes[paneID] {
                 changes.append(contentsOf: update(pane: &pane, from: agent, now: now))
@@ -249,7 +247,7 @@ public final class ProjectState {
     }
 
     /// The user closed this pane (the pane X, ⇧⌘W, or the accessibility
-    /// action). Closing a pane never touches the agent (#64): it keeps running
+    /// action). Closing a pane never touches the agent: it keeps running
     /// headless, so the feed keeps listing it live — and its pane must not be
     /// rebuilt from those snapshots while it does. The suppression clears when
     /// the daemon stops reporting the agent, so a later agent reusing the name
@@ -360,14 +358,12 @@ public final class ProjectState {
     /// turns gray dashed (disconnected). Terminals stay attached — only the
     /// metadata stream is gone.
     ///
-    /// The orchestrator is included. It used to be exempt, which was right only
-    /// while its status was a hardcoded constant: a constant cannot go stale, so
-    /// there was nothing to invalidate. Now that its word is measured, a dead
-    /// feed makes it exactly as untrustworthy as any agent's — the root may have
-    /// started or finished ten turns since the last line we read — so it must go
-    /// unknown with the rest. Its terminal is still live and still attached; what
-    /// we have lost is not the root, only our knowledge of it, and those are
-    /// different things to say.
+    /// The orchestrator is included, and must not be exempted: its status word is
+    /// measured, so a dead feed makes it exactly as untrustworthy as any agent's
+    /// — the root may have started or finished ten turns since the last line we
+    /// read. Its terminal is still live and still attached; what we have lost is
+    /// not the root, only our knowledge of it, and those are different things to
+    /// say.
     @discardableResult
     public func markFeedLost(reason: String = "workspace feed exited") -> [StateChange] {
         var changes: [StateChange] = []
@@ -508,7 +504,6 @@ public final class ProjectState {
         case .focusPane(let paneID):
             guard panes[paneID] != nil, focusedPane != paneID else { return [] }
             focusedPane = paneID
-            // Focus never acknowledges or clears attention.
             return [.focusChanged(paneID)]
 
         case .moveFocus(let direction):
