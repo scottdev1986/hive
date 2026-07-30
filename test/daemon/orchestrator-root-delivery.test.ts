@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
+import { HiveDatabase } from "../../src/daemon/db";
+import { MessageDelivery } from "../../src/daemon/delivery";
 import { SessiondOrchestratorRootDelivery } from "../../src/daemon/orchestrator-root-delivery";
 import type { OrchestratorSessiondSnapshot } from "../../src/daemon/orchestrator-sessiond";
 import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-contract";
-import type { MessageAttempt, ProviderRun } from "../../src/schemas";
+import {
+  type MessageAttempt,
+  ORCHESTRATOR_NAME,
+  type ProviderRun,
+} from "../../src/schemas";
 
 const sessiondRoot: OrchestratorSessiondSnapshot = {
   requestId: "req_018f1e90-7b5a-7cc0-8000-000000000411",
@@ -68,6 +74,7 @@ function attemptDb(active: ProviderRun | null = providerRun) {
       attempt = { ...attempt, ...result };
       return attempt;
     },
+    lastAttempt: () => attempt,
   };
 }
 
@@ -162,23 +169,26 @@ describe("SessiondOrchestratorRootDelivery", () => {
     });
   });
 
-  test("does not turn a queued Hive message into a shell command after the TUI exits", async () => {
+  test("records an atomic foreground veto and preserves its exact reason", async () => {
+    const db = attemptDb();
+    const reason = "input receipt stage rejected: foreground-changed";
     const delivery = new SessiondOrchestratorRootDelivery({
-      db: attemptDb(),
+      db,
       current: () => sessiondRoot,
       ready: () => true,
-      canInject: async () => false,
       input: {
-        writeAutomated: async () => {
-          throw new Error("the idle shell must never receive provider input");
-        },
+        writeAutomated: async () => ({ outcome: "declined", reason }),
       },
     });
     await expect(
       delivery.deliverMessage("agent report", { message_id: "message-1" }),
     ).resolves.toEqual({
       delivered: false,
-      reason: "root declined injection (canInject gate)",
+      reason,
+    });
+    expect(db.lastAttempt()).toMatchObject({
+      messageId: "message-1",
+      outcome: "foreground-changed",
     });
   });
 
@@ -199,5 +209,43 @@ describe("SessiondOrchestratorRootDelivery", () => {
       delivered: false,
       reason: "no active provider run is bound to the root terminal",
     });
+  });
+
+  test("keeps repeatedly declined queen mail queued and visible as blocked", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertProviderRun(providerRun);
+    const reason = "claim held by workspace-pane-queen until later";
+    const rootDelivery = new SessiondOrchestratorRootDelivery({
+      db,
+      current: () => sessiondRoot,
+      ready: () => true,
+      input: {
+        writeAutomated: async () => ({ outcome: "declined", reason }),
+      },
+    });
+    const delivery = new MessageDelivery(
+      db,
+      {
+        sendSessionMessage: async () => {
+          throw new Error("queen delivery must use the root protocol");
+        },
+      },
+      undefined,
+      rootDelivery,
+    );
+
+    const message = await delivery.send("maya", ORCHESTRATOR_NAME, "Report.");
+    expect(message.state).toBe("queued");
+    expect(db.listMessageAttempts(message.id)).toHaveLength(1);
+
+    await delivery.wakeOrchestrator();
+
+    expect(db.getMessage(message.id)?.state).toBe("queued");
+    expect(db.listMessageAttempts(message.id)).toHaveLength(2);
+    expect(delivery.blockedDeliveries().get(ORCHESTRATOR_NAME)).toMatchObject({
+      messageId: message.id,
+      diagnostic: reason,
+    });
+    db.close();
   });
 });

@@ -150,6 +150,47 @@ const harness = (
 };
 
 describe("WP7 MCP status tools", () => {
+  test("surfaces a blocked queen delivery in hive_status", async () => {
+    const db = new HiveDatabase(":memory:");
+    const reason = "claim held by workspace-pane-queen until later";
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: {
+        async spawn() {
+          return agent("spawned");
+        },
+      },
+      repoRoot: "/tmp/hive-status-root-delivery-test",
+      rootProtocol: {
+        isLive: () => true,
+        deliverMessage: async () => ({ delivered: false, reason }),
+      },
+    });
+    const message = await daemon.delivery.send(
+      "maya",
+      ORCHESTRATOR_NAME,
+      "Report.",
+    );
+    const token = daemon.capabilities.mint(
+      ORCHESTRATOR_NAME,
+      "orchestrator",
+    ).token;
+
+    const status = await callTool(daemon, token, "hive_status", {});
+
+    expect(message.state).toBe("queued");
+    expect(status.structuredContent).toMatchObject({
+      blockedDeliveries: {
+        queen: {
+          messageId: message.id,
+          diagnostic: reason,
+        },
+      },
+    });
+    db.close();
+  });
+
   test("reads incarnation generation from the persisted agent locator", async () => {
     const db = new HiveDatabase(":memory:");
     db.insertAgent(agent());

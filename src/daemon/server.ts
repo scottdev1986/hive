@@ -746,7 +746,6 @@ export class HiveDaemon {
           db: this.db,
           current: () => this.orchestratorSessiond?.snapshot() ?? null,
           ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
-          canInject: () => this.rootProviderAcceptsInput(),
           input: {
             writeAutomated: async (input) =>
               this.sessiondInput.writeAutomated === undefined
@@ -1560,31 +1559,6 @@ export class HiveDaemon {
       startToken: foreground.startToken,
       processGroupId: foreground.foregroundProcessGroupId,
     };
-  }
-
-  private async rootProviderAcceptsInput(): Promise<boolean> {
-    const current = this.orchestratorSessiond?.snapshot() ?? null;
-    if (
-      current?.state !== "running" ||
-      !this.orchestratorSessiond?.isInputReady()
-    ) {
-      return false;
-    }
-    try {
-      const inspection = await this.terminalHost.inspect(
-        requireSessiondRootLocator(current.locator),
-      );
-      const shellPid = inspection.shellRoot?.pid;
-      if (shellPid === null || shellPid === undefined) return false;
-      return (
-        foregroundJobState(
-          parseForegroundProcessTable(await runPsForeground()),
-          shellPid,
-        ) === "running"
-      );
-    } catch {
-      return false;
-    }
   }
 
   private statusLiveness(

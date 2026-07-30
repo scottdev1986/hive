@@ -13,7 +13,6 @@ export interface SessiondOrchestratorRootDeliveryDependencies {
   >;
   current: () => OrchestratorSessiondSnapshot | null;
   ready: () => boolean;
-  canInject?: () => Promise<boolean>;
 }
 
 /** The host receipt returned by INPUT_SUBMIT is the only success boundary.
@@ -40,7 +39,7 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
     meta: Record<string, string>,
   ): Promise<RootDeliveryOutcome> {
     const current = this.dependencies.current();
-    // Each refusal names itself. These four are adjacent expected states that
+    // Each refusal names itself. These three are adjacent expected states that
     // all retain-and-retry, but they are not the same fault, and reporting them
     // as one bit is what left three silent causes indistinguishable on the wire.
     if (current?.state !== "running") {
@@ -51,15 +50,6 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
     }
     if (!this.dependencies.ready()) {
       return { delivered: false, reason: "root host is not ready for input" };
-    }
-    if (
-      this.dependencies.canInject !== undefined &&
-      !(await this.dependencies.canInject())
-    ) {
-      return {
-        delivered: false,
-        reason: "root declined injection (canInject gate)",
-      };
     }
     const messageId = meta.message_id;
     if (messageId === undefined)

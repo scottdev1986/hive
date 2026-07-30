@@ -115,7 +115,7 @@ export function registerStatusTools(
     {
       title: "Hive agent status",
       description:
-        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed. The structuredContent memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / embedding-runtime-unverified / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs.',
+        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed. structuredContent.blockedDeliveries reports exact terminal decline diagnostics, including queen delivery. The structuredContent memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / embedding-runtime-unverified / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs.',
       inputSchema: StatusRequestSchema,
     },
     async ({ detail, history, fields }) => {
@@ -290,6 +290,10 @@ export function registerStatusTools(
       }));
       const strandedSection =
         stranded.length === 0 ? {} : { strandedWorktrees: stranded };
+      const blockedDeliverySection =
+        blocked.size === 0
+          ? {}
+          : { blockedDeliveries: Object.fromEntries(blocked) };
       if (fields !== undefined) {
         const base = toolResult(
           result.map((record) =>
@@ -307,6 +311,7 @@ export function registerStatusTools(
             ...base.structuredContent,
             memory,
             ...strandedSection,
+            ...blockedDeliverySection,
           },
         };
       }
@@ -317,6 +322,7 @@ export function registerStatusTools(
           ...base.structuredContent,
           memory,
           ...strandedSection,
+          ...blockedDeliverySection,
         },
       };
     },

@@ -273,18 +273,27 @@ export class MessageDelivery {
       const messages = await this.orchestratorInbox();
       const queued = messages.filter((message) => message.state === "queued");
       if (queued.length === 0) return [];
+      const first = queued[0];
+      if (first === undefined) return [];
       const urgent = queued.some((message) => message.priority === "urgent");
       const rootProtocol = this.rootProtocol;
       if (rootProtocol === undefined) return [];
       const outcome = await rootProtocol.deliverMessage(
         this.formatNotice(messages, urgent),
         {
-          message_id: queued[0]?.id ?? "",
+          message_id: first.id,
           unread: String(messages.length),
           urgent: String(urgent),
         },
       );
-      if (!outcome.delivered) return [];
+      if (!outcome.delivered) {
+        this.declines.set(ORCHESTRATOR_NAME, {
+          messageId: first.id,
+          reason: outcome.reason,
+        });
+        return [];
+      }
+      this.declines.delete(ORCHESTRATOR_NAME);
       return queued.map((message) => this.markNotified(message.id));
     });
   }
@@ -320,13 +329,17 @@ export class MessageDelivery {
       string,
       { messageId: string; queuedMinutes: number; diagnostic: string }
     >();
-    for (const agent of this.db.listAgents()) {
-      if (["dead", "done", "failed"].includes(agent.status)) continue;
+    const recipients = this.db
+      .listAgents()
+      .filter((agent) => !["dead", "done", "failed"].includes(agent.status))
+      .map((agent) => agent.name);
+    recipients.push(ORCHESTRATOR_NAME);
+    for (const recipient of recipients) {
       const first = this.db
-        .getUnacknowledgedMessages(agent.name)
+        .getUnacknowledgedMessages(recipient)
         .find((message) => message.state === "queued");
       if (first === undefined) continue;
-      const noted = this.declines.get(agent.name);
+      const noted = this.declines.get(recipient);
       const lastAttempt = this.db.listMessageAttempts(first.id).at(-1);
       const diagnostic =
         noted?.messageId === first.id
@@ -337,7 +350,7 @@ export class MessageDelivery {
             ? lastAttempt.outcome
             : undefined;
       if (diagnostic === undefined) continue;
-      blocked.set(agent.name, {
+      blocked.set(recipient, {
         messageId: first.id,
         queuedMinutes: Math.floor(
           (Date.now() - Date.parse(first.createdAt)) / 60_000,
