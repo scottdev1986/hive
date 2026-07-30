@@ -54,6 +54,7 @@ import {
   MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
+  type ProviderRun,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   SessionLocatorSchema,
@@ -115,6 +116,7 @@ import {
 } from "./landing";
 import {
   cleanupLifecycleFiles,
+  macProcessIdentity,
   readConfiguredPort,
   writeLifecycleFiles,
 } from "./lifecycle";
@@ -759,6 +761,7 @@ export class HiveDaemon {
       (agent) => this.agentProcessState(agent),
       undefined,
       deliverySessiondInput,
+      (agent, run) => this.staleRunForeground(agent, run),
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -1521,6 +1524,42 @@ export class HiveDaemon {
     } catch {
       return "unknown";
     }
+  }
+
+  /**
+   * The terminal's live foreground identity, but only when the run's recorded
+   * identity is provably gone (pid dead or start token mismatched). While the
+   * recorded process is alive it stays the only legitimate fence: the current
+   * foreground may be a tool subprocess, and a notice must not land there.
+   */
+  private async staleRunForeground(
+    agent: AgentRecord,
+    run: ProviderRun,
+  ): Promise<
+    { pid: number; startToken: string; processGroupId: number } | undefined
+  > {
+    try {
+      if (macProcessIdentity(run.pid).startToken === run.startToken) {
+        return undefined;
+      }
+    } catch {
+      // Unreadable means the pid is gone; fall through to the measurement.
+    }
+    const inspection = await this.terminalHost
+      .inspect(requireSessiondAgentLocator(agent))
+      .catch(() => null);
+    const foreground = inspection?.foreground;
+    if (
+      foreground === undefined ||
+      (foreground.state !== "unmanaged" && foreground.state !== "managed")
+    ) {
+      return undefined;
+    }
+    return {
+      pid: foreground.pid,
+      startToken: foreground.startToken,
+      processGroupId: foreground.foregroundProcessGroupId,
+    };
   }
 
   private async rootProviderAcceptsInput(): Promise<boolean> {

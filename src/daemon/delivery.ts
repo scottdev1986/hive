@@ -16,6 +16,7 @@ import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
 import {
   encodeSubmittedText,
   type SessiondAgentInput,
+  type SessiondInjectResult,
 } from "./session-host/sessiond-agent-input";
 
 function idempotencySenders(from: string): readonly string[] {
@@ -59,6 +60,21 @@ export interface SendOptions {
   idempotencyKey?: string;
 }
 
+/**
+ * The terminal's foreground identity measured now, returned ONLY when the
+ * run's recorded identity is no longer observable (recorded pid dead, or its
+ * start token no longer matches). A live recorded identity yields undefined:
+ * it means the provider process exists and simply is not foreground — for
+ * example a tool subprocess owns the tty — and typing into whatever is
+ * foreground would deliver the notice to the wrong process.
+ */
+export type StaleRunForeground = (
+  recipient: AgentRecord,
+  run: ProviderRun,
+) => Promise<
+  { pid: number; startToken: string; processGroupId: number } | undefined
+>;
+
 export function queuedDeliveryNote(
   message: AgentMessage,
   recipient: AgentRecord | null,
@@ -99,7 +115,16 @@ export class MessageDelivery {
       recipient: string,
     ) => boolean = isComposerLeased,
     private readonly sessiondInput?: SessiondAgentInput,
+    private readonly staleRunForeground?: StaleRunForeground,
   ) {}
+
+  /** Latest per-recipient decline sentence, kept for blockedDeliveries. The
+   * durable record is the message-attempt row; this map only preserves the
+   * host's exact wording, which the attempt outcome enum cannot carry. */
+  private readonly declines = new Map<
+    string,
+    { messageId: string; reason: string }
+  >();
 
   async send(
     from: string,
@@ -269,9 +294,12 @@ export class MessageDelivery {
     if (message.to !== canonicalOrchestratorName(agentName)) {
       throw new Error(`Message ${messageId} is not addressed to ${agentName}`);
     }
-    if (message.state === "queued") {
-      throw new Error(`Message ${messageId} has not been notified`);
-    }
+    // A queued row is acknowledgeable. hive_inbox serves queued rows precisely
+    // so a recipient can read mail whose terminal notice has not landed yet,
+    // and an acknowledgement is the recipient's own statement that it read the
+    // message — stronger evidence than any notice. The durable record keeps
+    // the distinction: an ack from queued leaves notifiedAt null, an ack after
+    // a notice carries both timestamps.
     return (
       this.db.transitionMessage(
         messageId,
@@ -281,11 +309,43 @@ export class MessageDelivery {
     );
   }
 
+  /** Recipients whose oldest queued message has a recorded failed delivery.
+   * A queued message that simply has not met a delivery trigger yet is not
+   * blocked and does not appear here. */
   blockedDeliveries(): Map<
     string,
     { messageId: string; queuedMinutes: number; diagnostic: string }
   > {
-    return new Map();
+    const blocked = new Map<
+      string,
+      { messageId: string; queuedMinutes: number; diagnostic: string }
+    >();
+    for (const agent of this.db.listAgents()) {
+      if (["dead", "done", "failed"].includes(agent.status)) continue;
+      const first = this.db
+        .getUnacknowledgedMessages(agent.name)
+        .find((message) => message.state === "queued");
+      if (first === undefined) continue;
+      const noted = this.declines.get(agent.name);
+      const lastAttempt = this.db.listMessageAttempts(first.id).at(-1);
+      const diagnostic =
+        noted?.messageId === first.id
+          ? noted.reason
+          : lastAttempt !== undefined &&
+              lastAttempt.outcome !== "written" &&
+              lastAttempt.outcome !== "pending"
+            ? lastAttempt.outcome
+            : undefined;
+      if (diagnostic === undefined) continue;
+      blocked.set(agent.name, {
+        messageId: first.id,
+        queuedMinutes: Math.floor(
+          (Date.now() - Date.parse(first.createdAt)) / 60_000,
+        ),
+        diagnostic,
+      });
+    }
+    return blocked;
   }
 
   private async deliverAgentNotice(
@@ -304,27 +364,68 @@ export class MessageDelivery {
     if (this.sessiondInput !== undefined) {
       const terminal = requireSessiondAgentLocator(recipient);
       const run = this.db.getActiveProviderRunByTerminal(terminal);
-      if (run === null || !(await this.providerIsRunning(recipient))) return [];
-      const expectedForeground = this.expectedForeground(run);
-      if (interrupt) {
-        const cancelled = await this.sessiondInput.writeAutomated({
-          terminal,
-          expectedForeground: {
-            providerRunId: run.runId,
-            ...expectedForeground,
-          },
+      if (run === null || !(await this.providerIsRunning(recipient))) {
+        this.declines.set(recipient.name, {
+          messageId: first.id,
+          reason:
+            run === null
+              ? "no active provider run is bound to the terminal"
+              : "provider process is not running",
+        });
+        return [];
+      }
+      // Escape at most once per message, ever: cancelling a turn is a side
+      // effect that must not repeat when the notice write fails and a later
+      // trigger retries this delivery. The durable attempt history is the
+      // evidence of a prior try, not this process's memory.
+      const priorAttempts = this.db.listMessageAttempts(first.id);
+      const attempt = this.db.beginMessageAttempt({
+        attemptId: crypto.randomUUID(),
+        messageId: first.id,
+        expectedProviderRunId: run.runId,
+        terminalGeneration: terminal.generation,
+        expectedForeground: this.expectedForeground(run),
+        attemptedAt: new Date().toISOString(),
+      });
+      if (interrupt && priorAttempts.length === 0) {
+        // Escape is the accelerator, not the deliverable: a declined Escape
+        // leaves the turn running, and the notice below is still worth
+        // writing. Both writes share one fence path, so a cancelled turn
+        // cannot outrun its own notice to a different foreground.
+        await this.writeWithFenceRecovery(recipient, run, terminal, {
           bytes: new TextEncoder().encode("\u001b"),
           idempotencyKey: `${messageId}:escape`,
         });
-        if (cancelled.outcome === "declined") return [];
       }
-      const written = await this.sessiondInput.writeAutomated({
+      const written = await this.writeWithFenceRecovery(
+        recipient,
+        run,
         terminal,
-        expectedForeground: { providerRunId: run.runId, ...expectedForeground },
-        bytes: encodeSubmittedText(notice),
-        idempotencyKey: messageId,
+        {
+          bytes: encodeSubmittedText(notice),
+          idempotencyKey: attempt.attemptId,
+        },
+      );
+      if (written.outcome === "declined") {
+        this.db.finishMessageAttempt(attempt.attemptId, {
+          outcome: written.reason.includes("foreground-changed")
+            ? "foreground-changed"
+            : written.reason.startsWith("claim ")
+              ? "input-busy"
+              : "unknown",
+          terminalReceipt: written.receipt ?? null,
+        });
+        this.declines.set(recipient.name, {
+          messageId: first.id,
+          reason: written.reason,
+        });
+        return [];
+      }
+      this.db.finishMessageAttempt(attempt.attemptId, {
+        outcome: "written",
+        terminalReceipt: written.receipt,
       });
-      if (written.outcome === "declined") return [];
+      this.declines.delete(recipient.name);
     } else {
       await this.sessions.sendSessionMessage(recipient, notice, {
         messageId,
@@ -332,6 +433,55 @@ export class MessageDelivery {
       });
     }
     return queued.map((message) => this.markNotified(message.id));
+  }
+
+  /**
+   * One fenced write with a single recovery. The run's recorded foreground
+   * identity can be a startup transient that died a second after launch: the
+   * vendor spawned a child and moved the terminal's process group, so the
+   * host refuses every write fenced on the record as `foreground-changed`,
+   * forever. When that happens and the recorded identity is provably gone,
+   * retry once against the foreground measured now. A recorded identity that
+   * is still alive is never overridden — the provider process exists and
+   * simply is not foreground (a tool subprocess may own the tty), and typing
+   * into whatever is foreground would reach the wrong process. The retry
+   * needs its own key: the host replays a known key's receipt verbatim, and
+   * the failed try stored a rejection under the original one.
+   */
+  private async writeWithFenceRecovery(
+    recipient: AgentRecord,
+    run: ProviderRun,
+    terminal: ReturnType<typeof requireSessiondAgentLocator>,
+    write: { bytes: Uint8Array; idempotencyKey: string },
+  ): Promise<SessiondInjectResult> {
+    const input = this.sessiondInput;
+    if (input === undefined) {
+      return { outcome: "declined", reason: "sessiond input is not wired" };
+    }
+    const first = await input.writeAutomated({
+      terminal,
+      expectedForeground: {
+        providerRunId: run.runId,
+        ...this.expectedForeground(run),
+      },
+      bytes: write.bytes,
+      idempotencyKey: write.idempotencyKey,
+    });
+    if (
+      first.outcome !== "declined" ||
+      !first.reason.includes("foreground-changed") ||
+      this.staleRunForeground === undefined
+    ) {
+      return first;
+    }
+    const measured = await this.staleRunForeground(recipient, run);
+    if (measured === undefined) return first;
+    return input.writeAutomated({
+      terminal,
+      expectedForeground: { providerRunId: run.runId, ...measured },
+      bytes: write.bytes,
+      idempotencyKey: `${write.idempotencyKey}:remeasured`,
+    });
   }
 
   private formatNotice(
