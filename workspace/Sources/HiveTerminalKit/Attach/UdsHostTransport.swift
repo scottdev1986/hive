@@ -1,12 +1,12 @@
 import Foundation
 
-/// L3 production `HostTransport`: one blocking Unix-domain-socket connection to
-/// a sessiond host endpoint, framed by `FrameCodec` (§20).
+/// Production `HostTransport`: one blocking Unix-domain-socket connection to
+/// a sessiond host endpoint, framed by `FrameCodec`.
 ///
 /// Reads block until a full frame arrives, the optional timeout elapses
 /// (`WireError.receiveTimeout`), or the host closes the stream (`nil`).
 /// `connectionId` is unique per connection so a retargeted surface rejects
-/// frames from an obsolete connection (§26).
+/// frames from an obsolete connection.
 public final class UdsHostTransport: HostTransport {
     public let connectionId: String
     public private(set) var isClosed = false

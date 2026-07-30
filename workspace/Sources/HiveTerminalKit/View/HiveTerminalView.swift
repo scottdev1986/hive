@@ -1,16 +1,15 @@
 import AppKit
 import Foundation
 
-/// L1 `HiveTerminalView` — one edge-to-edge NSView bound to exactly one
-/// SessionLocator/generation (§26).
+/// One edge-to-edge NSView bound to exactly one SessionLocator/generation.
 ///
 /// Focus: first responder only on direct click / explicit focus action.
 /// Output/status/reconnect never steal focus.
 ///
-/// Input (M8): native NSEvent → ghostty_surface_key/text/preedit/mouse →
+/// Input: native NSEvent → ghostty_surface_key/text/preedit/mouse →
 /// claim-bound write callback (encoder out).
 ///
-/// Render (M9): INVALIDATE schedules main-thread draw; CLOSE_REQUEST → terminate seam.
+/// Render: INVALIDATE schedules main-thread draw; CLOSE_REQUEST → terminate seam.
 public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var surfaceState: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
@@ -77,7 +76,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// One-shot per attach: see forceRendererResizeIfSemanticGridIsStale.
     private var postRestoreResizeForced = false
     private let resizeQuiescence: TimeInterval = 0.100
-    // internal (not private): HiveTerminalView+Input.swift (gate 8) reads/writes these.
+    // internal (not private): HiveTerminalView+Input.swift reads/writes these.
     var markedText = NSMutableAttributedString()
     var keyTextAccumulator: [String]?
     var previousPressureStage = 0
@@ -152,11 +151,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         )
     }
 
-    /// Wire §23 bridge events: INVALIDATE → render; CLOSE_REQUEST → terminate seam (M9).
+    /// Wire bridge events: INVALIDATE → render; CLOSE_REQUEST → terminate seam.
     private func wireBridgeEvents() {
         engine.callbackContext.onEvent = { [weak self] event in
             guard let self else { return }
-            // Main-thread confined (§23).
+            // Main-thread confined.
             if Thread.isMainThread {
                 self.handleBridgeEvent(event)
             } else {
@@ -190,7 +189,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             accessibilityAnnounce("Clipboard access denied", priority: .high)
             notifyOutputStatusReconnect(reason: "clipboard-denied")
         case .closeRequest:
-            // §26: CLOSE_REQUEST → exact-generation TERMINATE seam, never DETACH.
+            // CLOSE_REQUEST → exact-generation TERMINATE seam, never DETACH.
             accessibilityAnnounce("Terminal closed", priority: .medium)
             userClose()
         }
@@ -310,18 +309,12 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     ///
     /// Split out so a host that is slow to answer cannot hold the main thread.
     /// `AttachReplayClient.attach` blocks in `transport.receive` until the host
-    /// sends a frame or the 5 second handshake timeout expires, and a terminal
-    /// that has not produced output yet — a freshly created one, an idle
-    /// provider — sends nothing. Measured with real vendor TUIs on real PTYs
-    /// (`prototypes/terminal`, proto-viewer): two such panes attaching on the
-    /// main thread produced a 10,000 ms main-queue stall, i.e. a ten-second
-    /// frozen workspace; with the wait moved off main the worst stall in the
-    /// same run was 1.9 ms.
-    ///
-    /// Both halves stay main-thread-only. Only `client.attach` between them is
-    /// safe to run elsewhere: it serializes on its own lock, and the engine
-    /// ingress it uses (`processOutput`/`restoreCheckpoint`) is the same
-    /// off-main path `pumpHostFrame` already takes.
+    /// sends a frame or the handshake timeout expires, and a terminal that has
+    /// not produced output yet sends nothing — running that wait on main freezes
+    /// the workspace for the full timeout. Only `client.attach` between the two
+    /// main-thread halves is safe off-main: it serializes on its own lock, and
+    /// engine ingress (`processOutput`/`restoreCheckpoint`) matches the path
+    /// `pumpHostFrame` already takes.
     @discardableResult
     public func prepareAttach(
         grant: AttachGrant,
@@ -361,17 +354,16 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     /// Applies one live post-attach host frame through the locator-fenced
-    /// client (§20/§26). Frames for a superseded binding are rejected by the
-    /// client and never mutate the surface.
+    /// client. Frames for a superseded binding are rejected by the client and
+    /// never mutate the surface.
     ///
-    /// Safe to call from the pane's terminal I/O thread:
-    /// the VT parse happens on the CALLER's thread (the client serializes itself
-    /// with its own lock), and only the UI mirror below is main-thread work.
+    /// Safe to call from the pane's terminal I/O thread: the VT parse happens
+    /// on the CALLER's thread (the client serializes itself with its own lock),
+    /// and only the UI mirror below is main-thread work.
     ///
-    /// This is the whole point of the split. Applying 64 KiB of output costs
-    /// milliseconds of parsing; doing that on the main queue put it directly in
-    /// front of the next keystroke. Now the main queue only ever sees the cheap
-    /// state copy.
+    /// Applying tens of KiB of output costs milliseconds of parsing; do not put
+    /// that on the main queue in front of keystrokes. The main queue only sees
+    /// the cheap state copy.
     public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
         guard let client = attachClient else { return }
         let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
@@ -425,8 +417,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             theme: appearancePreferences.resolvedTheme(
                 for: HiveTerminalAppearanceState(
                     effectiveAppearance,
-                    // C1.4 owns the live Increase Contrast signal and the
-                    // re-push when it changes; see HiveTerminalAppearanceState.
+                    // Live Increase Contrast signal + re-push on toggle lives
+                    // with the accessibility-options observer (not this kit).
                     increasedContrast: false
                 )
             ),
@@ -434,7 +426,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         )
     }
 
-    /// #40: clean CLAIM_RELEASE before viewer transport teardown.
+    /// Clean CLAIM_RELEASE before viewer transport teardown.
     public func releaseClaimBestEffort() {
         attachClient?.releaseClaimBestEffort()
         claimPresentation = attachClient?.claimPresentation ?? .free
@@ -623,14 +615,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     /// Drives the surface into a typed, user-visible lost state when a viewer
-    /// gives up reconnecting (§26 bounded recovery). Never claims close — the
+    /// gives up reconnecting (bounded recovery). Never claims close — the
     /// logical pane and session are untouched; only this renderer stopped.
     public func markAttachFailed(_ evidence: String) {
         guard !closed else { return }
         setSurfaceState(.lost(evidence: evidence))
     }
 
-    // MARK: - First responder / input (M8, gate 8): see HiveTerminalView+Input.swift
+    // MARK: - First responder / input: see HiveTerminalView+Input.swift
 
     public func notifyOutputStatusReconnect(reason: String) {
         _ = reason
@@ -807,7 +799,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         workspaceObservers.removeAll()
     }
 
-    // MARK: - Geometry / RESIZE (M10)
+    // MARK: - Geometry / RESIZE
 
     public override func layout() {
         super.layout()
@@ -906,7 +898,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// resize (`Surface.resize`/`queueIo(.resize)`) and the terminal core
     /// adopts the live geometry — the same repair a window drag performs.
     /// One-shot per attach: if the mismatch persists (configuration still
-    /// settling), the C1 settle loop keeps its old retry/deadline path.
+    /// settling), an outer settle loop retries with its own deadline.
     private func forceRendererResizeIfSemanticGridIsStale() {
         guard !postRestoreResizeForced,
               let appliedFramebufferSize,
@@ -940,7 +932,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         pendingDraw = false
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
-        // #40 clean CLAIM_RELEASE, then B2.6 AX teardown (both required; hedda on-call).
+        // Clean CLAIM_RELEASE, then AX teardown — both required on close.
         releaseClaimBestEffort()
         accessibilitySurfaceWillClose()
         onUserClose?()

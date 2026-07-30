@@ -157,16 +157,15 @@ protocol ManualSurfaceEngine: AnyObject {
     func sendMousePressure(stage: UInt32, pressure: Double)
     func imePoint() -> ManualSurfaceIMEPoint?
     func performBindingAction(_ action: String) -> Bool
-    /// Gate 8: real cell/text-offset selection range, matching Ghostty's own
-    /// selectedRange() (ghostty_surface_read_selection), not a placeholder.
+    /// Real cell/text-offset selection range via
+    /// `ghostty_surface_read_selection`, not a placeholder.
     func readSelection() -> (offset: Int, length: Int)?
     func readScreenText() -> String
     func readSelectedText() -> String?
     func completeClipboardRequest(_ text: String, state: UnsafeMutableRawPointer?, confirmed: Bool)
-    /// Gate 8: matches ghostty_surface_mouse_scroll's packed scroll-mods
-    /// bitmask (bit 0 precision, bits 1-3 momentum phase) — see
-    /// HiveTerminalView+Input.swift's ScrollMods for the exact encoding,
-    /// sourced from Ghostty's own macos/Sources/Ghostty/Ghostty.Input.swift.
+    /// Matches `ghostty_surface_mouse_scroll`'s packed scroll-mods bitmask
+    /// (bit 0 precision, bits 1-3 momentum phase) — see
+    /// `HiveTerminalView+Input` ScrollMods for the exact encoding.
     func sendMouseScroll(x: Double, y: Double, mods: Int32)
     func free()
 }
@@ -208,9 +207,9 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     private(set) var textSent: [String] = []
     private(set) var preeditsSent: [String] = []
     private(set) var keysSent = 0
-    /// Gate 8 test detail: the C `text` pointer is only valid synchronously,
-    /// so it's copied to a Swift String here at call time (mirrors the real
-    /// bridge's copy-before-return discipline for callback pointers).
+    /// The C `text` pointer is only valid synchronously, so it's copied to a
+    /// Swift String here at call time (mirrors the real bridge's
+    /// copy-before-return discipline for callback pointers).
     struct KeySent {
         let action: TerminalKeyAction
         let modifiers: TerminalModifiers
@@ -260,7 +259,7 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
         }
         if end <= throughSeq {
             // Fully behind without stored match: engine treats as invalid;
-            // applicator may ignore as at-least-once retransmit (M7).
+            // applicator may ignore as at-least-once retransmit.
             return .invalidValue
         }
         if streamSeq != throughSeq {
@@ -383,9 +382,9 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     }
 }
 
-/// Real L0 wrapper over the seven §23 `_v1` symbols + stock surface APIs.
+/// Real wrapper over the seven `_v1` ABI symbols + stock surface APIs.
 ///
-/// ## Ownership (M2 / SF1)
+/// ## Ownership
 /// This type **retains** `callbackContext`, `appOwner`, and `hostView` for the
 /// life of the C surface and frees the C surface in `deinit`/`free()` **before**
 /// those objects can drop. The C surface holds unowned pointers into
@@ -406,19 +405,16 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
 
     /// Serializes EVERY surface operation, including the output feed.
     ///
-    /// Main-queue confinement used to provide this serialization for free: all
-    /// surface work ran on one queue, so `processOutput`, `draw`, and
-    /// `restoreCheckpoint` could never nest (`OrderedOutputEngineTests`
-    /// asserts exactly that). Moving the feed onto the pane's terminal I/O
-    /// thread removes that guarantee, so this lock restores it explicitly —
-    /// ingestion and draw stay mutually exclusive, and `free()` cannot pull the
-    /// handle out from under an in-flight feed.
+    /// Do not rely on main-queue confinement alone: the feed runs on the pane's
+    /// terminal I/O thread, so without this lock `processOutput`, `draw`, and
+    /// `restoreCheckpoint` can nest (`OrderedOutputEngineTests` asserts they
+    /// do not). Ingestion and draw stay mutually exclusive, and `free()` cannot
+    /// pull the handle out from under an in-flight feed.
     ///
-    /// What this buys and what it costs: the expensive part — parsing a 64 KiB
-    /// chunk of VT bytes — no longer occupies the main queue, so a keystroke is
-    /// never stuck behind it (the input path does not touch this lock at all).
-    /// A main-thread `draw` can still wait for the chunk in flight, bounded by
-    /// one chunk rather than by a whole coalesced batch.
+    /// Parsing a large VT chunk never occupies the main queue, so a keystroke
+    /// is never stuck behind it (the input path does not touch this lock). A
+    /// main-thread `draw` can still wait for the chunk in flight, bounded by
+    /// one chunk rather than a whole coalesced batch.
     ///
     /// Recursive because main-thread surface operations call one another.
     private let feedLock = NSRecursiveLock()
@@ -434,27 +430,26 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         return rawSurfaceHandle
     }
 
-    /// Gate 9 observe-only action notifications (SELECTION_CHANGED /
-    /// SCROLLBAR), delivered async on the main thread with the payload
-    /// already value-copied. Rides the surface's BridgeCallbackContext:
-    /// routing goes through GhosttySurfaceCallbackRegistry and the
-    /// context's acceptingCallbacks execution-time gate is the
-    /// no-delivery-after-free guarantee (dylan review 2026-07-18; single
-    /// routing path per queen's integration ruling).
+    /// Observe-only action notifications (SELECTION_CHANGED / SCROLLBAR),
+    /// delivered async on the main thread with the payload already
+    /// value-copied. Rides the surface's BridgeCallbackContext: routing goes
+    /// through GhosttySurfaceCallbackRegistry and the context's
+    /// acceptingCallbacks execution-time gate is the no-delivery-after-free
+    /// guarantee.
     public var onActionNotification: ((HiveTerminalActionNotification) -> Void)? {
         get { callbackContext.onActionNotification }
         set { callbackContext.onActionNotification = newValue }
     }
 
-    /// Strong host view so the C `nsview` pointer never dangles (SF1).
+    /// Strong host view so the C `nsview` pointer never dangles.
     private(set) var hostView: NSView?
     /// App retained so the surface stays valid (app owns surface lifetime tree).
-    /// internal (not private): gate 3 lifecycle tests reach the real
+    /// internal (not private): lifecycle tests reach the real
     /// GhosttyAppOwner/GhosttyAppWakeupContext via @testable import.
     private(set) var appOwner: GhosttyAppOwner?
     private var ownsSurface: Bool
 
-    /// Gate 3 test seams. Production leaves both nil.
+    /// Test seams. Production leaves both nil.
     var operationObserver: ((String, GhosttyOperationPhase) -> Void)?
     var outputCopyObserver: ((Data) -> Void)?
 
@@ -629,8 +624,8 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     public func draw() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
-        // Gate 5 test seam: observe draw the same way as processOutput/restore
-        // so serialization proofs can stamp entry/exit on both sides.
+        // Test seam: observe draw the same way as processOutput/restore so
+        // serialization proofs can stamp entry/exit on both sides.
         operationObserver?("draw", .begin)
         defer { operationObserver?("draw", .end) }
         ghostty_surface_draw(surface)
@@ -855,7 +850,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         free()
     }
 
-    /// §23 engine build id (hex C string).
+    /// Engine build id (hex C string).
     static func engineBuildId() -> String {
         guard let cstr = hive_ghostty_engine_build_id_v1() else { return "" }
         return String(cString: cstr)
@@ -900,13 +895,13 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     }
 }
 
-/// Backs `ghostty_runtime_config_s.wakeup_cb`/`userdata` (gate 3, M1-B1).
+/// Backs `ghostty_runtime_config_s.wakeup_cb`/`userdata`.
 ///
 /// ghostty.h: "Callback called to wakeup the event loop. This should
 /// trigger a full tick of the app loop" and `ghostty_app_tick`: "should be
-/// called whenever the wakeup callback is invoked." The pre-B1 snapshot's
-/// wakeup_cb was a no-op, so any Ghostty-internal async work that depends
-/// on a later tick to complete silently never did.
+/// called whenever the wakeup callback is invoked." Do not leave
+/// `wakeup_cb` as a no-op: any Ghostty-internal async work that depends on
+/// a later tick to complete silently never does.
 ///
 /// `app`/`freed` are read-modify-written only on the main thread, and both
 /// `scheduleTick` and `freeIfNeeded` run their real work there, so a tick
@@ -936,13 +931,10 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
 /// once (first caller wins; `freed` is checked and set atomically under
 /// `lock` before either the app pointer is cleared or the C frees run).
 ///
-/// INVARIANT (cross-vendor review 2026-07-17, second pass): the ONLY
-/// `ghostty_app_tick` call anywhere in this module is the one inside
-/// `scheduleTick`'s `runOnMain` closure below. `GhosttyAppOwner` used to
-/// also expose a public `tick()` that called `ghostty_app_tick(app)`
-/// directly — off-queue and ungated, reachable even after `free()` had
-/// already run. It had zero callers, so it was removed rather than routed
-/// through the guard: the safest ungated API is no API. If a tick needs
+/// INVARIANT: the ONLY `ghostty_app_tick` call anywhere in this module is
+/// the one inside `scheduleTick`'s main-queue closure below. Do not expose
+/// a public `tick()` that calls `ghostty_app_tick(app)` directly — that is
+/// off-queue and ungated, reachable even after `free()`. If a tick needs
 /// triggering from outside `wakeup_cb`, add a method that calls THIS
 /// class's `scheduleTick` (or a variant of it), never a bare
 /// `ghostty_app_tick(app)`. `grep -rn ghostty_app_tick` in Sources/ should
@@ -952,11 +944,11 @@ final class GhosttyAppWakeupContext: @unchecked Sendable {
     private var freed = false
     private let lock = NSLock()
 
-    /// Test seam only (gate 3 positive controls): substitutes a spy for
-    /// the real `ghostty_app_tick` call so tests can observe that a tick
-    /// actually executed, on which thread, and with which app pointer —
-    /// not merely that `scheduleTick` returned without crashing. nil in
-    /// production; every non-test caller gets the real C call.
+    /// Test seam only: substitutes a spy for the real `ghostty_app_tick`
+    /// call so tests can observe that a tick actually executed, on which
+    /// thread, and with which app pointer — not merely that `scheduleTick`
+    /// returned without crashing. nil in production; every non-test caller
+    /// gets the real C call.
     var tickOverride: ((ghostty_app_t) -> Void)?
 
     fileprivate func bind(_ app: ghostty_app_t) {
@@ -1014,29 +1006,27 @@ let ghosttyAppWakeupTrampoline: ghostty_runtime_wakeup_cb = { userdata in
     ctx.scheduleTick()
 }
 
-/// Gate 9 (M1-B1) action policy for manual surfaces: every
-/// `ghostty_action_tag_e` at the PINNED header (66 tags) is classified —
-/// never a blanket false. B1 handles no action at the apprt level, so
-/// every verdict currently resolves to "return false", but `handle` routes
-/// through the verdict per-tag via an exhaustive switch and treats an
-/// UNKNOWN tag (no verdict) as a loud programmer error (`assertionFailure`
-/// in debug), never a silent false — so the false is genuinely typed at
-/// the binding, not a blanket. Gate9ActionPolicyTests exercises this
-/// behaviorally through the callback (not just the classify table),
-/// including a real byte-triggerable action routed to its verdict.
+/// Action policy for manual surfaces: every `ghostty_action_tag_e` at the
+/// PINNED header is classified — never a blanket false. This embedder handles
+/// no action at the apprt level, so every verdict currently resolves to
+/// "return false", but `handle` routes through the verdict per-tag via an
+/// exhaustive switch and treats an UNKNOWN tag (no verdict) as a loud
+/// programmer error (`assertionFailure` in debug), never a silent false — so
+/// the false is genuinely typed at the binding, not a blanket.
+/// Gate9ActionPolicyTests exercises this behaviorally through the callback
+/// (not just the classify table), including a real byte-triggerable action
+/// routed to its verdict.
 ///
-/// UPGRADE-TIME GUARANTEE (corrected after cross-vendor review 2026-07-18 —
-/// the old ambiguous public-header field actually hashed the bridge header,
-/// which does not contain the action enum). The lock now carries distinct
-/// upstream and bridge header hashes. The two-part completeness guarantee is:
-/// (1) the whole vendored tree and upstream header are pinned, so any change
-/// fails the build chain; and (2)
+/// UPGRADE-TIME GUARANTEE: the lock carries distinct upstream and bridge
+/// header hashes (the bridge header does not contain the action enum). The
+/// two-part completeness guarantee is: (1) the whole vendored tree and
+/// upstream header are pinned, so any change fails the build chain; and (2)
 /// Gate9ActionPolicyTests parses the `ghostty_action_tag_e` enum block
 /// directly from that pinned header and asserts its member count equals the
 /// classified-set size, so a bump that appends a tag turns RED and demands
 /// a verdict.
 ///
-/// Verdicts (queen rulings 2026-07-18):
+/// Verdicts:
 /// - handledByEffects: visible behavior already flows through the manual
 ///   vt Handler effects → bridge events (TITLE/PWD/BELL); the action-cb
 ///   arm of the same signal is deliberately a no-op duplicate.
@@ -1044,13 +1034,13 @@ let ghosttyAppWakeupTrampoline: ghostty_runtime_wakeup_cb = { userdata in
 ///   from untrusted agent bytes is a spam/spoof vector; attention signals
 ///   belong to Hive's own attributed system), SECURE_INPUT (agent output
 ///   must not flip system secure-input; revisit for human-attach mode),
-///   OPEN_URL (no NSWorkspace.open from terminal content in B1).
+///   OPEN_URL (no NSWorkspace.open from terminal content).
 /// - deniedGesture: Ghostty window/tab/split/quit/inspector management
 ///   Hive does not delegate. Their KEYBINDS are stripped from the manual
 ///   config (`keybind = clear`), so these are unreachable-by-construction
 ///   from input; the verdict remains as defense in depth.
-/// - engineInert: engine housekeeping notifications with no B1 consumer
-///   (rendering geometry flows through gate-7's own APIs, not actions).
+/// - engineInert: engine housekeeping notifications with no consumer here
+///   (rendering geometry flows through dedicated size/geometry APIs, not actions).
 enum HiveGhosttyActionPolicy {
     enum Verdict: Equatable {
         case handledByEffects
@@ -1121,16 +1111,16 @@ enum HiveGhosttyActionPolicy {
         observerLock.lock(); observer = body; observerLock.unlock()
     }
 
-    /// The real callback body. Every action resolves to `false` in B1
-    /// (nothing is apprt-handled: title/pwd/bell flow through the vt
-    /// Handler effects → bridge events, denials and inert notifications
-    /// return false), but the routing is EXHAUSTIVE and per-verdict — an
-    /// unknown tag is a loud error in debug, never a silent false — so the
-    /// "never a blanket false" property holds at the binding.
+    /// The real callback body. Every action resolves to `false` (nothing is
+    /// apprt-handled: title/pwd/bell flow through the vt Handler effects →
+    /// bridge events, denials and inert notifications return false), but the
+    /// routing is EXHAUSTIVE and per-verdict — an unknown tag is a loud error
+    /// in debug, never a silent false — so the "never a blanket false"
+    /// property holds at the binding.
     ///
-    /// Observe-only side channel (Gate 10/B2.4 consumer): SELECTION_CHANGED,
-    /// SCROLLBAR, SEARCH_TOTAL, and SEARCH_SELECTED are additionally forwarded —
-    /// payload value-copied, async on main, per-surface — via
+    /// Observe-only side channel: SELECTION_CHANGED, SCROLLBAR, SEARCH_TOTAL,
+    /// and SEARCH_SELECTED are additionally forwarded — payload value-copied,
+    /// async on main, per-surface — via
     /// `GhosttyManualSurface.onActionNotification`.
     /// The return value to the engine is unchanged (still false), so the
     /// security disposition of all four tags is unaffected.
@@ -1168,7 +1158,7 @@ enum HiveGhosttyActionPolicy {
             // Deliberate denial (security / undelegated gesture).
             return false
         case .engineInert:
-            // Engine housekeeping notification, no B1 consumer.
+            // Engine housekeeping notification, no consumer here.
             return false
         case nil:
             // A tag with no verdict = the classified set drifted from the
@@ -1189,16 +1179,16 @@ enum HiveGhosttyActionPolicy {
     }
 }
 
-/// Gate 9 → Gate 10 carrier: announcement-worthy engine actions bridged
-/// per-surface. Observe-only — the action callback still returns false to
-/// the engine for every carried tag, so nothing privileged is enabled by listening.
+/// Announcement-worthy engine actions bridged per-surface. Observe-only —
+/// the action callback still returns false to the engine for every carried
+/// tag, so nothing privileged is enabled by listening.
 /// Payloads map 1:1 to the pinned action structs; `selectionChanged` carries
 /// no payload. Search's `-1` sentinel is projected to nil before enqueue.
-/// ACCESSIBILITY consumers must source selection range/text from the atomic
-/// semantic snapshot (queen ruling c1784ed2) — a separate `readSelection()`
-/// read can tear against the snapshot's text/cursor/viewport; treat the
-/// notification strictly as an async-main invalidation signal.
-/// `readSelection()` remains valid for non-tree consumers.
+/// Accessibility consumers must source selection range/text from the atomic
+/// semantic snapshot — a separate `readSelection()` read can tear against the
+/// snapshot's text/cursor/viewport; treat the notification strictly as an
+/// async-main invalidation signal. `readSelection()` remains valid for
+/// non-tree consumers.
 public enum HiveTerminalActionNotification: Equatable, Sendable {
     case selectionChanged
     case scrollbar(total: UInt64, offset: UInt64, len: UInt64)
@@ -1206,7 +1196,7 @@ public enum HiveTerminalActionNotification: Equatable, Sendable {
     case searchSelected(Int?)
 }
 
-/// Gate 9 observability for the four non-action runtime callbacks
+/// Observability for the four non-action runtime callbacks
 /// (`close_surface_cb`, `read_clipboard_cb`, `confirm_read_clipboard_cb`,
 /// `write_clipboard_cb`). Production behavior is unchanged — deny/no-op —
 /// the probes only count invocations so tests can prove a callback that is
@@ -1269,9 +1259,9 @@ private final class GhosttySurfaceCallbackRegistry: @unchecked Sendable {
         context?.enqueueRendererHealth(health)
     }
 
-    /// Gate 9 carrier routing (same shape as enqueueRendererHealth): the
-    /// context's admission gate provides the execution-time
-    /// no-delivery-after-free guarantee.
+    /// Carrier routing (same shape as enqueueRendererHealth): the context's
+    /// admission gate provides the execution-time no-delivery-after-free
+    /// guarantee.
     func enqueueActionNotification(_ note: HiveTerminalActionNotification, for surface: ghostty_surface_t?) {
         guard let surface else { return }
         lock.lock()
@@ -1281,11 +1271,11 @@ private final class GhosttySurfaceCallbackRegistry: @unchecked Sendable {
     }
 }
 
-/// Owns a Ghostty app + config for manual surface creation (M2).
+/// Owns a Ghostty app + config for manual surface creation.
 final class GhosttyAppOwner {
     let app: ghostty_app_t
     let config: ghostty_config_t
-    /// internal (not private): gate 3 lifecycle tests drive wakeup_cb directly.
+    /// internal (not private): lifecycle tests drive wakeup_cb directly.
     let wakeupContext: GhosttyAppWakeupContext
     var operationObserver: ((String) -> Void)?
 
@@ -1339,9 +1329,9 @@ enum GhosttyBridgeFactory {
     private static var globalInitialized = false
 
     /// Builds the runtime config passed to `ghostty_app_new` — pulled out of
-    /// `makeManualSurface` so gate 3 tests can assert the REAL factory wires
+    /// `makeManualSurface` so tests can assert the REAL factory wires
     /// `wakeup_cb`/`userdata` to the real trampoline/context, not a stub.
-    /// Without this seam, only the trampoline function in isolation was
+    /// Without this seam, only the trampoline function in isolation is
     /// testable and the factory's own wiring could silently regress to a
     /// no-op (e.g. `{ _ in }`) with no test catching it.
     static func makeRuntimeConfig(wakeupContext: GhosttyAppWakeupContext) -> ghostty_runtime_config_s {
@@ -1349,11 +1339,11 @@ enum GhosttyBridgeFactory {
             userdata: wakeupContext.unownedContextPointer,
             supports_selection_clipboard: false,
             wakeup_cb: ghosttyAppWakeupTrampoline,
-            // Gate 9: typed per-tag policy, not a blanket false — see
+            // Typed per-tag policy, not a blanket false — see
             // HiveGhosttyActionPolicy.
             action_cb: { _, target, action in
-                // Gate 9 typed policy + notification dispatch; Gate 3/7's
-                // renderer-health enqueue rides the same callback.
+                // Typed policy + notification dispatch; renderer-health
+                // enqueue rides the same callback.
                 let handled = HiveGhosttyActionPolicy.handle(action, target: target)
                 if action.tag == GHOSTTY_ACTION_RENDERER_HEALTH,
                    target.tag == GHOSTTY_TARGET_SURFACE {
@@ -1367,11 +1357,10 @@ enum GhosttyBridgeFactory {
                 }
                 return handled
             },
-            // Gate 9 probes remain the first statement in each callback.
-            // Gate 8 admits clipboard work only through explicit host
-            // binding actions; the fixed deny config keeps OSC 52 from ever
-            // reaching this apprt layer. See Gate8ClipboardTests and
-            // Gate9CallbackMatrixTests.
+            // Probes remain the first statement in each callback.
+            // Clipboard work is admitted only through explicit host binding
+            // actions; the fixed deny config keeps OSC 52 from ever reaching
+            // this apprt layer.
             read_clipboard_cb: { userdata, location, state in
                 HiveGhosttyRuntimeCallbackProbes.record(.readClipboard)
                 return GhosttyClipboardContext.fromUserdata(userdata)?.beginRead(
@@ -1441,15 +1430,14 @@ enum GhosttyBridgeFactory {
 
         creationObserver?("configNew")
         guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
-        // Gate 9 (queen ruling 2026-07-18): STRIP every Ghostty keybind from
-        // the manual-surface config. Hive owns window/pane/split management;
-        // an embedded agent-terminal provides none of Ghostty's ~37
-        // window/tab/split/quit/inspector actions, so making their bindings
-        // unreachable-by-construction beats denying them at the action
-        // callback — an unbound key falls through to normal terminal
+        // STRIP every Ghostty keybind from the manual-surface config. Hive owns
+        // window/pane/split management; an embedded agent-terminal provides
+        // none of Ghostty's window/tab/split/quit/inspector actions, so making
+        // their bindings unreachable-by-construction beats denying them at the
+        // action callback — an unbound key falls through to normal terminal
         // encoding instead of being swallowed by an action nobody provides.
         // `keybind = clear` empties the root set and all tables
-        // (config/Config.zig keybind parser). C1's generated file carries
+        // (config/Config.zig keybind parser). The generated policy file carries
         // that security policy after the theme and typography base.
         ghostty_config_load_file(config, configPolicyPath)
         ghostty_config_finalize(config)
@@ -1526,7 +1514,7 @@ enum GhosttyBridgeFactory {
         initializationCount += 1
     }
 
-    /// Convenience for tests: host view is retained by the returned surface (SF1).
+    /// Convenience for tests: host view is retained by the returned surface.
     static func makeManualSurfaceForTesting(
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480,
@@ -1571,7 +1559,7 @@ enum GhosttyBridgeFactory {
         }
     }
 
-    /// B2.4 mutation seam: loads an explicit generated policy file so tests
+    /// Test mutation seam: loads an explicit generated policy file so tests
     /// can prove a viewer setting changes real engine behavior at its
     /// consumption site. Production always uses HiveTerminalConfiguration.
     static func makeManualSurfaceForConfigurationTesting(

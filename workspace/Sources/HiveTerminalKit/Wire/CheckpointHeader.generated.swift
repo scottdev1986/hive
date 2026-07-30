@@ -2,7 +2,7 @@
 // HiveTerminalKit production projection of CHECKPOINT_HEADER (session-protocol.ts).
 
 public enum SessionProtocolGenerated {
-    /// HVTCP001 checkpoint envelope (§23 / CHECKPOINT_HEADER).
+    /// HVTCP001 checkpoint envelope (CHECKPOINT_HEADER).
     public enum Checkpoint {
         public static let magic = "HVTCP001"
         public static let version: UInt16 = 1

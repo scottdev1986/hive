@@ -3,25 +3,22 @@ import Foundation
 import HiveGhosttyC
 import ObjectiveC
 
-/// Accessibility (M1-B2.6 / Gate 10 AppKit slice).
+/// Accessibility adapter for `HiveTerminalView`.
 ///
-/// Forward-ported from duncan's terminal accessibility work
-/// (`943407ba` "Build atomic terminal accessibility snapshot") and adapted
-/// onto the post-B2.4 HiveTerminalView surface: semantic rows/ranges/cursor/
-/// selection from `ManualSurfaceSemanticSnapshotProviding`, selection-change
-/// AX posting via `HiveTerminalActionNotification.selectionChanged` (explicitly
-/// left unclaimed by the prior Gate 10 engine slice), lifecycle/failure
-/// announcements, and row-element tree for VoiceOver navigation.
+/// Semantic rows/ranges/cursor/selection come from
+/// `ManualSurfaceSemanticSnapshotProviding`. Selection-change AX posting uses
+/// `HiveTerminalActionNotification.selectionChanged`. Also handles lifecycle/
+/// failure announcements and a row-element tree for VoiceOver navigation.
 ///
 /// Engine exports (`semanticSnapshot()`) are single-lock; this adapter pins
 /// one generation for consecutive AX getters until the next invalidate signal
 /// (or an explicit `withPinnedSnapshot` read batch). It does **not** re-export
 /// on every property access — that multi-export path produced torn dumps.
 ///
-/// Live VoiceOver listening and Accessibility Inspector human audit remain
-/// explicit human checklist slots (Gate 7 pattern) — not silent gaps.
-/// Real `NSAccessibility.post` (see `post` below) is covered only by those
-/// human slots; machine tests watch `notificationProbe` only.
+/// Live VoiceOver listening and Accessibility Inspector human audit are
+/// explicit human checklist slots, not silent gaps. Real `NSAccessibility.post`
+/// (see `post` below) is covered only by those human slots; machine tests
+/// watch `notificationProbe` only.
 
 private struct TerminalAccessibilitySignals: OptionSet {
     let rawValue: UInt8
@@ -295,8 +292,7 @@ private final class TerminalAccessibilityController {
                 post(element: rows[index], notification: .valueChanged)
             }
         }
-        // Selection-change AX posting: claimed by B2.6 / Gate 10 AppKit slice.
-        // Engine posts HiveTerminalActionNotification.selectionChanged; we also
+        // Engine posts HiveTerminalActionNotification.selectionChanged; also
         // compare consecutive snapshots so a selection made without an action
         // tag still announces.
         if previous.selection != next.selection || pendingSignals.contains(.selection) {

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Outcome of an attach/replay attempt (§09/§20/§26).
+/// Outcome of an attach/replay attempt.
 public enum AttachReplayOutcome: Equatable, Sendable {
     case firstCorrectFrame(highWater: UInt64, connectionId: String)
     case failed(TerminalSurfaceState)
@@ -8,17 +8,17 @@ public enum AttachReplayOutcome: Equatable, Sendable {
     case continueReplay
 }
 
-/// L2 attach/replay client: speaks the §20 viewer wire to a HOST.
+/// Attach/replay client: speaks the viewer wire protocol to a HOST.
 ///
-/// Sequence (§09/§20):
+/// Sequence:
 /// 1. HELLO (viewer role + grant token)
-/// 2. WELCOME (**required** before HOST_ATTACH — M6)
+/// 2. WELCOME (**required** before HOST_ATTACH)
 /// 3. HOST_ATTACH (locator, token, geometry, afterSeq)
 /// 4. SNAPSHOT_BYTES (HVTCP001 envelope, possibly multi-chunk) → restore
 /// 5. OUTPUT frames in order → process_output
 /// 6. APPLIED high-water acknowledgements
 ///
-/// Host transport is injected (test double or L3 UDS).
+/// Host transport is injected (test double or production UDS).
 public final class AttachReplayClient {
     private struct PendingInputBatch {
         let binding: SurfaceBinding
@@ -68,7 +68,7 @@ public final class AttachReplayClient {
     /// wire, so the outcome must be observable here.
     public private(set) var lastResizeResult: String?
 
-    /// Handshake receive timeout (§09): fail closed rather than HOST_ATTACH blind.
+    /// Handshake receive timeout: fail closed rather than HOST_ATTACH blind.
     public var handshakeTimeout: TimeInterval = 5.0
     public static let resizeQuiescenceNanos: UInt64 = 100_000_000
     private static let claimRetryDelay: TimeInterval = 0.05
@@ -125,7 +125,7 @@ public final class AttachReplayClient {
         }
     }
 
-    /// Attach using a grant already obtained (broker path is outside L2).
+    /// Attach using a grant already obtained (broker path is outside this client).
     @discardableResult
     public func attach(
         grant: AttachGrant,
@@ -135,7 +135,7 @@ public final class AttachReplayClient {
     ) throws -> AttachReplayOutcome {
         stateLock.lock()
         defer { stateLock.unlock() }
-        // M3: fail CLOSED — never restore when local engine id is unknown or mismatched.
+        // Fail CLOSED — never restore when local engine id is unknown or mismatched.
         let localEngine = HiveTerminalEngineIdentity.current.buildId
         if localEngine.isEmpty {
             state = .incompatibleEngine(evidence: "local engine build id unavailable")
@@ -174,7 +174,7 @@ public final class AttachReplayClient {
         try sendJSON(.hello, object: hello, requestId: nextRequestId)
         nextRequestId += 1
 
-        // M6: WELCOME is required before HOST_ATTACH.
+        // WELCOME is required before HOST_ATTACH.
         try requireWelcome()
 
         let hostAttach: [String: Any] = [
@@ -253,17 +253,15 @@ public final class AttachReplayClient {
         resetInputState()
     }
 
-    /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport (#40).
+    /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport.
     /// Best-effort: transport may already be half-dead; host also clears on drop.
     public func releaseClaimBestEffort() {
         stateLock.lock()
         defer { stateLock.unlock() }
         guard let token = activeClaimToken, let binding, transport != nil else {
-            // A skip with a claim still held leaves the host holding a human
-            // claim nobody will ever release, and every daemon inject is denied
-            // HumanOrphaned from then on — the 2026-07-21 messaging regression.
-            // Today no path reaches here holding one; if one ever does, it says
-            // so instead of returning in silence.
+            // Do not skip while a claim is still held: the host keeps that claim
+            // forever, and every daemon inject is denied HumanOrphaned until
+            // operator recovery. Log rather than return in silence if stranded.
             if let stranded = activeClaimToken {
                 NSLog(
                     "hive claim: release SKIPPED with claim held token=%@ viewer=%@; host claim will orphan",
@@ -317,8 +315,8 @@ public final class AttachReplayClient {
         return try handleHostFrame(frame, binding: binding)
     }
 
-    /// Gate 8 encoder output is held until this exact binding owns a human
-    /// claim, then submitted through the frozen INPUT_SUBMIT JSON operation.
+    /// Encoder output is held until this exact binding owns a human claim,
+    /// then submitted through the frozen INPUT_SUBMIT JSON operation.
     public func handleEncodedWrite(_ bytes: Data) {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -361,7 +359,7 @@ public final class AttachReplayClient {
 
     /// The host orphaned this viewer's claim. It is the human's own claim and
     /// the host readmits a returning human through operatorResume, so the write
-    /// path stays armed: the next keystroke re-acquires and resumes (#87).
+    /// path stays armed: the next keystroke re-acquires and resumes.
     public func noteOrphaned(claimId: String) {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -371,7 +369,7 @@ public final class AttachReplayClient {
         scheduleClaimRetry()
     }
 
-    /// Frozen RESIZE request after geometry quiescence (M10).
+    /// Frozen RESIZE request after geometry quiescence.
     public func sendResize(_ geometry: TerminalGeometry) throws {
         stateLock.lock()
         defer { stateLock.unlock() }
@@ -469,7 +467,7 @@ public final class AttachReplayClient {
 
         case .snapshotBegin:
             // Metadata frame optional; authoritative length/throughSeq are in
-            // the HVTCP001 header inside SNAPSHOT_BYTES (M4/M5).
+            // the HVTCP001 header inside SNAPSHOT_BYTES.
             snapshotBuffer = Data()
             snapshotStarted = true
             state = .replaying
@@ -495,7 +493,7 @@ public final class AttachReplayClient {
                 return .failed(state)
             }
 
-            // M3: fail CLOSED — wire engineBuildId must equal local engine (no test sentinels).
+            // Fail CLOSED — wire engineBuildId must equal local engine (no test sentinels).
             let local = HiveTerminalEngineIdentity.current.buildId
             if local.isEmpty {
                 state = .incompatibleEngine(evidence: "local engine build id unavailable")
@@ -809,7 +807,7 @@ public final class AttachReplayClient {
         onInputSubmissionStateChange?(newState)
     }
 
-    /// §20 output acknowledgement — the frozen APPLIED output branch. The
+    /// Output acknowledgement — the frozen APPLIED output branch. The
     /// native header validator requires a nonzero client request id on
     /// non-unsolicited frames, so acks spend their own request ids.
     private func sendApplied(throughSeq: UInt64) throws {

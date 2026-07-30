@@ -3,12 +3,11 @@ import Carbon
 import Foundation
 import IOKit.hidsystem
 
-/// Input (M8, gate 8): native NSEvent → ghostty_surface_key/text/preedit/mouse
-/// → claim-bound write callback (encoder out). Split from HiveTerminalView.swift
-/// so gate 8 (input/IME/mouse) and gate 7 (rendering/geometry/GPU) can land in
-/// parallel without touching the same file (M1-B1, 2026-07-17).
+/// Input: native NSEvent → ghostty_surface_key/text/preedit/mouse → claim-bound
+/// write callback (encoder out). Split from `HiveTerminalView.swift` so input/
+/// IME/mouse and rendering/geometry can evolve without thrashing the same file.
 extension HiveTerminalView {
-    // MARK: - First responder / input (M8)
+    // MARK: - First responder / input
 
     public override var acceptsFirstResponder: Bool { true }
 
@@ -96,12 +95,10 @@ extension HiveTerminalView {
         engine.sendMousePos(x: p.x, y: bounds.height - p.y, modifiers: mapMods(event.modifierFlags))
     }
 
-    /// Pre-B1 snapshot had no scrollWheel override at all — scroll never
-    /// reached the terminal. Matches Surface View's scrollWheel exactly:
-    /// 2x precision-scroll multiplier, and the packed scroll-mods bitmask
-    /// (bit 0 precision, bits 1-3 momentum phase) from Ghostty.Input.
-    /// ScrollMods — sourced, not invented (see ManualSurfaceEngine.
-    /// sendMouseScroll's doc comment for the exact bit layout).
+    /// Forwards scroll to the terminal: 2x precision-scroll multiplier, and the
+    /// packed scroll-mods bitmask (bit 0 precision, bits 1-3 momentum phase)
+    /// from Ghostty.Input.ScrollMods — see `ManualSurfaceEngine.sendMouseScroll`
+    /// for the exact bit layout.
     public override func scrollWheel(with event: NSEvent) {
         var x = event.scrollingDeltaX
         var y = event.scrollingDeltaY
@@ -292,25 +289,20 @@ extension HiveTerminalView {
         }
     }
 
-    /// Pre-B1 snapshot had no keyUp override at all — GHOSTTY_ACTION_RELEASE
-    /// was dead code inside encodeKey, since encodeKey was only ever called
-    /// from keyDown. Real Ghostty's keyUp is simple (no IME choreography,
-    /// unlike keyDown): `keyAction(GHOSTTY_ACTION_RELEASE, event: event)`.
+    /// Release path for physical keys. Ghostty's keyUp has no IME choreography
+    /// (unlike keyDown): `keyAction(GHOSTTY_ACTION_RELEASE, event: event)`.
     public override func keyUp(with event: NSEvent) {
         encodeKey(event, action: .release)
     }
 
-    /// Pre-B1 snapshot had no flagsChanged override — a bare modifier
-    /// press/release (Shift alone, Option alone, ...) with no accompanying
-    /// character never reached the terminal at all. Exact port of Surface
-    /// View's flagsChanged (SurfaceView_AppKit.swift ~1405-1450): maps the
-    /// specific modifier keyCode to its GHOSTTY_MODS_* bit, skips while
-    /// composing (an IME grabbing modifier state mid-composition shouldn't
-    /// also be encoded as a terminal key event), and determines press vs.
-    /// release by checking whether the CORRECT side's NX_DEVICE*KEYMASK bit
-    /// is set — e.g. releasing right-shift while left-shift is still held
-    /// must report a release (mods.rawValue & mod != 0 alone can't tell
-    /// which side is still down).
+    /// Bare modifier press/release (Shift alone, Option alone, …) with no
+    /// accompanying character must still reach the terminal. Maps the specific
+    /// modifier keyCode to its GHOSTTY_MODS_* bit, skips while composing (an
+    /// IME grabbing modifier state mid-composition must not also encode as a
+    /// terminal key event), and determines press vs. release by checking the
+    /// CORRECT side's NX_DEVICE*KEYMASK bit — e.g. releasing right-shift while
+    /// left-shift is still held must report a release (`mods.rawValue & mod`
+    /// alone cannot tell which side is still down).
     public override func flagsChanged(with event: NSEvent) {
         let modifier: TerminalModifiers
         switch event.keyCode {
@@ -397,10 +389,8 @@ extension HiveTerminalView {
         guard markedText.length > 0 else { return NSRange(location: NSNotFound, length: 0) }
         return NSRange(location: 0, length: markedText.length)
     }
-    /// Real selection range from Ghostty's own selection tracking
-    /// (ghostty_surface_read_selection), matching Surface View's
-    /// selectedRange() exactly — the pre-B1 snapshot returned a hardcoded
-    /// NSNotFound placeholder regardless of actual terminal selection.
+    /// Selection range from Ghostty's own tracking (`ghostty_surface_read_selection`).
+    /// Must not return a hardcoded NSNotFound placeholder when a selection exists.
     public func selectedRange() -> NSRange {
         guard let selection = engine.readSelection() else {
             return NSRange(location: NSNotFound, length: 0)
@@ -441,20 +431,14 @@ extension HiveTerminalView {
         return NSAttributedString(string: text)
     }
     public func characterIndex(for point: NSPoint) -> Int { 0 }
-    /// Real IME insertion-point positioning via ghostty_surface_ime_point,
-    /// matching Surface View's core firstRect exactly (coordinate
-    /// conversion: Ghostty reports top-left-origin points, AppKit is
-    /// bottom-left-origin, so y flips within this view's frame before
-    /// converting to window coordinates). Pre-B1 snapshot always returned
-    /// the whole view's bounds, so every IME candidate window/composition
-    /// popover rendered in the same wrong place regardless of cursor
-    /// position — "placeholder IME ranges" was as much about this as about
-    /// markedRange/selectedRange.
+    /// IME insertion-point via `ghostty_surface_ime_point`. Ghostty reports
+    /// top-left-origin points; AppKit is bottom-left-origin, so y flips within
+    /// this view's frame before converting to window coordinates. Returning
+    /// the whole view bounds here misplaces every IME candidate/composition
+    /// popover regardless of cursor position.
     ///
-    /// Not ported: Surface View's QuickLook-vs-IME disambiguation (checks
-    /// range against selectedRange(), reads the live selection via
-    /// ghostty_surface_read_selection for the QuickLook case). This view
-    /// doesn't implement quickLook(with:), so that branch is dead code here.
+    /// QuickLook-vs-IME disambiguation is not needed: this view does not
+    /// implement `quickLook(with:)`.
     public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         actualRange?.pointee = range
         guard let point = engine.imePoint() else {
@@ -469,8 +453,8 @@ extension HiveTerminalView {
         )
         if range.length == 0, viewRect.width > 0 {
             // imePoint.width is the whole preedit width, not one cell.
-            // Gate 7 reports the cell in backing pixels; divide by the
-            // renderer's applied scale to keep NSTextInputClient in points.
+            // Cell size is in backing pixels; divide by the renderer's applied
+            // scale to keep NSTextInputClient in points.
             if let size = engine.reportedSize(),
                size.cellWidthPx > 0,
                appliedContentScale.width > 0 {
@@ -483,11 +467,10 @@ extension HiveTerminalView {
     }
 
     /// NSTextInputClient's firstRect contract is SCREEN coordinates.
-    /// Cross-vendor review (bram, 2026-07-18) caught this returning window
-    /// coordinates — in a window with nonzero screen origin every IME
-    /// candidate window rendered displaced. Matches the pinned Surface
-    /// View exactly: view→window via convert(_:to: nil), then
-    /// window.convertToScreen, window rect as the no-window fallback.
+    /// Do not return window coordinates: in a window with nonzero screen
+    /// origin every IME candidate window renders displaced. Convert
+    /// view→window via `convert(_:to: nil)`, then `window.convertToScreen`,
+    /// with the window rect as the no-window fallback.
     private func toScreen(_ winRect: NSRect) -> NSRect {
         guard let window else { return winRect }
         return window.convertToScreen(winRect)

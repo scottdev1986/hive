@@ -1,7 +1,7 @@
 import Foundation
 import HiveGhosttyC
 
-/// §23 bridge event types (hive_ghostty_event_e).
+/// Bridge event types (`hive_ghostty_event_e`).
 enum BridgeEventType: Int32, Equatable, Sendable {
     case invalidate = 1
     case title = 2
@@ -26,7 +26,7 @@ public enum RendererHealth: Equatable, Sendable {
     case unhealthy
 }
 
-/// MEMORY-SAFETY-SENSITIVE Swift↔C callback boundary (§23).
+/// MEMORY-SAFETY-SENSITIVE Swift↔C callback boundary.
 ///
 /// C-facing callback bodies only copy and may overlap on native worker
 /// threads; host handlers are delivered later on the serial main queue and
@@ -35,7 +35,7 @@ public enum RendererHealth: Equatable, Sendable {
 /// This context **always copies** write and event bytes synchronously before
 /// returning to C.
 ///
-/// ## Lifetime (M2)
+/// ## Lifetime
 /// The C surface holds an **unowned** raw pointer to this context for the
 /// surface's lifetime. `GhosttyManualSurface` **must** retain this context
 /// for as long as the C surface is alive (and free the surface before the
@@ -57,8 +57,8 @@ final class BridgeCallbackContext: @unchecked Sendable {
     /// queue, which is what the coalescing is about.
     private(set) var invalidateDeliveryCount = 0
 
-    /// Gate 3 test seam: production leaves this nil. Runs inside the admitted
-    /// copy scope so teardown-vs-callback ordering can be proved without a
+    /// Test seam: production leaves this nil. Runs inside the admitted copy
+    /// scope so teardown-vs-callback ordering can be proved without a
     /// timing-dependent oversized allocation.
     var callbackCopyObserver: (() -> Void)?
 
@@ -119,7 +119,7 @@ final class BridgeCallbackContext: @unchecked Sendable {
         enqueueWrite(copy)
     }
 
-    /// Synchronous event body from a `hive_ghostty_event_s *` (§23 ABI).
+    /// Synchronous event body from a `hive_ghostty_event_s *` ABI pointer.
     /// Unpacks type/bytes/length and copies payload before return.
     func handleEvent(_ event: UnsafePointer<hive_ghostty_event_s>?) {
         guard enter() else { return }
@@ -240,10 +240,10 @@ final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
-    /// Gate 9 observe-only action notifications (SELECTION_CHANGED /
-    /// SCROLLBAR), same admission + main-deferral discipline as
-    /// enqueueRendererHealth. The execution-time acceptingCallbacks recheck
-    /// is the no-delivery-after-free guarantee (dylan review 2026-07-18).
+    /// Observe-only action notifications (SELECTION_CHANGED / SCROLLBAR),
+    /// same admission + main-deferral discipline as enqueueRendererHealth.
+    /// The execution-time acceptingCallbacks recheck is the
+    /// no-delivery-after-free guarantee.
     public var onActionNotification: ((HiveTerminalActionNotification) -> Void)? {
         get {
             condition.lock()
@@ -286,7 +286,7 @@ final class BridgeCallbackContext: @unchecked Sendable {
     }
 }
 
-// MARK: - C trampolines typed against hive_ghostty_bridge.h (M1/B1)
+// MARK: - C trampolines typed against hive_ghostty_bridge.h
 
 /// Write trampoline: matches `hive_ghostty_write_fn` exactly.
 let hiveBridgeWriteTrampoline: hive_ghostty_write_fn = { context, bytes, length in
@@ -296,7 +296,7 @@ let hiveBridgeWriteTrampoline: hive_ghostty_write_fn = { context, bytes, length 
 
 /// Event trampoline: matches `hive_ghostty_event_fn` — **two** params
 /// `(void *context, const hive_ghostty_event_s *event)`. Unpacks the struct
-/// inside; never takes flattened type/bytes/length (B1).
+/// inside; never takes flattened type/bytes/length.
 let hiveBridgeEventTrampoline: hive_ghostty_event_fn = { context, event in
     guard let ctx = BridgeCallbackContext.fromContext(context) else { return }
     ctx.handleEvent(event)

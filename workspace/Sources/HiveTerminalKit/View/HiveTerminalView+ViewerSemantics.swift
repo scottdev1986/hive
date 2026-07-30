@@ -95,18 +95,11 @@ extension HiveTerminalView {
 
     /// Runs on the main thread once per applied OUTPUT frame, for every pane.
     ///
-    /// It reads no engine state. It used to export the whole semantic viewport
-    /// here — the full visible text, a UTF-16 offset per cell, and a digest —
-    /// only to recover three integers, and that export takes the same renderer
-    /// mutex the pane's terminal I/O thread holds while parsing a chunk. With
-    /// several vendor TUIs streaming at once it was the largest non-rendering
-    /// consumer of the main queue, and the main queue is what a keystroke waits
-    /// behind. Measured with eight real vendor TUIs on real sessiond sessions
-    /// (`prototypes/input-lag`): 69% of all main-queue work with presentation
-    /// disabled, and the second-largest consumer after Metal draws with it on.
-    ///
-    /// The three integers arrive on their own from the SCROLLBAR action, which
-    /// is user-paced. All this needs to know is that output arrived.
+    /// It reads no engine state. Do not export the semantic viewport here: that
+    /// takes the same renderer mutex the terminal I/O thread holds while parsing
+    /// a chunk, and with several streaming panes it dominates the main queue
+    /// ahead of keystrokes. Scroll totals arrive from the SCROLLBAR action
+    /// (user-paced); this only records that output arrived.
     func noteOutputApplied() {
         scrollStateStorage.outputSinceScrollbarUpdate = true
         guard !scrollStateStorage.followsBottom else { return }
@@ -121,9 +114,8 @@ extension HiveTerminalView {
         if scrollStateStorage.followsBottom {
             scrollStateStorage.hasUnseenOutput = false
         } else if scrollStateStorage.outputSinceScrollbarUpdate {
-            // This notification is the first news that the viewport had already
-            // left the bottom. Output applied while it was in flight was output
-            // the user could not see.
+            // First news the viewport left the bottom; output applied while
+            // this notification was in flight is unseen.
             scrollStateStorage.hasUnseenOutput = true
         }
         scrollStateStorage.outputSinceScrollbarUpdate = false

@@ -1,6 +1,6 @@
 import Foundation
 
-/// §06/§20 SessionLocator — exact generation identity. Never recover by name.
+/// Exact generation identity for a session. Never recover by name.
 public struct SessionLocator: Equatable, Sendable, Hashable {
     public var schemaVersion: Int
     public var instanceId: String
@@ -94,7 +94,7 @@ public struct SurfaceBinding: Equatable, Sendable, Hashable {
     public var generation: Int { locator.generation }
 }
 
-/// §20 TerminalGeometry — never 0×0 for attached terminals.
+/// Terminal pixel/cell geometry — never 0×0 for attached terminals.
 public struct TerminalGeometry: Equatable, Sendable {
     public var columns: Int
     public var rows: Int
@@ -159,7 +159,7 @@ public struct TerminalGeometry: Equatable, Sendable {
     }
 }
 
-/// §19/§20 AttachGrant (strict wire projection).
+/// Attach grant from the host (strict wire projection).
 public struct AttachGrant: Equatable, Sendable {
     public var locator: SessionLocator
     public var endpoint: String
@@ -217,7 +217,7 @@ public struct AttachGrant: Equatable, Sendable {
     }
 }
 
-/// §26 failure/lifecycle states — distinct typed states with evidence.
+/// Surface failure/lifecycle states — distinct typed states with evidence.
 public enum TerminalSurfaceState: Equatable, Sendable {
     case starting
     case attaching
@@ -241,7 +241,7 @@ public enum TerminalSurfaceState: Equatable, Sendable {
     }
 }
 
-/// §22 claim states the UI surfaces.
+/// Human-claim states the UI surfaces.
 public enum InputClaimPresentation: Equatable, Sendable {
     case free
     case humanOwned(viewerId: String, claimId: String)

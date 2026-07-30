@@ -59,11 +59,11 @@ public struct ManualSurfaceSemanticSnapshot: Equatable {
     public let geometry: ManualSurfaceSemanticGeometry
 }
 
-/// Gate 10 read seam. Production snapshots cross the seventh Hive bridge
-/// export; fakes may provide deterministic snapshots without a C surface.
+/// Semantic viewport read seam. Production snapshots cross the seventh Hive
+/// bridge export; fakes may provide deterministic snapshots without a C surface.
 public protocol ManualSurfaceSemanticSnapshotProviding: AnyObject {
     /// Main-thread only and never callable from a native Ghostty callback.
-    /// Gate 3 defers callback delivery before Gate 10 reaches this method.
+    /// Bridge callbacks defer delivery before any host reaches this method.
     func semanticSnapshot() -> ManualSurfaceSemanticSnapshot?
 }
 

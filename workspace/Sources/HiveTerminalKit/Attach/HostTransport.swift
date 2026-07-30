@@ -1,18 +1,18 @@
 import Foundation
 
-/// Bidirectional §20 frame transport (UDS in production; test double in Tests).
+/// Bidirectional wire-frame transport (UDS in production; test double in Tests).
 ///
-/// ## L3 SEAM (OUT OF SCOPE for WP5 L0–L2)
-/// Real WP4 session-host binding implements this protocol over UDS using the
-/// grant endpoint. L2 must not assume a pre-queued FakeHost shape.
+/// ## L3 SEAM
+/// Production session-host binding implements this protocol over UDS using the
+/// grant endpoint. Callers must not assume a pre-queued FakeHost shape.
 ///
-/// ## Async-host shape (M6)
+/// ## Async-host shape
 /// - `receive()` returns `nil` **only** when the transport is closed.
 /// - While open, `receive()` **blocks** until a frame arrives or the optional
 ///   timeout elapses (timeout → `WireError.receiveTimeout`, not nil).
-/// - L3 can implement this with a UDS read loop without changing L2.
+/// - Production can implement this with a UDS read loop without changing callers.
 public protocol HostTransport: AnyObject {
-    /// Connection identity used to cancel obsolete attaches on retarget (§26).
+    /// Connection identity used to cancel obsolete attaches on retarget.
     var connectionId: String { get }
     var isClosed: Bool { get }
     func send(_ frame: WireFrame) throws
@@ -26,9 +26,3 @@ public extension HostTransport {
         try receive(timeout: nil)
     }
 }
-
-// Frame coalescing used to live here: the pane pump drained up to 32 frames and
-// applied them in ONE main-queue block, because per-frame dispatch piled
-// hundreds of main-queue blocks ahead of keystrokes. Frames now apply on the
-// pane's terminal I/O thread and never reach the main queue, so there is
-// nothing left to coalesce.

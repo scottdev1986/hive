@@ -1,6 +1,6 @@
 import Foundation
 
-/// §20 local wire protocol v1 — 32-byte frame header, network byte order.
+/// Local wire protocol v1 — 32-byte frame header, network byte order.
 public enum FrameType: UInt16, CaseIterable, Sendable {
     case hello = 0x0001
     case welcome = 0x0002

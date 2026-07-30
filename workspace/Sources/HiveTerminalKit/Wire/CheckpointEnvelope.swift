@@ -1,13 +1,12 @@
 import Foundation
 import CryptoKit
 
-/// §20/§23 wire checkpoint envelope: 116-byte `HVTCP001` header + opaque payload.
+/// Wire checkpoint envelope: 116-byte `HVTCP001` header + opaque payload.
 ///
-/// Authority: docs/design/terminal-stack-transition.html §23 checkpoint table
-/// and `CHECKPOINT_HEADER` in `src/schemas/session-protocol.ts` (projected into
-/// `CheckpointHeader.generated.swift` as `SessionProtocolGenerated.Checkpoint`).
-/// The opaque payload is what `hive_ghostty_surface_restore_checkpoint_v1`
-/// consumes (engine format).
+/// Field layout matches `SessionProtocolGenerated.Checkpoint` (projected from
+/// `CHECKPOINT_HEADER` in `src/schemas/session-protocol.ts`). The opaque
+/// payload is what `hive_ghostty_surface_restore_checkpoint_v1` consumes
+/// (engine format).
 public struct CheckpointEnvelope: Equatable, Sendable {
     public static let headerBytes = SessionProtocolGenerated.Checkpoint.headerBytes
     public static let magic = SessionProtocolGenerated.Checkpoint.magic
@@ -118,7 +117,7 @@ public struct CheckpointEnvelope: Equatable, Sendable {
     }
 
     /// Build a wire envelope. Callers (including FakeHost) must pass the real
-    /// local engine build id — no default test sentinel (MF2).
+    /// local engine build id — no default test sentinel.
     public static func encode(
         throughSeq: UInt64,
         payload: Data,

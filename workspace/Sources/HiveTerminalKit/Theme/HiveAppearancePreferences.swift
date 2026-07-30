@@ -72,16 +72,16 @@ public final class HiveAppearancePreferences {
 ///
 /// Light/dark comes from the appearance the view is drawn in. Increase Contrast
 /// does NOT: it is an accessibility display option, not an appearance variant.
-/// Measured on macOS 26.3.1 — `NSAppearance(named: .accessibilityHighContrastAqua)`
-/// reports its own name as plain `NSAppearanceNameAqua`, and `bestMatch` maps
-/// every high-contrast name onto its base, so no appearance read can recover it.
-/// The only reader is `NSWorkspace`, which the kit may not reference (Gate 9).
+/// `NSAppearance(named: .accessibilityHighContrastAqua)` reports its own name
+/// as plain `NSAppearanceNameAqua`, and `bestMatch` maps every high-contrast
+/// name onto its base, so no appearance read can recover it. The only reader is
+/// `NSWorkspace`, which this kit may not reference.
 ///
-/// C1.2 therefore ships the increased-contrast variants and the resolution that
-/// selects them, both measured. Supplying the live signal — and re-pushing when
-/// the user toggles it mid-session — is C1.4's increment, which owns the
-/// accessibility-options observer. Until then this stays `false` at the call
-/// site rather than being defaulted somewhere it would look wired and be inert.
+/// Increased-contrast theme variants and resolution are shipped and measured.
+/// The live signal (and re-push when the user toggles it mid-session) belongs
+/// with an accessibility-options observer outside this kit. Call sites pass
+/// `false` explicitly rather than defaulting it somewhere it would look wired
+/// and be inert.
 struct HiveTerminalAppearanceState: Equatable {
     let appearance: HiveTerminalAppearance
     let increasedContrast: Bool
